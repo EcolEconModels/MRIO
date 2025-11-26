@@ -1,0 +1,36 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.Python
+*.so
+*.dll
+
+# Virtual environments
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+.ipython/
+.jupyter/
+
+# Data and outputs
+data/*
+data/raw/
+data/external/
+data/interim/
+data/processed/
+data/wiod13_*/
+data/exiobase3_*/
+data/**/*.pkl
+data/**/*.zip
+data/**/*.7z
+outputs/
+figures/
+
+# VSCode / editor
+.vscode/
+.idea/
+
+# macOS
+.DS_Store

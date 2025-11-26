@@ -1,0 +1,678 @@
+<!DOCTYPE html><html prefix="og: http://ogp.me/ns# article: http://ogp.me/ns/article#" lang="nl" data-tag-manager-id="GTM-WLHD85V"><head><META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta content="NOODP" name="ROBOTS">
+<meta content="nl" http-equiv="Content-Language">
+<title>World Input-Output Database | WIOD | Groningen Growth and Development Centre | Rijksuniversiteit Groningen</title>
+<meta name="description" content="Information about the World Input-Output Database">
+<link rel="alternate" hreflang="en" href="https://www.rug.nl/ggdc/valuechain/wiod/?lang=en" />
+<link rel="alternate" hreflang="x-default" href="https://www.rug.nl/ggdc/valuechain/wiod/" />
+<meta charset="utf-8">
+<meta content="telephone=no" name="format-detection">
+<meta content="summary" name="twitter:card">
+<meta content="article" property="og:type">
+<meta content="https://www.rug.nl/ggdc/valuechain/wiod/" property="og:url">
+<meta content="2016-07-27T15:02+02:00" property="article:published_time">
+<meta content="2025-10-09T09:47+02:00" property="article:modified_time">
+<meta property="og:title" content="World Input-Output Database">
+<meta property="og:description" content="Information about the World Input-Output Database">
+<meta content="https://www.rug.nl/ggdc/img/wiod-logo.png" property="og:image">
+<meta property="og:image:alt" content="WIOD">
+<meta property="og:site_name" content="University of Groningen">
+<link href="/_definition/shared/css/jquery-smoothness/jquery-ui.min.css?version=2025-10-25" rel="stylesheet">
+<link href="/_definition/shared/css/styles_v2.css?version=2025-10-25" rel="stylesheet" type="text/css">
+<link href="/_definition/shared/css/fotorama.css?version=2025-10-25" rel="stylesheet" type="text/css">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-57x57.png" sizes="57x57" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-114x114.png" sizes="114x114" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-72x72.png" sizes="72x72" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-144x144.png" sizes="144x144" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-60x60.png" sizes="60x60" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-120x120.png" sizes="120x120" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-76x76.png" sizes="76x76" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/apple-touch-icon-152x152.png" sizes="152x152" rel="apple-touch-icon">
+<link href="/_definition/shared/images/favicons/icon.ico" rel="shortcut icon">
+<meta content="user-scalable=1, initial-scale=1.0" name="viewport">
+<template data-alertsurl="" id="alertsConfig"></template>
+<script src="/_definition/shared/js/jquery.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/ucms.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/jquery-ui.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/js-cookie.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/md5.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/rug-shared.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/jquery.dialogoptions.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/jquery.dialogoptions-rug.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/imagesloaded.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/jquery.mobile.custom.min.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/fotorama.js?version=2025-10-25" type="text/javascript"></script><script src="/_definition/shared/js/interface.bundle.js?version=2025-10-25" type="text/javascript"></script><script type="text/javascript" src="/_definition/shared/js/cross-frame.js?version=2025-10-25"></script>
+</head>
+<body itemtype="https://schema.org/WebPage" itemscope="itemscope" id="top" class="page--generalarticle js--id-theme-portal"><!--googleoff: all-->
+<noscript>
+<strong>Javascript must be enabled for the correct page display</strong>
+</noscript>
+<!--Google Tag Manager (noscript)-->
+<noscript>
+<iframe style="display:none;visibility:hidden" width="0" height="0" src="https://www.googletagmanager.com/ns.html?id=GTM-WLHD85V"></iframe>
+</noscript>
+<!--End Google Tag Manager (no script)-->
+<a href="#main" class="rug-hidden-visually rug-hidden-visually--focusable">Skip to Content</a><a href="#nav" class="rug-hidden-visually rug-hidden-visually--focusable">Skip to Navigation</a>
+<!--portal context: /ggdc-->
+<header data-toggle-group="mainmenu" data-toggle-class="rug-site-header--open" data-toggle-id="menu-show" class="rug-site-header js--togglable-item js--sticky-header"><div class="rug-wrapper rug-wrapper--big rug-wrapper--flush">
+<div class="rug-site-header__bar rug-site-header__bar--tp">
+<a href="https://www.rug.nl/" class="rug-site-header__item rug-hidden-m"><img class="rug-site-logo" src="/_definition/shared/images/logo--nl.svg" alt="Rijksuniversiteit Groningen"></a><span class="rug-site-header__item"><a href="/ggdc/" class="rug-site-header__link rug-site-header__link--tp"><span class="rug-icon rug-icon--home rug-mr-xs" aria-hidden="true"></span>Groningen Growth and Development Centre</a></span><span class="rug-site-header__item"><span class="rug-site-header__text rug-hidden-m rug-mr rug-themeportal__heading--payoff">Onderdeel van Rijksuniversiteit Groningen</span></span>
+<div class="rug-site-header__item rug-site-header__item--close">
+<a href="#" data-toggle-group="mainmenu" data-toggle-class="rug-toggleable" data-toggle-id="menu-hide" class="rug-button rug-font-white rug-button--nav js--togglable-switch">Sluiten<span class="rug-icon rug-icon--l rug-icon--close rug-ml-xxs" aria-hidden="true"></span></a>
+</div>
+<nav class="rug-site-header__item">
+<ul class="rug-nav--meta rug-mr-xs">
+<li class="rug-nav--meta__item rug-nav--meta__item--mobile">
+<a href="#" data-toggle-group="mainmenu" data-toggle-class="rug-toggleable" data-toggle-id="menu-show" class="js-id--main_menu_toggle js--togglable-switch rug-font-white"><span class="rug-icon rug-icon--menu rug-icon--xl" aria-hidden="true"></span><span class="rug-hidden-visually">Menu en zoeken</span></a>
+</li>
+<li class="rug-nav--meta__item rug-language-select" title="Taal selectie">
+<button data-postfix="" data-language="nl" class="rug-mr-xs rug-button--language-select"><span class="rug-flag-icon rug-flag-icon-nl"></span><span class="rug-hidden-visually">Nederlands</span></button><button data-postfix="" data-language="en" class="rug-mr-xs rug-button--language-select"><span class="rug-flag-icon rug-flag-icon-en"></span><span class="rug-hidden-visually">English</span></button>
+</li>
+</ul>
+</nav>
+<nav class="rug-site-header__item">
+<ul class="rug-nav--meta">
+<li class="rug-nav--meta__item rug-nav--meta__item--mobile">
+<a href="/search/" class="rug-font-white"><span class="rug-icon rug-icon--search rug-icon--xl" aria-hidden="true"></span><span class="rug-hidden-visually">Zoekpagina</span></a>
+</li>
+</ul>
+</nav>
+</div>
+<div>
+<a href="https://www.rug.nl/" class="rug-themeportal__transporter"><img class="rug-site-logo rug-site-logo--themeportal" src="/_definition/shared/images/logo--nl.svg" alt="Rijksuniversiteit Groningen"></a><img alt="" src="/webvernieuwing/ggdc/header-ggdc.jpg" class="rug-bb--brand-resp"><div class="rug-themeportal__heading">
+<div class="rug-absolute--bottom-m">
+<div class="rug-panel--content">
+<div class="rug-h2 rug-themeportal__heading">Groningen Growth and Development Centre</div>
+<div class="rug-themeportal__heading__subtitle rug-mt-xxs">Faculty of Economics and Business</div>
+</div>
+</div>
+</div>
+</div>
+</div><template id="cookie-alert-html">&lt;div class="rug-mask js--requires-cookie-consent-trigger"&gt;&lt;div class="rug-warning--overlay rug-hidden rug-theme--content"&gt;&lt;span class="rug-icon rug-icon--close rug-absolute rug-absolute--top-right rug-mt-xs rug-mr-xs rug-cursor--pointer js--requires-cookie-consent-close"/&gt;&lt;div class="rug-notification--info rug-p js-id--alert"&gt;&lt;span class="rug-icon rug-icon--warn rug-icon--xl rug-mr-s" aria-hidden="true"/&gt;&lt;p&gt;Voor het tonen van deze inhoud is uw toestemming nodig voor het plaatsen van bepaalde cookies.&lt;/p&gt;&lt;p&gt;U kunt uw &lt;button class="rug-inline-button js--cookie-consent-popup"&gt;cookie instellingen aanpassen&lt;/button&gt;.&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;</template><template id="cookie-consent-conf">
+					{
+						"requiresCookieConsentCheck": "true",
+						"checkedCookieConsent": "no",
+						"hasCookieConsent": "no"
+					}
+				</template><script src="/_definition/shared/js/init-cookies.js?version=2025-10-25" type="text/javascript"></script>
+<div class="rug-background-menu rug-shadow-box-inset">
+<div class="rug-wrapper rug-wrapper--big rug-wrapper--flush">
+<form name="gs" id="search-form" action="/search/" class="rug-site-search rug-mb-0">
+<fieldset class="rug-mb-0 rug-shadow-box">
+<legend class="rug-hidden-visually">Zoeken</legend><label for="searchtext" class="rug-hidden-visually">Zoeken</label><input placeholder="Zoektermen..." id="searchtext" type="text" accesskey="4" autocomplete="off" role="combobox" aria-haspopup="false" name="search" class="rug-site-search__input q text"><input value="true" name="isNewSearch" type="hidden"><button type="submit" class="rug-site-search__button"><span class="rug-icon rug-icon--l rug-icon--search" aria-hidden="true"></span><span class="rug-hidden-visually">Zoeken</span></button>
+</fieldset>
+</form>
+<nav class="rug-nav--main__container">
+<ul class="rug-nav--main" id="nav">
+<li class="rug-nav--main__item">
+<a href="/ggdc/" data-path="/ggdc" class="rug-nav--main__button"><span class="rug-icon rug-icon--home" aria-hidden="true"></span><span class="rug-hidden-visually">Home</span></a>
+</li>
+<li data-path="/ggdc/productivity" class="rug-nav--main__item">
+<a aria-expanded="false" aria-controls="rug-nav--flyout-1" href="/ggdc/productivity/" class="rug-nav--main__link rug-nav--main__link-menu  js--noclick-m"><span>Productivity</span><span class="rug-icon rug-icon--s rug-icon--caret-down rug-nav--main__icon" aria-hidden="true"></span></a>
+<div id="rug-nav--flyout-1" class="rug-nav--flyout">
+<div class="rug-layout rug-layout--l">
+<div class="rug-layout__item rug-layout__item">
+<ul class="rug-nav--flyout__list">
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/" class="rug-nav--flyout__link rug-link--caret">Productivity</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/pwt/" class="rug-nav--flyout__link rug-link--caret">Penn World Table</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/eu-klems/" class="rug-nav--flyout__link rug-link--caret">EU KLEMS</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/pld/" class="rug-nav--flyout__link rug-link--caret">Productivity Level Database</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/worldklems-initiative" class="rug-nav--flyout__link rug-link--caret">WorldKLEMS Initiative</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/pr-projects/" class="rug-nav--flyout__link rug-link--caret">Related Projects</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/productivity/news" class="rug-nav--flyout__link rug-link--caret">Productivity News</a>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</li>
+<li data-path="/ggdc/valuechain" class="rug-nav--main__item">
+<a aria-expanded="false" aria-controls="rug-nav--flyout-2" href="/ggdc/valuechain/" class="rug-nav--main__link rug-nav--main__link-menu  js--noclick-m"><span>Global Value Chains</span><span class="rug-icon rug-icon--s rug-icon--caret-down rug-nav--main__icon" aria-hidden="true"></span></a>
+<div id="rug-nav--flyout-2" class="rug-nav--flyout">
+<div class="rug-layout rug-layout--l">
+<div class="rug-layout__item rug-layout__item">
+<ul class="rug-nav--flyout__list">
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/valuechain/" class="rug-nav--flyout__link rug-link--caret">Global Value Chains</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/valuechain/wiod/" class="rug-nav--flyout__link rug-link--caret">World Input-Output Database</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/valuechain/gvc-research/" class="rug-nav--flyout__link rug-link--caret">GVC Research</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/valuechain/long-run-wiod" class="rug-nav--flyout__link rug-link--caret">Long-run WIOD</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/valuechain/gvc-projects/" class="rug-nav--flyout__link rug-link--caret">Related Projects</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/valuechain/news" class="rug-nav--flyout__link rug-link--caret">Global Value Chains News</a>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</li>
+<li data-path="/ggdc/historicaldevelopment" class="rug-nav--main__item">
+<a aria-expanded="false" aria-controls="rug-nav--flyout-3" href="/ggdc/historicaldevelopment/" class="rug-nav--main__link rug-nav--main__link-menu  js--noclick-m"><span>Historical Development</span><span class="rug-icon rug-icon--s rug-icon--caret-down rug-nav--main__icon" aria-hidden="true"></span></a>
+<div id="rug-nav--flyout-3" class="rug-nav--flyout">
+<div class="rug-layout rug-layout--l">
+<div class="rug-layout__item rug-layout__item">
+<ul class="rug-nav--flyout__list">
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/historicaldevelopment/" class="rug-nav--flyout__link rug-link--caret">Historical Development</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/historicaldevelopment/maddison/" class="rug-nav--flyout__link rug-link--caret">Maddison Historical Statistics</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/historicaldevelopment/na/" class="rug-nav--flyout__link rug-link--caret">Historical National Accounts</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/historicaldevelopment/hd-projects/" class="rug-nav--flyout__link rug-link--caret">Related Projects</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/historicaldevelopment/historical-news" class="rug-nav--flyout__link rug-link--caret">Historical Development News</a>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</li>
+<li data-path="/ggdc/structuralchange" class="rug-nav--main__item">
+<a aria-expanded="false" aria-controls="rug-nav--flyout-4" href="/ggdc/structuralchange/" class="rug-nav--main__link rug-nav--main__link-menu  js--noclick-m"><span>Structural Change</span><span class="rug-icon rug-icon--s rug-icon--caret-down rug-nav--main__icon" aria-hidden="true"></span></a>
+<div id="rug-nav--flyout-4" class="rug-nav--flyout">
+<div class="rug-layout rug-layout--l">
+<div class="rug-layout__item rug-layout__item">
+<ul class="rug-nav--flyout__list">
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/structuralchange/" class="rug-nav--flyout__link rug-link--caret">Structural Change</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/structuralchange/etd/" class="rug-nav--flyout__link rug-link--caret">Economic Transformation Database</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/structuralchange/etd-transition-economies" class="rug-nav--flyout__link rug-link--caret">ETD Transition Economies</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/structuralchange/previous-sector-database/" class="rug-nav--flyout__link rug-link--caret">Previous Sector Databases</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/structuralchange/sc-projects/" class="rug-nav--flyout__link rug-link--caret">Related Projects</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/structuralchange/structural-change-news" class="rug-nav--flyout__link rug-link--caret">Structural Change News</a>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</li>
+<li data-path="/ggdc/events" class="rug-nav--main__item">
+<a aria-expanded="false" aria-controls="rug-nav--flyout-5" href="/ggdc/events/" class="rug-nav--main__link rug-nav--main__link-menu  js--noclick-m"><span>Events</span><span class="rug-icon rug-icon--s rug-icon--caret-down rug-nav--main__icon" aria-hidden="true"></span></a>
+<div id="rug-nav--flyout-5" class="rug-nav--flyout">
+<div class="rug-layout rug-layout--l">
+<div class="rug-layout__item rug-layout__item">
+<ul class="rug-nav--flyout__list">
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/events/" class="rug-nav--flyout__link rug-link--caret">Events</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/events/conference2024" class="rug-nav--flyout__link rug-link--caret">GGDC Conference 2024</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/events/maddison-lectures" class="rug-nav--flyout__link rug-link--caret">Maddison Lectures</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/events/events-news" class="rug-nav--flyout__link rug-link--caret">Events News</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/events/previous-conferences" class="rug-nav--flyout__link rug-link--caret">Previous Conferences</a>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</li>
+<li data-path="/ggdc/aboutus" class="rug-nav--main__item">
+<a aria-expanded="false" aria-controls="rug-nav--flyout-6" href="/ggdc/aboutus/" class="rug-nav--main__link rug-nav--main__link-menu  js--noclick-m"><span>About Us</span><span class="rug-icon rug-icon--s rug-icon--caret-down rug-nav--main__icon" aria-hidden="true"></span></a>
+<div id="rug-nav--flyout-6" class="rug-nav--flyout">
+<div class="rug-layout rug-layout--l">
+<div class="rug-layout__item rug-layout__item">
+<ul class="rug-nav--flyout__list">
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/" class="rug-nav--flyout__link rug-link--caret">About the GGDC</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/blog/" class="rug-nav--flyout__link rug-link--caret">GGDC News</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/iframe/memoranda" class="rug-nav--flyout__link rug-link--caret">Research Memoranda</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/experts" class="rug-nav--flyout__link rug-link--caret">Experts</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/affiliates" class="rug-nav--flyout__link rug-link--caret">Affiliates</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/partners" class="rug-nav--flyout__link rug-link--caret">Partners</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/projects" class="rug-nav--flyout__link rug-link--caret">Overview Projects</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/faculty-of-economics-and-business" class="rug-nav--flyout__link rug-link--caret">Faculty of Economics and Business</a>
+</li>
+<li class="rug-nav--flyout__item">
+<a href="/ggdc/aboutus/contact" class="rug-nav--flyout__link rug-link--caret">Contact</a>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</li>
+<li class="rug-nav--main__item rug-nav--main__item--search">
+<div class="js--rug-nav--main__search rug-nav--main__search-container">
+<button aria-label="Open Zoeken" data-search-link="/search/" class="rug-nav--main__button rug-nav--main__button--last rug-nav--main__search-button rug-text-nowrap"><span class="rug-icon rug-icon--search" aria-hidden="true"></span><span class="rug-hidden-l rug-ml-xs" aria-hidden="true">Zoeken</span></button>
+<div class="rug-nav--main__search-form-group rug-form-group rug-nav--main__search-form-group--hidden">
+<form action="/search/">
+<span class="rug-form-group-input-container"><input aria-label="Zoektermen..." placeholder="Zoektermen..." type="text" name="search" class="rug-form-input-text"></span><button aria-label="Zoeken" type="submit"><span class="rug-icon rug-icon--l rug-icon--search"></span></button>
+</form>
+</div>
+</div>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</header>
+<div class="rug-wrapper rug-wrapper--knee-high">
+<template data-active-sub-menu-1="7546f7b5-4d1f-4c2b-b22a-0451afc8ca38-33.31" data-active-sub-menu-2="f7c1368a-8984-4855-ae0b-4475fa6c2ff8-36.68" data-active-sub-menu-3="6b6912c0-ac2b-4a7f-8346-4ef51eaac136-33.34" data-active-top-menu="/ggdc/valuechain" id="navigation-data"></template>
+<div class="rug-breadcrumbs js--shrink-to-fit" itemprop="breadcrumb" itemscope="" itemtype="https://schema.org/BreadcrumbList">
+<span itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+<meta content="Groningen Growth and Development Centre" itemprop="name">
+<meta content="1" itemprop="position">
+<a class="rug-breadcrumbs__link js--shrinkable" href="/ggdc/" itemprop="item">Groningen Growth and Development Centre</a></span><span class="rug-icon rug-icon--angle-right rug-breadcrumbs__divider"></span><span itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+<meta content="Global Value Chains" itemprop="name">
+<meta content="2" itemprop="position">
+<a class="rug-breadcrumbs__link js--shrinkable" href="/ggdc/valuechain/" itemprop="item">Global Value Chains</a></span><span class="rug-icon rug-icon--angle-right rug-breadcrumbs__divider"></span><span itemprop="itemListElement" itemscope="" itemtype="https://schema.org/ListItem">
+<meta content="WIOD" itemprop="name">
+<meta content="3" itemprop="position">
+<a class="rug-breadcrumbs__link js--shrinkable" href="/ggdc/valuechain/wiod/" itemprop="item">WIOD</a></span>
+</div>
+</div>
+<template id="navigation-active-content" data-active-content="a1c9baa8-500b-48d8-8171-df467ffab4b9-36.68"></template>
+<!--googleon: all--><div class="rug-button rug-button--medium rug-button--toTop js--scrolltop">
+<span class="rug-icon rug-icon--angle-up"></span>
+</div><div class="rug-background-white" id="main">
+<div id="content" class="rug-wrapper rug-wrapper--overlay">
+<div class="rug-layout">
+<div class="rug-layout__item rug-width-m-8-24">
+<div class="rug-mb">
+<nav>
+<ul data-toggle-group="mainmenu" data-toggle-class="rug-block-max-m" data-toggle-id="menu-show" class="js--id-content-menu rug-nav--secondary rug-shadow-box js--togglable-item">
+				<li class="rug-nav--secondary__item rug-block-max-m ">
+<a aria-controls="menu-main-submenu" aria-expanded="false" href="#" data-toggle-mode="togglable" data-toggle-group="submenu" data-toggle-class="rug-nav--secondary__link--selected" data-toggle-id="menu-main" class="rug-nav--secondary__link js--togglable-switch">HOME</a>
+<ul data-toggle-group="submenu" data-toggle-class="rug-block" data-toggle-id="menu-main" class="js-id--mobilehome rug-nav--secondary__sub rug-nav--secondary__sub--hidden js--togglable-item" id="menu-main-submenu">
+<li data-menu-id="8177c8a7-5865-4026-9205-0192d7d739ac-36.68" class="rug-nav--secondary__sub__item">
+<a href="/ggdc/productivity/" class="rug-nav--secondary__sub__link"><span class="rug-nav--secondary__sub__link-text">Productivity</span></a>
+</li>
+<li data-menu-id="f7c1368a-8984-4855-ae0b-4475fa6c2ff8-36.68" class="rug-nav--secondary__sub__item">
+<a href="/ggdc/valuechain/" class="rug-nav--secondary__sub__link"><span class="rug-nav--secondary__sub__link-text">Global Value Chains</span></a>
+</li>
+<li data-menu-id="e9315985-60a6-45b5-9966-4ed1cee01cc0-33.32" class="rug-nav--secondary__sub__item">
+<a href="/ggdc/historicaldevelopment/" class="rug-nav--secondary__sub__link"><span class="rug-nav--secondary__sub__link-text">Historical Development</span></a>
+</li>
+<li data-menu-id="2f3811a4-5bee-47c1-b970-098a9715c761-33.34" class="rug-nav--secondary__sub__item">
+<a href="/ggdc/structuralchange/" class="rug-nav--secondary__sub__link"><span class="rug-nav--secondary__sub__link-text">Structural Change</span></a>
+</li>
+<li data-menu-id="e741029e-c9a8-4a08-9d10-10db0602cac6-33.14" class="rug-nav--secondary__sub__item">
+<a href="/ggdc/events/" class="rug-nav--secondary__sub__link"><span class="rug-nav--secondary__sub__link-text">Events</span></a>
+</li>
+<li data-menu-id="5c605746-57a1-4984-bfc9-0fed0a27cf03-33.12" class="rug-nav--secondary__sub__item">
+<a href="/ggdc/aboutus/" class="rug-nav--secondary__sub__link"><span class="rug-nav--secondary__sub__link-text  rug-b-0">About Us</span></a>
+</li>
+</ul>
+</li>
+
+				<li class="rug-nav--secondary__item">
+<a class="js--togglable-switch rug-nav--secondary__link" data-toggle-class="rug-nav--secondary__link--selected" data-toggle-group="submenu" data-toggle-id="menu-6b6912c0-ac2b-4a7f-8346-4ef51eaac136-33.34" data-toggle-mode="togglable">WIOD</a>
+<ul class="rug-nav--secondary__sub rug-nav--secondary__sub--hidden js--togglable-item" data-toggle-class="rug-block" data-toggle-group="submenu" data-toggle-id="menu-6b6912c0-ac2b-4a7f-8346-4ef51eaac136-33.34">
+<li class="rug-nav--secondary__sub__item" data-menu-id="a1c9baa8-500b-48d8-8171-df467ffab4b9-36.68">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/wiod/"><span class="rug-nav--secondary__sub__link-text">World Input-Output Database</span></a>
+</li>
+<li class="rug-nav--secondary__sub__item" data-menu-id="c9079a08-af6e-4c5f-aa6e-730cfb9fbc55-33.34">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/wiod/wiod-2016-release"><span class="rug-nav--secondary__sub__link-text">WIOD 2016 Release</span></a>
+</li>
+<li class="rug-nav--secondary__sub__item" data-menu-id="8237470e-b9c4-4d80-b76d-70afaeea2898-33.33">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/wiod/wiod-2013-release"><span class="rug-nav--secondary__sub__link-text">WIOD 2013 Release</span></a>
+</li>
+<li class="rug-nav--secondary__sub__item" data-menu-id="fcdd8eea-ced2-4c1e-a616-ec5e607cf66b-33.32">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/long-run-wiod"><span class="rug-nav--secondary__sub__link-text">Long-run WIOD</span></a>
+</li>
+<li class="rug-nav--secondary__sub__item" data-menu-id="f829b14d-da89-41d5-abf0-70b80a4642dd-33.36">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/wiod/initial-wiod-project"><span class="rug-nav--secondary__sub__link-text">Initial WIOD Project</span></a>
+</li>
+<li class="rug-nav--secondary__sub__item" data-menu-id="9c157764-b869-4e20-a380-e32805fd10b1-36.68">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/wiod/research-and-policy-impact"><span class="rug-nav--secondary__sub__link-text">Research and Policy Impact</span></a>
+</li>
+<li class="rug-nav--secondary__sub__item" data-menu-id="64a744af-6307-4be6-8a52-f57ae538d2de-33.34">
+<a class="rug-nav--secondary__sub__link" href="/ggdc/valuechain/wiod/news"><span class="rug-nav--secondary__sub__link-text  rug-b-0">News</span></a>
+</li>
+</ul>
+</li>
+
+				<li class="rug-nav--secondary__item rug-block-max-m">
+<ul class="rug-nav--secondary__sub rug-nav--secondary__sub--meta">
+<li class="rug-nav--secondary__sub__item rug-nav--secondary__sub__item--languages rug-language-select" title="Language select">
+<button data-postfix="" data-language="nl" class="rug-mr-xs rug-button--language-select"><span class="rug-flag-icon rug-flag-icon-nl"></span><span class="rug-hidden-visually">Nederlands</span></button><button data-postfix="" data-language="en" class="rug-mr-xs rug-button--language-select"><span class="rug-flag-icon rug-flag-icon-en"></span><span class="rug-hidden-visually">English</span></button>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+<div data-toggle-group="mainmenu" data-toggle-id="menu-show" data-toggle-class="rug-hidden-m--block" class="rug-layout__item rug-width-m-16-24">
+<div>
+<div class="rug-panel--content rug-panel--content--border">
+<h1 class="rug-mb-0 rug-clearfix" lang="en">
+<span lang="en">World Input-Output Database</span>
+</h1>
+</div>
+<div id="target-content-holder"></div>
+<div>
+<figure class="rug-no-break rug-overflow-hidden rug-image--right__float">
+<div class="rug-figure--image">
+<img src="/ggdc/img/wiod-logo.png" alt="WIOD" class=""></div>
+</figure>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+<h3>
+<a href="/ggdc/valuechain/wiod/initial-wiod-project">The WIOD Project</a>
+</h3>
+<p>This subsection of the GGDC website hosts the data and documentation of the World Input-Output Database (WIOD), previously found on <a href="http://www.wiod.org" target="_blank">www.wiod.org</a>. The original project website has been <a href="https://web.archive.org/web/20211102093630/http:/www.wiod.org/home" target="_blank">archived</a> and is no longer maintained. For questions concerning the WIOD, please send an email to <span class="js--decode" data-encoded="PGEgaHJlZj0ibWFpbHRvOmdnZGNAcnVnLm5sIj5nZ2RjQHJ1Zy5ubDwvYT4=">ggdc rug.nl</span>.</p>
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<figure class="rug-no-break rug-overflow-hidden rug-image--left__float">
+<div class="rug-figure--image">
+<img src="/ggdc/img/cc-button.png" alt="cc" class=""></div>
+</figure>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+               
+<p>The World Input-Output Database is licensed under a <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank">
+                     <span lang="EN-US">Creative Commons Attribution 4.0 International License</span> </a>
+                  <span lang="EN-US">.</span>
+               
+</p>
+            
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+               
+<h3>Release 2016</h3>
+               
+<p>World Input-Output Tables and underlying data, covering 43 countries, and a model for the rest of the world for the period 2000-2014. Data for 56 sectors are classified according to the International Standard Industrial Classification revision 4 (ISIC Rev. 4). The tables adhere to the 2008 version of the SNA.</p>
+            
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<div class="rug-mb-xm">
+<a href="/ggdc/valuechain/wiod/wiod-2016-release" class="rug-button rug-button--secondary rug-button--medium rug-mr-s rug-button__grid-two"><span lang="en">Go to the WIOD 2016 Release</span><span class="rug-icon rug-icon--caret-right rug-ml" aria-hidden="true"></span></a>
+</div>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+               
+<br>
+               
+<h3>Release 2013</h3>
+               
+<p>World Input-Output Tables and underlying data, covering 40 countries, and a model for the rest of the world for the period 1995-2011. Data for 35 sectors are classified according to the International Standard Industrial Classification revision 3 (ISIC Rev. 3). The tables adhere to the 1993 version of the SNA.</p>
+            
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<div class="rug-mb-xm">
+<a href="/ggdc/valuechain/wiod/wiod-2013-release" class="rug-button rug-button--secondary rug-button--medium rug-mr-s rug-button__grid-two"><span lang="en">Go to the WIOD 2013 Release</span><span class="rug-icon rug-icon--caret-right rug-ml" aria-hidden="true"></span></a>
+</div>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+               
+<br>
+               
+<h3>Long-run WIOD</h3>
+               
+<p>In a separate, but related project, a long-run time series of World Input-Output Tables have been estimated for the period 1965-2000. The tables include data for 25 countries and 23 sectors of the economy, classified according to the International Standard Industrial Classification revision 3 (ISIC Rev. 3). The tables adhere to the 1993 version of the SNA.</p>
+            
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<div class="rug-mb-xm">
+<a href="/ggdc/valuechain/long-run-wiod" class="rug-button rug-button--secondary rug-button--medium rug-mr-s rug-button__grid-two"><span lang="en">Go to the Long-run WIOD database</span><span class="rug-icon rug-icon--caret-right rug-ml" aria-hidden="true"></span></a>
+</div>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+               
+<br>
+               
+<div class="rug-clearfix"></div>
+<div class="rug-table-wrapper">
+<div style="display: none;" class="rug-table-navigator">
+<div role="button" data-mode="previous" class="rug-table-navigator__button" aria-label="Navigate to the left">
+<span class="rug-icon rug-icon--angle-left"></span>
+</div>
+<div role="button" data-mode="next" class="rug-table-navigator__button" aria-label="Navigate to the right">
+<span class="rug-icon rug-icon--angle-right"></span>
+</div>
+</div>
+<div class="rug-table-holder">
+<table class="rug-table--default">
+                  
+<tbody>
+                     
+<tr>
+                        
+<th>When using this database, a reference should be made to the following paper:</th>
+                     
+</tr>
+                     
+<tr>
+                        
+<td>Timmer, M. P., Dietzenbacher, E., Los, B., Stehrer, R. and de Vries, G. J. (2015), <a href="http://dx.doi.org/10.1111/roie.12178" target="_blank">
+                              <strong>"An Illustrated User Guide to the World Input&ndash;Output Database: the Case of Global Automotive Production"</strong> </a>, <em>Review of International Economics</em>., 23: 575&ndash;605</td>
+                     
+</tr>
+                  
+</tbody>
+               
+</table>
+</div>
+</div>
+               
+<div class="rug-clearfix"></div>
+<div class="rug-table-wrapper">
+<div style="display: none;" class="rug-table-navigator">
+<div role="button" data-mode="previous" class="rug-table-navigator__button" aria-label="Navigate to the left">
+<span class="rug-icon rug-icon--angle-left"></span>
+</div>
+<div role="button" data-mode="next" class="rug-table-navigator__button" aria-label="Navigate to the right">
+<span class="rug-icon rug-icon--angle-right"></span>
+</div>
+</div>
+<div class="rug-table-holder">
+<table class="rug-table--default">
+                  
+<tbody>
+                     
+<tr>
+                        
+<th>For an overview of the sources and characteristics of the new 2016 release see:</th>
+                     
+</tr>
+                     
+<tr>
+                        
+<td>Timmer, M. P., Los, B., Stehrer, R. and de Vries, G. J. (2016), <a href="/ggdc/html_publications/memorandum/gd162.pdf" target="_blank">
+                              <strong>"An Anatomy of the Global Trade Slowdown based on the WIOD 2016 Release"</strong> </a>, <em>GGDC research memorandum number 162, University of Groningen</em>
+                        </td>
+                     
+</tr>
+                  
+</tbody>
+               
+</table>
+</div>
+</div>
+            
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<div class="rug-theme--content rug-mb" lang="en">
+<div>
+               
+<h3>Acknowledgement</h3>
+               
+<p>
+                  
+<a href="/ggdc/valuechain/wiod/initial-wiod-project">The World Input-Output Database project</a> was financially supported by the European Commission, Research Directorate General as part of the 7th Framework Programme, Theme 8: Socio-Economic Sciences and Humanities. Grant Agreement no: 225 281. The WIOD 2016 release was funded by the Dutch Science Foundation (NWO) (grant number 453-14-012) and European Commission Services (project ECFIN 2015/019B).</p>
+            
+</div>
+</div>
+<div class="rug-clearfix"></div>
+<div style="--aspect-ratio:60%" data-columns="2" class="rug-picturebook-container rug-mb">
+<div class="rug-picturebook-card">
+<div class="rug-picturebook-card--image-container">
+<div class="rug-picturebook-card--image">
+<img alt="FP7" src="/ggdc/img/fp7-wide.png"></div>
+</div>
+</div>
+<div class="rug-picturebook-card">
+<div class="rug-picturebook-card--image-container">
+<div class="rug-picturebook-card--image">
+<img alt="NWO" src="/ggdc/img/logonwo.png"></div>
+</div>
+</div>
+</div>
+<div class="rug-clear rug-attributes--container rug-mb-xxs rug-mt">
+<span class="rug-attributes__label rug-text-nowrap rug-text-timid" lang="en">Last modified:</span><span class="rug-text-timid"><span lang="en">09 October 2025 09.47 a.m.</span></span>
+</div>
+</div>
+<div data-addsearch="exclude" class="rug-site-tools"></div>
+</div>
+</div>
+</div>
+</div>
+</div><div data-toggle-group="mainmenu" data-toggle-id="menu-show" data-toggle-class="rug-hidden-m--block" class="rug-wrapper">
+<aside class="rug-panel rug-panel--primary rug-p-0 rug-mt">
+<div class="rug-layout rug-col-l-8-24 rug-col-s-12-24 rug-overflow-hidden rug-layout--no-margins">
+<div class="rug-layout__item">
+<div class="rug-panel__block rug-panel__block--divided rug-p js--equal">
+<div class="rug-panel__block__title js--equal">
+<span lang="en">﻿</span>
+</div>
+<div class="rug-panel__block__image">
+<a href="/ggdc/aboutus/contact"><img alt="Contact" src="/ggdc/img/contactggdc-relinfo.png"></a>
+</div>
+<p>
+<span lang="en">﻿</span>
+</p>
+</div>
+</div>
+<div class="rug-layout__item">
+<div class="rug-panel__block rug-panel__block--divided rug-p js--equal">
+<div class="rug-panel__block__title js--equal">
+<span lang="en">﻿</span>
+</div>
+<div class="rug-panel__block__image">
+<a href="/ggdc/blog/"><img alt="GGDC News" src="/ggdc/img/news-relinfo.png"></a>
+</div>
+<p>
+<span lang="en">﻿</span>
+</p>
+</div>
+</div>
+<div class="rug-layout__item">
+<div class="rug-panel__block rug-panel__block--divided rug-p js--equal">
+<div class="rug-panel__block__title js--equal">
+<span lang="en">﻿</span>
+</div>
+<div class="rug-panel__block__image">
+<a href="/ggdc/aboutus/projects"><img alt="Overview Projects" src="/ggdc/img/project-relinfo.png"></a>
+</div>
+<p>
+<span lang="en">﻿</span>
+</p>
+</div>
+</div>
+</div>
+</aside>
+</div>
+<!--googleoff: all-->
+<footer data-toggle-group="mainmenu" data-toggle-id="menu-show" data-toggle-class="rug-hidden-m--block"><div class="rug-doormat rug-background-neutral-30">
+<div class="rug-wrapper">
+<div class="rug-layout rug-layout--no-margins"></div>
+</div>
+</div>
+<div data-toggle-group="mainmenu" data-toggle-id="menu-show" data-toggle-class="rug-hidden-m--block" class="rug-doormat rug-background-white rug-pv-l rug-text-center">
+<div class="rug-wrapper">
+<a class="rug-font-default rug-doormat__metalink" href="/info/disclaimer-copyright">Disclaimer &amp; Copyright</a> <a class="rug-font-default rug-doormat__metalink" href="/info/privacy">Privacy</a> <a class="rug-font-default rug-doormat__metalink" href="/info/cookies">Cookies</a> <a class="rug-font-default rug-doormat__metalink" href="/ggdc/valuechain/wiod/!sso">Inloggen</a>
+</div>
+</div>
+</footer><div>
+<div class="js-id--cookieconsent rug-hidden-initially rug-pt rug-pb rug-site-header--cookie-consent rug-cookie-consent__mobile-scroll rug-background-neutral-10" id="ConsentBar" data-nosnippet="">
+    <div class="rug-wrapper">
+        <div class="rug-layout">
+            <div class="rug-cookie-consent--cards-container">
+                <div class="rug-layout__item rug-width-s-12-24 rug-width-m-8-24 rug-width-l-8-24 rug-mv-xs">
+                    <a class="rug-cookie-consent--card rug-flex rug-p-xs js--cookie" data-js--cookie="cookies-accept-functional">
+                        <div class="rug-cookie-consent--card-text rug-ml-xs rug-mb-xs">
+                            <div class="rug-cookie-consent--card-title rug-mb-xxs">Functioneel</div>
+                            <div class="rug-cookie-consent--card-text rug-mr-xs rug-mb-xxs">
+                                Biedt de basisfuncties en maakt gebruik van geanonimiseerde cookies.
+                            </div>
+                        </div>
+                    </a>
+                </div>
+                <div class="rug-layout__item rug-width-s-12-24 rug-width-m-8-24 rug-width-l-8-24 rug-mv-xs">
+                    <a class="rug-cookie-consent--card rug-flex rug-p-xs js--cookie" data-js--cookie="cookies-accept-regular">
+                        <div class="rug-cookie-consent--card-text rug-ml-xs rug-mb-xs">
+                            <div class="rug-cookie-consent--card-title rug-mb-xxs">Standaard</div>
+                            <div class="rug-cookie-consent--card-text rug-mr-xs rug-mb-xxs">
+                                Biedt de optimale werking en maakt gebruik van onder andere videocookies.
+                            </div>
+                        </div>
+                    </a>
+                </div>
+                <div class="rug-layout__item rug-width-s-12-24 rug-width-m-8-24 rug-width-l-8-24 rug-mv-xs">
+                    <a class="rug-cookie-consent--card rug-flex rug-p-xs js--cookie" data-js--cookie="cookies-accept-all" >
+                        <div class="rug-cookie-consent--card-text rug-ml-xs rug-mb-xs">
+                            <div class="rug-cookie-consent--card-title rug-mb-xxs">Volledig</div>
+                            <div class="rug-cookie-consent--card-text rug-mr-xs rug-mb-xxs">
+                                Biedt gepersonaliseerde content en maakt gebruik van marketingcookies.
+                            </div>
+                        </div>
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="rug-layout rug-mt-xs">
+            <div class="rug-layout__item rug-width-m-18-24">
+                Stel je cookievoorkeur in. Lees onze <a href="/info/privacy">privacy</a> en <a href="/info/cookies">cookie disclaimer</a> voor meer informatie.
+            </div>
+        </div>
+    </div>
+</div>
+	
+</div>
+</body>
+</html>

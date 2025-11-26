@@ -1,0 +1,22 @@
+{
+    "description": "WIOD metadata file for pymrio",
+    "name": "WIOD",
+    "system": "IxI",
+    "version": "data13",
+    "history": [
+        "20251126 15:58:00 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/water/wat_may12.zip to wat_may12.zip",
+        "20251126 15:57:59 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/materials/mat_may12.zip to mat_may12.zip",
+        "20251126 15:57:58 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/land/lan_may12.zip to lan_may12.zip",
+        "20251126 15:57:57 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/AIR/AIR_may12.zip to AIR_may12.zip",
+        "20251126 15:57:55 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/CO2/CO2_may12.zip to CO2_may12.zip",
+        "20251126 15:57:54 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/EM/EM_may12.zip to EM_may12.zip",
+        "20251126 15:57:53 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/EU/EU_may12.zip to EU_may12.zip",
+        "20251126 15:57:52 - FILEIO -  Downloaded http://www.wiod.org/protected3/data13/SEA/WIOD_SEA_July14.xlsx to WIOD_SEA_July14.xlsx",
+        "20251126 15:57:51 - NOTE -  Download log created",
+        "20251126 15:57:51 - NOTE -  python_version: 3.12.3",
+        "20251126 15:57:51 - NOTE -  pymrio_version: 0.6.2",
+        "20251126 15:57:51 - NOTE -  os: Linux",
+        "20251126 15:57:51 - NOTE -  hostname: EMP-NB-2007",
+        "20251126 15:57:51 - NOTE -  username: agilra"
+    ]
+}
