@@ -1,0 +1,17 @@
+# AI Agent Instructions
+
+## Environment Configuration
+> [!IMPORTANT]
+> **ALWAYS** use the Python interpreter located in the local virtual environment: `.venv/bin/python`.
+> Do NOT use `python` or `python3` directly from the path, as it may not have the required dependencies installed.
+
+### Execution Example
+```bash
+.venv/bin/python scripts/my_script.py
+```
+
+## Project Structure
+- `src/`: Core library code (`mrio_pyramids`)
+- `scripts/`: Replication and analysis scripts
+- `tests/`: Unit tests
+- `.venv/`: Local virtual environment (Primary Python)

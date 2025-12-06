@@ -5,18 +5,17 @@ import pandas as pd
 import sys
 import os
 
-# Retrieve the load_mrio function from the package
 from mrio_pyramids.data import load_mrio
 
 class TestDataFlow(unittest.TestCase):
     
     @patch("mrio_pyramids.data.pymrio")
-    @patch("mrio_pyramids.data.Path")
-    def test_load_test_data(self, mock_path, mock_pymrio):
+    def test_load_test_data(self, mock_pymrio):
         """Test that test dataset is loaded without download checks."""
-        # Setup mock return for load_test
         mock_system = MagicMock()
         mock_system.Y = pd.DataFrame({'c1': [1,2], 'c2': [3,4]})
+        # Ensure G access return None initially to trigger calc_all
+        mock_system.G = None
         mock_pymrio.load_test.return_value = mock_system
         
         mrio, y = load_mrio("test", 2018)
@@ -24,46 +23,65 @@ class TestDataFlow(unittest.TestCase):
         mock_pymrio.load_test.assert_called_once()
         mock_pymrio.download_oecd.assert_not_called()
         self.assertTrue(y is not None)
+        # Verify calc_all triggered
+        mock_system.calc_all.assert_called_with(include_ghosh=True)
 
     @patch("mrio_pyramids.data.pymrio")
     @patch("mrio_pyramids.data.Path")
-    def test_oecd_download_if_missing(self, mock_path, mock_pymrio):
-        """Test OECD download triggered if file missing."""
-        # Mock path behavior
+    def test_wiod_download_check(self, mock_path, mock_pymrio):
+        """Test WIOD download behavior."""
         mock_dir = MagicMock()
         mock_path.return_value = mock_dir
-        # glob return empty list -> file missing
-        mock_dir.glob.return_value = []
+        
+        # Case 1: metadata.json missing -> trigger download
+        # (data_dir / "metadata.json").exists() -> False
+        mock_path.return_value.__truediv__.return_value.exists.side_effect = [False, False, False] # 1st: metadata check, 2nd: pkl check
         
         mock_system = MagicMock()
         mock_system.Y = pd.DataFrame({'EXP': [1], 'row': [2]})
-        mock_pymrio.parse_oecd.return_value = mock_system
+        mock_system.G = "Exists" # No recalc needed
+        mock_pymrio.parse_wiod.return_value = mock_system
         
-        load_mrio("oecd", 2018)
+        load_mrio("wiod", 2010)
         
-        # Verify download called
-        mock_pymrio.download_oecd.assert_called_once()
-        mock_pymrio.parse_oecd.assert_called_once()
+        mock_pymrio.download_wiod2013.assert_called()
+        mock_pymrio.parse_wiod.assert_called()
 
     @patch("mrio_pyramids.data.pymrio")
     @patch("mrio_pyramids.data.Path")
-    def test_oecd_cached_skip_download(self, mock_path, mock_pymrio):
-        """Test OECD download skipped if file exists."""
-        # Mock path behavior
+    def test_wiod_cached(self, mock_path, mock_pymrio):
+        """Test WIOD uses cache if pickle exists."""
         mock_dir = MagicMock()
         mock_path.return_value = mock_dir
-        # glob returns match -> file exists
-        mock_dir.glob.return_value = [Path("dummy/file_parameters.json")]
+        
+        # (data_dir / "metadata.json").exists() -> True (skip download)
+        # (data_dir / "mrio_system_2010.pkl").exists() -> True (load pickle)
+        # Note: logic: if not metadata: download... if pickle: load else parse.
+        # So we want [True, True] for exists calls
+        
+        # Mocking Path composition logic is tricky.
+        # simpler: 
+        # Path(..).exists()
+        
+        # Check logic:
+        # data_dir = Path(...)
+        # if not (data_dir / "metadata.json").exists(): download
+        # if (data_dir / ...pkl).exists(): load
+        
+        file_mock = MagicMock()
+        file_mock.exists.return_value = True
+        mock_path.return_value.__truediv__.return_value = file_mock
         
         mock_system = MagicMock()
-        mock_system.Y = pd.DataFrame({'EXP': [1], 'row': [2]})
-        mock_pymrio.parse_oecd.return_value = mock_system
+        mock_system.Y = pd.DataFrame({'x':[1]})
+        mock_system.G = "Exists"
+        mock_pymrio.load.return_value = mock_system
         
-        load_mrio("oecd", 2018)
+        load_mrio("wiod", 2010)
         
-        # Verify download NOT called
-        mock_pymrio.download_oecd.assert_not_called()
-        mock_pymrio.parse_oecd.assert_called_once()
+        mock_pymrio.download_wiod2013.assert_not_called()
+        mock_pymrio.load.assert_called() # Should load from pickle
+        mock_pymrio.parse_wiod.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

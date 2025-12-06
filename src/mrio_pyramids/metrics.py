@@ -55,6 +55,7 @@ def demand_weighted_linkages(
 
 
 
+
 def dependency_contributions(
     leontief: pd.DataFrame,
     final_demand: pd.Series,

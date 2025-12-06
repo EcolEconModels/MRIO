@@ -30,28 +30,77 @@ def plot_foundations(series: pd.Series, top_n: int = 15, title: str = "") -> plt
     return ax
 
 
-def plot_inverted_pyramid(series: pd.Series, top_n: int = 15, title: str = "") -> plt.Axes:
-    """Plot a simple inverted-pyramid style chart (stacked bars with largest base at bottom)."""
-    top = series.sort_values(ascending=False).head(top_n)
-    shares = top / top.sum() if top.sum() != 0 else top
-    y_pos = np.arange(len(top))[::-1]  # largest at bottom
+def plot_inverted_pyramid(
+    graph: nx.DiGraph,
+    base_node: str,
+    node_labels: Optional[Dict[str, str]] = None,
+    figsize: Tuple[int, int] = (10, 8),
+    title: str = "Inverted Pyramid Network",
+) -> plt.Axes:
+    """
+    Plot the dependency graph as an 'inverted pyramid' (hierarchical bottom-up layout).
+    Matches Figure 3 of Cahen-Fourot et al. (2020).
+    
+    Args:
+        graph: The dependency graph (edges go Upstream -> Downstream).
+        base_node: The root node of the pyramid (e.g., 'B' for Mining).
+        node_labels: Optional dictionary mapping node IDs to display labels.
+        figsize: Figure size.
+        title: Plot title.
+    """
+    from mrio_pyramids.graph import build_layers
 
-    fig, ax = plt.subplots(figsize=(6, 8))
-    # Custom color palette for the pyramid effect
-    colors = sns.color_palette("Blues", n_colors=len(top))
+    # Calculate layers: 0 is base, 1 is next level up, etc.
+    layers = build_layers(graph, base_node)
     
-    ax.barh(y_pos, shares.values, color=colors)
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(top.index)
-    ax.invert_yaxis()  # largest at bottom visually
-    ax.set_xlabel("Share of total")
-    ax.set_title(title or "Inverted pyramid (top contributors)")
+    # Filter graph to only reachable nodes
+    reachable = set(layers.keys())
+    sub = graph.subgraph(reachable).copy()
+
+    # Group nodes by layer
+    layer_nodes: Dict[int, List[str]] = {}
+    for node, layer in layers.items():
+        layer_nodes.setdefault(layer, []).append(node)
     
-    for y, v in zip(y_pos, shares.values):
-        ax.text(v + 0.005, y, f"{v:.2%}", va="center", fontsize=8)
+    # Calculate positions: layer 0 at y=0, layer 1 at y=1, etc.
+    # But visually we want B at the bottom.
+    pos = {}
     
-    ax.set_xlim(0, max(1.0, shares.max() * 1.1))
-    sns.despine(left=True, bottom=False)
+    # Sort layers so we process from bottom (0) to top
+    sorted_layers = sorted(layer_nodes.keys())
+    
+    for layer in sorted_layers:
+        nodes = layer_nodes[layer]
+        # Sort nodes alpha/numerically for stability
+        nodes_sorted = sorted(nodes)
+        
+        # Center the nodes horizontally
+        width = len(nodes)
+        xs = np.linspace(-width / 2, width / 2, num=width)
+        
+        # y position increases with layer (bottom-up)
+        y = layer * 1.5  # Scale vertical distance
+        
+        for node, x in zip(nodes_sorted, xs):
+            pos[node] = (x, y)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Draw logic
+    display_labels = {n: (node_labels.get(n, n) if node_labels else n) for n in sub.nodes()}
+    
+    nx.draw_networkx_nodes(
+        sub, pos, node_size=800, node_color="white", edgecolors="black", linewidths=1.0, ax=ax
+    )
+    nx.draw_networkx_labels(
+        sub, pos, labels=display_labels, font_size=9, font_color="black", ax=ax
+    )
+    nx.draw_networkx_edges(
+        sub, pos, edge_color="gray", alpha=0.5, arrows=True, arrowstyle="-|>", ax=ax
+    )
+    
+    ax.set_title(title)
+    ax.set_axis_off()
     plt.tight_layout()
     return ax
 

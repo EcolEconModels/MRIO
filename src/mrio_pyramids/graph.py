@@ -13,6 +13,7 @@ def build_dependency_graph(
     threshold: Optional[float] = None,
     normalize_by_column: bool = True,
     quantile_per_origin: Optional[float] = None,
+    global_quantile: Optional[float] = None,
 ) -> nx.DiGraph:
     """
     Construct a directed weighted graph from an upstream x downstream matrix.
@@ -33,16 +34,40 @@ def build_dependency_graph(
         col_sums = mat.sum(axis=0).replace(0, np.nan)
         mat = mat.div(col_sums, axis=1)
         mat = mat.fillna(0)
-
+    
+    # Calculate global threshold if requested
+    if global_quantile is not None:
+        flat_values = mat.values
+        # Create a mask for off-diagonal elements
+        # We want to ignore self-loops in the distribution if the graph will exclude them
+        # Assuming we only care about off-diagonal linkages
+        mask = ~np.eye(flat_values.shape[0], dtype=bool)
+        flat_values = flat_values[mask]
+        
+        # Filter out zeros (or very small values) as significant linkages are positive
+        flat_values = flat_values[flat_values > 1e-6]
+        
+        if len(flat_values) > 0:
+            threshold = np.quantile(flat_values, global_quantile)
+        
     edges: List[Tuple[str, str, float]] = []
+    
+    # If using per-origin quantile, we can't iterate columns easily for that logic (unless transposed).
+    # But existing logic iterates columns (downstream).
+    # If quantile_per_origin was meant to be "per column" (downstream), it's badly named.
+    # If it was meant to be "per row" (origin), the code `col = mat[downstream]` suggests it implemented per-destination.
+    
+    # Let's keep existing logic but apply global threshold if set.
     for downstream in mat.columns:
         col = mat[downstream]
         series = col
         if quantile_per_origin is not None:
+             # This acts as top-Q per consumer
             qval = series.quantile(quantile_per_origin)
             series = series[series >= qval]
         if top_k_per_downstream:
             series = series.sort_values(ascending=False).head(top_k_per_downstream)
+            
         for upstream, weight in series.items():
             if threshold is not None and weight < threshold:
                 continue

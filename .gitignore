@@ -32,5 +32,13 @@ figures/
 .vscode/
 .idea/
 
+# text / figures
+*.txt
+*.png
+*.jpg
+
+# temp
+tmp/*
+
 # macOS
 .DS_Store
