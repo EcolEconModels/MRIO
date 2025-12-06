@@ -7,12 +7,17 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
+
+# Add src to python path to find mrio_pyramids
+sys.path.append("src")
 
 import matplotlib
 import pandas as pd
 import networkx as nx
 
+import pymrio
 import mrio_pyramids as mp
 from mrio_pyramids.mapping import sector_label
 
@@ -75,32 +80,62 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dataset == "test":
-        mrio = mp.load_test_mrio()
-    elif args.dataset == "oecd":
-        mrio = mp.load_oecd_icio(storage_folder=Path(f"data/oecd_icio_{args.year}"), years=[args.year])
-    elif args.dataset == "wiod":
-        mrio = mp.load_wiod2013(storage_folder=Path(f"data/wiod13_{args.year}"), years=[args.year])
-    else:
-        mrio = mp.load_exiobase3(storage_folder=Path(f"data/exiobase3_{args.year}"), years=[args.year])
+        print("Loading internal pymrio test dataset (no download)...")
+        mrio = pymrio.load_test()
+        # Test dataset does not have 'EXP' columns usually, just 'Y'
+        y_full = mrio.Y.sum(axis=1)
 
-    y_full = mp.data.final_demand_vector(
-        mrio, demand_categories=[c for c in mrio.Y.columns if "EXP" not in c]
-    )
-    L_full = mp.compute_leontief(mrio.Z, mrio.x)
-    G_full = mp.compute_ghosh(mrio.Z, mrio.x)
+    elif args.dataset == "oecd":
+        data_dir = Path(f"data/oecd_icio_{args.year}")
+        # Check for file_parameters.json as a marker of existing dataset
+        param_file = list(data_dir.glob("**/file_parameters.json"))
+        if not param_file:
+            print(f"Downloading OECD {args.year} data...")
+            pymrio.download_oecd(storage_folder=data_dir.parent, years=[args.year])
+        
+        mrio = pymrio.parse_oecd(path=data_dir.parent, year=args.year)
+        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
+        y_full = mrio.Y[y_cols].sum(axis=1)
+
+    elif args.dataset == "wiod":
+        data_dir = Path(f"data/wiod13_{args.year}")
+        if not (data_dir / f"mrio_system_{args.year}.pkl").exists():
+             print(f"Downloading WIOD {args.year} data...")
+             pymrio.download_wiod2013(storage_folder=data_dir, years=[args.year])
+             mrio = pymrio.parse_wiod(path=data_dir, year=args.year)
+             mrio.save(data_dir / f"mrio_system_{args.year}.pkl")
+        else:
+             mrio = pymrio.load(data_dir / f"mrio_system_{args.year}.pkl")
+        
+        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
+        y_full = mrio.Y[y_cols].sum(axis=1)
+
+    else:
+        # Exiobase
+        data_dir = Path(f"data/exiobase3_{args.year}")
+        if not (data_dir / "mrio_system.pkl").exists():
+             print(f"Downloading EXIOBASE {args.year} data...")
+             pymrio.download_exiobase3(storage_folder=data_dir, years=[args.year], system="pxp")
+             mrio = pymrio.parse_exiobase3(data_dir / f"IOT_{args.year}_pxp.zip")
+             mrio.save(data_dir / "mrio_system.pkl")
+        else:
+             mrio = pymrio.load(data_dir / "mrio_system.pkl")
+
+        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
+        y_full = mrio.Y[y_cols].sum(axis=1)
+    
+    mrio.calc_all(include_ghosh=True)
 
     # Optional region subset (for multi-region datasets)
-    if args.region is not None and isinstance(G_full.index, pd.MultiIndex):
-        idx = G_full.index.get_level_values(0) == args.region
-        G = pd.DataFrame(G_full.values[idx][:, idx], index=G_full.index[idx], columns=G_full.columns[idx])
+    if args.region is not None and isinstance(mrio.G.index, pd.MultiIndex):
+        idx = mrio.G.index.get_level_values(0) == args.region
+        G = pd.DataFrame(mrio.G.values[idx][:, idx], index=mrio.G.index[idx], columns=mrio.G.columns[idx])
         y = y_full.loc[G.index]
-        L = pd.DataFrame(L_full.values[idx][:, idx], index=L_full.index[idx], columns=L_full.columns[idx])
+        L = pd.DataFrame(mrio.L.values[idx][:, idx], index=mrio.L.index[idx], columns=mrio.L.columns[idx])
     else:
-        G, y, L = G_full, y_full, L_full
+        G, y, L = mrio.G, y_full, mrio.L
 
-    inputs = mp.PyramidInputs(leontief=L, final_demand=y)
-
-    monetary_base = mp.embodied_pressure(inputs)
+    monetary_base = mp.embodied_pressure(leontief=L, final_demand=y)
     print("\nTop upstream contributors (Leontief):")
     print(mp.rank_foundational_sectors(monetary_base, top_n=args.top))
 
@@ -187,13 +222,13 @@ def main() -> None:
         print(f"Saved plots to {args.output_dir}")
 
     # Hierarchical clustering across countries (only for multi-region datasets)
-    if isinstance(G_full.index, pd.MultiIndex):
-        regions = sorted(set(G_full.index.get_level_values(0)))
-        sectors = list(G_full.index.get_level_values(1).unique())
+    if isinstance(mrio.G.index, pd.MultiIndex):
+        regions = sorted(set(mrio.G.index.get_level_values(0)))
+        sectors = list(mrio.G.index.get_level_values(1).unique())
         data = {}
         for reg in regions:
-            idx = G_full.index.get_level_values(0) == reg
-            G_reg = pd.DataFrame(G_full.values[idx][:, idx], index=G_full.index[idx], columns=G_full.columns[idx])
+            idx = mrio.G.index.get_level_values(0) == reg
+            G_reg = pd.DataFrame(mrio.G.values[idx][:, idx], index=mrio.G.index[idx], columns=mrio.G.columns[idx])
             y_reg = y_full.loc[G_reg.index]
             resp = (G_reg.values @ y_reg.values)
             data[reg] = pd.Series(resp, index=G_reg.index.get_level_values(1))
