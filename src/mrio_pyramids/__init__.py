@@ -6,31 +6,41 @@ embodied pressure allocation, ranking foundational sectors). Extend functions
 here rather than inside notebooks to keep the workflow reproducible.
 """
 
-from .pyramids import (
+from .data import load_mrio
+from .metrics import (
     dependency_contributions,
     embodied_pressure,
     rank_foundational_sectors,
+    forward_linkages,
+    demand_weighted_linkages,
 )
 from .graph import (
     build_dependency_graph,
     detect_communities,
+    symmetrize,
+    build_layers,
+)
+from .plotting import (
     plot_dependency_graph,
     plot_foundations,
     plot_inverted_pyramid,
     plot_layered_pyramid,
-    symmetrize,
 )
 
 from .clustering import sector_clustering
 
 __all__ = [
+    "load_mrio",
     "dependency_contributions",
     "embodied_pressure",
     "rank_foundational_sectors",
+    "forward_linkages",
+    "demand_weighted_linkages",
     "build_dependency_graph",
     "detect_communities",
     "plot_dependency_graph",
     "plot_foundations",
+    "plot_inverted_pyramid",
     "plot_layered_pyramid",
     "symmetrize",
 

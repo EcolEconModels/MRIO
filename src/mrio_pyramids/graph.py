@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -112,104 +111,4 @@ def symmetrize(graph: nx.DiGraph, agg: str = "max") -> nx.Graph:
     return G
 
 
-def plot_foundations(series: pd.Series, top_n: int = 15, title: str = "") -> plt.Axes:
-    """
-    Quick horizontal bar plot of top contributors.
-    """
-    top = series.sort_values(ascending=True).tail(top_n)
-    ax = top.plot(kind="barh", figsize=(7, 6), color="#4c72b0")
-    ax.set_xlabel("Share of total" if np.isclose(top.sum(), 1.0) else "Value")
-    ax.set_ylabel("Sector")
-    ax.set_title(title or "Top contributors")
-    ax.grid(axis="x", linestyle="--", alpha=0.5)
-    plt.tight_layout()
-    return ax
 
-
-def plot_inverted_pyramid(series: pd.Series, top_n: int = 15, title: str = "") -> plt.Axes:
-    """Plot a simple inverted-pyramid style chart (stacked bars with largest base at bottom)."""
-    top = series.sort_values(ascending=False).head(top_n)
-    shares = top / top.sum() if top.sum() != 0 else top
-    y_pos = np.arange(len(top))[::-1]  # largest at bottom
-
-    fig, ax = plt.subplots(figsize=(6, 8))
-    ax.barh(y_pos, shares.values, color=plt.cm.Blues(np.linspace(0.4, 0.9, len(top))))
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(top.index)
-    ax.invert_yaxis()  # largest at bottom visually
-    ax.set_xlabel("Share of total")
-    ax.set_title(title or "Inverted pyramid (top contributors)")
-    for y, v in zip(y_pos, shares.values):
-        ax.text(v + 0.005, y, f"{v:.2%}", va="center", fontsize=8)
-    ax.set_xlim(0, max(1.0, shares.max() * 1.1))
-    plt.tight_layout()
-    return ax
-
-
-def plot_dependency_graph(graph: nx.DiGraph, community_map: Optional[Dict[str, int]] = None) -> plt.Axes:
-    """
-    Quick network plot; for more polished figures, replace with custom visuals.
-    """
-    pos = nx.spring_layout(graph, seed=0, weight="weight")
-    node_colors = (
-        [community_map.get(n, 0) for n in graph.nodes()] if community_map else "lightblue"
-    )
-    weights = [graph[u][v].get("weight", 1.0) for u, v in graph.edges()]
-    ax = plt.gca()
-    nx.draw_networkx(
-        graph,
-        pos=pos,
-        with_labels=False,
-        node_size=50,
-        node_color=node_colors,
-        edge_color="gray",
-        width=[w * 5 for w in weights],
-        alpha=0.7,
-        ax=ax,
-    )
-    return ax
-
-
-def plot_layered_pyramid(
-    graph: nx.DiGraph,
-    base_node,
-    labels: Optional[Dict] = None,
-    node_size: int = 500,
-    figsize: Tuple[int, int] = (8, 6),
-    title: str = "Inverted pyramid",
-) -> plt.Axes:
-    """Plot an inverted pyramid layout from a directed graph given a base node."""
-    layers = build_layers(graph, base_node)
-    reachable_nodes = layers.keys()
-    sub = graph.subgraph(reachable_nodes).copy()
-    # Organize nodes by layer
-    layer_nodes: Dict[int, List] = {}
-    for n, layer in layers.items():
-        layer_nodes.setdefault(layer, []).append(n)
-    # Assign positions: x spaced within each layer, y = -layer (base at bottom)
-    pos = {}
-    for layer, nodes in sorted(layer_nodes.items()):
-        xs = np.linspace(-len(nodes), len(nodes), num=len(nodes)) if len(nodes) > 1 else [0]
-        for x, n in zip(xs, nodes):
-            pos[n] = (x, -layer)
-
-    node_labels = {n: (labels.get(n, n) if labels else n) for n in sub.nodes()}
-    weights = [sub[u][v].get("weight", 1.0) for u, v in sub.edges()]
-
-    fig, ax = plt.subplots(figsize=figsize)
-    nx.draw_networkx(
-        sub,
-        pos=pos,
-        labels=node_labels,
-        with_labels=True,
-        node_size=node_size,
-        node_color="#e6f0ff",
-        edge_color="gray",
-        width=[w * 5 for w in weights],
-        font_size=8,
-        ax=ax,
-    )
-    ax.set_axis_off()
-    ax.set_title(title)
-    plt.tight_layout()
-    return ax

@@ -17,6 +17,7 @@ import matplotlib
 import pandas as pd
 import networkx as nx
 
+
 import pymrio
 import mrio_pyramids as mp
 from mrio_pyramids.mapping import sector_label
@@ -74,57 +75,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+
+
 def main() -> None:
     args = parse_args()
-
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.dataset == "test":
-        print("Loading internal pymrio test dataset (no download)...")
-        mrio = pymrio.load_test()
-        # Test dataset does not have 'EXP' columns usually, just 'Y'
-        y_full = mrio.Y.sum(axis=1)
-
-    elif args.dataset == "oecd":
-        data_dir = Path(f"data/oecd_icio_{args.year}")
-        # Check for file_parameters.json as a marker of existing dataset
-        param_file = list(data_dir.glob("**/file_parameters.json"))
-        if not param_file:
-            print(f"Downloading OECD {args.year} data...")
-            pymrio.download_oecd(storage_folder=data_dir.parent, years=[args.year])
-        
-        mrio = pymrio.parse_oecd(path=data_dir.parent, year=args.year)
-        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-        y_full = mrio.Y[y_cols].sum(axis=1)
-
-    elif args.dataset == "wiod":
-        data_dir = Path(f"data/wiod13_{args.year}")
-        if not (data_dir / f"mrio_system_{args.year}.pkl").exists():
-             print(f"Downloading WIOD {args.year} data...")
-             pymrio.download_wiod2013(storage_folder=data_dir, years=[args.year])
-             mrio = pymrio.parse_wiod(path=data_dir, year=args.year)
-             mrio.save(data_dir / f"mrio_system_{args.year}.pkl")
-        else:
-             mrio = pymrio.load(data_dir / f"mrio_system_{args.year}.pkl")
-        
-        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-        y_full = mrio.Y[y_cols].sum(axis=1)
-
-    else:
-        # Exiobase
-        data_dir = Path(f"data/exiobase3_{args.year}")
-        if not (data_dir / "mrio_system.pkl").exists():
-             print(f"Downloading EXIOBASE {args.year} data...")
-             pymrio.download_exiobase3(storage_folder=data_dir, years=[args.year], system="pxp")
-             mrio = pymrio.parse_exiobase3(data_dir / f"IOT_{args.year}_pxp.zip")
-             mrio.save(data_dir / "mrio_system.pkl")
-        else:
-             mrio = pymrio.load(data_dir / "mrio_system.pkl")
-
-        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-        y_full = mrio.Y[y_cols].sum(axis=1)
-    
-    mrio.calc_all(include_ghosh=True)
+    mrio, y_full = mp.load_mrio(args.dataset, args.year)
 
     # Optional region subset (for multi-region datasets)
     if args.region is not None and isinstance(mrio.G.index, pd.MultiIndex):
@@ -139,8 +97,8 @@ def main() -> None:
     print("\nTop upstream contributors (Leontief):")
     print(mp.rank_foundational_sectors(monetary_base, top_n=args.top))
 
-    ghosh_response = (G @ y.values)
-    ghosh_base = pd.Series(ghosh_response, index=G.index, name="ghosh_base")
+    ghosh_base = mp.demand_weighted_linkages(ghosh=G, final_demand=y)
+    ghosh_base.name = "ghosh_base" # explicit name override if needed, though function sets it
     print("\nTop upstream contributors (Ghosh supply-driven):")
     print(mp.rank_foundational_sectors(ghosh_base, top_n=args.top))
 

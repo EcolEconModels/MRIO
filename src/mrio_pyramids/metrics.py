@@ -33,6 +33,28 @@ def embodied_pressure(
     return result
 
 
+def forward_linkages(ghosh: pd.DataFrame) -> pd.Series:
+    """
+    Compute standard forward linkages (row sums of Ghosh inverse).
+    Represents the total output generated throughout the economy by a unit increase
+    in primary inputs of sector i.
+    """
+    return pd.Series(ghosh.sum(axis=1), index=ghosh.index, name="forward_linkages")
+
+
+def demand_weighted_linkages(
+    ghosh: pd.DataFrame, final_demand: pd.Series
+) -> pd.Series:
+    """
+    Compute demand-weighted forward linkages (Ghosh inverse * Final Demand).
+    This is the supply-side equivalent of the footprint, showing which sectors'
+    supply enables the current final demand structure.
+    """
+    response = ghosh.values @ final_demand.values
+    return pd.Series(response, index=ghosh.index, name="demand_weighted_linkages")
+
+
+
 def dependency_contributions(
     leontief: pd.DataFrame,
     final_demand: pd.Series,
