@@ -14,6 +14,14 @@ from .metrics import (
     forward_linkages,
     demand_weighted_linkages,
 )
+from .stranding import (
+    calc_capital_intensity,
+    calc_stranding_multipliers,
+    decompose_stranding_rounds,
+    aggregate_stranding_by_rounds,
+    calc_external_stranding_multiplier,
+    calc_exposure_network
+)
 from .graph import (
     build_dependency_graph,
     detect_communities,
