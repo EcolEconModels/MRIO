@@ -24,6 +24,8 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root / "src"))
 
 from mrio_pyramids.data import load_mrio
+from mrio_pyramids.capital_data import load_capital_stock_data
+from mrio_pyramids.network_viz import plot_cascade_network
 from mrio_pyramids.stranding import (
     calc_capital_intensity,
     calc_stranding_multipliers,
@@ -36,43 +38,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def load_capital_stock_data(mrio, year: int) -> pd.Series:
-    """
-    Load capital stock data for sectors.
-    
-    TODO: Replace with actual WIOD SEA capital stock data.
-    For now, using mock data based on output scaling.
-    
-    Args:
-        mrio: pymrio IOSystem
-        year: Data year
-        
-    Returns:
-        Series of capital stock by sector
-    """
-    logger.warning("Using MOCK capital stock data. Replace with actual WIOD SEA data.")
-    
-    # Mock: Assume capital intensity varies by sector type
-    # Manufacturing/Mining: high capital intensity (k/x ~ 2-3)
-    # Services: medium (k/x ~ 1-2)
-    # Trade/Transport: low (k/x ~ 0.5-1)
-    
-    x = mrio.x.squeeze()
-    
-    # Simple heuristic: capital stock = 1.5 * output (on average)
-    # Add some sector-specific variation
-    np.random.seed(42)
-    capital_intensity_factor = np.random.uniform(0.8, 2.5, size=len(x))
-    
-    capital_stock = x * capital_intensity_factor
-    
-    return capital_stock
-
-
 def main():
     parser = argparse.ArgumentParser(description="Replicate Cahen-Fourot et al. (2021)")
     parser.add_argument("--dataset", type=str, default="wiod", help="MRIO dataset (wiod, oecd)")
     parser.add_argument("--year", type=int, default=2014, help="Year for analysis")
+    parser.add_argument("--capital-source", type=str, default="mock", help="Capital stock source (wiod, mock)")
     parser.add_argument("--fossil-sector", type=str, default="B", help="Fossil fuel sector code")
     parser.add_argument("--q", type=int, default=3, help="Top q sectors per round for cascade")
     parser.add_argument("--max-rounds", type=int, default=4, help="Maximum cascade rounds")
@@ -91,8 +61,8 @@ def main():
     logger.info(f"Ghosh matrix shape: {G.shape}")
     
     # 3. Load capital stock data
-    logger.info("Loading capital stock data...")
-    capital_stock = load_capital_stock_data(mrio, args.year)
+    logger.info(f"Loading capital stock data (source={args.capital_source})...")
+    capital_stock = load_capital_stock_data(mrio, args.year, source=args.capital_source)
     
     # 4. Calculate capital intensity κ = k/x
     logger.info("Calculating capital intensity...")
@@ -177,9 +147,21 @@ def main():
     logger.info("\nTop 10 sectors by total stranding multiplier:")
     logger.info(stranding_by_rounds.head(10).to_string())
     
-    # 10. Save results
+    # 10. Create output directory
     output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
+    
+    # 11. Generate cascade network visualization (Figure 3 style)
+    logger.info("Generating cascade network visualization...")
+    cascade_fig = plot_cascade_network(
+        rounds,
+        fossil_sector=fossil_sector_name,
+        title=f"Stranding Cascade from {fossil_sector_name} (q={args.q})",
+        save_path=output_dir / f"cascade_network_{args.year}.png"
+    )
+    plt.close(cascade_fig)
+    
+    # 12. Save results
     
     # Save stranding multipliers
     S.to_csv(output_dir / f"stranding_multipliers_{args.year}.csv")

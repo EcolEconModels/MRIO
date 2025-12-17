@@ -31,16 +31,23 @@ class TestPlotting(unittest.TestCase):
         self.assertEqual(ax, mock_ax)
 
     @patch("mrio_pyramids.plotting.plt")
-    @patch("mrio_pyramids.plotting.sns")
-    def test_plot_inverted_pyramid(self, mock_sns, mock_plt):
-        """Test inverted pyramid generation."""
+    @patch("mrio_pyramids.plotting.nx.draw_networkx_nodes")
+    @patch("mrio_pyramids.plotting.nx.draw_networkx_labels")
+    @patch("mrio_pyramids.plotting.nx.draw_networkx_edges")
+    def test_plot_inverted_pyramid(self, mock_edges, mock_labels, mock_nodes, mock_plt):
+        """Test inverted pyramid network generation."""
         mock_ax = MagicMock()
         mock_plt.subplots.return_value = (MagicMock(), mock_ax)
         
-        ax = plot_inverted_pyramid(self.series)
+        import networkx as nx
+        graph = nx.DiGraph()
+        graph.add_edge("A", "B", weight=1.0)
+
+        ax = plot_inverted_pyramid(graph, base_node="A")
         
-        # Should create barh
-        mock_ax.barh.assert_called()
+        mock_nodes.assert_called()
+        mock_labels.assert_called()
+        mock_edges.assert_called()
         self.assertEqual(ax, mock_ax)
         
     @patch("mrio_pyramids.plotting.nx")

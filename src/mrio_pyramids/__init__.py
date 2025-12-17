@@ -22,6 +22,11 @@ from .stranding import (
     calc_external_stranding_multiplier,
     calc_exposure_network
 )
+from .network_viz import (
+    plot_cascade_network,
+    plot_country_exposure_scatter,
+    plot_country_exposure_network
+)
 from .graph import (
     build_dependency_graph,
     detect_communities,
