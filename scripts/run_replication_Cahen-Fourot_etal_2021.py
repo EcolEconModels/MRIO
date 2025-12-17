@@ -36,7 +36,18 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser(description="Replicate Cahen-Fourot et al. (2021)")
     parser.add_argument("--dataset", type=str, default="wiod", help="MRIO dataset (wiod, oecd)")
-    parser.add_argument("--year", type=int, default=2014, help="Year for analysis")
+    parser.add_argument("--year", type=int, default=2011, help="Year for analysis (WIOD 2013 supports 1995–2011)")
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Allow pymrio to download missing MRIO source files (requires network).",
+    )
+    parser.add_argument(
+        "--wiod-wiot-file",
+        type=str,
+        default=None,
+        help="Explicit WIOD WIOT .xlsx file to parse (useful if duplicates exist). Relative paths are resolved under the WIOD cache folder.",
+    )
     parser.add_argument("--capital-source", type=str, default="mock", help="Capital stock source (wiod, mock)")
     parser.add_argument("--fossil-sector", type=str, default="B", help="Fossil fuel sector code")
     parser.add_argument("--q", type=int, default=3, help="Top q sectors per round for cascade")
@@ -45,7 +56,22 @@ def main():
     
     # 1. Load MRIO data
     logger.info(f"Loading {args.dataset} data for {args.year}...")
-    mrio, meta = load_mrio(dataset=args.dataset, year=args.year)
+    try:
+        mrio, _ = load_mrio(
+            dataset=args.dataset,
+            year=args.year,
+            force_download=args.force_download,
+            wiod_wiot_file=args.wiod_wiot_file,
+        )
+    except Exception as e:
+        logger.error(f"Failed to load MRIO data ({type(e).__name__}): {e}")
+        logger.info("Tip: for offline runs, use --dataset oecd (with a cached year), or pre-download WIOD and pass --wiod-wiot-file.")
+        return
+
+    # Dataset-specific defaults for sector codes.
+    if args.dataset.lower() == "oecd" and args.fossil_sector == "B":
+        logger.warning("Default fossil-sector 'B' is not present in OECD ICIO; using '05T06' (coal/oil/gas extraction) instead.")
+        args.fossil_sector = "05T06"
     
     # 2. Calculate Ghosh inverse
     logger.info("Calculating Ghosh inverse...")

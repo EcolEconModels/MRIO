@@ -22,7 +22,12 @@ def main():
     parser.add_argument("--dataset", type=str, default="oecd", help="MRIO dataset to use (test, oecd, wiod)")
     parser.add_argument("--year", type=int, default=2010, help="Year for the dataset")
     parser.add_argument("--country", type=str, default="DEU", help="Country code to plot (e.g., DEU, FRA)")
-    parser.add_argument("--sector", type=str, default="B", help="Root sector for pyramid (default: B Mining)")
+    parser.add_argument(
+        "--sector",
+        type=str,
+        default="B",
+        help="Root sector for pyramid (e.g., 'B' for WIOD/NACE; for OECD ICIO try '05T06').",
+    )
     parser.add_argument("--q", type=float, default=10.0, help="Percentile threshold q (e.g., 10.0 for top 10%%)")
     args = parser.parse_args()
 
@@ -95,11 +100,19 @@ def main():
     )
     
     # 5. Plot
-    root_node = args.sector 
+    root_node = args.sector
     if root_node not in G_graph:
-        logger.warning(f"Root node {root_node} not in graph! Available: {list(G_graph.nodes)[:5]}...")
-        # Check standard sectors
-        return
+        # Common mismatch: OECD ICIO sectors are numeric aggregates (e.g. 05T06) rather than NACE letters (e.g. B).
+        if args.dataset.lower() == "oecd" and root_node.upper() == "B" and "05T06" in G_graph:
+            logger.warning("Root sector 'B' not found in OECD ICIO; using '05T06' as a mining proxy.")
+            root_node = "05T06"
+        else:
+            available = sorted(list(G_graph.nodes))[:25]
+            logger.error(
+                f"Root node '{root_node}' not in graph. Example available sectors: {available}. "
+                "Pick a sector code present in the dataset (e.g. '05T06' for OECD ICIO)."
+            )
+            return
 
     logger.info(f"Plotting Inverted Pyramid for {root_node}...")
     fig_ax = plot_inverted_pyramid(
