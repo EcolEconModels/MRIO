@@ -20,7 +20,7 @@ def default_data_root() -> Path:
     env = os.environ.get("MRIO_DATA_ROOT")
     if env:
         return Path(env).expanduser().resolve()
-    # src/mrio_pyramids/data.py -> repo_root is two parents up from this file.
+    # src/ecolecon_mrio/data.py -> repo_root is two parents up from this file.
     return Path(__file__).resolve().parents[2] / "data"
 
 

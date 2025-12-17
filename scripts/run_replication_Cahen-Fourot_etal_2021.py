@@ -12,21 +12,16 @@ This script:
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Add src to sys.path
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root / "src"))
-
-from mrio_pyramids.data import load_mrio
-from mrio_pyramids.capital_data import load_capital_stock_data
-from mrio_pyramids.network_viz import plot_cascade_network
-from mrio_pyramids.stranding import (
+from ecolecon_mrio.data import load_mrio
+from ecolecon_mrio.capital_data import load_capital_stock_data
+from ecolecon_mrio.network_viz import plot_cascade_network
+from ecolecon_mrio.stranding import (
     calc_capital_intensity,
     calc_stranding_multipliers,
     decompose_stranding_rounds,

@@ -13,7 +13,7 @@ def _aggregate_back(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
 
 
 def test_expand_is_clean():
-    from mrio_pyramids.disaggregation import SplitProfiles, expand_io_tables
+    from ecolecon_mrio.disaggregation import SplitProfiles, expand_io_tables
 
     sectors = ["A", "C19"]
     Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=sectors, columns=sectors)
@@ -41,7 +41,7 @@ def test_expand_is_clean():
 
 
 def test_disaggregate_and_balance_ras():
-    from mrio_pyramids.disaggregation import SplitProfiles, disaggregate_and_balance
+    from ecolecon_mrio.disaggregation import SplitProfiles, disaggregate_and_balance
 
     sectors = ["A", "C19"]
     Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=sectors, columns=sectors)
@@ -63,7 +63,7 @@ def test_disaggregate_and_balance_ras():
 
 
 def test_disaggregate_and_balance_gras_with_negative_final_demand():
-    from mrio_pyramids.disaggregation import SplitProfiles, disaggregate_and_balance
+    from ecolecon_mrio.disaggregation import SplitProfiles, disaggregate_and_balance
 
     sectors = ["A", "C19"]
     Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=sectors, columns=sectors)

@@ -9,6 +9,13 @@ __pycache__/
 .venv/
 venv/
 
+# Packaging/build artifacts
+*.egg-info/
+.eggs/
+build/
+dist/
+*.whl
+
 # Jupyter
 .ipynb_checkpoints/
 .ipython/
@@ -39,6 +46,9 @@ figures/
 
 # temp
 tmp/*
+
+# accidental caches inside src/
+src/data/
 
 # macOS
 .DS_Store

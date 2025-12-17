@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import pytest
 
-from mrio_pyramids.clustering import sector_clustering
+from ecolecon_mrio.clustering import sector_clustering
 
 def test_sector_clustering_basic():
     # Create fake data: 4 sectors, 2 countries

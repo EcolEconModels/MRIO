@@ -2,7 +2,7 @@ import pandas as pd
 
 
 def test_load_eurostat_iot_variants_passes_variant_dim(monkeypatch):
-    import mrio_pyramids.eurostat_iot as ei
+    import ecolecon_mrio.eurostat_iot as ei
 
     calls = []
 

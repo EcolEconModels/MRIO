@@ -1,17 +1,11 @@
-
-import sys
 from pathlib import Path
 import networkx as nx
 import pandas as pd
 import logging
 import numpy as np
 
-# Add src to sys.path
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root / "src"))
-
-from mrio_pyramids.data import load_mrio
-from mrio_pyramids.graph import build_dependency_graph, build_layers
+from ecolecon_mrio.data import load_mrio
+from ecolecon_mrio.graph import build_dependency_graph, build_layers
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

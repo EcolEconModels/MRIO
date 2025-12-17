@@ -5,7 +5,7 @@ Unit tests for stranding analysis module.
 import unittest
 import numpy as np
 import pandas as pd
-from mrio_pyramids.stranding import (
+from ecolecon_mrio.stranding import (
     calc_capital_intensity,
     calc_stranding_multipliers,
     decompose_stranding_rounds,

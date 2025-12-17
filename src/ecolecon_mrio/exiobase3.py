@@ -39,7 +39,7 @@ def _coerce_single_column_df_to_series(x: pd.Series | pd.DataFrame, *, name: str
 
 def list_local_exiobase3_years(*, data_root: str | Path | None = None) -> list[int]:
     if data_root is None:
-        from mrio_pyramids.data import default_data_root
+        from ecolecon_mrio.data import default_data_root
 
         root = default_data_root()
     else:
@@ -74,7 +74,7 @@ def load_exiobase3(
     if system != "pxp":
         raise ValueError("Only system='pxp' is supported by the repo loader currently.")
 
-    from mrio_pyramids.data import load_mrio
+    from ecolecon_mrio.data import load_mrio
 
     try:
         mrio, _ = load_mrio(
@@ -108,7 +108,7 @@ def load_exiobase3_region_slice(
     Caches `Z_domestic`, `Y_region`, and `x_region` as pickles to avoid re-loading the full MRIO.
     """
     if cache_root is None:
-        from mrio_pyramids.data import default_data_root
+        from ecolecon_mrio.data import default_data_root
 
         cache_root = default_data_root()
     cache_root = Path(cache_root)
@@ -209,7 +209,7 @@ def load_exiobase3_region_slices(
     Load (and cache) multiple region slices, ensuring the full MRIO is loaded at most once.
     """
     if cache_root is None:
-        from mrio_pyramids.data import default_data_root
+        from ecolecon_mrio.data import default_data_root
 
         cache_root = default_data_root()
     cache_root = Path(cache_root)
@@ -307,7 +307,7 @@ def build_split_profiles_from_exio_domestic_block(
 
     Returns (SplitProfiles, matched_exio_sectors).
     """
-    from mrio_pyramids.disaggregation import SplitProfiles, normalize_share
+    from ecolecon_mrio.disaggregation import SplitProfiles, normalize_share
 
     Z_rr = exio_slice.Z_domestic
     Y_r = exio_slice.Y_region

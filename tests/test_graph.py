@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import networkx as nx
-from mrio_pyramids.graph import build_dependency_graph, detect_communities, symmetrize
+from ecolecon_mrio.graph import build_dependency_graph, detect_communities, symmetrize
 
 def test_build_dependency_graph_prunes_topk_threshold():
     mat = pd.DataFrame([[0.5, 0.1], [0.5, 0.9]], index=["a", "b"], columns=["a", "b"])

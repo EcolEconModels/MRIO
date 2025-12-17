@@ -2,7 +2,7 @@ import numpy as np
 
 
 def test_ras_balance_hits_margins():
-    from mrio_pyramids.balancing import ras_balance
+    from ecolecon_mrio.balancing import ras_balance
 
     M0 = np.array([[1.0, 2.0], [3.0, 4.0]])
     row_targets = np.array([10.0, 20.0])
@@ -17,7 +17,7 @@ def test_ras_balance_hits_margins():
 
 
 def test_gras_balance_handles_negatives():
-    from mrio_pyramids.balancing import gras_balance
+    from ecolecon_mrio.balancing import gras_balance
 
     M0 = np.array([[1.0, -0.5], [0.5, 1.0]])
     row_targets = np.array([1.0, 1.0])
@@ -33,7 +33,7 @@ def test_gras_balance_handles_negatives():
 
 
 def test_balance_biproportional_selects_method():
-    from mrio_pyramids.balancing import balance_biproportional
+    from ecolecon_mrio.balancing import balance_biproportional
 
     M0 = np.array([[1.0, 2.0], [3.0, 4.0]])
     row_targets = np.array([10.0, 20.0])

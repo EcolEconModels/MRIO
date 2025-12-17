@@ -48,7 +48,7 @@ def plot_inverted_pyramid(
         figsize: Figure size.
         title: Plot title.
     """
-    from mrio_pyramids.graph import build_layers
+    from ecolecon_mrio.graph import build_layers
 
     # Calculate layers: 0 is base, 1 is next level up, etc.
     layers = build_layers(graph, base_node)
@@ -109,7 +109,7 @@ def plot_dependency_graph(graph: nx.DiGraph, community_map: Optional[Dict[str, i
     """
     Quick network plot using NetworkX with improved styling.
     """
-    from mrio_pyramids.graph import build_layers # helper logic is tied to graph structure
+    from ecolecon_mrio.graph import build_layers # helper logic is tied to graph structure
     
     pos = nx.spring_layout(graph, seed=42, weight="weight", k=0.15, iterations=50)
     
@@ -142,7 +142,7 @@ def plot_layered_pyramid(
     title: str = "Inverted pyramid",
 ) -> plt.Axes:
     """Plot an inverted pyramid layout from a directed graph given a base node."""
-    from mrio_pyramids.graph import build_layers
+    from ecolecon_mrio.graph import build_layers
 
     layers = build_layers(graph, base_node)
     reachable_nodes = layers.keys()

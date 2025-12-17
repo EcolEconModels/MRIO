@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecolecon_mrio"
+version = "0.0.0"
+description = "Tools and scripts for MRIO analysis and ecological-economics workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pymrio",
+  "pandas",
+  "numpy",
+  "matplotlib",
+  "seaborn",
+  "networkx",
+  "jupyter",
+  "pytest",
+  "scipy",
+  "scikit-learn",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

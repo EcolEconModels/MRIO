@@ -4,20 +4,15 @@ Focus: Inverted Pyramid visualization and Forward Linkages.
 """
 import argparse
 import logging
-import sys
 from pathlib import Path
-
-# Add src to sys.path to ensure local imports work using .venv
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root / "src"))
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import pymrio
 
-from mrio_pyramids.data import load_mrio
-from mrio_pyramids.graph import build_dependency_graph
-from mrio_pyramids.plotting import plot_inverted_pyramid
+from ecolecon_mrio.data import load_mrio
+from ecolecon_mrio.graph import build_dependency_graph
+from ecolecon_mrio.plotting import plot_inverted_pyramid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

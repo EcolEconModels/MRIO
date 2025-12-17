@@ -6,7 +6,7 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from mrio_pyramids.balancing import BalanceStats, balance_biproportional
+from ecolecon_mrio.balancing import BalanceStats, balance_biproportional
 
 
 @dataclass(frozen=True)

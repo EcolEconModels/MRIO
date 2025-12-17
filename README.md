@@ -3,7 +3,7 @@
 Workflow scaffold to replicate Cahen-Fourot et al. (2020) inverted pyramid analysis using multi-regional input-output data, then extend it to environmentally extended MRIO (CO2, energy, water, land).
 
 ## Layout
-- `src/mrio_pyramids/`: reusable functions (Leontief, embodied pressure allocation, dependency rankings).
+- `src/ecolecon_mrio/`: reusable functions (Leontief, embodied pressure allocation, dependency rankings).
 - `notebooks/01_replicate_cahen_fourot.ipynb`: monetary inverted pyramid replication.
 - `notebooks/02_env_pressure_pyramids.ipynb`: environmental pressure extensions.
 - `tests/`: lightweight unit tests for core transforms.
@@ -23,7 +23,7 @@ Workflow scaffold to replicate Cahen-Fourot et al. (2020) inverted pyramid analy
    source .venv/bin/activate
    python -m ipykernel install --user --name=mrio-venv --display-name "Python (.venv)"
    ```
-2) Download or point to an MRIO dataset (EXIOBASE3 or WIOD). `mrio_pyramids.data.load_exiobase3` can download and parse EXIOBASE3 when network is available.
+2) Download or point to an MRIO dataset (EXIOBASE3 or WIOD). `ecolecon_mrio.data.load_exiobase3` can download and parse EXIOBASE3 when network is available.
 3) Run notebooks (headless) with local paths on the Python path and a writable IPython dir:
    ```
    source .venv/bin/activate
@@ -43,7 +43,7 @@ Workflow scaffold to replicate Cahen-Fourot et al. (2020) inverted pyramid analy
    ```
    source .venv/bin/activate
    export PYTHONPATH=$PWD/src
-   python -c "import mrio_pyramids as mp; print(mp)"
+   python -c "import ecolecon_mrio as mp; print(mp)"
    ```
 
 ## Replication run (Cahen-Fourot et al.)
@@ -64,6 +64,6 @@ VS Code does not auto-reload notebooks when the file changes; close/reopen or us
 - Open `notebooks/02_env_pressure_pyramids.ipynb` to extend with environmental satellites; replace the placeholder satellite reference with the correct table from the MRIO object.
 
 ## Next steps
-- Wire in plotting utilities (bar/treemap/network) under `src/mrio_pyramids/`.
+- Wire in plotting utilities (bar/treemap/network) under `src/ecolecon_mrio/`.
 - Add data-loading helpers for WIOD and reproducible sample fixtures.
 - Flesh out the pyramid construction to mirror the exact algorithmic choices in Cahen-Fourot (layer definitions, thresholds) and adapt them to environmental intensities.

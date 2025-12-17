@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import pandas as pd
 import numpy as np
 
-from mrio_pyramids.plotting import (
+from ecolecon_mrio.plotting import (
     plot_foundations,
     plot_inverted_pyramid,
     plot_dependency_graph,
@@ -18,8 +18,8 @@ class TestPlotting(unittest.TestCase):
         self.graph.nodes.return_value = ["A", "B"]
         self.graph.edges.return_value = [("A", "B")]
         
-    @patch("mrio_pyramids.plotting.plt")
-    @patch("mrio_pyramids.plotting.sns")
+    @patch("ecolecon_mrio.plotting.plt")
+    @patch("ecolecon_mrio.plotting.sns")
     def test_plot_foundations(self, mock_sns, mock_plt):
         """Test bar plot generation."""
         mock_ax = MagicMock()
@@ -30,10 +30,10 @@ class TestPlotting(unittest.TestCase):
         mock_sns.barplot.assert_called_once()
         self.assertEqual(ax, mock_ax)
 
-    @patch("mrio_pyramids.plotting.plt")
-    @patch("mrio_pyramids.plotting.nx.draw_networkx_nodes")
-    @patch("mrio_pyramids.plotting.nx.draw_networkx_labels")
-    @patch("mrio_pyramids.plotting.nx.draw_networkx_edges")
+    @patch("ecolecon_mrio.plotting.plt")
+    @patch("ecolecon_mrio.plotting.nx.draw_networkx_nodes")
+    @patch("ecolecon_mrio.plotting.nx.draw_networkx_labels")
+    @patch("ecolecon_mrio.plotting.nx.draw_networkx_edges")
     def test_plot_inverted_pyramid(self, mock_edges, mock_labels, mock_nodes, mock_plt):
         """Test inverted pyramid network generation."""
         mock_ax = MagicMock()
@@ -50,8 +50,8 @@ class TestPlotting(unittest.TestCase):
         mock_edges.assert_called()
         self.assertEqual(ax, mock_ax)
         
-    @patch("mrio_pyramids.plotting.nx")
-    @patch("mrio_pyramids.plotting.plt")
+    @patch("ecolecon_mrio.plotting.nx")
+    @patch("ecolecon_mrio.plotting.plt")
     def test_plot_dependency_graph(self, mock_plt, mock_nx):
         """Test network graph plotting."""
         mock_ax = MagicMock()

@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import pytest
 
-from mrio_pyramids.metrics import (
+from ecolecon_mrio.metrics import (
     embodied_pressure,
     rank_foundational_sectors,
     forward_linkages,

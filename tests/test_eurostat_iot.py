@@ -21,7 +21,7 @@ def _mini_payload():
 
 
 def test_parse_eurostat_iot_splits_Z_and_Y():
-    from mrio_pyramids.eurostat_iot import parse_eurostat_iot
+    from ecolecon_mrio.eurostat_iot import parse_eurostat_iot
 
     parsed = parse_eurostat_iot(_mini_payload(), row_dim="row", col_dim="col")
     assert list(parsed.Z.index) == ["A", "B"]
@@ -37,7 +37,7 @@ def test_parse_eurostat_iot_splits_Z_and_Y():
 
 
 def test_parse_eurostat_iot_bad_dim_raises_helpful_error():
-    from mrio_pyramids.eurostat_iot import EurostatFilterError, parse_eurostat_iot
+    from ecolecon_mrio.eurostat_iot import EurostatFilterError, parse_eurostat_iot
 
     with pytest.raises(EurostatFilterError) as e:
         parse_eurostat_iot(_mini_payload(), row_dim="bad", col_dim="col")

@@ -10,8 +10,8 @@ def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
 
 
 def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
-    from mrio_pyramids.exiobase3 import ExioRegionSlice
-    from split_eurostat_energy_by_exiobase import split_eurostat_energy_sectors_using_exiobase
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.eurostat_energy_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["coke oven products", "refined petroleum products", "electricity from coal", "gas supply"]
 
@@ -73,16 +73,15 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
     )
     euro_Y = pd.DataFrame({"FD": [3.0, 2.0, 1.0]}, index=euro_sectors)
 
-    res = split_eurostat_energy_sectors_using_exiobase(
+    res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
         eurostat_Y=euro_Y,
-        exio_region="AT",
         exio_slice=exio_slice,
-        eurostat_sector_19="C19",
-        eurostat_sector_35="D35",
-        exio_patterns_19=("coke", "refined"),
-        exio_patterns_35=("electricity", "gas"),
+        sector_patterns={"C19": ("coke", "refined"), "D35": ("electricity", "gas")},
         extract_quantity_and_price=True,
+        quantity_price_extensions=("energy",),
+        quantity_price_stressor_keywords=("Energy use -",),
+        quantity_price_cache_dir=tmp_path / "cache",
         ras_max_iter=5_000,
         ras_tol=1e-12,
     )
@@ -98,9 +97,9 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
 
 
 def test_write_energy_split_report_xlsx(tmp_path):
-    from mrio_pyramids.exiobase3 import ExioRegionSlice
-    from split_eurostat_energy_by_exiobase import (
-        split_eurostat_energy_sectors_using_exiobase,
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.eurostat_energy_split import (
+        split_iot_using_exiobase_split_profiles,
         write_energy_split_report_xlsx,
     )
 
@@ -153,16 +152,15 @@ def test_write_energy_split_report_xlsx(tmp_path):
     )
     euro_Y = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=euro_sectors)
 
-    res = split_eurostat_energy_sectors_using_exiobase(
+    res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
         eurostat_Y=euro_Y,
-        exio_region="AT",
         exio_slice=exio_slice,
-        eurostat_sector_19="C19",
-        eurostat_sector_35="D35",
-        exio_patterns_19=("coke", "refined"),
-        exio_patterns_35=("electricity", "gas"),
+        sector_patterns={"C19": ("coke", "refined"), "D35": ("electricity", "gas")},
         extract_quantity_and_price=True,
+        quantity_price_extensions=("energy",),
+        quantity_price_stressor_keywords=("Energy use -",),
+        quantity_price_cache_dir=tmp_path / "cache",
         ras_max_iter=5_000,
         ras_tol=1e-12,
     )
@@ -173,4 +171,3 @@ def test_write_energy_split_report_xlsx(tmp_path):
         aggregates=("C19", "D35"),
     )
     assert out_xlsx.exists()
-

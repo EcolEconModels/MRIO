@@ -10,7 +10,7 @@ def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
 
 
 def test_extract_quantity_and_price_from_minimal_zip(tmp_path):
-    from mrio_pyramids.exiobase3_extensions import extract_quantity_and_price
+    from ecolecon_mrio.exiobase3_extensions import extract_quantity_and_price
 
     zp = tmp_path / "IOT_2020_pxp.zip"
     with zipfile.ZipFile(zp, "w") as zf:

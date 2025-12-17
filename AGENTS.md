@@ -11,7 +11,7 @@
 ```
 
 ## Project Structure
-- `src/`: Core library code (`mrio_pyramids`)
+- `src/`: Core library code (`ecolecon_mrio`)
 - `scripts/`: Replication and analysis scripts
 - `tests/`: Unit tests
 - `.venv/`: Local virtual environment (Primary Python)
