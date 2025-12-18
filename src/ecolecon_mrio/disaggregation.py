@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.balancing import BalanceStats, balance_biproportional
+
+if TYPE_CHECKING:
+    try:
+        import pymrio
+    except ImportError:
+        pymrio = None  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -27,6 +33,19 @@ class SplitProfiles:
 
 @dataclass(frozen=True)
 class DisaggregationResult:
+    """
+    Result of disaggregation operation.
+    
+    Attributes:
+        Z: Balanced intermediate transactions matrix
+        Y: Balanced final demand matrix
+        x: Total output vector
+        A: Technical coefficients matrix
+        split_profiles: Share profiles used for disaggregation
+        balancing_method: Method used ("RAS" or "GRAS")
+        balancing_stats: Convergence statistics
+        io_system: Optional pymrio IOSystem for advanced analysis
+    """
     Z: pd.DataFrame
     Y: pd.DataFrame
     x: pd.Series
@@ -34,6 +53,7 @@ class DisaggregationResult:
     split_profiles: dict[str, SplitProfiles]
     balancing_method: str
     balancing_stats: BalanceStats
+    io_system: object | None = None  # pymrio.IOSystem when available
 
 
 def normalize_share(series: pd.Series | pd.DataFrame, *, name: str) -> pd.Series:
@@ -50,11 +70,31 @@ def normalize_share(series: pd.Series | pd.DataFrame, *, name: str) -> pd.Series
 
 
 def _outer_share_matrix(row_share: pd.Series, col_share: pd.Series) -> pd.DataFrame:
+    """
+    Build outer product matrix from normalized share vectors.
+    
+    Since both input shares sum to 1, their outer product also sums to 1.
+    No additional normalization is needed.
+    """
     M = np.outer(row_share.to_numpy(), col_share.to_numpy())
-    denom = float(M.sum())
-    if denom <= 0 or not np.isfinite(denom):
-        raise ValueError("Cannot build outer share matrix from degenerate shares.")
-    M = M / denom
+    # Validate assumption: input shares must be normalized.
+    # Use a proper exception (not `assert`) so this cannot be skipped with `python -O`.
+    tol = 1e-10
+    row_sum = float(row_share.sum())
+    col_sum = float(col_share.sum())
+    if not np.isfinite(row_sum) or not np.isfinite(col_sum):
+        raise ValueError(
+            "Cannot build outer share matrix: share sums are non-finite. "
+            f"row_share.sum()={row_sum}, col_share.sum()={col_sum}."
+        )
+    if abs(row_sum - 1.0) > tol or abs(col_sum - 1.0) > tol:
+        row_nan = int(row_share.isna().sum())
+        col_nan = int(col_share.isna().sum())
+        raise ValueError(
+            "Cannot build outer share matrix: expected normalized 1D shares (sum≈1). "
+            f"row_share.sum()={row_sum} (nan={row_nan}), col_share.sum()={col_sum} (nan={col_nan}). "
+            "This usually indicates missing values after reindexing or an un-normalized share vector."
+        )
     return pd.DataFrame(M, index=row_share.index, columns=col_share.index)
 
 
@@ -105,20 +145,22 @@ def expand_io_tables(
 
     for agg, prof in split_profiles.items():
         subs = list(prof.subsectors)
+        # Pre-compute reindexed shares to avoid repeated lookups
         sales_share = prof.intermediate_sales_share.reindex(subs)
         input_share = prof.intermediate_input_share.reindex(subs)
+        fd_share = prof.final_demand_share.reindex(subs)
 
         buyers_unchanged = [s for s in sectors_old if s not in split_profiles]
         suppliers_unchanged = buyers_unchanged
 
         # Split sales to unchanged buyers
         Z_row = Z.loc[agg, buyers_unchanged].astype("float64")
-        if float(Z_row.sum()) != 0:
+        if Z_row.sum() != 0:
             Z0.loc[subs, buyers_unchanged] = np.outer(sales_share.to_numpy(), Z_row.to_numpy())
 
         # Split purchases from unchanged suppliers
         Z_col = Z.loc[suppliers_unchanged, agg].astype("float64")
-        if float(Z_col.sum()) != 0:
+        if Z_col.sum() != 0:
             Z0.loc[suppliers_unchanged, subs] = np.outer(Z_col.to_numpy(), input_share.to_numpy())
 
         # Split within the aggregate block
@@ -129,23 +171,27 @@ def expand_io_tables(
 
         # Split final demand row
         Y_row = Y.loc[agg, :].astype("float64")
-        if float(Y_row.sum()) != 0:
-            fd_share = prof.final_demand_share.reindex(subs)
+        if Y_row.sum() != 0:
             Y0.loc[subs, :] = np.outer(fd_share.to_numpy(), Y_row.to_numpy())
 
     # Split interactions between two different aggregates (if any are being split)
     for agg_r, prof_r in split_profiles.items():
+        # Pre-compute reindexed shares for row aggregate
+        subs_r = list(prof_r.subsectors)
+        sales_share_r = prof_r.intermediate_sales_share.reindex(subs_r)
+        
         for agg_c, prof_c in split_profiles.items():
             if agg_r == agg_c:
                 continue
             cell = float(Z.loc[agg_r, agg_c])
             if cell == 0:
                 continue
-            share_mat = _outer_share_matrix(
-                prof_r.intermediate_sales_share.reindex(list(prof_r.subsectors)),
-                prof_c.intermediate_input_share.reindex(list(prof_c.subsectors)),
-            )
-            Z0.loc[list(prof_r.subsectors), list(prof_c.subsectors)] = cell * share_mat
+            # Pre-compute reindexed shares for column aggregate
+            subs_c = list(prof_c.subsectors)
+            input_share_c = prof_c.intermediate_input_share.reindex(subs_c)
+            
+            share_mat = _outer_share_matrix(sales_share_r, input_share_c)
+            Z0.loc[subs_r, subs_c] = cell * share_mat
 
     return Z0, Y0
 
@@ -204,11 +250,23 @@ def disaggregate_and_balance(
     split_profiles: Mapping[str, SplitProfiles],
     max_iter: int = 50_000,
     tol: float = 1e-10,
+    create_io_system: bool = True,
 ) -> DisaggregationResult:
     """
     Expand Z/Y using `split_profiles`, then biproportionally balance [Z|Y] to targets.
 
     Balancing uses RAS if feasible; otherwise it falls back to GRAS.
+    
+    Parameters:
+        Z: Square intermediate transactions matrix
+        Y: Final demand matrix (same row index as Z)
+        split_profiles: Disaggregation share profiles
+        max_iter: Maximum iterations for balancing
+        tol: Convergence tolerance
+        create_io_system: If True and pymrio available, create IOSystem object
+        
+    Returns:
+        DisaggregationResult with balanced tables and optional IOSystem
     """
     Z0, Y0 = expand_io_tables(Z, Y, split_profiles=split_profiles)
     x_target, u_target, fd_targets = build_targets(Z, Y, split_profiles=split_profiles, sectors_new=Z0.index)
@@ -227,6 +285,22 @@ def disaggregate_and_balance(
     x_bal = calc_x(Z_bal, Y_bal)
     A_bal = calc_A(Z_bal, x_bal)
 
+    # Optional: Create pymrio IOSystem for advanced analysis
+    io_system = None
+    if create_io_system:
+        try:
+            import pymrio
+            io_system = pymrio.IOSystem()
+            io_system.Z = Z_bal
+            io_system.Y = Y_bal
+            io_system.x = x_bal
+            io_system.A = A_bal
+            # Note: calc_system() will be called by user when needed
+            # to avoid overhead if not using pymrio features
+        except ImportError:
+            # pymrio not available, skip IOSystem creation
+            pass
+
     return DisaggregationResult(
         Z=Z_bal,
         Y=Y_bal,
@@ -235,4 +309,5 @@ def disaggregate_and_balance(
         split_profiles=dict(split_profiles),
         balancing_method=method,
         balancing_stats=stats,
+        io_system=io_system,
     )

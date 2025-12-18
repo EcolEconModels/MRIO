@@ -21,6 +21,21 @@ from ecolecon_mrio.exiobase3_extensions import (
 
 @dataclass(frozen=True)
 class SplitResult:
+    """
+    Result of energy sector splitting operation.
+    
+    Attributes:
+        Z: Balanced intermediate transactions matrix
+        Y: Balanced final demand matrix
+        x: Total output vector
+        A: Technical coefficients matrix
+        split_profiles: Share profiles used for disaggregation
+        balancing_method: Method used ("RAS" or "GRAS")
+        balancing_stats: Convergence statistics
+        exio_selected_sectors: EXIOBASE sectors matched for each aggregate
+        exio_quantity_and_price: Optional quantity/price data from EXIOBASE extensions
+        io_system: Optional pymrio IOSystem for advanced analysis
+    """
     Z: pd.DataFrame
     Y: pd.DataFrame
     x: pd.Series
@@ -30,6 +45,7 @@ class SplitResult:
     balancing_stats: BalanceStats
     exio_selected_sectors: dict[str, list[str]]
     exio_quantity_and_price: pd.DataFrame | None
+    io_system: object | None = None  # pymrio.IOSystem when available
 
 
 def _read_table(path: Path) -> pd.DataFrame:
@@ -172,6 +188,7 @@ def split_iot_using_exiobase_split_profiles(
         balancing_stats=res.balancing_stats,
         exio_selected_sectors=selected,
         exio_quantity_and_price=exio_qp,
+        io_system=res.io_system,
     )
 
 
