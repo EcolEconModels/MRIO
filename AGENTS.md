@@ -10,6 +10,10 @@
 .venv/bin/python scripts/my_script.py
 ```
 
+## Git Safety
+> [!IMPORTANT]
+> Do **NOT** run `git commit`, `git reset`, `git rebase`, or `git push` unless the user explicitly requests it.
+
 ## Project Structure
 - `src/`: Core library code (`ecolecon_mrio`)
 - `scripts/`: Replication and analysis scripts

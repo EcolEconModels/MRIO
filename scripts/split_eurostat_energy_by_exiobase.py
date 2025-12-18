@@ -74,6 +74,21 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
+    def _normalize_stk_flow(v: str) -> str:
+        # Eurostat uses "TOTAL" (not "TOT") for stk_flow.
+        if str(v).upper() == "TOT":
+            return "TOTAL"
+        return str(v)
+
+    def _normalize_eurostat_filters(filters: dict) -> dict:
+        if args.eurostat_stk_flow_dim == "stk_flow" and "stk_flow" in filters:
+            cur = filters["stk_flow"]
+            if isinstance(cur, (list, tuple)):
+                filters["stk_flow"] = [_normalize_stk_flow(x) for x in cur]
+            else:
+                filters["stk_flow"] = _normalize_stk_flow(cur)
+        return filters
+
     p = argparse.ArgumentParser(
         description="Split Eurostat AT IOT energy sectors (NACE 19/35) using EXIOBASE shares and RAS/GRAS-balance."
     )
@@ -242,10 +257,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(
                 "When using --eurostat-dataset, also provide --eurostat-filters, --eurostat-row-dim, --eurostat-col-dim."
             )
-        base_filters = json.loads(args.eurostat_filters)
+        base_filters = _normalize_eurostat_filters(json.loads(args.eurostat_filters))
 
         if args.eurostat_stk_flows is not None:
             flows = list(map(str, json.loads(args.eurostat_stk_flows)))
+            if args.eurostat_stk_flow_dim == "stk_flow":
+                flows = [_normalize_stk_flow(f) for f in flows]
             _vprint(args.verbose, "Calling: load_eurostat_iot_variants(...)")
             t = _Timer()
             variants = load_eurostat_iot_variants(

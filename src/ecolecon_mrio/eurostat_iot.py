@@ -211,6 +211,11 @@ def sdmx_json_to_series(payload: Mapping[str, Any], *, value_key: str = "value")
         cat = dim.get(d, {}).get("category", {})
         idx = cat.get("index", {}) or {}
         if not isinstance(idx, dict) or not idx:
+            if int(sz) == 0:
+                raise EurostatParseError(
+                    f"Empty category index for dimension '{d}' (size=0). "
+                    "This usually indicates an invalid filter value or no data for the selected slice."
+                )
             raise EurostatParseError(f"Missing category index for dimension '{d}'.")
         rev = [None] * sz
         for code, pos in idx.items():
