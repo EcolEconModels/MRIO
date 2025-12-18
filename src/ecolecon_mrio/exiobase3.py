@@ -301,6 +301,7 @@ def build_split_profiles_from_exio_domestic_block(
     aggregate_sector: str,
     exio_sector_patterns: Sequence[str],
     prefix_labels_with: str | None = None,
+    selector: str = "patterns",
 ):
     """
     Build 1D split profiles for disaggregation using EXIOBASE domestic block totals.
@@ -314,7 +315,25 @@ def build_split_profiles_from_exio_domestic_block(
     x_r = exio_slice.x_region
 
     exio_sector_index = pd.Index(Z_rr.index.astype(str))
-    matched = select_by_patterns(exio_sector_index, exio_sector_patterns)
+    if selector == "patterns":
+        matched = select_by_patterns(exio_sector_index, exio_sector_patterns)
+    elif selector == "exact":
+        available = set(map(str, exio_sector_index))
+        matched = []
+        missing = []
+        for s in exio_sector_patterns:
+            s_str = str(s)
+            if s_str not in available:
+                missing.append(s_str)
+            else:
+                matched.append(s_str)
+        if missing:
+            raise ValueError(
+                f"Missing EXIO sector labels for aggregate_sector={aggregate_sector!r} in region={exio_slice.region}: "
+                f"{missing}"
+            )
+    else:
+        raise ValueError("selector must be one of: 'patterns', 'exact'")
     if not matched:
         raise ValueError(
             f"No EXIO sectors matched patterns={list(exio_sector_patterns)} in region={exio_slice.region}."

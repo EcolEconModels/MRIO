@@ -107,7 +107,7 @@ def test_io_system_calc_system():
 def test_split_result_has_io_system():
     """Test that SplitResult also includes IOSystem."""
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
-    from ecolecon_mrio.eurostat_energy_split import split_iot_using_exiobase_split_profiles
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
     
     # Minimal EXIO slice
     exio_sectors = ["coke oven products", "refined petroleum products"]
@@ -186,6 +186,6 @@ def test_outer_share_matrix_asserts_normalization():
     row_share = pd.Series([0.3, 0.8], index=["a", "b"])  # Sums to 1.1
     col_share = pd.Series([0.4, 0.6], index=["x", "y"])  # Sums to 1.0
     
-    # Should raise assertion error
-    with pytest.raises(AssertionError, match="must sum to 1"):
+    # Should raise an error (not `assert`, which can be disabled with `python -O`)
+    with pytest.raises(ValueError, match="outer share matrix|normalized|sum"):
         _outer_share_matrix(row_share, col_share)

@@ -1,0 +1,38 @@
+aggregate_sector,subsector,exio_sector,enabled,notes
+CPA_C19,Coke Oven Coke,Coke Oven Coke,1,
+CPA_C19,Gas Coke,Gas Coke,1,
+CPA_C19,Petroleum Coke,Petroleum Coke,1,
+CPA_C19,Coke oven gas,Coke oven gas,1,
+CPA_C19,Motor Gasoline,Motor Gasoline,1,
+CPA_C19,Aviation Gasoline,Aviation Gasoline,1,
+CPA_C19,Gasoline Type Jet Fuel,Gasoline Type Jet Fuel,1,
+CPA_C19,Kerosene Type Jet Fuel,Kerosene Type Jet Fuel,1,
+CPA_C19,Kerosene,Kerosene,1,
+CPA_C19,Gas/Diesel Oil,Gas/Diesel Oil,1,
+CPA_C19,Heavy Fuel Oil,Heavy Fuel Oil,1,
+CPA_C19,Patent Fuel,Patent Fuel,1,
+CPA_C19,Refinery Gas,Refinery Gas,1,
+CPA_C19,Liquefied Petroleum Gases (LPG),Liquefied Petroleum Gases (LPG),1,
+CPA_C19,Non-specified Petroleum Products,Non-specified Petroleum Products,1,
+CPA_C19,Biogasoline,Biogasoline,1,
+CPA_C19,Biodiesels,Biodiesels,1,
+CPA_C19,Other Liquid Biofuels,Other Liquid Biofuels,1,
+CPA_C19,Nuclear fuel,Nuclear fuel,0,Optional: likely not part of CPA_C19 in Eurostat IOTs
+
+CPA_D,Electricity generation,Electricity by coal,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by gas,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by nuclear,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by hydro,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by wind,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by petroleum and other oil derivatives,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by biomass and waste,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by solar photovoltaic,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by solar thermal,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,"Electricity by tide, wave, ocean",1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity by Geothermal,1,Grouped to avoid electricity-by-source split
+CPA_D,Electricity generation,Electricity nec,1,Grouped to avoid electricity-by-source split
+CPA_D,Transmission services of electricity,Transmission services of electricity,1,
+CPA_D,Distribution and trade services of electricity,Distribution and trade services of electricity,1,
+CPA_D,Gas distribution,Distribution services of gaseous fuels through mains,1,
+CPA_D,Manufactured gas,Gas Works Gas,1,
+CPA_D,Steam and hot water supply services,Steam and hot water supply services,1,

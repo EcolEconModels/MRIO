@@ -11,7 +11,7 @@ def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
 
 def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
-    from ecolecon_mrio.eurostat_energy_split import split_iot_using_exiobase_split_profiles
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["coke oven products", "refined petroleum products", "electricity from coal", "gas supply"]
 
@@ -98,7 +98,7 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
 
 def test_write_energy_split_report_xlsx(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
-    from ecolecon_mrio.eurostat_energy_split import (
+    from ecolecon_mrio.exio_share_split import (
         split_iot_using_exiobase_split_profiles,
         write_energy_split_report_xlsx,
     )
@@ -171,3 +171,57 @@ def test_write_energy_split_report_xlsx(tmp_path):
         aggregates=("C19", "D35"),
     )
     assert out_xlsx.exists()
+
+
+def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["Electricity by coal", "Electricity by gas", "Transmission services of electricity"]
+    Z_domestic = pd.DataFrame(
+        [
+            [1.0, 0.2, 0.1],
+            [0.3, 1.0, 0.2],
+            [0.1, 0.2, 1.0],
+        ],
+        index=exio_sectors,
+        columns=exio_sectors,
+    )
+    Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=exio_sectors)
+    x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
+
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+
+    euro_sectors = ["CPA_D", "A"]
+    euro_Z = pd.DataFrame([[10.0, 1.0], [1.0, 5.0]], index=euro_sectors, columns=euro_sectors)
+    euro_Y = pd.DataFrame({"FD": [3.0, 2.0]}, index=euro_sectors)
+
+    sector_to_exio = {
+        "CPA_D": {
+            "Electricity generation": ["Electricity by coal", "Electricity by gas"],
+            "Transmission services of electricity": ["Transmission services of electricity"],
+        }
+    }
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors=sector_to_exio,
+        ras_max_iter=2_000,
+        ras_tol=1e-12,
+    )
+
+    assert "CPA_D" not in res.Z.index
+    assert any(s.endswith("Electricity generation") for s in res.Z.index)
+    assert not any("Electricity by coal" in s for s in res.Z.index)
+    assert not any("Electricity by gas" in s for s in res.Z.index)
