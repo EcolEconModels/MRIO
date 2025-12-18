@@ -21,6 +21,13 @@ dependencies = [
   "scikit-learn",
 ]
 
+[project.optional-dependencies]
+# Optional helpers for parsing the WIOD 2016 release (2000–2014).
+# - `pyreadstat` enables fast reading of the provided STATA bundles via `pandas.read_stata`.
+# - `pyxlsb` enables reading the provided XLSB bundles via `pandas.read_excel(..., engine="pyxlsb")`.
+wiod16-stata = ["pyreadstat>=1.2.0"]
+wiod16-xlsb = ["pyxlsb>=1.0.10"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

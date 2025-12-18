@@ -9,6 +9,8 @@ from typing import Tuple
 import pandas as pd
 import pymrio
 
+from ecolecon_mrio.wiod16 import load_wiod16
+
 
 def default_data_root() -> Path:
     """
@@ -80,6 +82,10 @@ def load_mrio(
             
         if verbose:
             print(f"Ensuring OECD data for {year} in {data_dir}...")
+
+        # Avoid unnecessary network calls: only invoke pymrio's downloader when data
+        # is missing (or the caller explicitly forces refresh).
+        existing_archives = sorted(list(data_dir.glob("*.zip")))
         
         # Note: download_oecd verifies existence internally.
         # We specify version='v2018' to ensure we get the yearly files expected for 2010 replication if possible,
@@ -87,10 +93,8 @@ def load_mrio(
         # However, 2020 paper used 2010 data from Eurostat. OECD is the fallback.
         # Let's use the 'v2018' version logic which is stable for 2010.
         
-        try:
-             pymrio.download_oecd(storage_folder=data_dir, years=[year], version="v2018")
-        except Exception as e:
-             print(f"Download warning/check: {e}")
+        if force_download or not existing_archives:
+            pymrio.download_oecd(storage_folder=data_dir, years=[year], version="v2018")
 
         # parser looks for files in the specific path
         mrio = pymrio.parse_oecd(path=data_dir, year=year)
@@ -100,6 +104,19 @@ def load_mrio(
         # Exports might be "AUS_EXP".
         y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
         y_full = mrio.Y[y_cols].sum(axis=1)
+
+    elif dataset == "wiod16":
+        root = Path(data_root) if data_root is not None else default_data_root()
+        data_dir = root / "wiod16"
+        parsed = load_wiod16(
+            year=year,
+            data_dir=data_dir,
+            force_download=force_download,
+            calc_all=calc_all,
+            include_ghosh=include_ghosh,
+            verbose=verbose,
+        )
+        return parsed.mrio, parsed.y_full
 
     elif dataset == "wiod":
         if year < 1995 or year > 2011:
@@ -158,6 +175,7 @@ def load_mrio(
                     f"WIOD WIOT file not found in {data_dir}. "
                     f"Expected a file matching wiot{yy}*.xlsx. "
                     "If you already downloaded WIOD, place the WIOT xlsx for this year in that folder, "
+                    "or re-run with force_download=True (requires network), "
                     "or select a supported year (1995–2011)."
                 )
 

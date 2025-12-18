@@ -332,3 +332,138 @@ def plot_country_exposure_network(
         logger.info(f"Saved country exposure network to {save_path}")
     
     return fig
+
+
+def _external_totals(square: pd.DataFrame) -> pd.Series:
+    """
+    Sum rows excluding self (diagonal) when row/col labels overlap.
+    """
+    totals = square.sum(axis=1)
+    overlap = square.index.intersection(square.columns)
+    if len(overlap) > 0:
+        diag = pd.Series(0.0, index=square.index)
+        for k in overlap:
+            diag.loc[k] = float(square.loc[k, k])
+        totals = totals - diag
+    return totals
+
+
+def _plot_country_dotplot(
+    effects: pd.DataFrame,
+    *,
+    totals: pd.Series,
+    top_n: int,
+    title: str,
+    xlabel: str,
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Dot plot used for Figures 5 and 6 of Cahen-Fourot et al. (2021).
+
+    `effects` is a square-ish matrix where each row has multiple dots (columns).
+    """
+    top = totals.sort_values(ascending=False).head(top_n).index.tolist()
+    effects = effects.loc[top]
+    totals = totals.loc[top]
+
+    fig_h = max(6, 0.55 * len(top) + 2)
+    fig, ax = plt.subplots(figsize=(12, fig_h))
+
+    # Plot all dots per row.
+    for i, country in enumerate(top):
+        row = effects.loc[country].drop(labels=[country], errors="ignore")
+        row = row.dropna()
+
+        # All dots in light grey.
+        ax.scatter(row.values, np.full(len(row), i), s=30, alpha=0.55, color="lightgray", zorder=2)
+
+        # Highlight and label top-3 affected/origin partners.
+        top3 = row.nlargest(3)
+        if len(top3) > 0:
+            ax.scatter([top3.iloc[0]], [i], s=70, alpha=0.9, color="#1f77b4", zorder=3)  # top in blue
+        if len(top3) > 1:
+            ax.scatter(top3.iloc[1:].values, np.full(len(top3) - 1, i), s=55, alpha=0.9, color="#444444", zorder=3)
+
+        for partner, val in top3.items():
+            ax.annotate(
+                str(partner),
+                (float(val), i),
+                xytext=(6, 6),
+                textcoords="offset points",
+                fontsize=9,
+                fontweight="bold",
+            )
+
+        # Framed total on the right.
+        ax.text(
+            1.01,
+            i,
+            f"{totals.loc[country]:.3f}",
+            transform=ax.get_yaxis_transform(),
+            ha="left",
+            va="center",
+            fontsize=10,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.9, edgecolor="black"),
+        )
+
+    ax.set_yticks(range(len(top)))
+    ax.set_yticklabels(top)
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.grid(True, axis="x", alpha=0.25)
+
+    # Add a bit of right margin for the framed totals.
+    plt.tight_layout(rect=(0, 0, 0.93, 1))
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        logger.info(f"Saved dot plot to {save_path}")
+
+    return fig
+
+
+def plot_country_external_stranding_dotplot(
+    origin_to_affected: pd.DataFrame,
+    *,
+    top_n: int = 10,
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Figure 5: Top countries for external fossil stranding multipliers.
+
+    `origin_to_affected.loc[origin, affected]` is the stranding effect on `affected`
+    from a unit shock in the (domestic) fossil sector of `origin`.
+    """
+    totals = _external_totals(origin_to_affected)
+    return _plot_country_dotplot(
+        origin_to_affected,
+        totals=totals,
+        top_n=top_n,
+        title="Top Countries for External Fossil Stranding Multipliers",
+        xlabel="Stranding effect on affected country",
+        save_path=save_path,
+    )
+
+
+def plot_country_external_exposure_dotplot(
+    origin_to_affected: pd.DataFrame,
+    *,
+    top_n: int = 10,
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Figure 6: Top countries for external exposure to fossil stranding risk.
+
+    This is the transpose perspective of Figure 5: rows are affected countries,
+    columns are origin countries.
+    """
+    affected_to_origin = origin_to_affected.T
+    totals = _external_totals(affected_to_origin)
+    return _plot_country_dotplot(
+        affected_to_origin,
+        totals=totals,
+        top_n=top_n,
+        title="Top Countries for External Exposure to Fossil Stranding Risk",
+        xlabel="Stranding exposure to origin-country fossil sectors",
+        save_path=save_path,
+    )

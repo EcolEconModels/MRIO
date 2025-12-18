@@ -10,7 +10,8 @@ from ecolecon_mrio.stranding import (
     calc_stranding_multipliers,
     decompose_stranding_rounds,
     aggregate_stranding_by_rounds,
-    calc_external_stranding_multiplier
+    calc_external_stranding_multiplier,
+    compute_country_to_country_effects_from_stranding,
 )
 
 
@@ -150,6 +151,32 @@ class TestStrandingEdgeCases(unittest.TestCase):
         S = calc_stranding_multipliers(G, kappa)
         
         self.assertEqual(S.shape, (2, 2))
+
+
+class TestCountryEffects(unittest.TestCase):
+    def test_country_to_country_effects(self):
+        # Two countries, two sectors each.
+        idx = pd.MultiIndex.from_product([["AAA", "BBB"], ["FOS", "OTH"]], names=["country", "sector"])
+        cols = idx
+
+        # Construct S so that only fossil columns matter.
+        S = pd.DataFrame(0.0, index=idx, columns=cols)
+        # Shock in AAA fossil affects BBB sectors.
+        S.loc[("BBB", "FOS"), ("AAA", "FOS")] = 1.0
+        S.loc[("BBB", "OTH"), ("AAA", "FOS")] = 2.0
+        # Shock in BBB fossil affects AAA sectors.
+        S.loc[("AAA", "FOS"), ("BBB", "FOS")] = 3.0
+        S.loc[("AAA", "OTH"), ("BBB", "FOS")] = 4.0
+
+        fossil_cols = [("AAA", "FOS"), ("BBB", "FOS")]
+        effects = compute_country_to_country_effects_from_stranding(S, fossil_cols=fossil_cols)
+
+        # origin x affected
+        self.assertAlmostEqual(effects.loc["AAA", "BBB"], 3.0)  # 1+2
+        self.assertAlmostEqual(effects.loc["BBB", "AAA"], 7.0)  # 3+4
+        # Domestic effects also exist (here zero).
+        self.assertAlmostEqual(effects.loc["AAA", "AAA"], 0.0)
+        self.assertAlmostEqual(effects.loc["BBB", "BBB"], 0.0)
 
 
 if __name__ == '__main__':

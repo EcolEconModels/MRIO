@@ -251,3 +251,37 @@ def calc_exposure_network(
     logger.info(f"Exposure network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     
     return G
+
+
+def compute_country_to_country_effects_from_stranding(
+    S: pd.DataFrame,
+    *,
+    fossil_cols: List[tuple],
+) -> pd.DataFrame:
+    """
+    Compute country-to-country stranding effects from a full (region, sector) S matrix.
+
+    Returns a DataFrame `origin_country x affected_country` where each cell is the
+    total stranding effect in the affected country resulting from a unit shock in
+    the origin country's fossil sector(s) (as provided in `fossil_cols`).
+
+    This is the input needed to reproduce Figure 5/6-style dot plots.
+    """
+    if not isinstance(S.index, pd.MultiIndex) or not isinstance(S.columns, pd.MultiIndex):
+        raise ValueError("S must have MultiIndex for both index and columns: (region, sector).")
+
+    if not fossil_cols:
+        raise ValueError("fossil_cols must be a non-empty list of S columns.")
+
+    # Subset to fossil-origin columns, then aggregate rows to affected-country totals.
+    sub = S.loc[:, fossil_cols]
+    affected_country_by_fossil_col = sub.groupby(level=0).sum()
+
+    # Aggregate fossil columns to origin-country totals (sum if multiple fossil columns per origin).
+    affected_country_by_origin_country = affected_country_by_fossil_col.T.groupby(level=0).sum().T
+
+    # Return origin x affected for convenience.
+    origin_to_affected = affected_country_by_origin_country.T
+    origin_to_affected.index.name = "origin_country"
+    origin_to_affected.columns.name = "affected_country"
+    return origin_to_affected

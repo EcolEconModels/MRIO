@@ -20,13 +20,19 @@ import seaborn as sns
 
 from ecolecon_mrio.data import load_mrio
 from ecolecon_mrio.capital_data import load_capital_stock_data
-from ecolecon_mrio.network_viz import plot_cascade_network
+from ecolecon_mrio.network_viz import (
+    plot_cascade_network,
+    plot_country_external_stranding_dotplot,
+    plot_country_external_exposure_dotplot,
+    plot_country_exposure_network,
+)
 from ecolecon_mrio.stranding import (
     calc_capital_intensity,
     calc_stranding_multipliers,
     decompose_stranding_rounds,
     aggregate_stranding_by_rounds,
-    calc_external_stranding_multiplier
+    calc_external_stranding_multiplier,
+    compute_country_to_country_effects_from_stranding,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -35,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Replicate Cahen-Fourot et al. (2021)")
-    parser.add_argument("--dataset", type=str, default="wiod", help="MRIO dataset (wiod, oecd)")
-    parser.add_argument("--year", type=int, default=2011, help="Year for analysis (WIOD 2013 supports 1995–2011)")
+    parser.add_argument("--dataset", type=str, default="wiod16", help="MRIO dataset (wiod, wiod16, oecd)")
+    parser.add_argument("--year", type=int, default=2014, help="Year for analysis (wiod=1995–2011, wiod16=2000–2014)")
     parser.add_argument(
         "--force-download",
         action="store_true",
@@ -48,10 +54,26 @@ def main():
         default=None,
         help="Explicit WIOD WIOT .xlsx file to parse (useful if duplicates exist). Relative paths are resolved under the WIOD cache folder.",
     )
-    parser.add_argument("--capital-source", type=str, default="mock", help="Capital stock source (wiod, mock)")
+    parser.add_argument(
+        "--capital-source",
+        type=str,
+        default="wiod16",
+        help="Capital stock source (mock, wiod16). wiod16 uses WIOD 2016 SEA (K/GO) if available.",
+    )
+    parser.add_argument(
+        "--capital-data-dir",
+        type=str,
+        default=None,
+        help="Directory for capital-stock inputs (e.g. data/wiod16).",
+    )
     parser.add_argument("--fossil-sector", type=str, default="B", help="Fossil fuel sector code")
     parser.add_argument("--q", type=int, default=3, help="Top q sectors per round for cascade")
     parser.add_argument("--max-rounds", type=int, default=4, help="Maximum cascade rounds")
+    parser.add_argument("--no-fig5", action="store_true", help="Skip Figure 5 (country external stranding multipliers).")
+    parser.add_argument("--no-fig6", action="store_true", help="Skip Figure 6 (country external exposure).")
+    parser.add_argument("--fig9-country", type=str, default="DEU", help="Country code for Figure 9 exposure network.")
+    parser.add_argument("--fig9-r", type=int, default=2, help="Top-r origin fossil sectors per target for Figure 9.")
+    parser.add_argument("--fig9-top-sectors", type=int, default=10, help="Number of top target sectors to include in Figure 9.")
     args = parser.parse_args()
     
     # 1. Load MRIO data
@@ -83,7 +105,13 @@ def main():
     
     # 3. Load capital stock data
     logger.info(f"Loading capital stock data (source={args.capital_source})...")
-    capital_stock = load_capital_stock_data(mrio, args.year, source=args.capital_source)
+    capital_stock = load_capital_stock_data(
+        mrio,
+        args.year,
+        source=args.capital_source,
+        data_dir=Path(args.capital_data_dir) if args.capital_data_dir else None,
+        force_download=args.force_download,
+    )
     
     # 4. Calculate capital intensity κ = k/x
     logger.info("Calculating capital intensity...")
@@ -181,7 +209,58 @@ def main():
         save_path=output_dir / f"cascade_network_{args.year}.png"
     )
     plt.close(cascade_fig)
-    
+
+    # Country-level figures (require MultiIndex with region codes).
+    if isinstance(S.index, pd.MultiIndex) and isinstance(S.columns, pd.MultiIndex):
+        effects = compute_country_to_country_effects_from_stranding(S, fossil_cols=fossil_cols)
+
+        if not args.no_fig5:
+            logger.info("Generating Figure 5 (external stranding multipliers)...")
+            fig5_path = output_dir / f"fig5_external_stranding_{args.year}.png"
+            fig5 = plot_country_external_stranding_dotplot(effects, top_n=10, save_path=fig5_path)
+            plt.close(fig5)
+
+        if not args.no_fig6:
+            logger.info("Generating Figure 6 (external exposure)...")
+            fig6_path = output_dir / f"fig6_external_exposure_{args.year}.png"
+            fig6 = plot_country_external_exposure_dotplot(effects, top_n=10, save_path=fig6_path)
+            plt.close(fig6)
+
+        # Figure 9-style: direct exposure links for one country.
+        logger.info(f"Generating Figure 9-style exposure network for {args.fig9_country}...")
+        targets = S.loc[(args.fig9_country, slice(None)), fossil_cols]
+        targets = targets.droplevel(0)
+        target_totals = targets.sum(axis=1).sort_values(ascending=False)
+        top_targets = target_totals.head(args.fig9_top_sectors).index.tolist()
+
+        edges = []
+        for sector in top_targets:
+            row = targets.loc[sector].sort_values(ascending=False)
+            for origin_col in row.head(args.fig9_r).index:
+                edges.append(
+                    {
+                        "origin_country_sector": (origin_col[0], str(origin_col[1])),
+                        "target_country_sector": (args.fig9_country, str(sector)),
+                        "stranding_value": float(row.loc[origin_col]),
+                    }
+                )
+
+        exposure_links = pd.DataFrame(edges)
+        if not exposure_links.empty:
+            fig9_path = output_dir / f"fig9_exposure_network_{args.fig9_country}_{args.year}.png"
+            fig9 = plot_country_exposure_network(
+                exposure_links=exposure_links,
+                focal_country=args.fig9_country,
+                focal_sectors=[str(s) for s in top_targets],
+                threshold=0.0,
+                save_path=fig9_path,
+            )
+            plt.close(fig9)
+        else:
+            logger.warning("No exposure links found for Figure 9-style network.")
+    else:
+        logger.info("Skipping country-level figures (S matrix is not region-sector MultiIndex).")
+
     # 12. Save results
     
     # Save stranding multipliers

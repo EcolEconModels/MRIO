@@ -39,10 +39,10 @@ figures/
 .vscode/
 .idea/
 
-# text / figures
-*.txt
-*.png
-*.jpg
+# Generated images at repo root (prefer storing outputs under outputs/ or figures/)
+/*.png
+/*.jpg
+/*.jpeg
 
 # temp
 tmp/*

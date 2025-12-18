@@ -21,52 +21,146 @@ def get_2021_sector_mapping() -> Dict[str, List[str]]:
     Returns:
         Dictionary mapping paper acronym → list of original sector codes
     """
-    # Note: This is a partial mapping based on common sectors
-    # Full mapping requires Table A.1 from paper appendix
-    
-    mapping = {
-        # Fossil fuel sectors
-        'MINfos': ['05', '06', 'B05', 'B06', '05T06'],  # Mining of coal, oil, gas
-        'MINnon': ['07', '08', '09', 'B07', 'B08', 'B09'],  # Other mining
-        
-        # Energy sectors
-        'PWR+': ['35', 'D35', '35T39'],  # Electricity, gas, steam supply
-        
-        # Manufacturing - refined products
-        'MANref': ['19', 'C19'],  # Coke and refined petroleum
-        'MANche': ['20', 'C20', '20T21'],  # Chemicals (may include pharma)
-        'MANpla': ['22', 'C22'],  # Rubber and plastics
-        'MANmet': ['24', 'C24'],  # Basic metals
-        'MANmac': ['28', 'C28'],  # Machinery and equipment
-        'MANmot': ['29', 'C29'],  # Motor vehicles
-        'MANpap': ['17', 'C17'],  # Paper products
-        'MANpri': ['18', 'C18'],  # Printing
-        
-        # Construction
-        'CNS+': ['41', '42', '43', 'F41', 'F42', 'F43', '41T43'],  # Construction
-        
-        # Services
-        'TRAair': ['51', 'H51'],  # Air transport
-        'TRAinl': ['50', 'H50'],  # Water transport
-        'TRAwar': ['50', 'H50'],  # Warehousing
-        
-        # Wholesale/retail
-        'MAN': ['45', '46', '47', 'G45', 'G46', 'G47', '45T47'],  # Trade
-        
-        # Accommodation
-        'RES+': ['55', '56', 'I55', 'I56', '55T56'],  # Accommodation, food
-        
-        # Public admin
-        'PUB+': ['84', 'O84'],  # Public administration
-        
-        # Arts/recreation
-        'ART+': ['90', '91', '92', '93', 'R90', 'R91', 'R92', 'R93'],  # Arts, recreation
-        
-        # Agriculture
-        'AGRagr': ['01', 'A01'],  # Crop and animal production
+    # Mapping based on Table A.1 in Cahen-Fourot et al. (2021).
+    #
+    # The mapping values include common variants encountered across sources:
+    # - NACE-style codes (e.g. "C10-C12", "B05-06", "J62_63")
+    # - OECD/ICIO aggregates (e.g. "10T12", "05T06", "49T53")
+    # - Single numeric codes (e.g. "19") and letter-prefixed forms (e.g. "C19")
+    #
+    # Callers can use this mapping either as a forward mapping (paper code -> source
+    # codes) or to build a reverse lookup for harmonizing indices.
+    mapping: Dict[str, List[str]] = {
+        # A: Agriculture, forestry and fishing
+        "AGR+": ["A", "01T03"],
+        "AGRagr": ["A01", "01"],
+        "AGRfor": ["A02", "02"],
+        "AGRfis": ["A03", "03"],
+
+        # B: Mining and quarrying
+        "MIN+": ["B"],
+        "MINfos": ["B05-06", "B05–06", "B05", "B06", "05T06", "05", "06"],
+        "MINoth": ["B07-08", "B07–08", "B07", "B08", "07T08", "07", "08"],
+        "MINsup": ["B09", "09"],
+
+        # C: Manufacturing
+        "MAN+": ["C"],
+        "MANfoo": ["C10-C12", "C10–12", "10T12"],
+        "MANtex": ["C13-C15", "C13–15", "13T15"],
+        "MANwoo": ["C16", "16"],
+        "MANpap": ["C17", "17"],
+        "MANpri": ["C18", "18"],
+        "MANref": ["C19", "19"],
+        "MANche": ["C20", "20"],
+        "MANpha": ["C21", "21"],
+        "MANpla": ["C22", "22"],
+        "MANmin": ["C23", "23"],
+        "MANmet": ["C24", "24"],
+        "MANfmp": ["C25", "25"],
+        "MANcom": ["C26", "26"],
+        "MANele": ["C27", "27"],
+        "MANmac": ["C28", "28"],
+        "MANmot": ["C29", "29"],
+        "MANtra": ["C30", "30"],
+        "MANfur": ["C31_32", "C31-C32", "C31–32", "31T33", "31", "32"],
+        "MANrep": ["C33", "33"],
+
+        # D: Electricity, gas, steam and air conditioning
+        "PWR+": ["D", "D35", "35", "35T39"],
+
+        # E: Water supply; sewerage; waste management and remediation
+        "WAT+": ["E", "36T39"],
+        "WATwat": ["E36", "36"],
+        "WATwst": ["E37-39", "E37–39", "37T39", "37", "38", "39"],
+
+        # F: Construction
+        "CNS+": ["F", "41T43"],
+
+        # G: Wholesale and retail trade; repair of motor vehicles and motorcycles
+        "TRD+": ["G", "45T47"],
+        "TRDmot": ["G45", "45"],
+        "TRDwho": ["G46", "46"],
+        "TRDret": ["G47", "47"],
+
+        # H: Transportation and storage
+        "TRA+": ["H", "49T53"],
+        "TRAinl": ["H49", "49"],
+        "TRAwat": ["H50", "50"],
+        "TRAair": ["H51", "51"],
+        "TRAwar": ["H52", "52"],
+        "TRApos": ["H53", "53"],
+
+        # I: Accommodation and food service activities
+        "FD+": ["I", "55T56"],
+
+        # J: Information and communication
+        "COM+": ["J", "58T63"],
+        "COMpub": ["J58", "58"],
+        "COMvid": ["J59_60", "J59-J60", "J59–60", "59T60", "59", "60"],
+        "COMtel": ["J61", "61"],
+        "COMcom": ["J62_63", "J62-J63", "J62–63", "62T63", "62", "63"],
+
+        # K: Financial and insurance activities
+        "FIN+": ["K", "64T66"],
+        "FINser": ["K64", "64"],
+        "FINins": ["K65", "65"],
+        "FINaux": ["K66", "66"],
+
+        # L: Real estate activities
+        "RES+": ["L", "68"],
+
+        # M: Professional, scientific and technical activities
+        "PRO+": ["M", "69T75"],
+        "PROleg": ["M69_70", "M69-M70", "M69–70", "69T70", "69", "70"],
+        "PROeng": ["M71", "71"],
+        "PROsci": ["M72", "72"],
+        "PROadv": ["M73", "73"],
+        "PROoth": ["M74_75", "M74-M75", "M74–75", "74T75", "74", "75"],
+
+        # N: Administrative and support service activities
+        "ADM+": ["N", "77T82"],
+
+        # O: Public administration and defence; compulsory social security
+        "PUB+": ["O", "84"],
+
+        # P: Education
+        "EDU+": ["P", "85"],
+
+        # Q: Human health and social work activities
+        "HEA+": ["Q", "86T88"],
+
+        # R_S: Arts, entertainment and recreation
+        "ART+": ["R_S", "R", "S", "90T93", "90", "91", "92", "93"],
+
+        # U: Activities of households as employers
+        "HOU+": ["U", "97T98"],
     }
     
     return mapping
+
+
+def map_sector_to_2021_paper_code(sector_code: str, mapping: Optional[Dict[str, List[str]]] = None) -> str:
+    """
+    Map a source-sector code to the Cahen-Fourot et al. (2021) paper code.
+
+    This performs a best-effort reverse lookup against `get_2021_sector_mapping()`.
+    If no mapping is found, it returns the original `sector_code`.
+    """
+    if mapping is None:
+        mapping = get_2021_sector_mapping()
+
+    s = str(sector_code).strip()
+    # Normalize common unicode dash to ascii.
+    s = s.replace("–", "-")
+
+    for paper_code, source_codes in mapping.items():
+        if s == paper_code:
+            return paper_code
+        for src in source_codes:
+            if s == str(src):
+                return paper_code
+
+    return s
 
 
 def aggregate_mrio_sectors(
