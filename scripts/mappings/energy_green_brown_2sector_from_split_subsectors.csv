@@ -1,0 +1,38 @@
+from_sector,to_sector,enabled,notes
+CPA_D::Electricity by hydro,ENERGY_GREEN,1,
+CPA_D::Electricity by wind,ENERGY_GREEN,1,
+CPA_D::Electricity by solar photovoltaic,ENERGY_GREEN,1,
+CPA_D::Electricity by solar thermal,ENERGY_GREEN,1,
+CPA_D::Electricity by Geothermal,ENERGY_GREEN,1,
+"CPA_D::Electricity by tide, wave, ocean",ENERGY_GREEN,1,
+CPA_D::Electricity by nuclear,ENERGY_GREEN,1,
+CPA_D::Electricity by biomass and waste,ENERGY_GREEN,1,Revisit biomass classification later
+CPA_D::Transmission services of electricity,ENERGY_GREEN,1,
+CPA_D::Distribution and trade services of electricity,ENERGY_GREEN,1,
+
+CPA_D::Electricity by coal,ENERGY_BROWN,1,
+CPA_D::Electricity by gas,ENERGY_BROWN,1,
+CPA_D::Electricity by petroleum and other oil derivatives,ENERGY_BROWN,1,
+CPA_D::Electricity nec,ENERGY_BROWN,1,Residual default brown
+CPA_D::Gas distribution,ENERGY_BROWN,1,
+CPA_D::Manufactured gas,ENERGY_BROWN,1,
+CPA_D::Steam and hot water supply services,ENERGY_BROWN,1,
+
+CPA_C19::Coke Oven Coke,ENERGY_BROWN,1,
+CPA_C19::Gas Coke,ENERGY_BROWN,1,
+CPA_C19::Petroleum Coke,ENERGY_BROWN,1,
+CPA_C19::Coke oven gas,ENERGY_BROWN,1,
+CPA_C19::Motor Gasoline,ENERGY_BROWN,1,
+CPA_C19::Aviation Gasoline,ENERGY_BROWN,1,
+CPA_C19::Gasoline Type Jet Fuel,ENERGY_BROWN,1,
+CPA_C19::Kerosene Type Jet Fuel,ENERGY_BROWN,1,
+CPA_C19::Kerosene,ENERGY_BROWN,1,
+CPA_C19::Gas/Diesel Oil,ENERGY_BROWN,1,
+CPA_C19::Heavy Fuel Oil,ENERGY_BROWN,1,
+CPA_C19::Patent Fuel,ENERGY_BROWN,1,
+CPA_C19::Refinery Gas,ENERGY_BROWN,1,
+CPA_C19::Liquefied Petroleum Gases (LPG),ENERGY_BROWN,1,
+CPA_C19::Non-specified Petroleum Products,ENERGY_BROWN,1,
+CPA_C19::Biogasoline,ENERGY_BROWN,1,Biofuels treated as brown
+CPA_C19::Biodiesels,ENERGY_BROWN,1,Biofuels treated as brown
+CPA_C19::Other Liquid Biofuels,ENERGY_BROWN,1,Biofuels treated as brown
