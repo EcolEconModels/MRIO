@@ -82,3 +82,41 @@ def test_disaggregate_and_balance_gras_with_negative_final_demand():
     assert res.balancing_method == "GRAS"
     assert res.balancing_stats.max_abs_row_gap <= 2e-5
     assert res.balancing_stats.max_abs_col_gap <= 2e-5
+
+
+def test_disaggregate_and_balance_local_keeps_untouched_blocks_fixed():
+    from ecolecon_mrio.disaggregation import SplitProfiles, disaggregate_and_balance
+
+    sectors = ["A", "B", "C19"]
+    Z = pd.DataFrame(
+        [
+            [1.0, 0.2, 0.3],
+            [0.1, 2.0, 0.4],
+            [0.5, 0.6, 3.0],
+        ],
+        index=sectors,
+        columns=sectors,
+    )
+    Y = pd.DataFrame([[5.0], [6.0], [7.0]], index=sectors, columns=["FD"])
+
+    prof = SplitProfiles(
+        aggregate_sector="C19",
+        subsectors=("C19::s1", "C19::s2"),
+        output_share=pd.Series([0.4, 0.6], index=["C19::s1", "C19::s2"]),
+        intermediate_sales_share=pd.Series([0.2, 0.8], index=["C19::s1", "C19::s2"]),
+        intermediate_input_share=pd.Series([0.7, 0.3], index=["C19::s1", "C19::s2"]),
+        final_demand_share=pd.Series([0.5, 0.5], index=["C19::s1", "C19::s2"]),
+    )
+
+    res = disaggregate_and_balance(
+        Z,
+        Y,
+        split_profiles={"C19": prof},
+        balancing_scope="local",
+        max_iter=50_000,
+        tol=1e-12,
+    )
+
+    untouched = ["A", "B"]
+    assert np.allclose(res.Z.loc[untouched, untouched].to_numpy(), Z.loc[untouched, untouched].to_numpy())
+    assert np.allclose(res.Y.loc[untouched, :].to_numpy(), Y.loc[untouched, :].to_numpy())

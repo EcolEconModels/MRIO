@@ -16,11 +16,13 @@ CPA_D::Electricity by petroleum and other oil derivatives,ENERGY_BROWN,1,
 CPA_D::Electricity nec,ENERGY_BROWN,1,Residual default brown
 CPA_D::Gas distribution,ENERGY_BROWN,1,
 CPA_D::Manufactured gas,ENERGY_BROWN,1,
+CPA_D::Biogas,ENERGY_BROWN,1,Revisit biogas classification later
 CPA_D::Steam and hot water supply services,ENERGY_BROWN,1,
 
 CPA_C19::Coke Oven Coke,ENERGY_BROWN,1,
 CPA_C19::Gas Coke,ENERGY_BROWN,1,
 CPA_C19::Petroleum Coke,ENERGY_BROWN,1,
+CPA_C19::Coal Tar,ENERGY_BROWN,1,
 CPA_C19::Coke oven gas,ENERGY_BROWN,1,
 CPA_C19::Motor Gasoline,ENERGY_BROWN,1,
 CPA_C19::Aviation Gasoline,ENERGY_BROWN,1,
@@ -32,6 +34,13 @@ CPA_C19::Heavy Fuel Oil,ENERGY_BROWN,1,
 CPA_C19::Patent Fuel,ENERGY_BROWN,1,
 CPA_C19::Refinery Gas,ENERGY_BROWN,1,
 CPA_C19::Liquefied Petroleum Gases (LPG),ENERGY_BROWN,1,
+CPA_C19::Refinery Feedstocks,ENERGY_BROWN,1,
+CPA_C19::Ethane,ENERGY_BROWN,1,
+CPA_C19::Naphtha,ENERGY_BROWN,1,
+CPA_C19::White Spirit & SBP,ENERGY_BROWN,1,
+CPA_C19::Lubricants,ENERGY_BROWN,1,
+CPA_C19::Bitumen,ENERGY_BROWN,1,
+CPA_C19::Paraffin Waxes,ENERGY_BROWN,1,
 CPA_C19::Non-specified Petroleum Products,ENERGY_BROWN,1,
 CPA_C19::Biogasoline,ENERGY_BROWN,1,Biofuels treated as brown
 CPA_C19::Biodiesels,ENERGY_BROWN,1,Biofuels treated as brown

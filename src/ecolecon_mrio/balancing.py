@@ -90,6 +90,7 @@ def gras_balance(
     b = np.ones(P.shape[1], dtype="float64")
     r = row_targets
     c = col_targets
+    eps = max(float(tol), 1e-12)
 
     def _update_multiplier(A: np.ndarray, B: np.ndarray, target: np.ndarray) -> np.ndarray:
         out = np.ones_like(target)
@@ -104,21 +105,21 @@ def gras_balance(
         # Case 2: A == 0, B > 0: target must be negative
         mask_A0_B = (A == 0) & (B > 0)
         if mask_A0_B.any():
-            if (target[mask_A0_B] >= 0).any():
+            if (target[mask_A0_B] > eps).any():
                 raise ValueError("GRAS infeasible: A=0,B>0 requires negative target.")
             out[mask_A0_B] = B[mask_A0_B] / (-target[mask_A0_B])
 
         # Case 3: A > 0, B == 0: linear scaling requires nonnegative target
         mask_B0_A = (B == 0) & (A > 0)
         if mask_B0_A.any():
-            if (target[mask_B0_A] < 0).any():
+            if (target[mask_B0_A] < -eps).any():
                 raise ValueError("GRAS infeasible: B=0,A>0 requires nonnegative target.")
             out[mask_B0_A] = np.divide(target[mask_B0_A], A[mask_B0_A], out=np.ones_like(target[mask_B0_A]), where=A[mask_B0_A] != 0)
 
         # Case 4: A==0,B==0: must have target==0
         mask_A0_B0 = (A == 0) & (B == 0)
         if mask_A0_B0.any():
-            if (np.abs(target[mask_A0_B0]) > 1e-12).any():
+            if (np.abs(target[mask_A0_B0]) > eps).any():
                 raise ValueError("GRAS infeasible: A=0,B=0 requires zero target.")
             out[mask_A0_B0] = 1.0
 
@@ -175,3 +176,68 @@ def balance_biproportional(
     M, stats = gras_balance(M0, row_targets, col_targets, max_iter=max_iter, tol=tol)
     return M, stats, "GRAS"
 
+
+def balance_biproportional_masked(
+    M0: np.ndarray,
+    row_targets: np.ndarray,
+    col_targets: np.ndarray,
+    *,
+    adjustable: np.ndarray,
+    max_iter: int = 50_000,
+    tol: float = 1e-10,
+) -> tuple[np.ndarray, BalanceStats, str]:
+    """
+    Constrained biproportional balancing with a fixed-cell mask.
+
+    Parameters
+    ----------
+    M0
+        Initial matrix.
+    row_targets, col_targets
+        Desired row/column sums for the full matrix (fixed + adjustable).
+    adjustable
+        Boolean mask of the same shape as M0; True entries are allowed to change.
+        False entries remain fixed at their initial values in M0.
+
+    Notes
+    -----
+    This is implemented by decomposing M0 into:
+      M0 = M_fixed + M_adj
+
+    and balancing M_adj to residual targets:
+      row_targets_adj = row_targets - M_fixed.sum(axis=1)
+      col_targets_adj = col_targets - M_fixed.sum(axis=0)
+
+    The final balanced matrix is:
+      M = M_fixed + M_adj_balanced
+    """
+    M0 = np.asarray(M0, dtype="float64")
+    row_targets = np.asarray(row_targets, dtype="float64")
+    col_targets = np.asarray(col_targets, dtype="float64")
+    adjustable = np.asarray(adjustable, dtype=bool)
+    eps = max(float(tol), 1e-12)
+
+    if M0.shape != adjustable.shape:
+        raise ValueError(f"adjustable mask must have same shape as M0, got {adjustable.shape} vs {M0.shape}.")
+
+    fixed = np.where(adjustable, 0.0, M0)
+    adj0 = np.where(adjustable, M0, 0.0)
+
+    row_resid = row_targets - fixed.sum(axis=1)
+    col_resid = col_targets - fixed.sum(axis=0)
+
+    if abs(row_resid.sum() - col_resid.sum()) > 1e-8:
+        raise ValueError("Row/column residual targets are inconsistent (different totals).")
+
+    # If the adjustable block is nonnegative, residual targets must be nonnegative (within tolerance).
+    if (adj0 >= 0).all() and ((row_resid < -eps).any() or (col_resid < -eps).any()):
+        raise ValueError(
+            "Masked balancing infeasible: fixed cells exceed targets, producing negative residual targets."
+        )
+
+    M_adj_bal, stats, method = balance_biproportional(
+        adj0, row_targets=row_resid, col_targets=col_resid, max_iter=max_iter, tol=tol
+    )
+
+    M = fixed + M_adj_bal
+    return M, stats, method

@@ -373,6 +373,9 @@ def split_iot_using_exiobase_split_profiles(
     prefix_template: str = "{aggregate}::",
     ras_max_iter: int = 50_000,
     ras_tol: float = 1e-10,
+    balancing_scope: str = "local",
+    coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
+    coverage_tol: float = 0.0,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
@@ -391,8 +394,68 @@ def split_iot_using_exiobase_split_profiles(
         prefix_template=prefix_template,
     )
 
+    if coverage_expected_exio_sectors is not None:
+        if coverage_tol < 0:
+            raise ValueError("coverage_tol must be >= 0")
+
+        use_total = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype("float64")
+        use_total.index = use_total.index.astype(str)
+
+        errors: list[str] = []
+        for agg, expected in coverage_expected_exio_sectors.items():
+            agg_s = str(agg)
+            expected_list = list(map(str, expected))
+            selected_list = list(map(str, selected.get(agg_s, [])))
+
+            missing_expected = [s for s in expected_list if s not in use_total.index]
+            if missing_expected:
+                errors.append(
+                    f"Coverage check failed: aggregate_sector={agg_s!r} has expected EXIO sectors that are not present "
+                    f"in the EXIO slice (flow={exio_slice.flow!r}): {missing_expected!r}"
+                )
+                continue
+
+            missing_selected = [s for s in selected_list if s not in use_total.index]
+            if missing_selected:
+                errors.append(
+                    f"Coverage check failed: aggregate_sector={agg_s!r} has selected EXIO sectors that are not present "
+                    f"in the EXIO slice (flow={exio_slice.flow!r}): {missing_selected!r}"
+                )
+                continue
+
+            expected_sum = float(use_total.loc[expected_list].sum())
+            selected_sum = float(use_total.loc[selected_list].sum())
+            if expected_sum == 0:
+                coverage = 1.0 if selected_sum == 0 else 0.0
+            else:
+                coverage = selected_sum / expected_sum
+
+            if coverage < 1.0 - float(coverage_tol):
+                missing = sorted(set(expected_list) - set(selected_list))
+                missing_contrib = (
+                    use_total.loc[missing].sort_values(ascending=False).head(10).to_dict() if missing else {}
+                )
+                errors.append(
+                    "Coverage check failed for EXIO constituent set.\n"
+                    f"  aggregate_sector: {agg_s}\n"
+                    f"  exio_flow: {exio_slice.flow}\n"
+                    f"  expected_count: {len(expected_list)}\n"
+                    f"  selected_count: {len(selected_list)}\n"
+                    f"  selected/expected (by EXIO Z+Y row totals): {coverage:.6g} (tol={coverage_tol})\n"
+                    f"  missing_sectors: {missing!r}\n"
+                    f"  top_missing_contrib: {missing_contrib!r}"
+                )
+
+        if errors:
+            raise ValueError("\n\n".join(errors))
+
     res = disaggregate_and_balance(
-        eurostat_Z, eurostat_Y, split_profiles=profiles, max_iter=ras_max_iter, tol=ras_tol,
+        eurostat_Z,
+        eurostat_Y,
+        split_profiles=profiles,
+        balancing_scope=balancing_scope,
+        max_iter=ras_max_iter,
+        tol=ras_tol,
         create_io_system=create_io_system,
     )
 
@@ -453,6 +516,9 @@ def split_iot_using_exiobase_shares(
     prefix_template: str = "{aggregate}::",
     ras_max_iter: int = 50_000,
     ras_tol: float = 1e-10,
+    balancing_scope: str = "local",
+    coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
+    coverage_tol: float = 0.0,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
@@ -478,6 +544,9 @@ def split_iot_using_exiobase_shares(
         prefix_template=prefix_template,
         ras_max_iter=ras_max_iter,
         ras_tol=ras_tol,
+        balancing_scope=balancing_scope,
+        coverage_expected_exio_sectors=coverage_expected_exio_sectors,
+        coverage_tol=coverage_tol,
         extract_quantity_and_price=extract_quantity_and_price,
         quantity_price_extensions=quantity_price_extensions,
         quantity_price_stressor_keywords=quantity_price_stressor_keywords,

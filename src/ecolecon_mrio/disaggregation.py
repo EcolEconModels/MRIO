@@ -6,7 +6,7 @@ from typing import Mapping, Sequence, TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.balancing import BalanceStats, balance_biproportional
+from ecolecon_mrio.balancing import BalanceStats, balance_biproportional, balance_biproportional_masked
 
 if TYPE_CHECKING:
     try:
@@ -248,6 +248,7 @@ def disaggregate_and_balance(
     Y: pd.DataFrame,
     *,
     split_profiles: Mapping[str, SplitProfiles],
+    balancing_scope: str = "local",
     max_iter: int = 50_000,
     tol: float = 1e-10,
     create_io_system: bool = True,
@@ -256,6 +257,12 @@ def disaggregate_and_balance(
     Expand Z/Y using `split_profiles`, then biproportionally balance [Z|Y] to targets.
 
     Balancing uses RAS if feasible; otherwise it falls back to GRAS.
+
+    `balancing_scope` controls which cells are allowed to change during balancing:
+    - "global": all cells in [Z|Y] may change (standard RAS/GRAS).
+    - "local": keep the untouched blocks fixed and only balance cells that touch the
+      newly-created subsectors (recommended when you want the original IO table to
+      remain identical outside the split sectors).
     
     Parameters:
         Z: Square intermediate transactions matrix
@@ -275,9 +282,43 @@ def disaggregate_and_balance(
     row_targets = x_target.to_numpy()
     col_targets = np.concatenate([u_target.to_numpy(), fd_targets.to_numpy()])
 
-    M_bal, stats, method = balance_biproportional(
-        M0.to_numpy(), row_targets=row_targets, col_targets=col_targets, max_iter=max_iter, tol=tol
-    )
+    balancing_scope_n = str(balancing_scope).strip().lower()
+    if balancing_scope_n not in {"global", "local"}:
+        raise ValueError(f"balancing_scope must be 'local' or 'global', got {balancing_scope!r}.")
+
+    if balancing_scope_n == "global":
+        M_bal, stats, method = balance_biproportional(
+            M0.to_numpy(), row_targets=row_targets, col_targets=col_targets, max_iter=max_iter, tol=tol
+        )
+    else:
+        # Constrained/local balancing: keep the untouched (un-split) blocks fixed.
+        subsectors: set[str] = set()
+        for prof in split_profiles.values():
+            subsectors.update(map(str, prof.subsectors))
+
+        row_is_split = np.array([str(s) in subsectors for s in M0.index], dtype=bool)
+
+        # Columns: first block is Z columns (sector labels), second block is final demand.
+        z_cols = list(map(str, Z0.columns))
+        col_is_split_Z = np.array([c in subsectors for c in z_cols], dtype=bool)
+        n_z = len(z_cols)
+        n_y = Y0.shape[1]
+
+        # Adjustable mask:
+        # - Z block: adjust cells where row or column touches a split subsector
+        # - Y block: only adjust split subsector rows (keep unaffected Y rows fixed)
+        mask_Z = row_is_split[:, None] | col_is_split_Z[None, :]
+        mask_Y = row_is_split[:, None].repeat(n_y, axis=1)
+        adjustable = np.concatenate([mask_Z, mask_Y], axis=1)
+
+        M_bal, stats, method = balance_biproportional_masked(
+            M0.to_numpy(),
+            row_targets=row_targets,
+            col_targets=col_targets,
+            adjustable=adjustable,
+            max_iter=max_iter,
+            tol=tol,
+        )
 
     M_bal_df = pd.DataFrame(M_bal, index=M0.index, columns=M0.columns)
     Z_bal = M_bal_df.loc[:, Z0.columns]

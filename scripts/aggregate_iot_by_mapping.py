@@ -194,6 +194,9 @@ def _write_sfc_workbook(
 
     from ecolecon_mrio.eurostat_iot import load_eurostat_iot
 
+    def _r(x: float) -> float:
+        return float(round(float(x), 2))
+
     filt = dict(eurostat_filters)
     if variant_value is not None:
         filt[variant_dim] = str(variant_value)
@@ -248,6 +251,53 @@ def _write_sfc_workbook(
     else:
         fd_codes_order_no_total = fd_codes_order
         _vprint(verbose, "Note: Eurostat meta did not include a 'TOTAL' column; template alignment may be off.")
+
+    # Eurostat IOT exports use a fixed ordering in the final-demand block that does not always match
+    # the SDMX category index order (notably for the P5 aggregates and TU/TFU).
+    eurostat_fd_canonical = [
+        "P3",
+        "P3_S13",
+        "P3_S14",
+        "P3_S15",
+        "P5",
+        "P5M",
+        "P6",
+        "P6_B0",
+        "P6_D0",
+        "P6_U2",
+        "P6_U3",
+        "P51G",
+        "P52",
+        "P53",
+        "TU",
+        "TFU",
+    ]
+    eurostat_xlsx_template_fd_display = [
+        # Eurostat XLSX export layout (as in tmp/IOT_Austria_2021_Eurostat.xlsx):
+        # includes P5 total, then P5M as a subcomponent, then exports, then P51G/P52/P53 breakdown,
+        # and finally TU/TFU summary columns.
+        "P3",
+        "P3_S13",
+        "P3_S14",
+        "P3_S15",
+        "P5",
+        "P5M",
+        "P6",
+        "P6_B0",
+        "P6_D0",
+        "P6_U2",
+        "P6_U3",
+        "P51G",
+        "P52",
+        "P53",
+        "TU",
+        "TFU",
+    ]
+    y_cols = set(map(str, Y_after.columns))
+    if template_xlsx is not None and set(eurostat_xlsx_template_fd_display).issubset(y_cols):
+        fd_codes_order_no_total = eurostat_xlsx_template_fd_display
+    elif set(eurostat_fd_canonical).issubset(y_cols):
+        fd_codes_order_no_total = eurostat_fd_canonical
 
     Z_ord = Z_after.loc[product_codes_order, product_codes_order].astype("float64")
     Y_ord = Y_after.loc[product_codes_order, :].astype("float64")
@@ -337,49 +387,83 @@ def _write_sfc_workbook(
     ws.cell(row=hr, column=1).value = ws.cell(row=hr, column=1).value or f"{str(eurostat_col_dim).upper()} (Labels)"
     ws.cell(row=hr, column=c_total).value = "Total"
 
-    for j, code in enumerate(product_codes_order):
-        label = _pretty_sector_label(row_labels.get(code, str(code)))
-        ws.cell(row=hr, column=c_prod0 + j).value = label
+    if template_xlsx is None:
+        for j, code in enumerate(product_codes_order):
+            label = _pretty_sector_label(row_labels.get(code, str(code)))
+            ws.cell(row=hr, column=c_prod0 + j).value = label
 
-    for j, code in enumerate(fd_codes_order_no_total):
-        label = str(col_labels.get(code, code))
-        ws.cell(row=hr, column=c_fd0 + j).value = label
+        for j, code in enumerate(fd_codes_order_no_total):
+            label = str(col_labels.get(code, code))
+            ws.cell(row=hr, column=c_fd0 + j).value = label
+    else:
+        # Template mode: preserve template header labels (only rename new aggregates).
+        for j, code in enumerate(product_codes_order):
+            if str(code).startswith("ENERGY_"):
+                label = _pretty_sector_label(code)
+                ws.cell(row=hr, column=c_prod0 + j).value = label
 
     # Total row label
     ws.cell(row=tr, column=1).value = "Total"
 
-    # Fill totals row numeric values
-    if "TOTAL" in Y_ord.columns:
-        ws.cell(row=tr, column=c_total).value = float(Y_ord["TOTAL"].sum())
+    # Summary columns (these exist in the Eurostat XLSX export but should be derived from Z/Y)
+    row_sum_Z = Z_ord.sum(axis=1)
+    total_intermediate = float(row_sum_Z.sum())
+
+    # Total final use (TFU) should be derived for consistency after splitting/balancing:
+    # TFU = P3 + P5 + P6. (P5M and P51G are overlapping components of P5.)
+    if {"P3", "P5", "P6"}.issubset(set(Y_ord.columns)):
+        tfu = (Y_ord["P3"] + Y_ord["P5"] + Y_ord["P6"]).astype("float64")
+        tfu_total = float(tfu.sum())
+    elif "TFU" in Y_ord.columns:
+        tfu = Y_ord["TFU"].astype("float64")
+        tfu_total = float(tfu.sum())
     else:
-        ws.cell(row=tr, column=c_total).value = float(Z_ord.to_numpy().sum())
+        tfu = pd.Series(0.0, index=Y_ord.index)
+        tfu_total = 0.0
+
+    tu = (row_sum_Z + tfu).astype("float64")
+    tu_total = float(total_intermediate + tfu_total)
+
+    # Total row, column B: total intermediate consumption
+    ws.cell(row=tr, column=c_total).value = _r(total_intermediate)
 
     col_sums_Z = Z_ord.sum(axis=0)
     for j, code in enumerate(product_codes_order):
-        ws.cell(row=tr, column=c_prod0 + j).value = float(col_sums_Z.loc[code])
+        ws.cell(row=tr, column=c_prod0 + j).value = _r(col_sums_Z.loc[code])
 
-    col_sums_Y = Y_ord.reindex(columns=fd_codes_order_no_total).sum(axis=0)
+    col_sums_Y = Y_ord.sum(axis=0)
     for j, code in enumerate(fd_codes_order_no_total):
-        ws.cell(row=tr, column=c_fd0 + j).value = float(col_sums_Y.loc[code])
+        if code == "TU":
+            ws.cell(row=tr, column=c_fd0 + j).value = _r(tu_total)
+        elif code == "TFU":
+            ws.cell(row=tr, column=c_fd0 + j).value = _r(tfu_total)
+        else:
+            ws.cell(row=tr, column=c_fd0 + j).value = _r(col_sums_Y.get(code, 0.0))
 
     # Fill product rows (labels + numbers)
     for i, row_code in enumerate(product_codes_order):
         excel_r = r0 + i
-        ws.cell(row=excel_r, column=1).value = _pretty_sector_label(row_labels.get(row_code, str(row_code)))
-        if "TOTAL" in Y_ord.columns:
-            ws.cell(row=excel_r, column=c_total).value = float(Y_ord.loc[row_code, "TOTAL"])
+        if template_xlsx is None:
+            ws.cell(row=excel_r, column=1).value = _pretty_sector_label(row_labels.get(row_code, str(row_code)))
         else:
-            ws.cell(row=excel_r, column=c_total).value = float(Z_ord.loc[row_code].sum())
+            if str(row_code).startswith("ENERGY_"):
+                ws.cell(row=excel_r, column=1).value = _pretty_sector_label(row_code)
+
+        ws.cell(row=excel_r, column=c_total).value = _r(row_sum_Z.loc[row_code])
 
         # intermediate block
         row_vec = Z_ord.loc[row_code, product_codes_order]
         for j, col_code in enumerate(product_codes_order):
-            ws.cell(row=excel_r, column=c_prod0 + j).value = float(row_vec.loc[col_code])
+            ws.cell(row=excel_r, column=c_prod0 + j).value = _r(row_vec.loc[col_code])
 
         # final demand block (excluding TOTAL)
-        fd_vec = Y_ord.loc[row_code, fd_codes_order_no_total]
         for j, col_code in enumerate(fd_codes_order_no_total):
-            ws.cell(row=excel_r, column=c_fd0 + j).value = float(fd_vec.loc[col_code])
+            if col_code == "TU":
+                ws.cell(row=excel_r, column=c_fd0 + j).value = _r(tu.loc[row_code])
+            elif col_code == "TFU":
+                ws.cell(row=excel_r, column=c_fd0 + j).value = _r(tfu.loc[row_code])
+            else:
+                ws.cell(row=excel_r, column=c_fd0 + j).value = _r(float(Y_ord.loc[row_code, col_code]))
 
     # Template-only: update account rows for the new energy sectors and blank out energy-balance sheets.
     if template_xlsx is not None:

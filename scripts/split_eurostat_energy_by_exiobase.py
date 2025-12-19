@@ -136,6 +136,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Which EXIO use-slice to derive split shares from. "
         "auto maps Eurostat stk_flow DOM/IMP/TOTAL -> EXIO domestic/imports/total.",
     )
+    p.add_argument(
+        "--balancing-scope",
+        default="local",
+        choices=["local", "global"],
+        help="How to apply RAS/GRAS balancing after splitting. "
+        "local keeps the untouched parts of the IO table fixed and only balances cells that touch the new subsectors; "
+        "global allows all cells to change.",
+    )
 
     p.add_argument(
         "--dump-exio-sectors-csv",
@@ -147,6 +155,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="CSV mapping file with columns aggregate_sector, exio_sector[,subsector,enabled]. "
         "When provided, pattern matching is disabled (recommended).",
+    )
+    p.add_argument(
+        "--require-mapping-coverage",
+        action="store_true",
+        help=(
+            "Require a constituent coverage check before splitting. When enabled, the mapping CSV must list "
+            "the full constituent set for each aggregate (including any disabled rows). The split will error "
+            "if the enabled subset covers less than (1 - --coverage-tol) of the constituent total, as measured "
+            "in the selected EXIO flow."
+        ),
+    )
+    p.add_argument(
+        "--coverage-tol",
+        type=float,
+        default=0.0,
+        help=(
+            "Tolerance for the coverage check (default 0.0). Example: 1e-6 allows up to 0.0001%% of EXIO Z+Y row totals "
+            "to be omitted/disabled."
+        ),
     )
     p.add_argument(
         "--allow-normalized-exio-match",
@@ -260,6 +287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     sector_to_exio_sectors = None
+    coverage_expected_exio = None
     if args.exio_mapping_csv is not None:
         _vprint(args.verbose, "Calling: read_exio_sector_mapping_csv(...)")
         t = _Timer()
@@ -267,6 +295,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         _vprint(args.verbose, f"Returned: read_exio_sector_mapping_csv ({t.elapsed_s():.2f}s)")
         if args.verbose and (args.patterns_19 is not None or args.patterns_35 is not None or args.electricity_by_source):
             _vprint(args.verbose, "NOTE: --exio-mapping-csv provided; ignoring pattern selection flags.")
+        if args.require_mapping_coverage:
+            df_all = pd.read_csv(args.exio_mapping_csv, dtype=str).fillna("")
+            needed = {"aggregate_sector", "exio_sector"}
+            missing = sorted(needed - set(df_all.columns))
+            if missing:
+                raise SystemExit(
+                    f"--require-mapping-coverage requires mapping CSV columns {sorted(needed)}; missing: {missing}"
+                )
+            df_all["aggregate_sector"] = df_all["aggregate_sector"].astype(str).str.strip()
+            df_all["exio_sector"] = df_all["exio_sector"].astype(str).str.strip()
+            df_all = df_all[(df_all["aggregate_sector"] != "") & (df_all["exio_sector"] != "")]
+            if "constituent" in df_all.columns:
+                def _boolish(v: object) -> bool:
+                    s = str(v).strip().lower()
+                    if s == "" or s in {"1", "true", "t", "yes", "y", "on"}:
+                        return True
+                    if s in {"0", "false", "f", "no", "n", "off"}:
+                        return False
+                    raise SystemExit(f"Could not parse boolean-ish mapping CSV constituent value: {v!r}")
+
+                df_all = df_all[df_all["constituent"].map(_boolish)].copy()
+            coverage_expected_exio = {
+                str(agg): list(map(str, g["exio_sector"].tolist()))
+                for agg, g in df_all.groupby("aggregate_sector", sort=False)
+            }
     report_aggregates = (
         tuple(sector_to_exio_sectors.keys())
         if sector_to_exio_sectors is not None
@@ -334,6 +387,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     sector_patterns=None if sector_to_exio_sectors is not None else sector_patterns,
                     allow_normalized_exio_match=args.allow_normalized_exio_match,
                     exio_cache_root=data_root,
+                    balancing_scope=args.balancing_scope,
+                    coverage_expected_exio_sectors=coverage_expected_exio,
+                    coverage_tol=args.coverage_tol,
                     extract_quantity_and_price=extract_qp,
                     quantity_price_extensions=qp_extensions if extract_qp else None,
                     quantity_price_stressor_keywords=qp_keywords if extract_qp else None,
@@ -423,6 +479,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         sector_patterns=None if sector_to_exio_sectors is not None else sector_patterns,
         allow_normalized_exio_match=args.allow_normalized_exio_match,
         exio_cache_root=data_root,
+        balancing_scope=args.balancing_scope,
+        coverage_expected_exio_sectors=coverage_expected_exio,
+        coverage_tol=args.coverage_tol,
         extract_quantity_and_price=extract_qp,
         quantity_price_extensions=qp_extensions if extract_qp else None,
         quantity_price_stressor_keywords=qp_keywords if extract_qp else None,
