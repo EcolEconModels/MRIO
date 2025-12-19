@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+from pandas.errors import ParserError
 
 
 @dataclass(frozen=True)
@@ -50,10 +52,105 @@ def read_sector_aggregation_mapping_csv(
     - enabled: boolean-ish (default True)
     - notes: ignored by the parser (kept in returned DataFrame)
     """
-    df = pd.read_csv(path, dtype=str).fillna("")
+    path = Path(path)
+
+    def _read_mapping_csv_heuristic() -> pd.DataFrame:
+        """
+        Heuristic reader for hand-edited CSVs with unquoted commas.
+
+        Assumes the conventional column order: from_sector,to_sector,enabled,notes
+        and repairs by parsing from the right (..., to, enabled, notes...).
+        """
+        rows: list[dict[str, str]] = []
+        with path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            header: list[str] | None = None
+            for raw in reader:
+                if not raw:
+                    continue
+                if raw[0].lstrip().startswith("#"):
+                    continue
+                header = [c.strip() for c in raw]
+                break
+            if header is None:
+                raise ValueError(f"Aggregation mapping CSV {path} is empty.")
+
+            if from_col not in header or to_col not in header:
+                raise ValueError(
+                    f"Aggregation mapping CSV {path} missing required columns: "
+                    f"{[c for c in (from_col, to_col) if c not in header]}"
+                )
+
+            # Heuristic repair for unquoted commas, assuming the conventional column order:
+            # from_sector,to_sector,enabled,notes
+            expected = [from_col, to_col, enabled_col, "notes"]
+            if header[: len(expected)] != expected[: len(header)]:
+                raise ValueError(
+                    f"Aggregation mapping CSV {path} parsed unexpectedly; "
+                    f"expected header starting with {expected}, got {header}"
+                )
+
+            for raw in reader:
+                if not raw or all(str(x).strip() == "" for x in raw):
+                    continue
+                if str(raw[0]).lstrip().startswith("#"):
+                    continue
+
+                parts = [str(x).strip() for x in raw]
+                enabled_idx = None
+                if enabled_col in header:
+                    enabled_idx = header.index(enabled_col)
+
+                if enabled_idx is None:
+                    if len(parts) < 2:
+                        continue
+                    from_sector = ",".join(parts[:-1]).strip()
+                    to_sector = parts[-1].strip()
+                    enabled = "1"
+                    notes = ""
+                else:
+                    # Parse from the right: ... , to_sector, enabled, notes...
+                    enabled_pos = None
+                    for i in range(len(parts) - 1, -1, -1):
+                        try:
+                            _parse_bool(parts[i])
+                            enabled_pos = i
+                            break
+                        except Exception:
+                            continue
+                    if enabled_pos is None or enabled_pos == 0:
+                        raise ValueError(
+                            f"Aggregation mapping CSV {path} has a row without a parseable "
+                            f"{enabled_col}: {raw!r}"
+                        )
+                    if enabled_pos - 1 < 0:
+                        raise ValueError(
+                            f"Aggregation mapping CSV {path} has a row without {to_col}: {raw!r}"
+                        )
+                    to_sector = parts[enabled_pos - 1].strip()
+                    enabled = parts[enabled_pos].strip()
+                    notes = ",".join(parts[enabled_pos + 1 :]).strip()
+                    from_sector = ",".join(parts[: enabled_pos - 1]).strip()
+
+                rows.append(
+                    {
+                        from_col: from_sector,
+                        to_col: to_sector,
+                        enabled_col: enabled,
+                        "notes": notes,
+                    }
+                )
+
+        return pd.DataFrame(rows).fillna("")
+
+    try:
+        df = pd.read_csv(path, dtype=str).fillna("")
+    except ParserError:
+        # Most commonly: unquoted commas in from_sector or notes.
+        df = _read_mapping_csv_heuristic()
     missing = [c for c in (from_col, to_col) if c not in df.columns]
     if missing:
-        raise ValueError(f"Aggregation mapping CSV {Path(path)} missing required columns: {missing}")
+        raise ValueError(f"Aggregation mapping CSV {path} missing required columns: {missing}")
 
     if enabled_col in df.columns:
         mask = df[enabled_col].map(_parse_bool).astype(bool)
@@ -249,4 +346,3 @@ def write_aggregation_report_xlsx(
         summary.to_excel(xw, sheet_name="summary", index=False)
 
     return out_path
-
