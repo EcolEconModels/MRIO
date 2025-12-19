@@ -248,7 +248,7 @@ def build_split_profiles_from_exiobase_domestic_block(
 
         Z_rr = exio_slice.Z_domestic
         Y_r = exio_slice.Y_region
-        x_r = exio_slice.x_region
+        x_use = (Z_rr.sum(axis=1) + Y_r.sum(axis=1)).astype("float64")
         
         # Pre-compute sums to avoid repetitive matrix summing in loop
         # These are series indexed by exio sector
@@ -274,7 +274,7 @@ def build_split_profiles_from_exiobase_domestic_block(
                 # Aggregate EXIO vectors into subsector totals, then normalize to shares.
                 # Optimized: slices from pre-computed sums instead of summing matrix block every time.
                 x_sub = pd.Series(
-                    {sub: float(x_r.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()},
+                    {sub: float(x_use.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()},
                     dtype="float64",
                 )
                 sales_sub = pd.Series(

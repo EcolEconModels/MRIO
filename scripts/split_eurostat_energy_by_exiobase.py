@@ -89,6 +89,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 filters["stk_flow"] = _normalize_stk_flow(cur)
         return filters
 
+    def _exio_flow_for_eurostat_flow_value(flow_value: str) -> str:
+        if args.exio_share_flow != "auto":
+            return str(args.exio_share_flow)
+        if args.eurostat_stk_flow_dim == "stk_flow":
+            f = str(flow_value).upper()
+            if f == "DOM":
+                return "domestic"
+            if f == "IMP":
+                return "imports"
+            if f in {"TOTAL", "TOT"}:
+                return "total"
+        return "domestic"
+
     p = argparse.ArgumentParser(
         description="Split Eurostat AT IOT energy sectors (NACE 19/35) using EXIOBASE shares and RAS/GRAS-balance."
     )
@@ -116,6 +129,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     p.add_argument("--exio-year", type=int, default=2020)
     p.add_argument("--exio-region", default="AT")
+    p.add_argument(
+        "--exio-share-flow",
+        default="auto",
+        choices=["auto", "domestic", "imports", "total"],
+        help="Which EXIO use-slice to derive split shares from. "
+        "auto maps Eurostat stk_flow DOM/IMP/TOTAL -> EXIO domestic/imports/total.",
+    )
 
     p.add_argument(
         "--dump-exio-sectors-csv",
@@ -202,6 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             year=args.exio_year,
             region=args.exio_region,
             system="pxp",
+            flow="domestic",
             cache_root=data_root,
             verbose=args.verbose,
         )
@@ -278,16 +299,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             _vprint(args.verbose, f"Returned: load_eurostat_iot_variants ({t.elapsed_s():.2f}s)")
 
-            _vprint(args.verbose, "Calling: load_exiobase3_region_slice(...)")
-            t = _Timer()
-            exio_slice = load_exiobase3_region_slice(
-                year=args.exio_year,
-                region=args.exio_region,
-                system="pxp",
-                cache_root=data_root,
-                verbose=False,
-            )
-            _vprint(args.verbose, f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)")
+            exio_slices: dict[str, object] = {}
+            for flow in flows:
+                exio_flow = _exio_flow_for_eurostat_flow_value(flow)
+                if exio_flow in exio_slices:
+                    continue
+                _vprint(args.verbose, f"Calling: load_exiobase3_region_slice(..., flow={exio_flow})")
+                t = _Timer()
+                exio_slices[exio_flow] = load_exiobase3_region_slice(
+                    year=args.exio_year,
+                    region=args.exio_region,
+                    system="pxp",
+                    flow=exio_flow,
+                    cache_root=data_root,
+                    verbose=args.verbose,
+                )
+                _vprint(args.verbose, f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)")
 
             for flow, parsed in variants.items():
                 flow_dir = outdir / f"{args.eurostat_stk_flow_dim}={flow}"
@@ -295,6 +322,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 _vprint(args.verbose, f"Calling: split_iot_using_exiobase_split_profiles(...) [{flow}]")
                 t = _Timer()
+                exio_flow = _exio_flow_for_eurostat_flow_value(flow)
+                exio_slice = exio_slices[exio_flow]
                 res = split_iot_using_exiobase_shares(
                     eurostat_Z=parsed.Z,
                     eurostat_Y=parsed.Y,
@@ -363,6 +392,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _vprint(args.verbose, f"Returned: load_eurostat_iot ({t.elapsed_s():.2f}s)")
         Z, Y = parsed.Z, parsed.Y
+        exio_flow_single = _exio_flow_for_eurostat_flow_value(
+            str(base_filters.get(args.eurostat_stk_flow_dim, "DOM"))
+        )
     else:
         if not (args.eurostat_z and args.eurostat_y):
             raise SystemExit("Provide --eurostat-z and --eurostat-y, or use --eurostat-dataset mode.")
@@ -370,6 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         t = _Timer()
         Z, Y = load_local_iot(args.eurostat_z, args.eurostat_y)
         _vprint(args.verbose, f"Returned: load_local_iot ({t.elapsed_s():.2f}s)")
+        exio_flow_single = "domestic" if args.exio_share_flow == "auto" else str(args.exio_share_flow)
 
     _vprint(args.verbose, "Calling: split_iot_using_exiobase_shares(...)")
     t = _Timer()
@@ -378,6 +411,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         eurostat_Y=Y,
         exio_year=args.exio_year,
         exio_region=args.exio_region,
+        exio_slice=load_exiobase3_region_slice(
+            year=args.exio_year,
+            region=args.exio_region,
+            system="pxp",
+            flow=exio_flow_single,
+            cache_root=data_root,
+            verbose=args.verbose,
+        ),
         sector_to_exio_sectors=sector_to_exio_sectors,
         sector_patterns=None if sector_to_exio_sectors is not None else sector_patterns,
         allow_normalized_exio_match=args.allow_normalized_exio_match,

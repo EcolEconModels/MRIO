@@ -22,6 +22,7 @@ class ExioRegionSlice:
     Y_region: pd.DataFrame
     x_region: pd.Series
     source_zip: Path
+    flow: str = "domestic"
 
 
 def _coerce_single_column_df_to_series(x: pd.Series | pd.DataFrame, *, name: str) -> pd.Series:
@@ -51,6 +52,85 @@ def list_local_exiobase3_years(*, data_root: str | Path | None = None) -> list[i
         except Exception:
             continue
     return sorted(set(years))
+
+
+def _normalize_flow(flow: str) -> str:
+    flow_norm = str(flow).strip().lower()
+    if flow_norm in {"dom", "domestic"}:
+        return "domestic"
+    if flow_norm in {"imp", "import", "imports"}:
+        return "imports"
+    if flow_norm in {"tot", "total"}:
+        return "total"
+    raise ValueError("flow must be one of: domestic, imports, total")
+
+
+def build_exio_region_use_slice_from_mrio(
+    *,
+    year: int,
+    system: str,
+    region: str,
+    Z: pd.DataFrame,
+    Y: pd.DataFrame,
+    source_zip: Path,
+    flow: str = "domestic",
+) -> ExioRegionSlice:
+    """
+    Build an EXIO-like single-region *use* slice from a full MRIO (Z,Y).
+
+    Definitions (destination = `region`):
+    - flow='domestic': origin == region
+    - flow='imports' : sum over origins != region
+    - flow='total'   : sum over all origins
+
+    Returns an `ExioRegionSlice` whose `Z_domestic`/`Y_region` contain the chosen use matrices.
+    """
+    flow_norm = _normalize_flow(flow)
+
+    if not isinstance(Z.index, pd.MultiIndex) or not isinstance(Z.columns, pd.MultiIndex):
+        raise ValueError("Expected MRIO Z to have MultiIndex rows/cols (region, sector).")
+    if not isinstance(Y.index, pd.MultiIndex) or not isinstance(Y.columns, pd.MultiIndex):
+        raise ValueError("Expected MRIO Y to have MultiIndex rows/cols.")
+
+    # Slice use side (columns) to destination region (drops region level in columns).
+    Z_to_r = Z.xs(region, level=0, axis=1)
+    Y_to_r = Y.xs(region, level=0, axis=1)
+
+    # Domestic use (origin == region).
+    Z_dom = Z_to_r.xs(region, level=0, axis=0)
+    Y_dom = Y_to_r.xs(region, level=0, axis=0)
+
+    # Import use (origin != region), summed over origins -> by-sector.
+    Z_foreign = Z_to_r.loc[Z_to_r.index.get_level_values(0) != region]
+    Y_foreign = Y_to_r.loc[Y_to_r.index.get_level_values(0) != region]
+    Z_imp = Z_foreign.groupby(level=1).sum()
+    Y_imp = Y_foreign.groupby(level=1).sum()
+
+    # Total use, summed over all origins -> by-sector.
+    Z_tot = Z_to_r.groupby(level=1).sum()
+    Y_tot = Y_to_r.groupby(level=1).sum()
+
+    if flow_norm == "domestic":
+        Z_use, Y_use = Z_dom, Y_dom
+    elif flow_norm == "imports":
+        Z_use, Y_use = Z_imp, Y_imp
+    else:
+        Z_use, Y_use = Z_tot, Y_tot
+
+    sectors = pd.Index(Z_use.index.astype(str))
+    x_use = (Z_use.sum(axis=1) + Y_use.sum(axis=1)).astype("float64")
+
+    return ExioRegionSlice(
+        year=year,
+        system=system,
+        region=region,
+        sectors=sectors,
+        Z_domestic=Z_use,
+        Y_region=Y_use,
+        x_region=x_use,
+        source_zip=source_zip,
+        flow=flow_norm,
+    )
 
 
 def load_exiobase3(
@@ -97,6 +177,7 @@ def load_exiobase3_region_slice(
     year: int,
     region: str = "AT",
     system: str = "pxp",
+    flow: str = "domestic",
     force_download: bool = False,
     force_rebuild_slice: bool = False,
     cache_root: str | Path | None = None,
@@ -112,12 +193,20 @@ def load_exiobase3_region_slice(
 
         cache_root = default_data_root()
     cache_root = Path(cache_root)
+    flow_norm = _normalize_flow(flow)
+
     slice_dir = cache_root / f"exiobase3_{year}" / "slices" / region / system
     slice_dir.mkdir(parents=True, exist_ok=True)
 
-    z_path = slice_dir / "Z_domestic.pkl"
-    y_path = slice_dir / "Y_region.pkl"
-    x_path = slice_dir / "x_region.pkl"
+    if flow_norm == "domestic":
+        z_path = slice_dir / "Z_domestic.pkl"
+        y_path = slice_dir / "Y_region.pkl"
+    elif flow_norm == "imports":
+        z_path = slice_dir / "Z_imports.pkl"
+        y_path = slice_dir / "Y_imports.pkl"
+    else:  # total
+        z_path = slice_dir / "Z_total.pkl"
+        y_path = slice_dir / "Y_total.pkl"
     meta_path = slice_dir / "meta.json"
 
     source_zip = cache_root / f"exiobase3_{year}" / f"IOT_{year}_{system}.zip"
@@ -127,23 +216,23 @@ def load_exiobase3_region_slice(
         if alt.exists():
             source_zip = alt
 
-    if not force_rebuild_slice and z_path.exists() and y_path.exists() and x_path.exists():
+    if not force_rebuild_slice and z_path.exists() and y_path.exists():
         if verbose:
-            print(f"Loading cached EXIOBASE region slice from {slice_dir} ...")
-        Z_domestic = pd.read_pickle(z_path)
-        Y_region = pd.read_pickle(y_path)
-        x_region_raw = pd.read_pickle(x_path)
-        x_region = _coerce_single_column_df_to_series(x_region_raw, name="x_region").astype("float64")
-        sectors = pd.Index(Z_domestic.index.astype(str))
+            print(f"Loading cached EXIOBASE region slice from {slice_dir} [flow={flow_norm}] ...")
+        Z_use = pd.read_pickle(z_path)
+        Y_use = pd.read_pickle(y_path)
+        sectors = pd.Index(Z_use.index.astype(str))
+        x_use = (Z_use.sum(axis=1) + Y_use.sum(axis=1)).astype("float64")
         return ExioRegionSlice(
             year=year,
             system=system,
             region=region,
             sectors=sectors,
-            Z_domestic=Z_domestic,
-            Y_region=Y_region,
-            x_region=x_region,
+            Z_domestic=Z_use,
+            Y_region=Y_use,
+            x_region=x_use,
             source_zip=source_zip,
+            flow=flow_norm,
         )
 
     if verbose:
@@ -162,38 +251,31 @@ def load_exiobase3_region_slice(
 
     Z = mrio.Z
     Y = mrio.Y
-    x = mrio.x
 
     if not isinstance(Z.index, pd.MultiIndex) or not isinstance(Z.columns, pd.MultiIndex):
         raise ValueError("Expected EXIOBASE Z to have MultiIndex rows/cols (region, sector).")
     if not isinstance(Y.index, pd.MultiIndex) or not isinstance(Y.columns, pd.MultiIndex):
         raise ValueError("Expected EXIOBASE Y to have MultiIndex rows and columns.")
 
-    Z_rr = Z.xs(region, level=0, axis=0).xs(region, level=0, axis=1)
-    Y_r = Y.xs(region, level=0, axis=0).xs(region, level=0, axis=1)
-    x_r_raw = x.xs(region, level=0, axis=0)
-    x_r = _coerce_single_column_df_to_series(x_r_raw, name="x_region").astype("float64")
-
-    if verbose:
-        print(f"Writing EXIOBASE region slice cache to {slice_dir} ...")
-    Z_rr.to_pickle(z_path)
-    Y_r.to_pickle(y_path)
-    x_r.to_pickle(x_path)
-    meta_path.write_text(
-        f'{{"year":{year},"system":"{system}","region":"{region}"}}', encoding="utf-8"
-    )
-
-    sectors = pd.Index(Z_rr.index.astype(str))
-    return ExioRegionSlice(
+    slice_obj = build_exio_region_use_slice_from_mrio(
         year=year,
         system=system,
         region=region,
-        sectors=sectors,
-        Z_domestic=Z_rr,
-        Y_region=Y_r,
-        x_region=x_r,
+        Z=Z,
+        Y=Y,
         source_zip=source_zip,
+        flow=flow_norm,
     )
+
+    if verbose:
+        print(f"Writing EXIOBASE region slice cache to {slice_dir} ...")
+    slice_obj.Z_domestic.to_pickle(z_path)
+    slice_obj.Y_region.to_pickle(y_path)
+    meta_path.write_text(
+        f'{{"year":{year},"system":"{system}","region":"{region}","flow":"{flow_norm}"}}',
+        encoding="utf-8",
+    )
+    return slice_obj
 
 
 def load_exiobase3_region_slices(
@@ -312,7 +394,8 @@ def build_split_profiles_from_exio_domestic_block(
 
     Z_rr = exio_slice.Z_domestic
     Y_r = exio_slice.Y_region
-    x_r = exio_slice.x_region
+    # Use-side "output" for the slice (matches Eurostat-style Z+Y accounting).
+    x_use = (Y_r.sum(axis=1) + Z_rr.sum(axis=1)).astype("float64")
 
     exio_sector_index = pd.Index(Z_rr.index.astype(str))
     if selector == "patterns":
@@ -344,7 +427,7 @@ def build_split_profiles_from_exio_domestic_block(
     ]
 
     matched_idx = pd.Index(matched)
-    x_sub = x_r.loc[matched_idx].astype("float64")
+    x_sub = x_use.loc[matched_idx].astype("float64")
     domestic_sales_intermediate = Z_rr.loc[matched_idx, :].sum(axis=1).astype("float64")
     domestic_inputs = Z_rr.loc[:, matched_idx].sum(axis=0).astype("float64")
     domestic_final_demand = Y_r.loc[matched_idx, :].sum(axis=1).astype("float64")
