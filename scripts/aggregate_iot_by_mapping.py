@@ -194,8 +194,12 @@ def _write_sfc_workbook(
 
     from ecolecon_mrio.eurostat_iot import load_eurostat_iot
 
-    def _r(x: float) -> float:
-        return float(round(float(x), 2))
+    number_format = "0.00"
+
+    def _write_num(ws, *, row: int, col: int, value: float) -> None:
+        cell = ws.cell(row=row, column=col)
+        cell.value = float(value)
+        cell.number_format = number_format
 
     filt = dict(eurostat_filters)
     if variant_value is not None:
@@ -425,20 +429,20 @@ def _write_sfc_workbook(
     tu_total = float(total_intermediate + tfu_total)
 
     # Total row, column B: total intermediate consumption
-    ws.cell(row=tr, column=c_total).value = _r(total_intermediate)
+    _write_num(ws, row=tr, col=c_total, value=total_intermediate)
 
     col_sums_Z = Z_ord.sum(axis=0)
     for j, code in enumerate(product_codes_order):
-        ws.cell(row=tr, column=c_prod0 + j).value = _r(col_sums_Z.loc[code])
+        _write_num(ws, row=tr, col=c_prod0 + j, value=float(col_sums_Z.loc[code]))
 
     col_sums_Y = Y_ord.sum(axis=0)
     for j, code in enumerate(fd_codes_order_no_total):
         if code == "TU":
-            ws.cell(row=tr, column=c_fd0 + j).value = _r(tu_total)
+            _write_num(ws, row=tr, col=c_fd0 + j, value=tu_total)
         elif code == "TFU":
-            ws.cell(row=tr, column=c_fd0 + j).value = _r(tfu_total)
+            _write_num(ws, row=tr, col=c_fd0 + j, value=tfu_total)
         else:
-            ws.cell(row=tr, column=c_fd0 + j).value = _r(col_sums_Y.get(code, 0.0))
+            _write_num(ws, row=tr, col=c_fd0 + j, value=float(col_sums_Y.get(code, 0.0)))
 
     # Fill product rows (labels + numbers)
     for i, row_code in enumerate(product_codes_order):
@@ -449,21 +453,21 @@ def _write_sfc_workbook(
             if str(row_code).startswith("ENERGY_"):
                 ws.cell(row=excel_r, column=1).value = _pretty_sector_label(row_code)
 
-        ws.cell(row=excel_r, column=c_total).value = _r(row_sum_Z.loc[row_code])
+        _write_num(ws, row=excel_r, col=c_total, value=float(row_sum_Z.loc[row_code]))
 
         # intermediate block
         row_vec = Z_ord.loc[row_code, product_codes_order]
         for j, col_code in enumerate(product_codes_order):
-            ws.cell(row=excel_r, column=c_prod0 + j).value = _r(row_vec.loc[col_code])
+            _write_num(ws, row=excel_r, col=c_prod0 + j, value=float(row_vec.loc[col_code]))
 
         # final demand block (excluding TOTAL)
         for j, col_code in enumerate(fd_codes_order_no_total):
             if col_code == "TU":
-                ws.cell(row=excel_r, column=c_fd0 + j).value = _r(tu.loc[row_code])
+                _write_num(ws, row=excel_r, col=c_fd0 + j, value=float(tu.loc[row_code]))
             elif col_code == "TFU":
-                ws.cell(row=excel_r, column=c_fd0 + j).value = _r(tfu.loc[row_code])
+                _write_num(ws, row=excel_r, col=c_fd0 + j, value=float(tfu.loc[row_code]))
             else:
-                ws.cell(row=excel_r, column=c_fd0 + j).value = _r(float(Y_ord.loc[row_code, col_code]))
+                _write_num(ws, row=excel_r, col=c_fd0 + j, value=float(Y_ord.loc[row_code, col_code]))
 
     # Template-only: update account rows for the new energy sectors and blank out energy-balance sheets.
     if template_xlsx is not None:
