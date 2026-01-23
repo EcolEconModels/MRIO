@@ -194,11 +194,11 @@ def extract_quantity_and_price(
     cache_dir: str | Path | None = None,
 ) -> pd.DataFrame | None:
     """
-    Extract physical quantities from EXIOBASE 3 extensions and compute quantity shares + implied prices.
+    Extract physical quantities from EXIOBASE 3 extensions and compute quantity shares + unit-value proxies.
 
     Notes
     - Physical data in EXIOBASE 3 is provided via extensions (e.g., `energy/F.txt` in TJ).
-    - The implied price here is a unit-value proxy: monetary_output / physical_quantity.
+    - The value per physical input here is a unit-value proxy: monetary_output / physical_quantity.
     """
     if not sectors:
         return None
@@ -244,7 +244,7 @@ def extract_quantity_and_price(
             if not np.isfinite(total_qty) or total_qty == 0:
                 continue
             qty_share = qty / total_qty
-            implied_price = monetary_output / qty.replace(0.0, np.nan)
+            value_per_physical_input = monetary_output / qty.replace(0.0, np.nan)
             unit = ext_obj.unit.get(stressor, None)
             out = pd.DataFrame(
                 {
@@ -254,7 +254,7 @@ def extract_quantity_and_price(
                     "quantity": qty,
                     "quantity_share": qty_share,
                     "monetary_output": monetary_output,
-                    "implied_price": implied_price,
+                    "value_per_physical_input": value_per_physical_input,
                 }
             )
             out.index.name = "exio_sector"

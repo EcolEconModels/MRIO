@@ -66,6 +66,5 @@ def test_extract_quantity_and_price_from_minimal_zip(tmp_path):
     assert elec["quantity"] == 2.0
     assert abs(float(coal["quantity_share"]) - (1.0 / 3.0)) < 1e-12
     assert abs(float(elec["quantity_share"]) - (2.0 / 3.0)) < 1e-12
-    assert abs(float(coal["implied_price"]) - 10.0) < 1e-12
-    assert abs(float(elec["implied_price"]) - 20.0) < 1e-12
-
+    assert abs(float(coal["value_per_physical_input"]) - 10.0) < 1e-12
+    assert abs(float(elec["value_per_physical_input"]) - 20.0) < 1e-12

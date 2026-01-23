@@ -15,6 +15,7 @@ from ecolecon_mrio.exio_share_split import (
     read_exio_sector_mapping_csv,
     split_iot_using_exiobase_shares,
     write_split_report_xlsx,
+    map_exio_value_per_physical_input,
 )
 from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot, load_eurostat_iot_variants
@@ -196,7 +197,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument(
         "--no-exio-quantity-price",
         action="store_true",
-        help="Skip extracting physical quantities and implied price proxies from EXIO extensions.",
+        help="Skip extracting physical quantities and value-per-physical-input proxies from EXIO extensions.",
     )
     p.add_argument(
         "--qp-extensions",
@@ -425,6 +426,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     out = flow_dir / "exio_quantity_and_price.csv"
                     res.exio_quantity_and_price.to_csv(out, index=False)
                     _vprint(args.verbose, f"Wrote: {out.resolve()}")
+                    
+                    # Compute and output disaggregated sector values per physical input
+                    mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+                    disagg_values = map_exio_value_per_physical_input(
+                        exio_quantity_and_price=res.exio_quantity_and_price,
+                        sector_to_exio_sectors=mapping_for_values,
+                        split_profiles=res.split_profiles,
+                    )
+                    if disagg_values is not None:
+                        out = flow_dir / "disaggregated_sector_value_per_physical_input.csv"
+                        disagg_values.to_csv(out, index=False)
+                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
                 if not args.no_xlsx_report:
                     out = flow_dir / "energy_split_report.xlsx"
                     write_split_report_xlsx(
@@ -516,6 +529,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         out = outdir / "exio_quantity_and_price_proxies.csv"
         res.exio_quantity_and_price.to_csv(out, index=False)
         _vprint(args.verbose, f"Wrote: {out.resolve()}")
+        
+        # Compute and output disaggregated sector values per physical input
+        mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+        disagg_values = map_exio_value_per_physical_input(
+            exio_quantity_and_price=res.exio_quantity_and_price,
+            sector_to_exio_sectors=mapping_for_values,
+            split_profiles=res.split_profiles,
+        )
+        if disagg_values is not None:
+            out = outdir / "disaggregated_sector_value_per_physical_input.csv"
+            disagg_values.to_csv(out, index=False)
+            _vprint(args.verbose, f"Wrote: {out.resolve()}")
     if not args.no_xlsx_report:
         out = outdir / "energy_split_report.xlsx"
         write_split_report_xlsx(out, result=res, aggregates=report_aggregates)

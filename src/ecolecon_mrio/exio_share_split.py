@@ -33,6 +33,7 @@ class SplitResult:
     balancing_stats: BalanceStats
     exio_selected_sectors: dict[str, list[str]]
     exio_quantity_and_price: pd.DataFrame | None
+    disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
 
@@ -311,6 +312,9 @@ def build_split_profiles_from_exiobase_domestic_block(
                 if prefix is not None:
                     subsectors = [f"{prefix}{s}" for s in subsectors]
                 rename = dict(zip(x_sub.index.astype(str), subsectors))
+                subsector_to_exio_prefixed = {
+                    rename[str(sub)]: list(map(str, members)) for sub, members in subsector_to_exio.items()
+                }
 
                 profiles[str(aggregate)] = SplitProfiles(
                     aggregate_sector=str(aggregate),
@@ -319,6 +323,7 @@ def build_split_profiles_from_exiobase_domestic_block(
                     intermediate_sales_share=sales_share.rename(index=rename),
                     intermediate_input_share=input_share.rename(index=rename),
                     final_demand_share=final_demand_share.rename(index=rename),
+                    subsector_to_exio_sectors=subsector_to_exio_prefixed,
                 )
 
                 flat_members: list[str] = []
@@ -357,6 +362,104 @@ def build_split_profiles_from_exiobase_domestic_block(
         profiles[str(aggregate)] = prof
         selected[str(aggregate)] = list(matched)
     return profiles, selected
+
+
+def map_exio_value_per_physical_input(
+    exio_quantity_and_price: pd.DataFrame | None,
+    split_profiles: dict[str, SplitProfiles],
+    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+) -> pd.DataFrame | None:
+    """
+    Map EXIOBASE unit-value proxies to disaggregated sectors.
+
+    For each disaggregated subsector, aggregates EXIOBASE quantities and
+    monetary outputs across the EXIO sectors assigned to that subsector.
+
+    Args:
+        exio_quantity_and_price: DataFrame from extract_quantity_and_price with columns:
+            exio_sector, extension, stressor, unit, quantity, monetary_output, value_per_physical_input
+        split_profiles: Mapping of aggregate sector -> SplitProfiles with subsector assignments
+        sector_to_exio_sectors: Optional mapping used as a fallback when the split
+            profiles do not include subsector-to-EXIO mappings.
+
+    Returns:
+        DataFrame with columns: disaggregated_sector, extension, stressor, unit,
+        quantity, monetary_output, value_per_physical_input; or None if inputs
+        are insufficient
+    """
+    if exio_quantity_and_price is None or not split_profiles:
+        return None
+
+    exio_qp = exio_quantity_and_price.copy()
+    if "value_per_physical_input" not in exio_qp.columns and "implied_price" in exio_qp.columns:
+        exio_qp = exio_qp.rename(columns={"implied_price": "value_per_physical_input"})
+
+    required_cols = {"exio_sector", "extension", "stressor", "unit", "quantity", "monetary_output"}
+    missing_cols = required_cols - set(exio_qp.columns)
+    if missing_cols:
+        raise ValueError(f"exio_quantity_and_price missing required columns: {sorted(missing_cols)!r}")
+
+    exio_qp["quantity"] = pd.to_numeric(exio_qp["quantity"], errors="coerce")
+    exio_qp["monetary_output"] = pd.to_numeric(exio_qp["monetary_output"], errors="coerce")
+
+    rows: list[dict] = []
+
+    for agg_sector, prof in split_profiles.items():
+        subsector_map = prof.subsector_to_exio_sectors
+        if not subsector_map and sector_to_exio_sectors is not None:
+            agg_map = sector_to_exio_sectors.get(str(agg_sector))
+            if isinstance(agg_map, ABCMapping):
+                resolved: dict[str, list[str]] = {}
+                for sub, members in agg_map.items():
+                    sub_label = str(sub)
+                    if sub_label not in prof.subsectors:
+                        matches = [s for s in prof.subsectors if s.endswith(f"::{sub_label}")]
+                        if len(matches) == 1:
+                            sub_label = matches[0]
+                        else:
+                            continue
+                    resolved[sub_label] = list(map(str, members))
+                subsector_map = resolved or None
+            elif agg_map is not None:
+                exio_list = list(map(str, agg_map))
+                if len(exio_list) == len(prof.subsectors):
+                    subsector_map = {
+                        subsector: [exio_sector]
+                        for subsector, exio_sector in zip(prof.subsectors, exio_list)
+                    }
+
+        if not subsector_map:
+            continue
+
+        for subsector, exio_sectors in subsector_map.items():
+            exio_subset = exio_qp[exio_qp["exio_sector"].isin(list(map(str, exio_sectors)))]
+            if exio_subset.empty:
+                continue
+
+            grouped = exio_subset.groupby(["extension", "stressor", "unit"], dropna=False)
+            for (ext, stressor, unit), group in grouped:
+                total_qty = float(group["quantity"].sum())
+                if not np.isfinite(total_qty) or total_qty == 0:
+                    continue
+                total_monetary = float(group["monetary_output"].sum())
+                if not np.isfinite(total_monetary):
+                    continue
+                rows.append(
+                    {
+                        "disaggregated_sector": subsector,
+                        "extension": ext,
+                        "stressor": stressor,
+                        "unit": unit,
+                        "quantity": total_qty,
+                        "monetary_output": total_monetary,
+                        "value_per_physical_input": total_monetary / total_qty,
+                    }
+                )
+
+    if not rows:
+        return None
+
+    return pd.DataFrame(rows)
 
 
 def split_iot_using_exiobase_split_profiles(

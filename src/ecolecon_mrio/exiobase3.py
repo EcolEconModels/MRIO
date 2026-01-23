@@ -425,6 +425,7 @@ def build_split_profiles_from_exio_domestic_block(
     subsectors = [
         f"{prefix_labels_with}{s}" if prefix_labels_with is not None else s for s in matched
     ]
+    subsector_to_exio = {sub: [exio] for exio, sub in zip(matched, subsectors)}
 
     matched_idx = pd.Index(matched)
     x_sub = x_use.loc[matched_idx].astype("float64")
@@ -455,6 +456,7 @@ def build_split_profiles_from_exio_domestic_block(
         intermediate_sales_share=sales_share.rename(index=rename),
         intermediate_input_share=input_share.rename(index=rename),
         final_demand_share=final_demand_share.rename(index=rename),
+        subsector_to_exio_sectors=subsector_to_exio,
     )
     return profiles, matched
 

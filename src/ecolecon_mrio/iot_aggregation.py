@@ -16,6 +16,7 @@ class AggregationResult:
     Y: pd.DataFrame
     x: pd.Series
     A: pd.DataFrame
+    aggregated_sector_value_per_physical_input: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
 
@@ -268,6 +269,79 @@ def aggregate_Y(
     return Y
 
 
+def compute_aggregated_sector_value_per_physical_input(
+    disaggregated_sector_value_per_physical_input: pd.DataFrame | None,
+    aggregation_mapping: Mapping[str, str],
+) -> pd.DataFrame | None:
+    """
+    Compute value-per-physical-input for aggregated sectors from disaggregated data.
+
+    For each aggregated sector, computes value per physical input as:
+        value_per_physical_input = sum(monetary_output) / sum(quantity)
+
+    Args:
+        disaggregated_sector_value_per_physical_input: DataFrame with columns:
+            disaggregated_sector, extension, stressor, unit, quantity, monetary_output, value_per_physical_input
+        aggregation_mapping: Mapping of disaggregated_sector -> aggregated_sector
+
+    Returns:
+        DataFrame with columns: aggregated_sector, extension, stressor, unit, value_per_physical_input, n_components
+        or None if inputs are insufficient
+    """
+    if (
+        disaggregated_sector_value_per_physical_input is None
+        or disaggregated_sector_value_per_physical_input.empty
+        or not aggregation_mapping
+    ):
+        return None
+
+    required_cols = {"disaggregated_sector", "extension", "stressor", "unit", "quantity", "monetary_output"}
+    missing_cols = required_cols - set(disaggregated_sector_value_per_physical_input.columns)
+    if missing_cols:
+        raise ValueError(
+            "disaggregated_sector_value_per_physical_input missing required columns: "
+            f"{sorted(missing_cols)!r}"
+        )
+
+    values = disaggregated_sector_value_per_physical_input.copy()
+    values["aggregated_sector"] = values["disaggregated_sector"].map(aggregation_mapping)
+    values = values[values["aggregated_sector"].notna()].copy()
+    if values.empty:
+        return None
+
+    values["quantity"] = pd.to_numeric(values["quantity"], errors="coerce")
+    values["monetary_output"] = pd.to_numeric(values["monetary_output"], errors="coerce")
+
+    rows: list[dict] = []
+    grouped = values.groupby(
+        ["aggregated_sector", "extension", "stressor", "unit"],
+        dropna=False,
+    )
+    for (agg_sector, ext, stressor, unit), group in grouped:
+        total_qty = float(group["quantity"].sum())
+        if not np.isfinite(total_qty) or total_qty == 0:
+            continue
+        total_monetary = float(group["monetary_output"].sum())
+        if not np.isfinite(total_monetary):
+            continue
+        value_per_physical_input = total_monetary / total_qty
+        rows.append(
+            {
+                "aggregated_sector": agg_sector,
+                "extension": ext,
+                "stressor": stressor,
+                "unit": unit,
+                "value_per_physical_input": value_per_physical_input,
+                "n_components": int(group["disaggregated_sector"].nunique()),
+            }
+        )
+
+    if not rows:
+        return None
+
+    return pd.DataFrame(rows)
+
+
 def aggregate_iot(
     Z: pd.DataFrame,
     Y: pd.DataFrame,
@@ -276,9 +350,26 @@ def aggregate_iot(
     level: int = -1,
     keep_unmapped: bool = True,
     create_io_system: bool = True,
+    compute_sector_value_per_physical_input: bool = False,
+    disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
 ) -> AggregationResult:
     """
     Aggregate an IO table (Z,Y) by summing rows/cols according to a mapping.
+
+    Args:
+        Z: Intermediate transactions matrix (must be square)
+        Y: Final demand matrix (must have same index as Z)
+        mapping: Dict mapping aggregated sector names to original sector names
+        level: Which level of MultiIndex to aggregate (if applicable)
+        keep_unmapped: Whether to keep sectors not in the mapping
+        create_io_system: Whether to build a pymrio IOSystem
+        compute_sector_value_per_physical_input: If True and disaggregated_sector_value_per_physical_input provided,
+            compute aggregated sector value-per-physical-input
+        disaggregated_sector_value_per_physical_input: DataFrame with value-per-physical-input data for disaggregated sectors
+            (required if compute_sector_value_per_physical_input=True)
+
+    Returns:
+        AggregationResult with aggregated Z, Y, x, A, and optionally aggregated_sector_value_per_physical_input
     """
     if not Z.index.equals(Z.columns):
         raise ValueError("Z must be square with matching index/columns.")
@@ -307,7 +398,22 @@ def aggregate_iot(
         except Exception:
             io_system = None
 
-    return AggregationResult(Z=Z_agg, Y=Y_agg, x=x, A=A, io_system=io_system)
+    # Compute aggregated sector value-per-physical-input if requested
+    agg_sector_values = None
+    if compute_sector_value_per_physical_input and disaggregated_sector_value_per_physical_input is not None:
+        agg_sector_values = compute_aggregated_sector_value_per_physical_input(
+            disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
+            aggregation_mapping=mapping,
+        )
+
+    return AggregationResult(
+        Z=Z_agg,
+        Y=Y_agg,
+        x=x,
+        A=A,
+        aggregated_sector_value_per_physical_input=agg_sector_values,
+        io_system=io_system,
+    )
 
 
 def write_aggregation_report_xlsx(

@@ -77,7 +77,16 @@ def _pretty_sector_label(code_or_label: str) -> str:
     return s
 
 
-def _write_excel_mapping_sheet(wb, *, sheet_name: str, mapping_df: pd.DataFrame) -> None:
+def _write_excel_mapping_sheet(
+    wb,
+    *,
+    sheet_name: str,
+    mapping_df: pd.DataFrame,
+    disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
+    aggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
+    mapping_from_col: str = "from_sector",
+    mapping_to_col: str = "to_sector",
+) -> None:
     import openpyxl
 
     if sheet_name in wb.sheetnames:
@@ -85,13 +94,67 @@ def _write_excel_mapping_sheet(wb, *, sheet_name: str, mapping_df: pd.DataFrame)
         wb.remove(ws)
     ws = wb.create_sheet(sheet_name)
 
-    headers = list(map(str, mapping_df.columns))
+    # Prepare data with value-per-physical-input columns
+    display_df = mapping_df.copy()
+
+    # Add columns for disaggregated sectors when stressor/unit are unambiguous
+    if (
+        disaggregated_sector_value_per_physical_input is not None
+        and not disaggregated_sector_value_per_physical_input.empty
+    ):
+        value_df = disaggregated_sector_value_per_physical_input.copy()
+        if {"extension", "stressor", "unit"}.issubset(value_df.columns):
+            unique_keys = value_df[["extension", "stressor", "unit"]].drop_duplicates()
+            if len(unique_keys) == 1:
+                sums = value_df.groupby("disaggregated_sector")[["quantity", "monetary_output"]].sum()
+                disagg_values_by_sector = sums["monetary_output"] / sums["quantity"]
+                unit_val = str(unique_keys["unit"].iloc[0]).strip()
+                unit_label = unit_val if unit_val and unit_val.lower() != "nan" else "unit"
+                header = f"{mapping_from_col} Value per physical input (EUR/{unit_label})"
+                display_df[header] = display_df[mapping_from_col].map(disagg_values_by_sector).fillna("")
+
+    # Write the main mapping table
+    headers = list(map(str, display_df.columns))
     ws.append(headers)
-    for row in mapping_df.itertuples(index=False):
-        ws.append([("" if v is None else str(v)) for v in row])
+    for row in display_df.itertuples(index=False):
+        ws.append([("" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)) for v in row])
+
+    # Add aggregated sector value-per-physical-input section below the mapping table
+    if (
+        aggregated_sector_value_per_physical_input is not None
+        and not aggregated_sector_value_per_physical_input.empty
+    ):
+        # Add blank row
+        ws.append([])
+
+        # Add aggregated values section header
+        current_row = ws.max_row + 1
+        ws.cell(row=current_row, column=1).value = "Re-aggregated Sector Values per Physical Input"
+        ws.cell(row=current_row, column=1).font = openpyxl.styles.Font(bold=True)
+
+        # Add aggregated values data (group by extension and stressor to show multiple rows per sector)
+        current_row += 1
+        ws.cell(row=current_row, column=1).value = mapping_to_col.replace("_", " ").title()
+        ws.cell(row=current_row, column=2).value = "Extension"
+        ws.cell(row=current_row, column=3).value = "Stressor"
+        ws.cell(row=current_row, column=4).value = "Value per physical input (EUR per unit)"
+        ws.cell(row=current_row, column=5).value = "N Components"
+
+        for _, agg_row in aggregated_sector_value_per_physical_input.iterrows():
+            current_row += 1
+            ws.cell(row=current_row, column=1).value = str(agg_row.get("aggregated_sector", ""))
+            ws.cell(row=current_row, column=2).value = str(agg_row.get("extension", ""))
+            ws.cell(row=current_row, column=3).value = str(agg_row.get("stressor", ""))
+            value_val = agg_row.get("value_per_physical_input")
+            if value_val is not None and not pd.isna(value_val):
+                ws.cell(row=current_row, column=4).value = float(value_val)
+                ws.cell(row=current_row, column=4).number_format = "0.00"
+            n_comp = agg_row.get("n_components")
+            if n_comp is not None:
+                ws.cell(row=current_row, column=5).value = int(n_comp)
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(headers))}{len(mapping_df) + 1}"
+    ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(headers))}{len(display_df) + 1}"
 
 
 def _clear_worksheet(ws) -> None:
@@ -182,6 +245,8 @@ def _write_sfc_workbook(
     mapping_from_col: str,
     mapping_to_col: str,
     verbose: bool,
+    disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
+    aggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
 ) -> None:
     """
     Write an Eurostat-export-shaped workbook for downstream R/SFC scripts.
@@ -539,7 +604,15 @@ def _write_sfc_workbook(
                         share.get("CPA_D", 0.5)
                     )
 
-    _write_excel_mapping_sheet(wb, sheet_name="IO Aggregation Mapping", mapping_df=mapping_df)
+    _write_excel_mapping_sheet(
+        wb,
+        sheet_name="IO Aggregation Mapping",
+        mapping_df=mapping_df,
+        disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
+        aggregated_sector_value_per_physical_input=aggregated_sector_value_per_physical_input,
+        mapping_from_col=mapping_from_col,
+        mapping_to_col=mapping_to_col,
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
@@ -635,9 +708,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         Y.index = Y.index.astype(str)
         Y.columns = Y.columns.astype(str)
 
+        # Try to load disaggregated sector value-per-physical-input if they exist
+        disaggregated_values = None
+        z_dir = Z_path.parent
+        values_path = z_dir / "disaggregated_sector_value_per_physical_input.csv"
+        if values_path.exists():
+            _vprint(args.verbose, f"Reading: {values_path.resolve()}")
+            disaggregated_values = pd.read_csv(values_path)
+            required_cols = {
+                "disaggregated_sector",
+                "extension",
+                "stressor",
+                "unit",
+                "quantity",
+                "monetary_output",
+            }
+            missing_cols = required_cols - set(disaggregated_values.columns)
+            if missing_cols:
+                _vprint(
+                    args.verbose,
+                    "Skipping sector value-per-physical-input aggregation; missing columns in "
+                    f"{values_path.name}: {sorted(missing_cols)!r}",
+                )
+                disaggregated_values = None
+
         _vprint(args.verbose, "Calling: aggregate_iot(...)")
         t = _Timer()
-        res = aggregate_iot(Z, Y, mapping, keep_unmapped=True, create_io_system=args.create_io_system)
+        res = aggregate_iot(
+            Z,
+            Y,
+            mapping,
+            keep_unmapped=True,
+            create_io_system=args.create_io_system,
+            compute_sector_value_per_physical_input=disaggregated_values is not None,
+            disaggregated_sector_value_per_physical_input=disaggregated_values,
+        )
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
@@ -657,6 +762,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             verbose=args.verbose,
         )
+
+        # Output aggregated sector value-per-physical-input if available
+        if res.aggregated_sector_value_per_physical_input is not None:
+            _write_df_csv(
+                res.aggregated_sector_value_per_physical_input,
+                out_base / "aggregated_sector_value_per_physical_input.csv",
+                verbose=args.verbose,
+            )
 
         if not args.no_xlsx:
             out_xlsx = out_base / "aggregation_report.xlsx"
@@ -698,6 +811,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mapping_from_col=str(args.mapping_from_col),
                 mapping_to_col=str(args.mapping_to_col),
                 verbose=args.verbose,
+                disaggregated_sector_value_per_physical_input=disaggregated_values,
+                aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
 

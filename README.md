@@ -9,6 +9,7 @@ Workflow scaffold to replicate Cahen-Fourot et al. (2020) inverted pyramid analy
 - `tests/`: lightweight unit tests for core transforms.
 - `data/`: place downloaded MRIO datasets here (gitignored).
 - `scripts/run_replication.py`: scriptable replication (downloads/caches WIOD 2013, computes Leontief/Ghosh, prunes graph, detects communities).
+- `scripts/split_eurostat_energy_by_exiobase.py` + `scripts/aggregate_iot_by_mapping.py`: optional `*_value_per_physical_input.csv` unit-value proxies (monetary output / physical quantity).
 
 ## Quickstart
 1) Create/activate the local venv and install deps:

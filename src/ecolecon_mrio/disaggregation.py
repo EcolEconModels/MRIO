@@ -21,6 +21,7 @@ class SplitProfiles:
     Split shares for one aggregate sector into multiple subsectors.
 
     Shares are 1D and should sum to 1 within each aggregate.
+    Optional subsector_to_exio_sectors captures the EXIO sectors assigned to each subsector.
     """
 
     aggregate_sector: str
@@ -29,6 +30,7 @@ class SplitProfiles:
     intermediate_sales_share: pd.Series
     intermediate_input_share: pd.Series
     final_demand_share: pd.Series
+    subsector_to_exio_sectors: dict[str, list[str]] | None = None
 
 
 @dataclass(frozen=True)
