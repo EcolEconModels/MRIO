@@ -17,6 +17,7 @@ class AggregationResult:
     x: pd.Series
     A: pd.DataFrame
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None
+    aggregated_sector_emission_intensity: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
 
@@ -269,6 +270,58 @@ def aggregate_Y(
     return Y
 
 
+def _compute_aggregated_sector_ratio_of_sums(
+    values: pd.DataFrame,
+    aggregation_mapping: Mapping[str, str],
+    *,
+    numerator_col: str,
+    denominator_col: str,
+    out_ratio_col: str,
+    out_total_numerator_col: str | None = None,
+    out_total_denominator_col: str | None = None,
+) -> pd.DataFrame | None:
+    """Aggregate a disaggregated metric to aggregated sectors via ratio-of-sums."""
+    values = values.copy()
+    values["aggregated_sector"] = values["disaggregated_sector"].map(aggregation_mapping)
+    values = values[values["aggregated_sector"].notna()].copy()
+    if values.empty:
+        return None
+
+    values[numerator_col] = pd.to_numeric(values[numerator_col], errors="coerce")
+    values[denominator_col] = pd.to_numeric(values[denominator_col], errors="coerce")
+
+    rows: list[dict] = []
+    grouped = values.groupby(
+        ["aggregated_sector", "extension", "stressor", "unit"],
+        dropna=False,
+    )
+    for (agg_sector, ext, stressor, unit), group in grouped:
+        total_den = float(group[denominator_col].sum())
+        if not np.isfinite(total_den) or total_den == 0:
+            continue
+        total_num = float(group[numerator_col].sum())
+        if not np.isfinite(total_num):
+            continue
+
+        row = {
+            "aggregated_sector": agg_sector,
+            "extension": ext,
+            "stressor": stressor,
+            "unit": unit,
+            out_ratio_col: total_num / total_den,
+            "n_components": int(group["disaggregated_sector"].nunique()),
+        }
+        if out_total_numerator_col is not None:
+            row[out_total_numerator_col] = total_num
+        if out_total_denominator_col is not None:
+            row[out_total_denominator_col] = total_den
+        rows.append(row)
+
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
+
+
 def compute_aggregated_sector_value_per_physical_input(
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None,
     aggregation_mapping: Mapping[str, str],
@@ -303,43 +356,56 @@ def compute_aggregated_sector_value_per_physical_input(
             f"{sorted(missing_cols)!r}"
         )
 
-    values = disaggregated_sector_value_per_physical_input.copy()
-    values["aggregated_sector"] = values["disaggregated_sector"].map(aggregation_mapping)
-    values = values[values["aggregated_sector"].notna()].copy()
-    if values.empty:
+    return _compute_aggregated_sector_ratio_of_sums(
+        disaggregated_sector_value_per_physical_input,
+        aggregation_mapping,
+        numerator_col="monetary_output",
+        denominator_col="quantity",
+        out_ratio_col="value_per_physical_input",
+    )
+
+def compute_aggregated_sector_emission_intensity(
+    disaggregated_sector_emission_intensity: pd.DataFrame | None,
+    aggregation_mapping: Mapping[str, str],
+) -> pd.DataFrame | None:
+    """Compute emissions intensity for aggregated sectors from disaggregated data.
+
+    For each aggregated sector, computes direct emissions intensity as:
+        emission_intensity = sum(emission) / sum(monetary_output)
+
+    Args:
+        disaggregated_sector_emission_intensity: DataFrame with columns:
+            disaggregated_sector, extension, stressor, unit, emission, monetary_output, emission_intensity
+        aggregation_mapping: Mapping of disaggregated_sector -> aggregated_sector
+
+    Returns:
+        DataFrame with columns: aggregated_sector, extension, stressor, unit,
+        emission_intensity, n_components; or None if inputs are insufficient
+    """
+    if (
+        disaggregated_sector_emission_intensity is None
+        or disaggregated_sector_emission_intensity.empty
+        or not aggregation_mapping
+    ):
         return None
 
-    values["quantity"] = pd.to_numeric(values["quantity"], errors="coerce")
-    values["monetary_output"] = pd.to_numeric(values["monetary_output"], errors="coerce")
-
-    rows: list[dict] = []
-    grouped = values.groupby(
-        ["aggregated_sector", "extension", "stressor", "unit"],
-        dropna=False,
-    )
-    for (agg_sector, ext, stressor, unit), group in grouped:
-        total_qty = float(group["quantity"].sum())
-        if not np.isfinite(total_qty) or total_qty == 0:
-            continue
-        total_monetary = float(group["monetary_output"].sum())
-        if not np.isfinite(total_monetary):
-            continue
-        value_per_physical_input = total_monetary / total_qty
-        rows.append(
-            {
-                "aggregated_sector": agg_sector,
-                "extension": ext,
-                "stressor": stressor,
-                "unit": unit,
-                "value_per_physical_input": value_per_physical_input,
-                "n_components": int(group["disaggregated_sector"].nunique()),
-            }
+    required_cols = {"disaggregated_sector", "extension", "stressor", "unit", "emission", "monetary_output"}
+    missing_cols = required_cols - set(disaggregated_sector_emission_intensity.columns)
+    if missing_cols:
+        raise ValueError(
+            "disaggregated_sector_emission_intensity missing required columns: "
+            f"{sorted(missing_cols)!r}"
         )
 
-    if not rows:
-        return None
-
-    return pd.DataFrame(rows)
+    return _compute_aggregated_sector_ratio_of_sums(
+        disaggregated_sector_emission_intensity,
+        aggregation_mapping,
+        numerator_col="emission",
+        denominator_col="monetary_output",
+        out_ratio_col="emission_intensity",
+        out_total_numerator_col="emission",
+        out_total_denominator_col="monetary_output",
+    )
 
 
 def aggregate_iot(
@@ -352,6 +418,8 @@ def aggregate_iot(
     create_io_system: bool = True,
     compute_sector_value_per_physical_input: bool = False,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
+    compute_sector_emission_intensity: bool = False,
+    disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
 ) -> AggregationResult:
     """
     Aggregate an IO table (Z,Y) by summing rows/cols according to a mapping.
@@ -406,49 +474,20 @@ def aggregate_iot(
             aggregation_mapping=mapping,
         )
 
+    agg_sector_emission_intensity = None
+    if compute_sector_emission_intensity:
+        agg_sector_emission_intensity = compute_aggregated_sector_emission_intensity(
+            disaggregated_sector_emission_intensity,
+            mapping,
+        )
+
     return AggregationResult(
         Z=Z_agg,
         Y=Y_agg,
         x=x,
         A=A,
         aggregated_sector_value_per_physical_input=agg_sector_values,
+        aggregated_sector_emission_intensity=agg_sector_emission_intensity,
         io_system=io_system,
     )
 
-
-def write_aggregation_report_xlsx(
-    out_path: str | Path,
-    *,
-    Z_before: pd.DataFrame,
-    Y_before: pd.DataFrame,
-    result: AggregationResult,
-    mapping_df: pd.DataFrame,
-) -> Path:
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    before_sectors = pd.DataFrame({"sector": list(map(str, Z_before.index))})
-    after_sectors = pd.DataFrame({"sector": list(map(str, result.Z.index))})
-
-    counts = mapping_df.copy()
-    if "enabled" not in counts.columns:
-        counts["enabled"] = "1"
-
-    with pd.ExcelWriter(out_path) as xw:
-        mapping_df.to_excel(xw, sheet_name="mapping", index=False)
-        before_sectors.to_excel(xw, sheet_name="sectors_before", index=False)
-        after_sectors.to_excel(xw, sheet_name="sectors_after", index=False)
-
-        summary = pd.DataFrame(
-            {
-                "n_sectors_before": [len(Z_before.index)],
-                "n_sectors_after": [len(result.Z.index)],
-                "Z_total_before": [float(Z_before.to_numpy().sum())],
-                "Z_total_after": [float(result.Z.to_numpy().sum())],
-                "Y_total_before": [float(Y_before.to_numpy().sum())],
-                "Y_total_after": [float(result.Y.to_numpy().sum())],
-            }
-        )
-        summary.to_excel(xw, sheet_name="summary", index=False)
-
-    return out_path

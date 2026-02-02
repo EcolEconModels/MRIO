@@ -263,3 +263,155 @@ def extract_quantity_and_price(
     if not rows:
         return None
     return pd.concat(rows, ignore_index=True)
+
+
+def extract_emissions_and_intensity(
+    *,
+    container: str | Path,
+    region: str,
+    sectors: Sequence[str],
+    monetary_output: pd.Series,
+    extension: str = "air_emissions",
+    stressor_keywords: Sequence[str] = ("CO2 - combustion - air",),
+    cache_dir: str | Path | None = None,
+) -> pd.DataFrame | None:
+    """Extract emissions from one EXIOBASE extension and compute emissions intensity.
+
+    This is the direct (production-based) environmental extension intensity:
+        emission_intensity = emissions / monetary_output
+
+    Notes
+    - `monetary_output` must be aligned to EXIO sector labels and be in the same
+      monetary basis as the IO system you will apply it to.
+    - Units come from the extension's `unit.txt` (e.g. kg for CO2 stressors).
+    """
+    if not sectors:
+        return None
+
+    sectors = list(map(str, sectors))
+    monetary_output = monetary_output.reindex(sectors).astype("float64")
+
+    ext_obj = load_exiobase3_extension(
+        container, extension=str(extension), region=str(region), cache_dir=cache_dir
+    )
+    if ext_obj.F is None:
+        return None
+
+    F = ext_obj.F
+    if not isinstance(F.columns, pd.MultiIndex) or F.columns.nlevels != 2:
+        return None
+
+    try:
+        F_r = F.xs(region, level=0, axis=1)
+    except Exception:
+        return None
+
+    if not isinstance(F_r.columns, pd.Index):
+        F_r.columns = pd.Index(map(str, F_r.columns))
+    F_r = F_r.loc[:, F_r.columns.astype(str)]
+
+    missing = [s for s in sectors if s not in set(map(str, F_r.columns))]
+    if missing:
+        return None
+
+    stressors = _select_rows_by_keywords(F_r.index, stressor_keywords)
+    if not stressors:
+        return None
+
+    rows: list[pd.DataFrame] = []
+    for stressor in stressors:
+        emis = F_r.loc[stressor, sectors].astype("float64")
+        unit = ext_obj.unit.get(stressor, None)
+        emission_intensity = emis / monetary_output.replace(0.0, np.nan)
+        out = pd.DataFrame(
+            {
+                "extension": str(extension),
+                "stressor": stressor,
+                "unit": unit,
+                "emission": emis,
+                "monetary_output": monetary_output,
+                "emission_intensity": emission_intensity,
+            }
+        )
+        out.index.name = "exio_sector"
+        rows.append(out.reset_index())
+
+    if not rows:
+        return None
+    return pd.concat(rows, ignore_index=True)
+
+
+def extract_final_demand_emissions_and_intensity(
+    *,
+    container: str | Path,
+    region: str,
+    monetary_final_demand: pd.Series,
+    extension: str = "air_emissions",
+    stressor_keywords: Sequence[str] = ("CO2 - combustion - air",),
+    cache_dir: str | Path | None = None,
+) -> pd.DataFrame | None:
+    """Extract direct emissions tied to final demand categories (EXIO F_Y).
+
+    This captures *direct* emissions that occur in final demand (e.g. households'
+    combustion), represented in EXIOBASE as an extension matrix F_Y.
+
+    Computes:
+        final_demand_emission_intensity = emission / monetary_final_demand
+
+    Args:
+        monetary_final_demand: Series indexed by EXIO final demand category labels
+            (matching the second column header line in Y.txt / F_Y.txt), values in EUR.
+
+    Returns:
+        DataFrame with columns: extension, stressor, unit, category, emission,
+        monetary_final_demand, final_demand_emission_intensity
+    """
+    monetary_final_demand = monetary_final_demand.copy()
+    monetary_final_demand.index = monetary_final_demand.index.astype(str)
+    monetary_final_demand = pd.to_numeric(monetary_final_demand, errors="coerce")
+
+    ext_obj = load_exiobase3_extension(
+        container, extension=str(extension), region=str(region), cache_dir=cache_dir
+    )
+    if ext_obj.F_Y is None:
+        return None
+
+    F_Y = ext_obj.F_Y
+    if not isinstance(F_Y.columns, pd.MultiIndex) or F_Y.columns.nlevels != 2:
+        return None
+
+    try:
+        F_Y_r = F_Y.xs(region, level=0, axis=1)
+    except Exception:
+        return None
+
+    if not isinstance(F_Y_r.columns, pd.Index):
+        F_Y_r.columns = pd.Index(map(str, F_Y_r.columns))
+    categories = pd.Index(map(str, F_Y_r.columns))
+
+    stressors = _select_rows_by_keywords(F_Y_r.index, stressor_keywords)
+    if not stressors:
+        return None
+
+    rows: list[pd.DataFrame] = []
+    for stressor in stressors:
+        emis = F_Y_r.loc[stressor, categories].astype("float64")
+        unit = ext_obj.unit.get(stressor, None)
+        denom = monetary_final_demand.reindex(categories).astype("float64")
+        intensity = emis / denom.replace(0.0, np.nan)
+        out = pd.DataFrame(
+            {
+                "extension": str(extension),
+                "stressor": stressor,
+                "unit": unit,
+                "category": categories,
+                "emission": emis.to_numpy(),
+                "monetary_final_demand": denom.to_numpy(),
+                "final_demand_emission_intensity": intensity.to_numpy(),
+            }
+        )
+        rows.append(out)
+
+    if not rows:
+        return None
+    return pd.concat(rows, ignore_index=True)

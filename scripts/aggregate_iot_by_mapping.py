@@ -7,12 +7,12 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
     read_sector_aggregation_mapping_csv,
-    write_aggregation_report_xlsx,
 )
 
 
@@ -60,6 +60,144 @@ def _write_text(path: Path, content: str, *, verbose: bool) -> None:
     _vprint(verbose, f"Wrote: {path.resolve()}")
 
 
+def write_aggregation_report_xlsx(
+    out_path: str | Path,
+    *,
+    Z_before: pd.DataFrame,
+    Y_before: pd.DataFrame,
+    result,
+    mapping_df: pd.DataFrame,
+) -> Path:
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    before_sectors = pd.DataFrame({"sector": list(map(str, Z_before.index))})
+    after_sectors = pd.DataFrame({"sector": list(map(str, result.Z.index))})
+
+    counts = mapping_df.copy()
+    if "enabled" not in counts.columns:
+        counts["enabled"] = "1"
+
+    with pd.ExcelWriter(out_path) as xw:
+        mapping_df.to_excel(xw, sheet_name="mapping", index=False)
+        before_sectors.to_excel(xw, sheet_name="sectors_before", index=False)
+        after_sectors.to_excel(xw, sheet_name="sectors_after", index=False)
+
+        summary = pd.DataFrame(
+            {
+                "n_sectors_before": [len(Z_before.index)],
+                "n_sectors_after": [len(result.Z.index)],
+                "Z_total_before": [float(Z_before.to_numpy().sum())],
+                "Z_total_after": [float(result.Z.to_numpy().sum())],
+                "Y_total_before": [float(Y_before.to_numpy().sum())],
+                "Y_total_after": [float(result.Y.to_numpy().sum())],
+            }
+        )
+        summary.to_excel(xw, sheet_name="summary", index=False)
+
+    return out_path
+
+
+def _require_columns(df: pd.DataFrame, columns: set[str], *, label: str) -> None:
+    missing = columns - set(df.columns)
+    if missing:
+        raise ValueError(f"{label} missing required columns: {sorted(missing)!r}")
+
+
+def _compute_production_based_intensity(
+    disaggregated_sector_emission_intensity: pd.DataFrame,
+) -> tuple[pd.Series, pd.Series, str]:
+    _require_columns(
+        disaggregated_sector_emission_intensity,
+        {"disaggregated_sector", "emission", "monetary_output", "unit"},
+        label="disaggregated_sector_emission_intensity",
+    )
+    emis_df = disaggregated_sector_emission_intensity.copy()
+    sums = emis_df.groupby("disaggregated_sector")[["emission", "monetary_output"]].sum()
+    out_by_sector = sums["monetary_output"]
+    intensity_by_sector = sums["emission"] / sums["monetary_output"]
+    unit_vals = emis_df["unit"].dropna().unique().tolist()
+    unit_label = str(unit_vals[0]).strip() if len(unit_vals) == 1 else "mixed units"
+    return out_by_sector, intensity_by_sector, unit_label
+
+
+def _compute_use_phase_intensity_scalar(
+    exio_final_demand_emission_intensity: pd.DataFrame,
+    Y: pd.DataFrame,
+) -> tuple[float, str]:
+    _require_columns(
+        exio_final_demand_emission_intensity,
+        {"category", "emission", "monetary_final_demand", "unit"},
+        label="exio_final_demand_emission_intensity",
+    )
+    if Y is None or Y.empty:
+        raise ValueError("disaggregated_Y is required to compute use-phase intensity.")
+
+    fy = exio_final_demand_emission_intensity.copy()
+    fy["emission"] = pd.to_numeric(fy["emission"], errors="coerce")
+    fy["monetary_final_demand"] = pd.to_numeric(fy["monetary_final_demand"], errors="coerce")
+    grouped = fy.groupby("category")[["emission", "monetary_final_demand"]].sum()
+
+    def _ratio_by_keys(keys: list[str]) -> float | None:
+        sel = [c for c in grouped.index if any(k in str(c).lower() for k in keys)]
+        if not sel:
+            return None
+        num = grouped.loc[sel, "emission"].sum()
+        den = grouped.loc[sel, "monetary_final_demand"].sum()
+        if not np.isfinite(num) or not np.isfinite(den) or den == 0:
+            return None
+        return float(num) / float(den)
+
+    p3_ratio = _ratio_by_keys([
+        "households",
+        "non-profit organisations serving households",
+        "npish",
+        "government",
+    ])
+    p5_ratio = _ratio_by_keys(["gross fixed capital formation"])
+    fy_intensity = {
+        "P3": p3_ratio,
+        "P3_S14": _ratio_by_keys(["households"]),
+        "P3_S15": _ratio_by_keys(["non-profit organisations serving households", "npish"]),
+        "P3_S13": _ratio_by_keys(["government"]),
+        "P5": p5_ratio,
+        "P51G": p5_ratio,
+        "P52": _ratio_by_keys(["inventories"]),
+        "P53": _ratio_by_keys(["valuables"]),
+        "P6": _ratio_by_keys(["exports"]),
+        "P6_B0": _ratio_by_keys(["exports"]),
+        "P6_D0": _ratio_by_keys(["exports"]),
+        "P6_U2": _ratio_by_keys(["exports"]),
+        "P6_U3": _ratio_by_keys(["exports"]),
+    }
+
+    y_cols = list(map(str, Y.columns))
+    dom_cols: list[str] = []
+    if "P3" in y_cols:
+        dom_cols.append("P3")
+    else:
+        dom_cols += [c for c in ["P3_S13", "P3_S14", "P3_S15"] if c in y_cols]
+    if "P5" in y_cols:
+        dom_cols.append("P5")
+    elif "P51G" in y_cols:
+        dom_cols.append("P51G")
+
+    intensity_by_col = {c: fy_intensity.get(c) for c in dom_cols if fy_intensity.get(c) is not None}
+    if not intensity_by_col:
+        raise ValueError("Could not derive use-phase intensities for domestic final-demand columns.")
+
+    intensities = pd.Series(intensity_by_col).dropna()
+    y_dom = Y[intensities.index].astype("float64")
+    total_emis = float((y_dom.mul(intensities, axis=1)).sum().sum())
+    total_fd = float(y_dom.sum().sum())
+    if not np.isfinite(total_emis) or not np.isfinite(total_fd) or total_fd == 0:
+        raise ValueError("Invalid totals for use-phase intensity (emissions or final demand).")
+
+    unit_vals = fy["unit"].dropna().unique().tolist()
+    unit_label = str(unit_vals[0]).strip() if len(unit_vals) == 1 else "mixed units"
+    return total_emis / total_fd, unit_label
+
+
 def _parse_json_arg(s: str) -> dict:
     try:
         obj = json.loads(s)
@@ -82,17 +220,64 @@ def _write_excel_mapping_sheet(
     *,
     sheet_name: str,
     mapping_df: pd.DataFrame,
+    disaggregated_Y: pd.DataFrame | None = None,
+    aggregated_Y: pd.DataFrame | None = None,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
+    disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
+    aggregated_sector_emission_intensity: pd.DataFrame | None = None,
+    exio_final_demand_emission_intensity: pd.DataFrame | None = None,
     mapping_from_col: str = "from_sector",
     mapping_to_col: str = "to_sector",
 ) -> None:
     import openpyxl
+    from openpyxl.utils import get_column_letter
 
     if sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         wb.remove(ws)
     ws = wb.create_sheet(sheet_name)
+
+    def _auto_width(ws) -> None:
+        for col_cells in ws.columns:
+            values = [cell.value for cell in col_cells if cell.value is not None]
+            if not values:
+                continue
+            max_len = max(len(str(v)) for v in values)
+            ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 2, 60)
+
+    def _split_final_demand(Y: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
+        cols = list(map(str, Y.columns))
+
+        # Consumption
+        if "P3" in cols:
+            cons_cols = ["P3"]
+        else:
+            cons_cols = [c for c in cols if c in {"P3_S13", "P3_S14", "P3_S15"}]
+
+        # Capital formation (avoid overlap with stocks)
+        if "P5" in cols:
+            cap_cols = ["P5"]
+        else:
+            cap_cols = [c for c in cols if c == "P51G"]
+
+        # Exports
+        if "P6" in cols:
+            exp_cols = ["P6"]
+        else:
+            exp_cols = [c for c in cols if c in {"P6_B0", "P6_D0", "P6_U2", "P6_U3"}]
+
+        # Stocks & valuables
+        stock_cols = [c for c in cols if c in {"P52", "P53"}]
+
+        Y_use = Y.copy()
+        for c in Y_use.columns:
+            Y_use[c] = pd.to_numeric(Y_use[c], errors="coerce")
+
+        domestic = Y_use[cons_cols + cap_cols].sum(axis=1) if (cons_cols or cap_cols) else Y_use.sum(axis=1) * 0
+        exports = Y_use[exp_cols].sum(axis=1) if exp_cols else Y_use.sum(axis=1) * 0
+        stocks = Y_use[stock_cols].sum(axis=1) if stock_cols else Y_use.sum(axis=1) * 0
+        return domestic.astype("float64"), exports.astype("float64"), stocks.astype("float64")
 
     # Prepare data with value-per-physical-input columns
     display_df = mapping_df.copy()
@@ -107,51 +292,293 @@ def _write_excel_mapping_sheet(
             unique_keys = value_df[["extension", "stressor", "unit"]].drop_duplicates()
             if len(unique_keys) == 1:
                 sums = value_df.groupby("disaggregated_sector")[["quantity", "monetary_output"]].sum()
-                disagg_values_by_sector = sums["monetary_output"] / sums["quantity"]
                 unit_val = str(unique_keys["unit"].iloc[0]).strip()
-                unit_label = unit_val if unit_val and unit_val.lower() != "nan" else "unit"
-                header = f"{mapping_from_col} Value per physical input (EUR/{unit_label})"
-                display_df[header] = display_df[mapping_from_col].map(disagg_values_by_sector).fillna("")
+                unit_label = unit_val if unit_val and unit_val.lower() != "nan" else "mixed units"
+                header_energy = f"{mapping_from_col} Total energy ({unit_label})"
+                header_value = f"{mapping_from_col} Total value (EUR)"
+                display_df[header_energy] = display_df[mapping_from_col].map(sums["quantity"]).fillna("")
+                display_df[header_value] = display_df[mapping_from_col].map(sums["monetary_output"]).fillna("")
+
+    # Add CO2 monetary output + production-based intensity columns for disaggregated sectors
+    if disaggregated_sector_emission_intensity is None or disaggregated_sector_emission_intensity.empty:
+        raise ValueError("disaggregated_sector_emission_intensity is required for production-based CO2 intensity.")
+    emis_df = disaggregated_sector_emission_intensity.copy()
+    _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
+    unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
+    if len(unique_keys) != 1:
+        raise ValueError(
+            "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
+        )
+    disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
+    header_out = f"{mapping_from_col} Monetary output (M€)"
+    header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
+    display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
+    display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
+
+    # Add domestic/exports/stocks final demand + CO2 intensity for domestic demand (per disaggregated sector)
+    domestic_fd_by_sector = None
+    exports_by_sector = None
+    stocks_by_sector = None
+    if disaggregated_Y is not None and not disaggregated_Y.empty:
+        domestic_fd_by_sector, exports_by_sector, stocks_by_sector = _split_final_demand(disaggregated_Y)
+        display_df[f"{mapping_from_col} Domestic final demand (M€)"] = display_df[
+            mapping_from_col
+        ].map(domestic_fd_by_sector).fillna("")
+        display_df[f"{mapping_from_col} Exports (M€)"] = display_df[mapping_from_col].map(
+            exports_by_sector
+        ).fillna("")
+        display_df[f"{mapping_from_col} Stocks & valuables (M€)"] = display_df[
+            mapping_from_col
+        ].map(stocks_by_sector).fillna("")
+
+    # Add notes on energy-use stressors
+    if "stressor" in display_df.columns and "notes" not in display_df.columns:
+        stressor_notes = {
+            "energy use - emission relevant": (
+                "Energy that is combustion-relevant (used for emissions accounting)."
+            ),
+            "energy use - final": "Final energy delivered to end users.",
+            "energy use - gross": "Total primary energy input before transformation losses.",
+            "energy use - net": "Energy available after transformation losses.",
+        }
+
+        def _note_for_stressor(val: object) -> str:
+            s = str(val).strip().lower()
+            for key, note in stressor_notes.items():
+                if key in s:
+                    return note
+            return ""
+
+        display_df["notes"] = display_df["stressor"].map(_note_for_stressor)
+
+    # Use-phase (F_Y) domestic-demand CO2 intensity (scalar applied to all sectors)
+    if exio_final_demand_emission_intensity is None or exio_final_demand_emission_intensity.empty:
+        raise ValueError("exio_final_demand_emission_intensity is required for use-phase CO2 intensity.")
+    if disaggregated_Y is None or disaggregated_Y.empty:
+        raise ValueError("disaggregated_Y is required for use-phase CO2 intensity.")
+    fy_dom_intensity_scalar, fy_unit_label = _compute_use_phase_intensity_scalar(
+        exio_final_demand_emission_intensity,
+        disaggregated_Y,
+    )
+    header_fd_int = f"{mapping_from_col} Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)"
+    display_df[header_fd_int] = fy_dom_intensity_scalar
 
     # Write the main mapping table
     headers = list(map(str, display_df.columns))
     ws.append(headers)
-    for row in display_df.itertuples(index=False):
-        ws.append([("" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)) for v in row])
 
-    # Add aggregated sector value-per-physical-input section below the mapping table
+    def _cell_value(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        if isinstance(v, (int, float)):
+            return float(v)
+        return str(v)
+
+    for row in display_df.itertuples(index=False):
+        ws.append([_cell_value(v) for v in row])
+
+    # Apply number formats for known numeric columns in the main mapping table
+    header_to_col = {h: i + 1 for i, h in enumerate(headers)}
+    for h, col_idx in header_to_col.items():
+        if "Monetary output" in h:
+            fmt = "0.00"
+        elif "Mean CO2 intensity" in h:
+            fmt = "0.0000"
+        elif "Domestic final demand" in h or "Exports" in h or "Stocks" in h:
+            fmt = "0.00"
+        elif "Total energy" in h or "Total value" in h:
+            fmt = "0.00"
+        else:
+            continue
+        for r in range(2, len(display_df) + 2):
+            ws.cell(row=r, column=col_idx).number_format = fmt
+
+    _auto_width(ws)
+
+    # Add aggregated sector totals (energy + value) by stressor in a separate tab
     if (
         aggregated_sector_value_per_physical_input is not None
         and not aggregated_sector_value_per_physical_input.empty
     ):
-        # Add blank row
-        ws.append([])
+        sheet_title = "Re-aggregated Totals"
+        if sheet_title in wb.sheetnames:
+            wb.remove(wb[sheet_title])
+        ws_v = wb.create_sheet(sheet_title)
+        agg = None
+        n_comp = None
+        use_unit_column = True
+        unit_label = None
 
-        # Add aggregated values section header
-        current_row = ws.max_row + 1
-        ws.cell(row=current_row, column=1).value = "Re-aggregated Sector Values per Physical Input"
-        ws.cell(row=current_row, column=1).font = openpyxl.styles.Font(bold=True)
+        if disaggregated_sector_value_per_physical_input is not None:
+            disagg_vals = disaggregated_sector_value_per_physical_input.copy()
+            required = {
+                "disaggregated_sector",
+                "extension",
+                "stressor",
+                "unit",
+                "quantity",
+                "monetary_output",
+            }
+            if required.issubset(disagg_vals.columns):
+                tmp = disagg_vals.merge(
+                    mapping_df[[mapping_from_col, mapping_to_col]],
+                    left_on="disaggregated_sector",
+                    right_on=mapping_from_col,
+                    how="left",
+                )
+                tmp = tmp[tmp[mapping_to_col].notna()].copy()
+                if not tmp.empty:
+                    agg = (
+                        tmp.groupby([mapping_to_col, "extension", "stressor", "unit"], dropna=False)
+                        [["quantity", "monetary_output"]]
+                        .sum()
+                    )
+                    n_comp = tmp.groupby([mapping_to_col, "extension", "stressor", "unit"], dropna=False)[
+                        mapping_from_col
+                    ].nunique()
 
-        # Add aggregated values data (group by extension and stressor to show multiple rows per sector)
-        current_row += 1
-        ws.cell(row=current_row, column=1).value = mapping_to_col.replace("_", " ").title()
-        ws.cell(row=current_row, column=2).value = "Extension"
-        ws.cell(row=current_row, column=3).value = "Stressor"
-        ws.cell(row=current_row, column=4).value = "Value per physical input (EUR per unit)"
-        ws.cell(row=current_row, column=5).value = "N Components"
+                    units = agg.index.get_level_values("unit").dropna().unique().tolist()
+                    if len(units) == 1:
+                        unit_label = str(units[0]).strip()
+                        use_unit_column = False
 
-        for _, agg_row in aggregated_sector_value_per_physical_input.iterrows():
-            current_row += 1
-            ws.cell(row=current_row, column=1).value = str(agg_row.get("aggregated_sector", ""))
-            ws.cell(row=current_row, column=2).value = str(agg_row.get("extension", ""))
-            ws.cell(row=current_row, column=3).value = str(agg_row.get("stressor", ""))
-            value_val = agg_row.get("value_per_physical_input")
-            if value_val is not None and not pd.isna(value_val):
-                ws.cell(row=current_row, column=4).value = float(value_val)
-                ws.cell(row=current_row, column=4).number_format = "0.00"
-            n_comp = agg_row.get("n_components")
-            if n_comp is not None:
-                ws.cell(row=current_row, column=5).value = int(n_comp)
+                    stressor_notes = {
+                        "energy use - emission relevant": (
+                            "Energy that is combustion-relevant (used for emissions accounting)."
+                        ),
+                        "energy use - final": "Final energy delivered to end users.",
+                        "energy use - gross": "Total primary energy input before transformation losses.",
+                        "energy use - net": "Energy available after transformation losses.",
+                    }
+
+                    def _note_for_stressor(val: object) -> str:
+                        s = str(val).strip().lower()
+                        for key, note in stressor_notes.items():
+                            if key in s:
+                                return note
+                        return ""
+
+                    pass
+
+        total_energy_header = "Total energy"
+        if unit_label:
+            total_energy_header = f"Total energy ({unit_label})"
+
+        if use_unit_column:
+            ws_v.append(
+                [
+                    mapping_to_col.replace("_", " ").title(),
+                    "Extension",
+                    "Stressor",
+                    "Unit",
+                    total_energy_header,
+                    "Total value (M€)",
+                    "N Components",
+                    "Notes",
+                ]
+            )
+        else:
+            ws_v.append(
+                [
+                    mapping_to_col.replace("_", " ").title(),
+                    "Extension",
+                    "Stressor",
+                    total_energy_header,
+                    "Total value (M€)",
+                    "N Components",
+                    "Notes",
+                ]
+            )
+
+        if agg is not None:
+            for (sector, ext, stressor, unit), row in agg.iterrows():
+                if use_unit_column:
+                    ws_v.append(
+                        [
+                            str(sector),
+                            str(ext),
+                            str(stressor),
+                            str(unit),
+                            row["quantity"],
+                            row["monetary_output"],
+                            int(n_comp.get((sector, ext, stressor, unit), 0)) if n_comp is not None else 0,
+                            _note_for_stressor(stressor),
+                        ]
+                    )
+                else:
+                    ws_v.append(
+                        [
+                            str(sector),
+                            str(ext),
+                            str(stressor),
+                            row["quantity"],
+                            row["monetary_output"],
+                            int(n_comp.get((sector, ext, stressor, unit), 0)) if n_comp is not None else 0,
+                            _note_for_stressor(stressor),
+                        ]
+                    )
+
+        energy_col_idx = 5 if use_unit_column else 4
+        value_col_idx = 6 if use_unit_column else 5
+        for row in ws_v.iter_rows(min_row=2, min_col=energy_col_idx, max_col=value_col_idx):
+            for cell in row:
+                if cell.value is not None and not pd.isna(cell.value):
+                    cell.number_format = "0.00"
+        _auto_width(ws_v)
+
+    # Add aggregated sector summary with domestic/exports/stocks + use-phase intensity (F_Y)
+    if aggregated_Y is not None and not aggregated_Y.empty:
+        if aggregated_sector_emission_intensity is None or aggregated_sector_emission_intensity.empty:
+            raise ValueError("aggregated_sector_emission_intensity is required for the summary sheet.")
+        if fy_dom_intensity_scalar is None:
+            raise ValueError("use-phase CO2 intensity is required for the summary sheet.")
+        agg_domestic_fd, agg_exports, agg_stocks = _split_final_demand(aggregated_Y)
+
+        sheet_title = "Re-aggregated Summary"
+        if sheet_title in wb.sheetnames:
+            wb.remove(wb[sheet_title])
+        ws_s = wb.create_sheet(sheet_title)
+
+        prod_unit_label = "mixed units"
+        if "unit" in aggregated_sector_emission_intensity.columns:
+            uvals = aggregated_sector_emission_intensity["unit"].dropna().unique().tolist()
+            if len(uvals) == 1:
+                prod_unit_label = str(uvals[0]).strip()
+
+        ws_s.append(
+            [
+                mapping_to_col.replace("_", " ").title(),
+                "Monetary output (M€)",
+                f"Mean CO2 intensity ({prod_unit_label}/M€)",
+                "Domestic final demand (M€)",
+                "Exports (M€)",
+                "Stocks & valuables (M€)",
+                f"Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)",
+            ]
+        )
+        agg_emis_df = aggregated_sector_emission_intensity
+        for _, row in agg_emis_df.iterrows():
+            agg_sector = str(row.get("aggregated_sector", ""))
+            ws_s.append(
+                [
+                    agg_sector,
+                    row.get("monetary_output"),
+                    row.get("emission_intensity"),
+                    agg_domestic_fd.get(agg_sector) if agg_domestic_fd is not None else None,
+                    agg_exports.get(agg_sector) if agg_exports is not None else None,
+                    agg_stocks.get(agg_sector) if agg_stocks is not None else None,
+                    fy_dom_intensity_scalar,
+                ]
+            )
+        for row in ws_s.iter_rows(min_row=2, min_col=2, max_col=7):
+            for cell in row:
+                if cell.value is None or pd.isna(cell.value):
+                    continue
+                if cell.column in (2, 4, 5, 6):
+                    cell.number_format = "0.00"
+                else:
+                    cell.number_format = "0.0000"
+        _auto_width(ws_s)
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(headers))}{len(display_df) + 1}"
@@ -247,6 +674,9 @@ def _write_sfc_workbook(
     verbose: bool,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
+    disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
+    aggregated_sector_emission_intensity: pd.DataFrame | None = None,
+    exio_final_demand_emission_intensity: pd.DataFrame | None = None,
 ) -> None:
     """
     Write an Eurostat-export-shaped workbook for downstream R/SFC scripts.
@@ -608,8 +1038,13 @@ def _write_sfc_workbook(
         wb,
         sheet_name="IO Aggregation Mapping",
         mapping_df=mapping_df,
+        disaggregated_Y=Y_before,
+        aggregated_Y=Y_after,
         disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
         aggregated_sector_value_per_physical_input=aggregated_sector_value_per_physical_input,
+        disaggregated_sector_emission_intensity=disaggregated_sector_emission_intensity,
+        aggregated_sector_emission_intensity=aggregated_sector_emission_intensity,
+        exio_final_demand_emission_intensity=exio_final_demand_emission_intensity,
         mapping_from_col=mapping_from_col,
         mapping_to_col=mapping_to_col,
     )
@@ -732,6 +1167,53 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 disaggregated_values = None
 
+        # Try to load disaggregated sector CO2/emissions intensity if they exist
+        disaggregated_emissions = None
+        emissions_path = z_dir / "disaggregated_sector_co2_intensity.csv"
+        if emissions_path.exists():
+            _vprint(args.verbose, f"Reading: {emissions_path.resolve()}")
+            disaggregated_emissions = pd.read_csv(emissions_path)
+            required_cols = {
+                "disaggregated_sector",
+                "extension",
+                "stressor",
+                "unit",
+                "emission",
+                "monetary_output",
+            }
+            missing_cols = required_cols - set(disaggregated_emissions.columns)
+            if missing_cols:
+                _vprint(
+                    args.verbose,
+                    "Skipping sector emissions-intensity aggregation; missing columns in "
+                    f"{emissions_path.name}: {sorted(missing_cols)!r}",
+                )
+                disaggregated_emissions = None
+
+        # Try to load EXIO final-demand direct CO2 intensity (F_Y) if it exists
+        exio_final_demand_emissions = None
+        fd_path = z_dir / "exio_final_demand_co2_intensity.csv"
+        if fd_path.exists():
+            _vprint(args.verbose, f"Reading: {fd_path.resolve()}")
+            exio_final_demand_emissions = pd.read_csv(fd_path)
+            required_cols = {
+                "extension",
+                "stressor",
+                "unit",
+                "category",
+                "emission",
+                "monetary_final_demand",
+                "final_demand_emission_intensity",
+            }
+            missing_cols = required_cols - set(exio_final_demand_emissions.columns)
+            if missing_cols:
+                _vprint(
+                    args.verbose,
+                    "Skipping EXIO final-demand emissions-intensity; missing columns in "
+                    f"{fd_path.name}: {sorted(missing_cols)!r}",
+                )
+                exio_final_demand_emissions = None
+
         _vprint(args.verbose, "Calling: aggregate_iot(...)")
         t = _Timer()
         res = aggregate_iot(
@@ -742,6 +1224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             create_io_system=args.create_io_system,
             compute_sector_value_per_physical_input=disaggregated_values is not None,
             disaggregated_sector_value_per_physical_input=disaggregated_values,
+            compute_sector_emission_intensity=disaggregated_emissions is not None,
+            disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
@@ -768,6 +1252,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             _write_df_csv(
                 res.aggregated_sector_value_per_physical_input,
                 out_base / "aggregated_sector_value_per_physical_input.csv",
+                verbose=args.verbose,
+            )
+
+        # Output aggregated sector emissions intensity if available
+        if res.aggregated_sector_emission_intensity is not None:
+            _write_df_csv(
+                res.aggregated_sector_emission_intensity,
+                out_base / "aggregated_sector_co2_intensity.csv",
+                verbose=args.verbose,
+            )
+
+        if exio_final_demand_emissions is not None:
+            _write_df_csv(
+                exio_final_demand_emissions,
+                out_base / "exio_final_demand_co2_intensity.csv",
                 verbose=args.verbose,
             )
 
@@ -813,6 +1312,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verbose=args.verbose,
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
+                disaggregated_sector_emission_intensity=disaggregated_emissions,
+                aggregated_sector_emission_intensity=res.aggregated_sector_emission_intensity,
+                exio_final_demand_emission_intensity=exio_final_demand_emissions,
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
 

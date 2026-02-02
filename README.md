@@ -68,3 +68,28 @@ VS Code does not auto-reload notebooks when the file changes; close/reopen or us
 - Wire in plotting utilities (bar/treemap/network) under `src/ecolecon_mrio/`.
 - Add data-loading helpers for WIOD and reproducible sample fixtures.
 - Flesh out the pyramid construction to mirror the exact algorithmic choices in Cahen-Fourot (layer definitions, thresholds) and adapt them to environmental intensities.
+
+## Pipeline: AT 2021 ENERGY_GREEN / ENERGY_BROWN
+
+This repo includes a reproducible 3-step pipeline to:
+
+1) Generate an EXIO → Eurostat energy split mapping CSV (no network).
+2) Split Eurostat AT 2021 IOT into energy subsectors (batch over `stk_flow`).
+3) Re-aggregate split subsectors into `ENERGY_GREEN` / `ENERGY_BROWN` and write one Eurostat-shaped workbook per `stk_flow`.
+
+Recommended entrypoint (no extra dependencies):
+
+```
+bash scripts/pipelines/at_2021_energy_green_brown.sh
+```
+
+You can run the script from any working directory; it resolves the repo root internally.
+
+Optional convenience (if `make` is available):
+
+```
+make at-2021-energy-green-brown
+```
+
+The script uses `.venv/bin/python` and supports overrides via environment variables:
+`TEMPLATE_XLSX`, `OUT_SPLIT`, `OUT_AGG`, `EXIO_YEAR`, `EXIO_REGION`, `EUROSTAT_TIME`, `EUROSTAT_GEO`.

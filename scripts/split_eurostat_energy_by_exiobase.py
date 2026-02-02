@@ -16,8 +16,13 @@ from ecolecon_mrio.exio_share_split import (
     split_iot_using_exiobase_shares,
     write_split_report_xlsx,
     map_exio_value_per_physical_input,
+    map_exio_emission_intensity,
 )
 from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
+from ecolecon_mrio.exiobase3_extensions import (
+    extract_emissions_and_intensity as extract_exio_emissions_and_intensity,
+    extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
+)
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot, load_eurostat_iot_variants
 
 
@@ -210,6 +215,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         help='JSON list of stressor substring keywords to select quantity rows (default: ["Energy use -"]).',
     )
 
+    p.add_argument(
+        "--no-exio-co2-intensity",
+        action="store_true",
+        help="Skip extracting direct CO2 intensity (emissions per monetary output) from EXIO air_emissions extension.",
+    )
+    p.add_argument(
+        "--co2-extension",
+        default="air_emissions",
+        help="EXIO extension to read for CO2 (default: air_emissions).",
+    )
+    p.add_argument(
+        "--co2-stressor-keywords",
+        default='["CO2 - combustion - air"]',
+        help='JSON list of stressor substring keywords to select CO2 rows (default: ["CO2 - combustion - air"]).',
+    )
+
     p.add_argument("--outdir", default=None, help="Output directory (required unless using a dump/template mode).")
     p.add_argument("--no-xlsx-report", action="store_true", help="Skip writing the XLSX report.")
     args = p.parse_args(argv)
@@ -239,6 +260,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     extract_qp = not args.no_exio_quantity_price
     qp_extensions = tuple(json.loads(args.qp_extensions))
     qp_keywords = tuple(json.loads(args.qp_stressor_keywords))
+    extract_co2 = not args.no_exio_co2_intensity
+    co2_extension = str(args.co2_extension)
+    co2_keywords = tuple(json.loads(args.co2_stressor_keywords))
     qp_cache_dir = (
         data_root / f"exiobase3_{args.exio_year}" / "slices" / args.exio_region / "pxp" / "extensions"
     )
@@ -438,6 +462,63 @@ def main(argv: Sequence[str] | None = None) -> int:
                         out = flow_dir / "disaggregated_sector_value_per_physical_input.csv"
                         disagg_values.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+                # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
+                if extract_co2:
+                    exio_sectors: list[str] = []
+                    for agg in res.split_profiles.keys():
+                        exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
+                    exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
+
+                    # Use the same monetary-output convention as the slice (Eurostat-style Z+Y totals).
+                    exio_out = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype(
+                        "float64"
+                    )
+
+                    # Final-demand monetary totals by EXIO category (EUR)
+                    y_by_category = exio_slice.Y_region.sum(axis=0)
+                    if isinstance(y_by_category, pd.DataFrame):
+                        y_by_category = y_by_category.iloc[:, 0]
+                    y_by_category = y_by_category.astype("float64")
+
+                    exio_co2 = extract_exio_emissions_and_intensity(
+                        container=exio_slice.source_zip,
+                        region=exio_slice.region,
+                        sectors=exio_sectors,
+                        monetary_output=exio_out,
+                        extension=co2_extension,
+                        stressor_keywords=co2_keywords,
+                        cache_dir=qp_cache_dir,
+                    )
+                    if exio_co2 is not None:
+                        out = flow_dir / "exio_co2_intensity.csv"
+                        exio_co2.to_csv(out, index=False)
+                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+                        mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+                        disagg_co2 = map_exio_emission_intensity(
+                            exio_emissions_and_intensity=exio_co2,
+                            sector_to_exio_sectors=mapping_for_values,
+                            split_profiles=res.split_profiles,
+                        )
+                        if disagg_co2 is not None:
+                            out = flow_dir / "disaggregated_sector_co2_intensity.csv"
+                            disagg_co2.to_csv(out, index=False)
+                            _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+                    # Also extract direct final-demand CO2 (F_Y), so users can report F_Y (or intensity * y)
+                    exio_fd_co2 = extract_exio_final_demand_emissions_and_intensity(
+                        container=exio_slice.source_zip,
+                        region=exio_slice.region,
+                        monetary_final_demand=y_by_category,
+                        extension=co2_extension,
+                        stressor_keywords=co2_keywords,
+                        cache_dir=qp_cache_dir,
+                    )
+                    if exio_fd_co2 is not None:
+                        out = flow_dir / "exio_final_demand_co2_intensity.csv"
+                        exio_fd_co2.to_csv(out, index=False)
+                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
                 if not args.no_xlsx_report:
                     out = flow_dir / "energy_split_report.xlsx"
                     write_split_report_xlsx(
@@ -541,6 +622,49 @@ def main(argv: Sequence[str] | None = None) -> int:
             out = outdir / "disaggregated_sector_value_per_physical_input.csv"
             disagg_values.to_csv(out, index=False)
             _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+    # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
+    if extract_co2:
+        exio_sectors: list[str] = []
+        for agg in res.split_profiles.keys():
+            exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
+        exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
+
+        exio_slice_single = load_exiobase3_region_slice(
+            year=args.exio_year,
+            region=args.exio_region,
+            system="pxp",
+            flow=exio_flow_single,
+            cache_root=data_root,
+            verbose=args.verbose,
+        )
+        exio_out = (exio_slice_single.Z_domestic.sum(axis=1) + exio_slice_single.Y_region.sum(axis=1)).astype(
+            "float64"
+        )
+        exio_co2 = extract_exio_emissions_and_intensity(
+            container=exio_slice_single.source_zip,
+            region=exio_slice_single.region,
+            sectors=exio_sectors,
+            monetary_output=exio_out,
+            extension=co2_extension,
+            stressor_keywords=co2_keywords,
+            cache_dir=qp_cache_dir,
+        )
+        if exio_co2 is not None:
+            out = outdir / "exio_co2_intensity.csv"
+            exio_co2.to_csv(out, index=False)
+            _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+            mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+            disagg_co2 = map_exio_emission_intensity(
+                exio_emissions_and_intensity=exio_co2,
+                sector_to_exio_sectors=mapping_for_values,
+                split_profiles=res.split_profiles,
+            )
+            if disagg_co2 is not None:
+                out = outdir / "disaggregated_sector_co2_intensity.csv"
+                disagg_co2.to_csv(out, index=False)
+                _vprint(args.verbose, f"Wrote: {out.resolve()}")
     if not args.no_xlsx_report:
         out = outdir / "energy_split_report.xlsx"
         write_split_report_xlsx(out, result=res, aggregates=report_aggregates)
