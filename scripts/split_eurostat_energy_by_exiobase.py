@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
@@ -75,6 +76,41 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
     _vprint(verbose, f"Wrote: {path.resolve()}")
+    
+def _aggregate_exio_emissions_to_eurostat(
+    exio_emissions: pd.DataFrame,
+    sector_to_exio_sectors: dict[str, list[str]] | dict[str, dict[str, list[str]]],
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    for agg_sector, exio_sectors in sector_to_exio_sectors.items():
+        if isinstance(exio_sectors, dict):
+            exio_list = []
+            for members in exio_sectors.values():
+                exio_list.extend(list(map(str, members)))
+        else:
+            exio_list = list(map(str, exio_sectors))
+
+        subset = exio_emissions[exio_emissions["exio_sector"].isin(exio_list)]
+        if subset.empty:
+            continue
+        grouped = subset.groupby(["extension", "stressor", "unit"], dropna=False)
+        for (ext, stressor, unit), group in grouped:
+            total_emis = float(group["emission"].sum())
+            total_out = float(group["monetary_output"].sum())
+            if not np.isfinite(total_emis) or not np.isfinite(total_out) or total_out == 0:
+                continue
+            rows.append(
+                {
+                    "aggregated_sector": str(agg_sector),
+                    "extension": ext,
+                    "stressor": stressor,
+                    "unit": unit,
+                    "emission": total_emis,
+                    "monetary_output": total_out,
+                    "emission_intensity": total_emis / total_out,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -230,6 +266,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         default='["CO2 - combustion - air"]',
         help='JSON list of stressor substring keywords to select CO2 rows (default: ["CO2 - combustion - air"]).',
     )
+    p.add_argument(
+        "--exio-to-eurostat-mapping-csv",
+        default=None,
+        help=(
+            "Optional mapping CSV (aggregate_sector, exio_sector) to map EXIO CO2 intensities to Eurostat sectors. "
+            "If provided, writes eurostat_sector_co2_intensity.csv."
+        ),
+    )
 
     p.add_argument("--outdir", default=None, help="Output directory (required unless using a dump/template mode).")
     p.add_argument("--no-xlsx-report", action="store_true", help="Skip writing the XLSX report.")
@@ -263,6 +307,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     extract_co2 = not args.no_exio_co2_intensity
     co2_extension = str(args.co2_extension)
     co2_keywords = tuple(json.loads(args.co2_stressor_keywords))
+    full_sector_mapping = None
+    if args.exio_to_eurostat_mapping_csv:
+        full_sector_mapping = read_exio_sector_mapping_csv(args.exio_to_eurostat_mapping_csv)
     qp_cache_dir = (
         data_root / f"exiobase3_{args.exio_year}" / "slices" / args.exio_region / "pxp" / "extensions"
     )
@@ -519,6 +566,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                         out = flow_dir / "exio_final_demand_co2_intensity.csv"
                         exio_fd_co2.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+                if extract_co2 and full_sector_mapping is not None:
+                    exio_sectors_full: list[str] = []
+                    for members in full_sector_mapping.values():
+                        if isinstance(members, dict):
+                            for v in members.values():
+                                exio_sectors_full.extend(list(map(str, v)))
+                        else:
+                            exio_sectors_full.extend(list(map(str, members)))
+                    exio_sectors_full = list(dict.fromkeys(exio_sectors_full))
+
+                    available = set(map(str, exio_slice.sectors))
+                    exio_sectors_full = [s for s in exio_sectors_full if s in available]
+
+                    exio_out_full = (
+                        exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)
+                    ).astype("float64")
+                    exio_co2_full = extract_exio_emissions_and_intensity(
+                        container=exio_slice.source_zip,
+                        region=exio_slice.region,
+                        sectors=exio_sectors_full,
+                        monetary_output=exio_out_full,
+                        extension=co2_extension,
+                        stressor_keywords=co2_keywords,
+                        cache_dir=qp_cache_dir,
+                    )
+                    if exio_co2_full is not None:
+                        eurostat_co2 = _aggregate_exio_emissions_to_eurostat(
+                            exio_co2_full, full_sector_mapping
+                        )
+                        if not eurostat_co2.empty:
+                            out = flow_dir / "eurostat_sector_co2_intensity.csv"
+                            eurostat_co2.to_csv(out, index=False)
+                            _vprint(args.verbose, f"Wrote: {out.resolve()}")
                 if not args.no_xlsx_report:
                     out = flow_dir / "energy_split_report.xlsx"
                     write_split_report_xlsx(
@@ -664,6 +745,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             if disagg_co2 is not None:
                 out = outdir / "disaggregated_sector_co2_intensity.csv"
                 disagg_co2.to_csv(out, index=False)
+                _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+    if extract_co2 and full_sector_mapping is not None:
+        exio_sectors_full: list[str] = []
+        for members in full_sector_mapping.values():
+            if isinstance(members, dict):
+                for v in members.values():
+                    exio_sectors_full.extend(list(map(str, v)))
+            else:
+                exio_sectors_full.extend(list(map(str, members)))
+        exio_sectors_full = list(dict.fromkeys(exio_sectors_full))
+
+        exio_slice_single = load_exiobase3_region_slice(
+            year=args.exio_year,
+            region=args.exio_region,
+            system="pxp",
+            flow=exio_flow_single,
+            cache_root=data_root,
+            verbose=args.verbose,
+        )
+        available = set(map(str, exio_slice_single.sectors))
+        exio_sectors_full = [s for s in exio_sectors_full if s in available]
+
+        exio_out_full = (
+            exio_slice_single.Z_domestic.sum(axis=1) + exio_slice_single.Y_region.sum(axis=1)
+        ).astype("float64")
+        exio_co2_full = extract_exio_emissions_and_intensity(
+            container=exio_slice_single.source_zip,
+            region=exio_slice_single.region,
+            sectors=exio_sectors_full,
+            monetary_output=exio_out_full,
+            extension=co2_extension,
+            stressor_keywords=co2_keywords,
+            cache_dir=qp_cache_dir,
+        )
+        if exio_co2_full is not None:
+            eurostat_co2 = _aggregate_exio_emissions_to_eurostat(exio_co2_full, full_sector_mapping)
+            if not eurostat_co2.empty:
+                out = outdir / "eurostat_sector_co2_intensity.csv"
+                eurostat_co2.to_csv(out, index=False)
                 _vprint(args.verbose, f"Wrote: {out.resolve()}")
     if not args.no_xlsx_report:
         out = outdir / "energy_split_report.xlsx"

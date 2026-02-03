@@ -35,6 +35,7 @@ EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
 
 MAP_EXIO_TO_EUROSTAT="$ROOT_DIR/scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv"
 MAP_GREEN_BROWN="$ROOT_DIR/scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv"
+EXIO_TO_EUROSTAT_MAP="${EXIO_TO_EUROSTAT_MAP:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa.csv}"
 
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/AT_2021_energy_split_flows_with_source}"
 OUT_AGG="${OUT_AGG:-$ROOT_DIR/outputs/AT_2021_energy_green_brown_flows_with_source}"
@@ -53,12 +54,27 @@ STK_FLOWS_JSON='["DOM","IMP","TOTAL"]'
 
 set -x
 
-# 1) Generate mapping CSV
+# 1) Generate mapping CSVs
 "$PY" "$ROOT_DIR/scripts/generate_exio_energy_split_mapping.py" \
   --out "$MAP_EXIO_TO_EUROSTAT" \
   --electricity-by-source
 
+"$PY" "$ROOT_DIR/scripts/generate_exio_to_eurostat_mapping.py" \
+  --eurostat-dataset naio_10_cp1700 \
+  --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
+  --eurostat-row-dim prd_ava \
+  --eurostat-col-dim prd_use \
+  --eurostat-stk-flow-dim stk_flow \
+  --eurostat-stk-flow-value TOTAL \
+  --eurostat-storage-folder "$ROOT_DIR/data/eurostat" \
+  --out "$EXIO_TO_EUROSTAT_MAP"
+
 # 2) Split Eurostat IOT (batch over stk_flow)
+EXIO_TO_EUROSTAT_ARGS=()
+if [[ -f "$EXIO_TO_EUROSTAT_MAP" ]]; then
+  EXIO_TO_EUROSTAT_ARGS=(--exio-to-eurostat-mapping-csv "$EXIO_TO_EUROSTAT_MAP")
+fi
+
 "$PY" "$ROOT_DIR/scripts/split_eurostat_energy_by_exiobase.py" --verbose \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
@@ -69,6 +85,7 @@ set -x
   --exio-mapping-csv "$MAP_EXIO_TO_EUROSTAT" \
   --require-mapping-coverage --coverage-tol 0 \
   --balancing-scope local \
+  "${EXIO_TO_EUROSTAT_ARGS[@]}" \
   --outdir "$OUT_SPLIT"
 
 # 3) Aggregate to ENERGY_GREEN/BROWN + write Eurostat-shaped workbooks

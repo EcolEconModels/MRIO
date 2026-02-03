@@ -208,6 +208,17 @@ def _parse_json_arg(s: str) -> dict:
     return obj
 
 
+def _cpa_section_from_code(code: str) -> str | None:
+    s = str(code).strip().upper()
+    if s.startswith("CPA_"):
+        s = s[4:]
+    if not s:
+        return None
+    if len(s) >= 1 and s[0].isalpha():
+        return s[0]
+    return None
+
+
 def _pretty_sector_label(code_or_label: str) -> str:
     s = str(code_or_label)
     if s.startswith("ENERGY_"):
@@ -222,6 +233,9 @@ def _write_excel_mapping_sheet(
     mapping_df: pd.DataFrame,
     disaggregated_Y: pd.DataFrame | None = None,
     aggregated_Y: pd.DataFrame | None = None,
+    aggregated_x: pd.Series | None = None,
+    aggregated_sector_order: list[str] | None = None,
+    aggregated_sector_labels: dict[str, str] | None = None,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
     disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
@@ -554,28 +568,61 @@ def _write_excel_mapping_sheet(
                 "Exports (M€)",
                 "Stocks & valuables (M€)",
                 f"Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)",
+                "Heuristic fill",
             ]
         )
-        agg_emis_df = aggregated_sector_emission_intensity
-        for _, row in agg_emis_df.iterrows():
-            agg_sector = str(row.get("aggregated_sector", ""))
+        agg_emis_df = aggregated_sector_emission_intensity.copy()
+        if "aggregated_sector" in agg_emis_df.columns:
+            agg_emis_df["aggregated_sector"] = agg_emis_df["aggregated_sector"].astype(str)
+        intensity_by_sector = None
+        output_by_sector = None
+        if "aggregated_sector" in agg_emis_df.columns and "emission_intensity" in agg_emis_df.columns:
+            intensity_by_sector = agg_emis_df.set_index("aggregated_sector")["emission_intensity"]
+
+        heuristic_by_sector = None
+        if "aggregated_sector" in agg_emis_df.columns and "heuristic_fill" in agg_emis_df.columns:
+            heuristic_by_sector = agg_emis_df.set_index("aggregated_sector")["heuristic_fill"]
+
+        if aggregated_x is not None and not aggregated_x.empty:
+            output_by_sector = aggregated_x.copy()
+            output_by_sector.index = output_by_sector.index.astype(str)
+        elif "aggregated_sector" in agg_emis_df.columns and "monetary_output" in agg_emis_df.columns:
+            output_by_sector = agg_emis_df.set_index("aggregated_sector")["monetary_output"]
+
+        if aggregated_sector_order:
+            sector_index = pd.Index(list(map(str, aggregated_sector_order)))
+        elif output_by_sector is not None:
+            sector_index = output_by_sector.index
+        else:
+            sector_index = aggregated_Y.index.astype(str)
+
+        for agg_sector in sector_index:
+            agg_sector_s = str(agg_sector)
+            display_sector = (
+                aggregated_sector_labels.get(agg_sector_s)
+                if aggregated_sector_labels is not None
+                else agg_sector_s
+            )
             ws_s.append(
                 [
-                    agg_sector,
-                    row.get("monetary_output"),
-                    row.get("emission_intensity"),
-                    agg_domestic_fd.get(agg_sector) if agg_domestic_fd is not None else None,
-                    agg_exports.get(agg_sector) if agg_exports is not None else None,
-                    agg_stocks.get(agg_sector) if agg_stocks is not None else None,
+                    display_sector,
+                    output_by_sector.get(agg_sector_s) if output_by_sector is not None else None,
+                    intensity_by_sector.get(agg_sector_s) if intensity_by_sector is not None else None,
+                    agg_domestic_fd.get(agg_sector_s) if agg_domestic_fd is not None else None,
+                    agg_exports.get(agg_sector_s) if agg_exports is not None else None,
+                    agg_stocks.get(agg_sector_s) if agg_stocks is not None else None,
                     fy_dom_intensity_scalar,
+                    bool(heuristic_by_sector.get(agg_sector_s)) if heuristic_by_sector is not None else False,
                 ]
             )
-        for row in ws_s.iter_rows(min_row=2, min_col=2, max_col=7):
+        for row in ws_s.iter_rows(min_row=2, min_col=2, max_col=8):
             for cell in row:
                 if cell.value is None or pd.isna(cell.value):
                     continue
                 if cell.column in (2, 4, 5, 6):
                     cell.number_format = "0.00"
+                elif cell.column == 8:
+                    cell.number_format = "@"
                 else:
                     cell.number_format = "0.0000"
         _auto_width(ws_s)
@@ -800,6 +847,7 @@ def _write_sfc_workbook(
 
     Z_ord = Z_after.loc[product_codes_order, product_codes_order].astype("float64")
     Y_ord = Y_after.loc[product_codes_order, :].astype("float64")
+    x_after = (Z_after.sum(axis=1) + Y_after.sum(axis=1)).astype("float64")
 
     # Derive output-share-based allocation shares to split template account rows from old sectors
     # (e.g. CPA_C19/CPA_D) into the new aggregates (e.g. ENERGY_*).
@@ -900,6 +948,11 @@ def _write_sfc_workbook(
             if str(code).startswith("ENERGY_"):
                 label = _pretty_sector_label(code)
                 ws.cell(row=hr, column=c_prod0 + j).value = label
+
+    sector_label_map = {
+        str(code): _pretty_sector_label(row_labels.get(str(code), str(code)))
+        for code in product_codes_order
+    }
 
     # Total row label
     ws.cell(row=tr, column=1).value = "Total"
@@ -1040,6 +1093,9 @@ def _write_sfc_workbook(
         mapping_df=mapping_df,
         disaggregated_Y=Y_before,
         aggregated_Y=Y_after,
+        aggregated_x=x_after,
+        aggregated_sector_order=list(map(str, product_codes_order)),
+        aggregated_sector_labels=sector_label_map,
         disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
         aggregated_sector_value_per_physical_input=aggregated_sector_value_per_physical_input,
         disaggregated_sector_emission_intensity=disaggregated_sector_emission_intensity,
@@ -1190,6 +1246,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 disaggregated_emissions = None
 
+        # Try to load full Eurostat-sector CO2 intensities (from EXIO concordance)
+        full_sector_emissions = None
+        eurostat_emissions_path = z_dir / "eurostat_sector_co2_intensity.csv"
+        if eurostat_emissions_path.exists():
+            _vprint(args.verbose, f"Reading: {eurostat_emissions_path.resolve()}")
+            full_sector_emissions = pd.read_csv(eurostat_emissions_path)
+
         # Try to load EXIO final-demand direct CO2 intensity (F_Y) if it exists
         exio_final_demand_emissions = None
         fd_path = z_dir / "exio_final_demand_co2_intensity.csv"
@@ -1229,6 +1292,98 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
+        combined_emissions = res.aggregated_sector_emission_intensity
+        if full_sector_emissions is not None and not full_sector_emissions.empty:
+            if {"aggregated_sector", "extension", "stressor", "unit"}.issubset(full_sector_emissions.columns):
+                primary = combined_emissions.copy() if combined_emissions is not None else pd.DataFrame()
+                fallback = full_sector_emissions.copy()
+                if not primary.empty:
+                    for col in ("aggregated_sector", "extension", "stressor", "unit"):
+                        primary[col] = primary[col].astype(str)
+                for col in ("aggregated_sector", "extension", "stressor", "unit"):
+                    fallback[col] = fallback[col].astype(str)
+
+                if not primary.empty:
+                    key_cols = ["aggregated_sector", "extension", "stressor", "unit"]
+                    primary_keys = set(map(tuple, primary[key_cols].to_numpy()))
+                    keep_mask = [tuple(row) not in primary_keys for row in fallback[key_cols].to_numpy()]
+                    fallback = fallback.loc[keep_mask]
+                    combined_emissions = pd.concat([primary, fallback], ignore_index=True)
+                else:
+                    combined_emissions = fallback
+
+        # Heuristic fill: ensure all aggregated sectors have a CO2 intensity
+        if combined_emissions is not None and not combined_emissions.empty:
+            required_cols = {"aggregated_sector", "extension", "stressor", "unit", "emission_intensity"}
+            if required_cols.issubset(combined_emissions.columns):
+                combined_emissions["aggregated_sector"] = combined_emissions["aggregated_sector"].astype(str)
+                combined_emissions["emission_intensity"] = pd.to_numeric(
+                    combined_emissions["emission_intensity"], errors="coerce"
+                )
+                if "heuristic_fill" not in combined_emissions.columns:
+                    combined_emissions["heuristic_fill"] = False
+                if "monetary_output" not in combined_emissions.columns or "emission" not in combined_emissions.columns:
+                    combined_emissions["monetary_output"] = pd.NA
+                    combined_emissions["emission"] = pd.NA
+
+                sectors_all = res.Z.index.astype(str)
+                mapped = set(combined_emissions["aggregated_sector"].tolist())
+                missing = [s for s in sectors_all if s not in mapped]
+
+                if missing:
+                    combo = combined_emissions[["extension", "stressor", "unit"]].drop_duplicates()
+                    if len(combo) == 1:
+                        ext = combo.iloc[0]["extension"]
+                        stressor = combo.iloc[0]["stressor"]
+                        unit = combo.iloc[0]["unit"]
+
+                        by_section = {}
+                        for sec in sectors_all:
+                            sec_letter = _cpa_section_from_code(sec)
+                            by_section.setdefault(sec_letter, []).append(sec)
+
+                        section_means = {}
+                        for sec_letter, sec_list in by_section.items():
+                            vals = combined_emissions[
+                                combined_emissions["aggregated_sector"].isin(sec_list)
+                            ]["emission_intensity"].dropna()
+                            if not vals.empty:
+                                section_means[sec_letter] = float(vals.mean())
+
+                        global_mean = float(
+                            combined_emissions["emission_intensity"].dropna().mean()
+                        ) if combined_emissions["emission_intensity"].notna().any() else None
+
+                        rows = []
+                        for sec in missing:
+                            sec_letter = _cpa_section_from_code(sec)
+                            intensity = section_means.get(sec_letter, global_mean)
+                            if intensity is None or not np.isfinite(intensity):
+                                continue
+                            monetary_output = float(res.x.get(sec, np.nan))
+                            emission = (
+                                float(intensity) * monetary_output
+                                if np.isfinite(monetary_output)
+                                else np.nan
+                            )
+                            rows.append(
+                                {
+                                    "aggregated_sector": sec,
+                                    "extension": ext,
+                                    "stressor": stressor,
+                                    "unit": unit,
+                                    "emission": emission,
+                                    "monetary_output": monetary_output,
+                                    "emission_intensity": float(intensity),
+                                    "n_components": 0,
+                                    "heuristic_fill": True,
+                                }
+                            )
+                        if rows:
+                            combined_emissions = pd.concat(
+                                [combined_emissions, pd.DataFrame(rows)], ignore_index=True
+                            )
+
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
         _write_df_csv(res.Y, out_base / "Y_agg.csv", verbose=args.verbose)
         _write_series_csv(res.x, out_base / "x_agg.csv", verbose=args.verbose)
@@ -1256,9 +1411,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         # Output aggregated sector emissions intensity if available
-        if res.aggregated_sector_emission_intensity is not None:
+        if combined_emissions is not None:
             _write_df_csv(
-                res.aggregated_sector_emission_intensity,
+                combined_emissions,
                 out_base / "aggregated_sector_co2_intensity.csv",
                 verbose=args.verbose,
             )
@@ -1313,7 +1468,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
                 disaggregated_sector_emission_intensity=disaggregated_emissions,
-                aggregated_sector_emission_intensity=res.aggregated_sector_emission_intensity,
+                aggregated_sector_emission_intensity=combined_emissions,
                 exio_final_demand_emission_intensity=exio_final_demand_emissions,
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
