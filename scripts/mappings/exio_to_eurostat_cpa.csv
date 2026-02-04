@@ -1,167 +1,65 @@
 aggregate_sector,exio_sector,enabled,notes
-CPA_A01,Paddy rice,1,p01.a
-CPA_A01,Wheat,1,p01.b
-CPA_A01,Cereal grains nec,1,p01.c
-CPA_A01,"Vegetables, fruit, nuts",1,p01.d
-CPA_A01,Oil seeds,1,p01.e
-CPA_A01,"Sugar cane, sugar beet",1,p01.f
-CPA_A01,Plant-based fibers,1,p01.g
-CPA_A01,Crops nec,1,p01.h
-CPA_A01,Cattle,1,p01.i
-CPA_A01,Pigs,1,p01.j
-CPA_A01,Poultry,1,p01.k
-CPA_A01,Meat animals nec,1,p01.l
-CPA_A01,Animal products nec,1,p01.m
-CPA_A01,Raw milk,1,p01.n
-CPA_A01,"Wool, silk-worm cocoons",1,p01.o
-CPA_A01,Manure (conventional treatment),1,p01.w.1
-CPA_A01,Manure (biogas treatment),1,p01.w.2
-CPA_A02,"Products of forestry, logging and related services (02)",1,p02
-CPA_B,Fish and other fishing products; services incidental of fishing (05),1,p05
-CPA_C10-12,Anthracite,1,p10.a
-CPA_C10-12,Coking Coal,1,p10.b
-CPA_C10-12,Other Bituminous Coal,1,p10.c
-CPA_C10-12,Sub-Bituminous Coal,1,p10.d
-CPA_C10-12,Patent Fuel,1,p10.e
-CPA_C10-12,Lignite/Brown Coal,1,p10.f
-CPA_C10-12,BKB/Peat Briquettes,1,p10.g
-CPA_C10-12,Peat,1,p10.h
-CPA_C10-12,"Crude petroleum and services related to crude oil extraction, excluding surveying",1,p11.a
-CPA_C10-12,"Natural gas and services related to natural gas extraction, excluding surveying",1,p11.b
-CPA_C10-12,Natural Gas Liquids,1,p11.b.1
-CPA_C10-12,Other Hydrocarbons,1,p11.c
-CPA_C10-12,Uranium and thorium ores (12),1,p12
-CPA_C13-15,Iron ores,1,p13.1
-CPA_C13-15,Copper ores and concentrates,1,p13.20.11
-CPA_C13-15,Nickel ores and concentrates,1,p13.20.12
-CPA_C13-15,Aluminium ores and concentrates,1,p13.20.13
-CPA_C13-15,Precious metal ores and concentrates,1,p13.20.14
-CPA_C13-15,"Lead, zinc and tin ores and concentrates",1,p13.20.15
-CPA_C13-15,Other non-ferrous metal ores and concentrates,1,p13.20.16
-CPA_C13-15,Stone,1,p14.1
-CPA_C13-15,Sand and clay,1,p14.2
-CPA_C13-15,"Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.",1,p14.3
-CPA_C13-15,Products of meat cattle,1,p15.a
-CPA_C13-15,Products of meat pigs,1,p15.b
-CPA_C13-15,Products of meat poultry,1,p15.c
-CPA_C13-15,Meat products nec,1,p15.d
-CPA_C13-15,products of Vegetable oils and fats,1,p15.e
-CPA_C13-15,Dairy products,1,p15.f
-CPA_C13-15,Processed rice,1,p15.g
-CPA_C13-15,Sugar,1,p15.h
-CPA_C13-15,Food products nec,1,p15.i
-CPA_C13-15,Beverages,1,p15.j
-CPA_C13-15,Fish products,1,p15.k
-CPA_C16,Tobacco products (16),1,p16
-CPA_C17,Textiles (17),1,p17
-CPA_C18,Wearing apparel; furs (18),1,p18
-CPA_C19,Leather and leather products (19),1,p19
-CPA_C20,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),1,p20
-CPA_C20,"Wood material for treatment, Re-processing of secondary wood material into new wood material",1,p20.w
-CPA_C21,Pulp,1,p21.1
-CPA_C21,"Secondary paper for treatment, Re-processing of secondary paper into new pulp",1,p21.w.1
-CPA_C21,Paper and paper products,1,p21.2
-CPA_C22,Printed matter and recorded media (22),1,p22
-CPA_C23,Coke Oven Coke,1,p23.1.a
-CPA_C23,Gas Coke,1,p23.1.b
-CPA_C23,Coal Tar,1,p23.1.c
-CPA_C23,Motor Gasoline,1,p23.20.a
-CPA_C23,Aviation Gasoline,1,p23.20.b
-CPA_C23,Gasoline Type Jet Fuel,1,p23.20.c
-CPA_C23,Kerosene Type Jet Fuel,1,p23.20.d
-CPA_C23,Kerosene,1,p23.20.e
-CPA_C23,Gas/Diesel Oil,1,p23.20.f
-CPA_C23,Heavy Fuel Oil,1,p23.20.g
-CPA_C23,Refinery Gas,1,p23.20.h
-CPA_C23,Liquefied Petroleum Gases (LPG),1,p23.20.i
-CPA_C23,Refinery Feedstocks,1,p23.20.j
-CPA_C23,Ethane,1,p23.20.k
-CPA_C23,Naphtha,1,p23.20.l
-CPA_C23,White Spirit & SBP,1,p23.20.m
-CPA_C23,Lubricants,1,p23.20.n
-CPA_C23,Bitumen,1,p23.20.o
-CPA_C23,Paraffin Waxes,1,p23.20.p
-CPA_C23,Petroleum Coke,1,p23.20.q
-CPA_C23,Non-specified Petroleum Products,1,p23.20.r
-CPA_C23,Nuclear fuel,1,p23.3
-CPA_C24,"Plastics, basic",1,p24.a
-CPA_C24,"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",1,p24.a.w
-CPA_C24,N-fertiliser,1,p24.b
-CPA_C24,P- and other fertiliser,1,p24.c
-CPA_C24,Chemicals nec,1,p24.d
-CPA_C24,Charcoal,1,p24.e
-CPA_C24,Additives/Blending Components,1,p24.f
-CPA_C24,Biogasoline,1,p24.g
-CPA_C24,Biodiesels,1,p24.h
-CPA_C24,Other Liquid Biofuels,1,p24.i
-CPA_C25,Rubber and plastic products (25),1,p25
-CPA_C26,Glass and glass products,1,p26.a
-CPA_C26,"Secondary glass for treatment, Re-processing of secondary glass into new glass",1,p26.a.w
-CPA_C26,Ceramic goods,1,p26.b
-CPA_C26,"Bricks, tiles and construction products, in baked clay",1,p26.c
-CPA_C26,"Cement, lime and plaster",1,p26.d
-CPA_C26,"Ash for treatment, Re-processing of ash into clinker",1,p26.d.w
-CPA_C26,Other non-metallic mineral products,1,p26.e
-CPA_C27,Basic iron and steel and of ferro-alloys and first products thereof,1,p27.a
-CPA_C27,"Secondary steel for treatment, Re-processing of secondary steel into new steel",1,p27.a.w
-CPA_C27,Precious metals,1,p27.41
-CPA_C27,"Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals",1,p27.41.w
-CPA_C27,Aluminium and aluminium products,1,p27.42
-CPA_C27,"Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium",1,p27.42.w
-CPA_C27,"Lead, zinc and tin and products thereof",1,p27.43
-CPA_C27,"Secondary lead for treatment, Re-processing of secondary lead into new lead",1,p27.43.w
-CPA_C27,Copper products,1,p27.44
-CPA_C27,"Secondary copper for treatment, Re-processing of secondary copper into new copper",1,p27.44.w
-CPA_C27,Other non-ferrous metal products,1,p27.45
-CPA_C27,"Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals",1,p27.45.w
-CPA_C27,Foundry work services,1,p27.5
-CPA_C28,"Fabricated metal products, except machinery and equipment (28)",1,p28
-CPA_C29,Machinery and equipment n.e.c. (29),1,p29
-CPA_C30,Office machinery and computers (30),1,p30
-CPA_C33,"Medical, precision and optical instruments, watches and clocks (33)",1,p33
-CPA_D,Other transport equipment (35),1,p35
-CPA_E36,Furniture; other manufactured goods n.e.c. (36),1,p36
-CPA_E37-39,Secondary raw materials,1,p37
-CPA_E37-39,"Bottles for treatment, Recycling of bottles by direct reuse",1,p37.w.1
-CPA_F,"Collected and purified water, distribution services of water (41)",1,p41
-CPA_G45,Construction work (45),1,p45
-CPA_G45,"Secondary construction material for treatment, Re-processing of secondary construction material into aggregates",1,p45.w
-CPA_H50,"Sale, maintenance, repair of motor vehicles, motor vehicles parts, motorcycles, motor cycles parts and accessoiries",1,p50.a
-CPA_H50,Retail trade services of motor fuel,1,p50.b
-CPA_H51,"Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51)",1,p51
-CPA_H52,"Retail  trade services, except of motor vehicles and motorcycles; repair services of personal and household goods (52)",1,p52
-CPA_I,Hotel and restaurant services (55),1,p55
-CPA_J61,Sea and coastal water transportation services,1,p61.1
-CPA_J61,Inland water transportation services,1,p61.2
-CPA_K64,Post and telecommunication services (64),1,p64
-CPA_K65,"Financial intermediation services, except insurance and pension funding services (65)",1,p65
-CPA_K66,"Insurance and pension funding services, except compulsory social security services (66)",1,p66
-CPA_M71,Renting services of machinery and equipment without operator and of personal and household goods (71),1,p71
-CPA_M72,Computer and related services (72),1,p72
-CPA_M73,Research and development services (73),1,p73
-CPA_N80-82,Education services (80),1,p80
-CPA_P,Health and social work services (85),1,p85
-CPA_R90-92,Food waste for treatment: incineration,1,p90.1.a
-CPA_R90-92,Paper waste for treatment: incineration,1,p90.1.b
-CPA_R90-92,Plastic waste for treatment: incineration,1,p90.1.c
-CPA_R90-92,Intert/metal waste for treatment: incineration,1,p90.1.d
-CPA_R90-92,Textiles waste for treatment: incineration,1,p90.1.e
-CPA_R90-92,Wood waste for treatment: incineration,1,p90.1.f
-CPA_R90-92,Oil/hazardous waste for treatment: incineration,1,p90.1.g
-CPA_R90-92,Food waste for treatment: biogasification and land application,1,p90.2.a
-CPA_R90-92,Paper waste for treatment: biogasification and land application,1,p90.2.b
-CPA_R90-92,Sewage sludge for treatment: biogasification and land application,1,p90.2.c
-CPA_R90-92,Food waste for treatment: composting and land application,1,p90.3.a
-CPA_R90-92,Paper and wood waste for treatment: composting and land application,1,p90.3.b
-CPA_R90-92,Food waste for treatment: waste water treatment,1,p90.4.a
-CPA_R90-92,Other waste for treatment: waste water treatment,1,p90.4.b
-CPA_R90-92,Food waste for treatment: landfill,1,p90.5.a
-CPA_R90-92,Paper for treatment: landfill,1,p90.5.b
-CPA_R90-92,Plastic waste for treatment: landfill,1,p90.5.c
-CPA_R90-92,Inert/metal/hazardous waste for treatment: landfill,1,p90.5.d
-CPA_R90-92,Textiles waste for treatment: landfill,1,p90.5.e
-CPA_R90-92,Wood waste for treatment: landfill,1,p90.5.f
-CPA_R90-92,Membership organisation services n.e.c. (91),1,p91
-CPA_R90-92,"Recreational, cultural and sporting services (92)",1,p92
-CPA_R93,Other services (93),1,p93
-CPA_S95,Private households with employed persons (95),1,p95
+CPA_A02,"Products of forestry, logging and related services (02)",1,label-match
+CPA_A03,Fish and other fishing products; services incidental of fishing (05),1,label-match
+CPA_E36,"Natural gas and services related to natural gas extraction, excluding surveying",1,label-match
+CPA_C30,Other Hydrocarbons,1,label-match
+CPA_C28,"Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.",1,label-match
+CPA_A01,products of Vegetable oils and fats,1,label-match
+CPA_C17,Dairy products,1,label-match
+CPA_C10-12,Food products nec,1,label-match
+CPA_C17,Fish products,1,label-match
+CPA_C10-12,Tobacco products (16),1,label-match
+CPA_C17,Leather and leather products (19),1,label-match
+CPA_C16,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),1,label-match
+CPA_C17,Paper and paper products,1,label-match
+CPA_C19,Petroleum Coke,1,label-match
+CPA_C19,Non-specified Petroleum Products,1,label-match
+CPA_C24,"Plastics, basic",1,label-match
+CPA_C31_32,P- and other fertiliser,1,label-match
+CPA_C22,Rubber and plastic products (25),1,label-match
+CPA_C17,Glass and glass products,1,label-match
+CPA_C23,Other non-metallic mineral products,1,label-match
+CPA_C21,Basic iron and steel and of ferro-alloys and first products thereof,1,label-match
+CPA_C24,Precious metals,1,label-match
+CPA_C17,Aluminium and aluminium products,1,label-match
+CPA_C17,"Lead, zinc and tin and products thereof",1,label-match
+CPA_C17,Copper products,1,label-match
+CPA_C23,Other non-ferrous metal products,1,label-match
+CPA_J58,Foundry work services,1,label-match
+CPA_C25,"Fabricated metal products, except machinery and equipment (28)",1,label-match
+CPA_C28,Machinery and equipment n.e.c. (29),1,label-match
+CPA_C28,Electrical machinery and apparatus n.e.c. (31),1,label-match
+CPA_C29,"Motor vehicles, trailers and semi-trailers (34)",1,label-match
+CPA_C30,Other transport equipment (35),1,label-match
+CPA_C31_32,Furniture; other manufactured goods n.e.c. (36),1,label-match
+CPA_D,Electricity by gas,1,label-match
+CPA_G46,Distribution and trade services of electricity,1,label-match
+CPA_E36,Steam and hot water supply services,1,label-match
+CPA_E36,"Collected and purified water, distribution services of water (41)",1,label-match
+CPA_G45,"Sale, maintenance, repair of motor vehicles, motor vehicles parts, motorcycles, motor cycles parts and accessoiries",1,label-match
+CPA_G47,Retail trade services of motor fuel,1,label-match
+CPA_G46,"Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51)",1,label-match
+CPA_G47,"Retail  trade services, except of motor vehicles and motorcycles; repair services of personal and household goods (52)",1,label-match
+CPA_C18,Hotel and restaurant services (55),1,label-match
+CPA_H52,Railway transportation services,1,label-match
+CPA_S96,Other land transportation services,1,label-match
+CPA_H49,Transportation services via pipelines,1,label-match
+CPA_E36,Sea and coastal water transportation services,1,label-match
+CPA_H50,Inland water transportation services,1,label-match
+CPA_H51,Air transport services (62),1,label-match
+CPA_N79,Supporting and auxiliary transport services; travel agency services (63),1,label-match
+CPA_C18,Post and telecommunication services (64),1,label-match
+CPA_K64,"Financial intermediation services, except insurance and pension funding services (65)",1,label-match
+CPA_K65,"Insurance and pension funding services, except compulsory social security services (66)",1,label-match
+CPA_K66,Services auxiliary to financial intermediation (67),1,label-match
+CPA_L68B,Real estate services (70),1,label-match
+CPA_S95,Renting services of machinery and equipment without operator and of personal and household goods (71),1,label-match
+CPA_J62_63,Computer and related services (72),1,label-match
+CPA_M72,Research and development services (73),1,label-match
+CPA_S96,Other business services (74),1,label-match
+CPA_O,Public administration and defence services; compulsory social security services (75),1,label-match
+CPA_P,Education services (80),1,label-match
+CPA_Q87_88,Health and social work services (85),1,label-match
+CPA_C28,Membership organisation services n.e.c. (91),1,label-match
+CPA_R93,"Recreational, cultural and sporting services (92)",1,label-match
+CPA_S96,Other services (93),1,label-match

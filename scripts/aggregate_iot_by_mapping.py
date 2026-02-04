@@ -236,6 +236,8 @@ def _write_excel_mapping_sheet(
     aggregated_x: pd.Series | None = None,
     aggregated_sector_order: list[str] | None = None,
     aggregated_sector_labels: dict[str, str] | None = None,
+    eurostat_label_map: dict[str, str] | None = None,
+    eurostat_sector_co2_mapping: pd.DataFrame | None = None,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
     disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
@@ -540,6 +542,70 @@ def _write_excel_mapping_sheet(
                     cell.number_format = "0.00"
         _auto_width(ws_v)
 
+    # Add EXIO -> Eurostat CO2 mapping details
+    if eurostat_sector_co2_mapping is not None and not eurostat_sector_co2_mapping.empty:
+        sheet_title = "EXIO-Eurostat CO2 Mapping"
+        if sheet_title in wb.sheetnames:
+            wb.remove(wb[sheet_title])
+        ws_m = wb.create_sheet(sheet_title)
+
+        cols = [
+            "aggregated_sector",
+            "eurostat_sector_name",
+            "exio_sector",
+            "extension",
+            "stressor",
+            "unit",
+            "emission_intensity",
+            "method",
+            "n_exio_sectors",
+            "heuristic_note",
+        ]
+        ws_m.append([c.replace("_", " ").title() for c in cols])
+
+        df_m = eurostat_sector_co2_mapping.copy()
+        label_map = eurostat_label_map or aggregated_sector_labels
+        if label_map is not None and "aggregated_sector" in df_m.columns:
+            df_m["eurostat_sector_name"] = df_m["aggregated_sector"].astype(str).map(
+                lambda s: label_map.get(s, s)
+            )
+        if "aggregated_sector" in df_m.columns:
+            df_m = df_m[df_m["aggregated_sector"].astype(str).str.startswith("CPA_")]
+        for c in cols:
+            if c not in df_m.columns:
+                df_m[c] = ""
+
+        def _split_exio_list(v) -> list[str]:
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return []
+            s = str(v).strip()
+            if not s:
+                return []
+            return [x.strip() for x in s.split("|") if x.strip()]
+
+        def _val(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            return v
+
+        expanded_rows = []
+        for _, r in df_m.iterrows():
+            exio_list = _split_exio_list(r.get("exio_sectors", ""))
+            if not exio_list:
+                exio_list = [""]
+            for exio in exio_list:
+                row_dict = {c: r.get(c, "") for c in cols}
+                row_dict["exio_sector"] = exio
+                expanded_rows.append([_val(row_dict.get(c)) for c in cols])
+        for row in expanded_rows:
+            ws_m.append(row)
+
+        for row in ws_m.iter_rows(min_row=2, min_col=7, max_col=7):
+            for cell in row:
+                if cell.value is not None and not pd.isna(cell.value):
+                    cell.number_format = "0.0000"
+        _auto_width(ws_m)
+
     # Add aggregated sector summary with domestic/exports/stocks + use-phase intensity (F_Y)
     if aggregated_Y is not None and not aggregated_Y.empty:
         if aggregated_sector_emission_intensity is None or aggregated_sector_emission_intensity.empty:
@@ -568,7 +634,7 @@ def _write_excel_mapping_sheet(
                 "Exports (M€)",
                 "Stocks & valuables (M€)",
                 f"Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)",
-                "Heuristic fill",
+                "Heuristic note",
             ]
         )
         agg_emis_df = aggregated_sector_emission_intensity.copy()
@@ -580,8 +646,8 @@ def _write_excel_mapping_sheet(
             intensity_by_sector = agg_emis_df.set_index("aggregated_sector")["emission_intensity"]
 
         heuristic_by_sector = None
-        if "aggregated_sector" in agg_emis_df.columns and "heuristic_fill" in agg_emis_df.columns:
-            heuristic_by_sector = agg_emis_df.set_index("aggregated_sector")["heuristic_fill"]
+        if "aggregated_sector" in agg_emis_df.columns and "heuristic_note" in agg_emis_df.columns:
+            heuristic_by_sector = agg_emis_df.set_index("aggregated_sector")["heuristic_note"]
 
         if aggregated_x is not None and not aggregated_x.empty:
             output_by_sector = aggregated_x.copy()
@@ -612,7 +678,9 @@ def _write_excel_mapping_sheet(
                     agg_exports.get(agg_sector_s) if agg_exports is not None else None,
                     agg_stocks.get(agg_sector_s) if agg_stocks is not None else None,
                     fy_dom_intensity_scalar,
-                    bool(heuristic_by_sector.get(agg_sector_s)) if heuristic_by_sector is not None else False,
+                    heuristic_by_sector.get(agg_sector_s)
+                    if heuristic_by_sector is not None
+                    else "",
                 ]
             )
         for row in ws_s.iter_rows(min_row=2, min_col=2, max_col=8):
@@ -724,6 +792,7 @@ def _write_sfc_workbook(
     disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
     aggregated_sector_emission_intensity: pd.DataFrame | None = None,
     exio_final_demand_emission_intensity: pd.DataFrame | None = None,
+    eurostat_sector_co2_mapping: pd.DataFrame | None = None,
 ) -> None:
     """
     Write an Eurostat-export-shaped workbook for downstream R/SFC scripts.
@@ -1096,6 +1165,8 @@ def _write_sfc_workbook(
         aggregated_x=x_after,
         aggregated_sector_order=list(map(str, product_codes_order)),
         aggregated_sector_labels=sector_label_map,
+        eurostat_label_map=row_labels,
+        eurostat_sector_co2_mapping=eurostat_sector_co2_mapping,
         disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
         aggregated_sector_value_per_physical_input=aggregated_sector_value_per_physical_input,
         disaggregated_sector_emission_intensity=disaggregated_sector_emission_intensity,
@@ -1322,13 +1393,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 if "heuristic_fill" not in combined_emissions.columns:
                     combined_emissions["heuristic_fill"] = False
+                if "heuristic_note" not in combined_emissions.columns:
+                    combined_emissions["heuristic_note"] = ""
                 if "monetary_output" not in combined_emissions.columns or "emission" not in combined_emissions.columns:
                     combined_emissions["monetary_output"] = pd.NA
                     combined_emissions["emission"] = pd.NA
 
+                def _list_with_others(items: list[str], *, max_items: int = 8) -> str:
+                    if len(items) <= max_items:
+                        return ", ".join(items)
+                    shown = items[:max_items]
+                    return ", ".join(shown) + f", and {len(items) - max_items} others"
+
                 sectors_all = res.Z.index.astype(str)
                 mapped = set(combined_emissions["aggregated_sector"].tolist())
                 missing = [s for s in sectors_all if s not in mapped]
+
+                base_rows = combined_emissions[combined_emissions["heuristic_fill"] == False]
+                section_to_sectors: dict[str | None, list[str]] = {}
+                for sec in base_rows["aggregated_sector"].dropna().astype(str).unique().tolist():
+                    sec_letter = _cpa_section_from_code(sec)
+                    section_to_sectors.setdefault(sec_letter, []).append(sec)
+                for k in section_to_sectors:
+                    section_to_sectors[k] = sorted(section_to_sectors[k])
+                global_sectors = sorted(base_rows["aggregated_sector"].dropna().astype(str).unique().tolist())
 
                 if missing:
                     combo = combined_emissions[["extension", "stressor", "unit"]].drop_duplicates()
@@ -1344,15 +1432,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                         section_means = {}
                         for sec_letter, sec_list in by_section.items():
-                            vals = combined_emissions[
-                                combined_emissions["aggregated_sector"].isin(sec_list)
+                            vals = base_rows[
+                                base_rows["aggregated_sector"].isin(sec_list)
                             ]["emission_intensity"].dropna()
                             if not vals.empty:
                                 section_means[sec_letter] = float(vals.mean())
 
                         global_mean = float(
-                            combined_emissions["emission_intensity"].dropna().mean()
-                        ) if combined_emissions["emission_intensity"].notna().any() else None
+                            base_rows["emission_intensity"].dropna().mean()
+                        ) if base_rows["emission_intensity"].notna().any() else None
 
                         rows = []
                         for sec in missing:
@@ -1366,6 +1454,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 if np.isfinite(monetary_output)
                                 else np.nan
                             )
+                            if sec_letter in section_means:
+                                base_list = section_to_sectors.get(sec_letter, [])
+                                base_text = _list_with_others(base_list)
+                                note = (
+                                    "No direct EXIO–Eurostat mapping for this CPA sector. "
+                                    f"Imputed using the mean CO2 intensity for CPA section {sec_letter}, "
+                                    f"computed from mapped sectors {base_text} (n={len(base_list)}). "
+                                    "Use with caution; this is a coverage‑preserving heuristic, not a measured value."
+                                )
+                            else:
+                                base_text = _list_with_others(global_sectors)
+                                note = (
+                                    "No direct EXIO–Eurostat mapping for this CPA sector. "
+                                    f"Imputed using the global mean CO2 intensity across all mapped sectors "
+                                    f"({base_text}; n={len(global_sectors)}). "
+                                    "Use with caution; this is a coverage‑preserving heuristic, not a measured value."
+                                )
                             rows.append(
                                 {
                                     "aggregated_sector": sec,
@@ -1377,12 +1482,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                                     "emission_intensity": float(intensity),
                                     "n_components": 0,
                                     "heuristic_fill": True,
+                                    "heuristic_note": note,
                                 }
                             )
                         if rows:
                             combined_emissions = pd.concat(
                                 [combined_emissions, pd.DataFrame(rows)], ignore_index=True
                             )
+
+                # Detailed notes for directly mapped sectors
+                if "heuristic_note" in combined_emissions.columns:
+                    direct_mask = combined_emissions["heuristic_fill"] == False
+                    empty_note = combined_emissions["heuristic_note"].astype(str).str.strip() == ""
+                    method_col = "method" if "method" in combined_emissions.columns else None
+                    exio_col = "exio_sectors" if "exio_sectors" in combined_emissions.columns else None
+
+                    def _direct_note(method_val: str | None, exio_val: str | None) -> str:
+                        method_text = str(method_val).strip() if method_val is not None else "ratio-of-sums"
+                        if method_text.lower() in {"", "nan"}:
+                            method_text = "ratio-of-sums"
+                        exio_list = []
+                        if exio_val is not None and str(exio_val).strip():
+                            exio_list = [x.strip() for x in str(exio_val).split("|") if x.strip()]
+                        exio_text = _list_with_others(exio_list) if exio_list else "the mapped EXIO sectors"
+                        return (
+                            "Direct EXIO–Eurostat mapping. CO2 intensity computed as the "
+                            f"{method_text} of summed EXIO emissions to summed EXIO monetary output across "
+                            f"{exio_text}. No imputation was applied; values come directly from EXIO satellite accounts."
+                        )
+
+                    idx = combined_emissions.index[direct_mask & empty_note]
+                    for i in idx:
+                        method_val = combined_emissions.at[i, method_col] if method_col else None
+                        exio_val = combined_emissions.at[i, exio_col] if exio_col else None
+                        combined_emissions.at[i, "heuristic_note"] = _direct_note(method_val, exio_val)
 
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
         _write_df_csv(res.Y, out_base / "Y_agg.csv", verbose=args.verbose)
@@ -1417,6 +1550,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 out_base / "aggregated_sector_co2_intensity.csv",
                 verbose=args.verbose,
             )
+
+        mapping_for_sheet = None
+        if full_sector_emissions is not None and not full_sector_emissions.empty:
+            mapping_for_sheet = full_sector_emissions.copy()
+            if combined_emissions is not None and not combined_emissions.empty:
+                key_cols = ["aggregated_sector", "extension", "stressor", "unit"]
+                if set(key_cols).issubset(mapping_for_sheet.columns) and set(key_cols).issubset(
+                    combined_emissions.columns
+                ):
+                    note_cols = ["heuristic_note", "method", "emission_intensity"]
+                    cols = [c for c in note_cols if c in combined_emissions.columns]
+                    merged = mapping_for_sheet.merge(
+                        combined_emissions[key_cols + cols],
+                        on=key_cols,
+                        how="left",
+                        suffixes=("", "_combined"),
+                    )
+                    for c in cols:
+                        if c not in mapping_for_sheet.columns and c in merged.columns:
+                            merged[c] = merged[c]
+                    mapping_for_sheet = merged
+
+                    mapping_keys = set(map(tuple, mapping_for_sheet[key_cols].to_numpy()))
+                    extra = combined_emissions.copy()
+                    extra_keys = set(map(tuple, extra[key_cols].to_numpy()))
+                    missing_keys = [k for k in extra_keys if k not in mapping_keys]
+                    if missing_keys:
+                        extra = extra[[*key_cols, *[c for c in extra.columns if c not in key_cols]]]
+                        keep_mask = [tuple(row) in missing_keys for row in extra[key_cols].to_numpy()]
+                        extra = extra.loc[keep_mask].copy()
+                        if "exio_sectors" not in extra.columns:
+                            extra["exio_sectors"] = ""
+                        if "n_exio_sectors" not in extra.columns:
+                            extra["n_exio_sectors"] = 0
+                        mapping_for_sheet = pd.concat([mapping_for_sheet, extra], ignore_index=True)
 
         if exio_final_demand_emissions is not None:
             _write_df_csv(
@@ -1470,6 +1638,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 disaggregated_sector_emission_intensity=disaggregated_emissions,
                 aggregated_sector_emission_intensity=combined_emissions,
                 exio_final_demand_emission_intensity=exio_final_demand_emissions,
+                eurostat_sector_co2_mapping=mapping_for_sheet,
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
 

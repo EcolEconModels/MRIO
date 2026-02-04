@@ -81,36 +81,18 @@ def _aggregate_exio_emissions_to_eurostat(
     exio_emissions: pd.DataFrame,
     sector_to_exio_sectors: dict[str, list[str]] | dict[str, dict[str, list[str]]],
 ) -> pd.DataFrame:
-    rows: list[dict] = []
-    for agg_sector, exio_sectors in sector_to_exio_sectors.items():
-        if isinstance(exio_sectors, dict):
-            exio_list = []
-            for members in exio_sectors.values():
-                exio_list.extend(list(map(str, members)))
-        else:
-            exio_list = list(map(str, exio_sectors))
+    from ecolecon_mrio.sector_intensity import aggregate_intensity_by_mapping
 
-        subset = exio_emissions[exio_emissions["exio_sector"].isin(exio_list)]
-        if subset.empty:
-            continue
-        grouped = subset.groupby(["extension", "stressor", "unit"], dropna=False)
-        for (ext, stressor, unit), group in grouped:
-            total_emis = float(group["emission"].sum())
-            total_out = float(group["monetary_output"].sum())
-            if not np.isfinite(total_emis) or not np.isfinite(total_out) or total_out == 0:
-                continue
-            rows.append(
-                {
-                    "aggregated_sector": str(agg_sector),
-                    "extension": ext,
-                    "stressor": stressor,
-                    "unit": unit,
-                    "emission": total_emis,
-                    "monetary_output": total_out,
-                    "emission_intensity": total_emis / total_out,
-                }
-            )
-    return pd.DataFrame(rows)
+    return aggregate_intensity_by_mapping(
+        exio_emissions,
+        sector_to_exio_sectors,
+        group_cols=("extension", "stressor", "unit"),
+        value_col="emission",
+        output_col="monetary_output",
+        intensity_col="emission_intensity",
+        method_label="ratio-of-sums (EXIO)",
+        include_exio_list=True,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -705,6 +687,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
     # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
+    exio_slice_single = None
     if extract_co2:
         exio_sectors: list[str] = []
         for agg in res.split_profiles.keys():
@@ -757,14 +740,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 exio_sectors_full.extend(list(map(str, members)))
         exio_sectors_full = list(dict.fromkeys(exio_sectors_full))
 
-        exio_slice_single = load_exiobase3_region_slice(
-            year=args.exio_year,
-            region=args.exio_region,
-            system="pxp",
-            flow=exio_flow_single,
-            cache_root=data_root,
-            verbose=args.verbose,
-        )
+        if exio_slice_single is None:
+            exio_slice_single = load_exiobase3_region_slice(
+                year=args.exio_year,
+                region=args.exio_region,
+                system="pxp",
+                flow=exio_flow_single,
+                cache_root=data_root,
+                verbose=args.verbose,
+            )
         available = set(map(str, exio_slice_single.sectors))
         exio_sectors_full = [s for s in exio_sectors_full if s in available]
 
