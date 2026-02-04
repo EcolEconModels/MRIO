@@ -54,7 +54,7 @@ STK_FLOWS_JSON='["DOM","IMP","TOTAL"]'
 
 set -x
 
-# 1) Generate mapping CSVs
+# 1) Generate mapping CSVs (EXIO->Eurostat mapping uses Eurostat x-weighted splits)
 "$PY" "$ROOT_DIR/scripts/generate_exio_energy_split_mapping.py" \
   --out "$MAP_EXIO_TO_EUROSTAT" \
   --electricity-by-source

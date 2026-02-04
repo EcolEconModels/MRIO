@@ -1,65 +1,216 @@
-aggregate_sector,exio_sector,enabled,notes
-CPA_A02,"Products of forestry, logging and related services (02)",1,label-match
-CPA_A03,Fish and other fishing products; services incidental of fishing (05),1,label-match
-CPA_E36,"Natural gas and services related to natural gas extraction, excluding surveying",1,label-match
-CPA_C30,Other Hydrocarbons,1,label-match
-CPA_C28,"Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.",1,label-match
-CPA_A01,products of Vegetable oils and fats,1,label-match
-CPA_C17,Dairy products,1,label-match
-CPA_C10-12,Food products nec,1,label-match
-CPA_C17,Fish products,1,label-match
-CPA_C10-12,Tobacco products (16),1,label-match
-CPA_C17,Leather and leather products (19),1,label-match
-CPA_C16,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),1,label-match
-CPA_C17,Paper and paper products,1,label-match
-CPA_C19,Petroleum Coke,1,label-match
-CPA_C19,Non-specified Petroleum Products,1,label-match
-CPA_C24,"Plastics, basic",1,label-match
-CPA_C31_32,P- and other fertiliser,1,label-match
-CPA_C22,Rubber and plastic products (25),1,label-match
-CPA_C17,Glass and glass products,1,label-match
-CPA_C23,Other non-metallic mineral products,1,label-match
-CPA_C21,Basic iron and steel and of ferro-alloys and first products thereof,1,label-match
-CPA_C24,Precious metals,1,label-match
-CPA_C17,Aluminium and aluminium products,1,label-match
-CPA_C17,"Lead, zinc and tin and products thereof",1,label-match
-CPA_C17,Copper products,1,label-match
-CPA_C23,Other non-ferrous metal products,1,label-match
-CPA_J58,Foundry work services,1,label-match
-CPA_C25,"Fabricated metal products, except machinery and equipment (28)",1,label-match
-CPA_C28,Machinery and equipment n.e.c. (29),1,label-match
-CPA_C28,Electrical machinery and apparatus n.e.c. (31),1,label-match
-CPA_C29,"Motor vehicles, trailers and semi-trailers (34)",1,label-match
-CPA_C30,Other transport equipment (35),1,label-match
-CPA_C31_32,Furniture; other manufactured goods n.e.c. (36),1,label-match
-CPA_D,Electricity by gas,1,label-match
-CPA_G46,Distribution and trade services of electricity,1,label-match
-CPA_E36,Steam and hot water supply services,1,label-match
-CPA_E36,"Collected and purified water, distribution services of water (41)",1,label-match
-CPA_G45,"Sale, maintenance, repair of motor vehicles, motor vehicles parts, motorcycles, motor cycles parts and accessoiries",1,label-match
-CPA_G47,Retail trade services of motor fuel,1,label-match
-CPA_G46,"Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51)",1,label-match
-CPA_G47,"Retail  trade services, except of motor vehicles and motorcycles; repair services of personal and household goods (52)",1,label-match
-CPA_C18,Hotel and restaurant services (55),1,label-match
-CPA_H52,Railway transportation services,1,label-match
-CPA_S96,Other land transportation services,1,label-match
-CPA_H49,Transportation services via pipelines,1,label-match
-CPA_E36,Sea and coastal water transportation services,1,label-match
-CPA_H50,Inland water transportation services,1,label-match
-CPA_H51,Air transport services (62),1,label-match
-CPA_N79,Supporting and auxiliary transport services; travel agency services (63),1,label-match
-CPA_C18,Post and telecommunication services (64),1,label-match
-CPA_K64,"Financial intermediation services, except insurance and pension funding services (65)",1,label-match
-CPA_K65,"Insurance and pension funding services, except compulsory social security services (66)",1,label-match
-CPA_K66,Services auxiliary to financial intermediation (67),1,label-match
-CPA_L68B,Real estate services (70),1,label-match
-CPA_S95,Renting services of machinery and equipment without operator and of personal and household goods (71),1,label-match
-CPA_J62_63,Computer and related services (72),1,label-match
-CPA_M72,Research and development services (73),1,label-match
-CPA_S96,Other business services (74),1,label-match
-CPA_O,Public administration and defence services; compulsory social security services (75),1,label-match
-CPA_P,Education services (80),1,label-match
-CPA_Q87_88,Health and social work services (85),1,label-match
-CPA_C28,Membership organisation services n.e.c. (91),1,label-match
-CPA_R93,"Recreational, cultural and sporting services (92)",1,label-match
-CPA_S96,Other services (93),1,label-match
+aggregate_sector,exio_sector,enabled,notes,weight
+CPA_A01,Paddy rice,1,code-map,1.0
+CPA_A01,Wheat,1,code-map,1.0
+CPA_A01,Cereal grains nec,1,code-map,1.0
+CPA_A01,"Vegetables, fruit, nuts",1,code-map,1.0
+CPA_A01,Oil seeds,1,code-map,1.0
+CPA_A01,"Sugar cane, sugar beet",1,code-map,1.0
+CPA_A01,Plant-based fibers,1,code-map,1.0
+CPA_A01,Crops nec,1,code-map,1.0
+CPA_A01,Cattle,1,code-map,1.0
+CPA_A01,Pigs,1,code-map,1.0
+CPA_A01,Poultry,1,code-map,1.0
+CPA_A01,Meat animals nec,1,code-map,1.0
+CPA_A01,Animal products nec,1,code-map,1.0
+CPA_A01,Raw milk,1,code-map,1.0
+CPA_A01,"Wool, silk-worm cocoons",1,code-map,1.0
+CPA_A01,Manure (conventional treatment),1,code-map,1.0
+CPA_A01,Manure (biogas treatment),1,code-map,1.0
+CPA_A02,"Products of forestry, logging and related services (02)",1,code-map,1.0
+CPA_A03,Fish and other fishing products; services incidental of fishing (05),1,code-map,1.0
+CPA_B,Anthracite,1,code-map,1.0
+CPA_B,Coking Coal,1,code-map,1.0
+CPA_B,Other Bituminous Coal,1,code-map,1.0
+CPA_B,Sub-Bituminous Coal,1,code-map,1.0
+CPA_B,Patent Fuel,1,code-map,1.0
+CPA_B,Lignite/Brown Coal,1,code-map,1.0
+CPA_B,BKB/Peat Briquettes,1,code-map,1.0
+CPA_B,Peat,1,code-map,1.0
+CPA_B,"Crude petroleum and services related to crude oil extraction, excluding surveying",1,code-map,1.0
+CPA_B,"Natural gas and services related to natural gas extraction, excluding surveying",1,code-map,1.0
+CPA_B,Natural Gas Liquids,1,code-map,1.0
+CPA_B,Other Hydrocarbons,1,code-map,1.0
+CPA_B,Uranium and thorium ores (12),1,code-map,1.0
+CPA_B,Iron ores,1,code-map,1.0
+CPA_B,Copper ores and concentrates,1,code-map,1.0
+CPA_B,Nickel ores and concentrates,1,code-map,1.0
+CPA_B,Aluminium ores and concentrates,1,code-map,1.0
+CPA_B,Precious metal ores and concentrates,1,code-map,1.0
+CPA_B,"Lead, zinc and tin ores and concentrates",1,code-map,1.0
+CPA_B,Other non-ferrous metal ores and concentrates,1,code-map,1.0
+CPA_B,Stone,1,code-map,1.0
+CPA_B,Sand and clay,1,code-map,1.0
+CPA_B,"Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.",1,code-map,1.0
+CPA_C10-12,Products of meat cattle,1,code-map,1.0
+CPA_C10-12,Products of meat pigs,1,code-map,1.0
+CPA_C10-12,Products of meat poultry,1,code-map,1.0
+CPA_C10-12,Meat products nec,1,code-map,1.0
+CPA_C10-12,products of Vegetable oils and fats,1,code-map,1.0
+CPA_C10-12,Dairy products,1,code-map,1.0
+CPA_C10-12,Processed rice,1,code-map,1.0
+CPA_C10-12,Sugar,1,code-map,1.0
+CPA_C10-12,Food products nec,1,code-map,1.0
+CPA_C10-12,Beverages,1,code-map,1.0
+CPA_C10-12,Fish products,1,code-map,1.0
+CPA_C10-12,Tobacco products (16),1,code-map,1.0
+CPA_C13-15,Textiles (17),1,code-map,1.0
+CPA_C13-15,Wearing apparel; furs (18),1,code-map,1.0
+CPA_C13-15,Leather and leather products (19),1,code-map,1.0
+CPA_C16,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),1,code-map,1.0
+CPA_C16,"Wood material for treatment, Re-processing of secondary wood material into new wood material",1,code-map,1.0
+CPA_C17,Pulp,1,code-map,1.0
+CPA_C17,"Secondary paper for treatment, Re-processing of secondary paper into new pulp",1,code-map,1.0
+CPA_C17,Paper and paper products,1,code-map,1.0
+CPA_C19,Coke Oven Coke,1,code-map,1.0
+CPA_C19,Gas Coke,1,code-map,1.0
+CPA_C19,Coal Tar,1,code-map,1.0
+CPA_C19,Motor Gasoline,1,code-map,1.0
+CPA_C19,Aviation Gasoline,1,code-map,1.0
+CPA_C19,Gasoline Type Jet Fuel,1,code-map,1.0
+CPA_C19,Kerosene Type Jet Fuel,1,code-map,1.0
+CPA_C19,Kerosene,1,code-map,1.0
+CPA_C19,Gas/Diesel Oil,1,code-map,1.0
+CPA_C19,Heavy Fuel Oil,1,code-map,1.0
+CPA_C19,Refinery Gas,1,code-map,1.0
+CPA_C19,Liquefied Petroleum Gases (LPG),1,code-map,1.0
+CPA_C19,Refinery Feedstocks,1,code-map,1.0
+CPA_C19,Ethane,1,code-map,1.0
+CPA_C19,Naphtha,1,code-map,1.0
+CPA_C19,White Spirit & SBP,1,code-map,1.0
+CPA_C19,Lubricants,1,code-map,1.0
+CPA_C19,Bitumen,1,code-map,1.0
+CPA_C19,Paraffin Waxes,1,code-map,1.0
+CPA_C19,Petroleum Coke,1,code-map,1.0
+CPA_C19,Non-specified Petroleum Products,1,code-map,1.0
+CPA_C19,Nuclear fuel,1,code-map,1.0
+CPA_C20,"Plastics, basic",1,code-map,1.0
+CPA_C20,"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",1,code-map,1.0
+CPA_C20,N-fertiliser,1,code-map,1.0
+CPA_C20,P- and other fertiliser,1,code-map,1.0
+CPA_C20,Charcoal,1,code-map,1.0
+CPA_C20,Additives/Blending Components,1,code-map,1.0
+CPA_C20,Biogasoline,1,code-map,1.0
+CPA_C20,Biodiesels,1,code-map,1.0
+CPA_C20,Other Liquid Biofuels,1,code-map,1.0
+CPA_C22,Rubber and plastic products (25),1,code-map,1.0
+CPA_C23,Glass and glass products,1,code-map,1.0
+CPA_C23,"Secondary glass for treatment, Re-processing of secondary glass into new glass",1,code-map,1.0
+CPA_C23,Ceramic goods,1,code-map,1.0
+CPA_C23,"Bricks, tiles and construction products, in baked clay",1,code-map,1.0
+CPA_C23,"Cement, lime and plaster",1,code-map,1.0
+CPA_C23,"Ash for treatment, Re-processing of ash into clinker",1,code-map,1.0
+CPA_C23,Other non-metallic mineral products,1,code-map,1.0
+CPA_C24,Basic iron and steel and of ferro-alloys and first products thereof,1,code-map,1.0
+CPA_C24,"Secondary steel for treatment, Re-processing of secondary steel into new steel",1,code-map,1.0
+CPA_C24,Precious metals,1,code-map,1.0
+CPA_C24,"Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals",1,code-map,1.0
+CPA_C24,Aluminium and aluminium products,1,code-map,1.0
+CPA_C24,"Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium",1,code-map,1.0
+CPA_C24,"Lead, zinc and tin and products thereof",1,code-map,1.0
+CPA_C24,"Secondary lead for treatment, Re-processing of secondary lead into new lead",1,code-map,1.0
+CPA_C24,Copper products,1,code-map,1.0
+CPA_C24,"Secondary copper for treatment, Re-processing of secondary copper into new copper",1,code-map,1.0
+CPA_C24,Other non-ferrous metal products,1,code-map,1.0
+CPA_C24,"Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals",1,code-map,1.0
+CPA_C24,Foundry work services,1,code-map,1.0
+CPA_C25,"Fabricated metal products, except machinery and equipment (28)",1,code-map,1.0
+CPA_C26,Office machinery and computers (30),1,code-map,1.0
+CPA_C27,Electrical machinery and apparatus n.e.c. (31),1,code-map,1.0
+CPA_C26,"Radio, television and communication equipment and apparatus (32)",1,code-map,1.0
+CPA_C26,"Medical, precision and optical instruments, watches and clocks (33)",1,code-map,1.0
+CPA_C29,"Motor vehicles, trailers and semi-trailers (34)",1,code-map,1.0
+CPA_C30,Other transport equipment (35),1,code-map,1.0
+CPA_C31_32,Furniture; other manufactured goods n.e.c. (36),1,code-map,1.0
+CPA_E37-39,Secondary raw materials,1,code-map,1.0
+CPA_E37-39,"Bottles for treatment, Recycling of bottles by direct reuse",1,code-map,1.0
+CPA_D,Electricity by coal,1,code-map,1.0
+CPA_D,Electricity by gas,1,code-map,1.0
+CPA_D,Electricity by nuclear,1,code-map,1.0
+CPA_D,Electricity by hydro,1,code-map,1.0
+CPA_D,Electricity by wind,1,code-map,1.0
+CPA_D,Electricity by petroleum and other oil derivatives,1,code-map,1.0
+CPA_D,Electricity by biomass and waste,1,code-map,1.0
+CPA_D,Electricity by solar photovoltaic,1,code-map,1.0
+CPA_D,Electricity by solar thermal,1,code-map,1.0
+CPA_D,"Electricity by tide, wave, ocean",1,code-map,1.0
+CPA_D,Electricity by Geothermal,1,code-map,1.0
+CPA_D,Electricity nec,1,code-map,1.0
+CPA_D,Transmission services of electricity,1,code-map,1.0
+CPA_D,Distribution and trade services of electricity,1,code-map,1.0
+CPA_D,Coke oven gas,1,code-map,1.0
+CPA_D,Blast Furnace Gas,1,code-map,1.0
+CPA_D,Oxygen Steel Furnace Gas,1,code-map,1.0
+CPA_D,Gas Works Gas,1,code-map,1.0
+CPA_D,Biogas,1,code-map,1.0
+CPA_D,Distribution services of gaseous fuels through mains,1,code-map,1.0
+CPA_D,Steam and hot water supply services,1,code-map,1.0
+CPA_E36,"Collected and purified water, distribution services of water (41)",1,code-map,1.0
+CPA_F,Construction work (45),1,code-map,1.0
+CPA_F,"Secondary construction material for treatment, Re-processing of secondary construction material into aggregates",1,code-map,1.0
+CPA_G45,"Sale, maintenance, repair of motor vehicles, motor vehicles parts, motorcycles, motor cycles parts and accessoiries",1,code-map,1.0
+CPA_G45,Retail trade services of motor fuel,1,code-map,1.0
+CPA_G46,"Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51)",1,code-map,1.0
+CPA_G47,"Retail  trade services, except of motor vehicles and motorcycles; repair services of personal and household goods (52)",1,code-map,1.0
+CPA_I,Hotel and restaurant services (55),1,code-map,1.0
+CPA_H49,Railway transportation services,1,code-map,1.0
+CPA_H49,Other land transportation services,1,code-map,1.0
+CPA_H49,Transportation services via pipelines,1,code-map,1.0
+CPA_H50,Sea and coastal water transportation services,1,code-map,1.0
+CPA_H50,Inland water transportation services,1,code-map,1.0
+CPA_H51,Air transport services (62),1,code-map,1.0
+CPA_H52,Supporting and auxiliary transport services; travel agency services (63),1,code-map,1.0
+CPA_K64,"Financial intermediation services, except insurance and pension funding services (65)",1,code-map,1.0
+CPA_K65,"Insurance and pension funding services, except compulsory social security services (66)",1,code-map,1.0
+CPA_K66,Services auxiliary to financial intermediation (67),1,code-map,1.0
+CPA_N77,Renting services of machinery and equipment without operator and of personal and household goods (71),1,code-map,1.0
+CPA_J62_63,Computer and related services (72),1,code-map,1.0
+CPA_M72,Research and development services (73),1,code-map,1.0
+CPA_O,Public administration and defence services; compulsory social security services (75),1,code-map,1.0
+CPA_P,Education services (80),1,code-map,1.0
+CPA_E37-39,Food waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Paper waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Plastic waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Intert/metal waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Textiles waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Wood waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Oil/hazardous waste for treatment: incineration,1,code-map,1.0
+CPA_E37-39,Food waste for treatment: biogasification and land application,1,code-map,1.0
+CPA_E37-39,Paper waste for treatment: biogasification and land application,1,code-map,1.0
+CPA_E37-39,Sewage sludge for treatment: biogasification and land application,1,code-map,1.0
+CPA_E37-39,Food waste for treatment: composting and land application,1,code-map,1.0
+CPA_E37-39,Paper and wood waste for treatment: composting and land application,1,code-map,1.0
+CPA_E37-39,Food waste for treatment: waste water treatment,1,code-map,1.0
+CPA_E37-39,Other waste for treatment: waste water treatment,1,code-map,1.0
+CPA_E37-39,Food waste for treatment: landfill,1,code-map,1.0
+CPA_E37-39,Paper for treatment: landfill,1,code-map,1.0
+CPA_E37-39,Plastic waste for treatment: landfill,1,code-map,1.0
+CPA_E37-39,Inert/metal/hazardous waste for treatment: landfill,1,code-map,1.0
+CPA_E37-39,Textiles waste for treatment: landfill,1,code-map,1.0
+CPA_E37-39,Wood waste for treatment: landfill,1,code-map,1.0
+CPA_S94,Membership organisation services n.e.c. (91),1,code-map,1.0
+CPA_T,Private households with employed persons (95),1,code-map,1.0
+CPA_U,Extra-territorial organizations and bodies,1,code-map,1.0
+CPA_C18,Printed matter and recorded media (22),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_C18=0.1791, CPA_J58=0.8209.",0.17914077157919892
+CPA_J58,Printed matter and recorded media (22),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_C18=0.1791, CPA_J58=0.8209.",0.8208592284208012
+CPA_C20,Chemicals nec,1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_C20=0.7385, CPA_C21=0.2615.",0.7384829914290287
+CPA_C21,Chemicals nec,1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_C20=0.7385, CPA_C21=0.2615.",0.2615170085709713
+CPA_C28,Machinery and equipment n.e.c. (29),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_C28=0.8178, CPA_C33=0.1822.",0.8177678819736139
+CPA_C33,Machinery and equipment n.e.c. (29),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_C28=0.8178, CPA_C33=0.1822.",0.18223211802638614
+CPA_H53,Post and telecommunication services (64),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_H53=0.3782, CPA_J61=0.6218.",0.37824880701364993
+CPA_J61,Post and telecommunication services (64),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_H53=0.3782, CPA_J61=0.6218.",0.6217511929863501
+CPA_L68A,Real estate services (70),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_L68A=0.4733, CPA_L68B=0.5267.",0.473264996643545
+CPA_L68B,Real estate services (70),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_L68A=0.4733, CPA_L68B=0.5267.",0.5267350033564551
+CPA_M69_70,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.35634509603423015
+CPA_M71,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.207408617292277
+CPA_M73,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.13535592894202947
+CPA_M74_75,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.0379580284244828
+CPA_N78,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.08070664051241794
+CPA_N79,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.023610529616811732
+CPA_N80-82,Other business services (74),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_M69_70=0.3563, CPA_M71=0.2074, CPA_M73=0.1354, CPA_M74_75=0.0380, CPA_N78=0.0807, CPA_N79=0.0236, CPA_N80-82=0.1586.",0.15861515917775096
+CPA_Q86,Health and social work services (85),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_Q86=0.7502, CPA_Q87_88=0.2498.",0.7502106246040858
+CPA_Q87_88,Health and social work services (85),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_Q86=0.7502, CPA_Q87_88=0.2498.",0.24978937539591414
+CPA_J59_60,"Recreational, cultural and sporting services (92)",1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_J59_60=0.3764, CPA_R90-92=0.4272, CPA_R93=0.1964.",0.37643068954615266
+CPA_R90-92,"Recreational, cultural and sporting services (92)",1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_J59_60=0.3764, CPA_R90-92=0.4272, CPA_R93=0.1964.",0.42718829095885635
+CPA_R93,"Recreational, cultural and sporting services (92)",1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_J59_60=0.3764, CPA_R90-92=0.4272, CPA_R93=0.1964.",0.19638101949499095
+CPA_S95,Other services (93),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_S95=0.1753, CPA_S96=0.8247.",0.17534083224070116
+CPA_S96,Other services (93),1,"Split mapping across CPA codes using Eurostat output shares (x = Z+Y). Weights: CPA_S95=0.1753, CPA_S96=0.8247.",0.8246591677592989

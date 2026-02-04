@@ -3,6 +3,48 @@ from __future__ import annotations
 import zipfile
 
 import pandas as pd
+import pytest
+
+
+def test_mapping_integrity_check_passes():
+    from scripts.split_eurostat_energy_by_exiobase import _assert_mapping_integrity
+
+    euro_Z = pd.DataFrame([[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"FD": [100.0, 100.0]}, index=["CPA_A", "CPA_B"])
+
+    mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
+
+    _assert_mapping_integrity(
+        sector_mapping=mapping,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        label="test",
+    )
+
+
+def test_output_consistency_check_fails_on_mismatch():
+    from types import SimpleNamespace
+    from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
+
+    euro_Z = pd.DataFrame([[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"FD": [50.0, 150.0]}, index=["CPA_A", "CPA_B"])
+
+    exio_slice = SimpleNamespace(
+        Z_domestic=pd.DataFrame([[0.0, 0.0], [0.0, 0.0]], index=["S1", "S2"], columns=["S1", "S2"]),
+        Y_region=pd.DataFrame({"FD": [100.0, 100.0]}, index=["S1", "S2"]),
+    )
+    mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
+
+    with pytest.raises(SystemExit):
+        _assert_output_consistency(
+            sector_mapping=mapping,
+            eurostat_Z=euro_Z,
+            eurostat_Y=euro_Y,
+            exio_slice=exio_slice,
+            rtol=0.01,
+            atol=1e-6,
+            label="test",
+        )
 
 
 def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:

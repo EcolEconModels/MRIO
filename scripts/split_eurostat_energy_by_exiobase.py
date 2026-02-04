@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import re
 from pathlib import Path
 from typing import Sequence
 
@@ -25,6 +26,11 @@ from ecolecon_mrio.exiobase3_extensions import (
     extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
 )
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot, load_eurostat_iot_variants
+from ecolecon_mrio.weighted_mapping import (
+    flatten_exio_sectors_from_mapping,
+    read_weighted_mapping_csv,
+    validate_mapping_weights,
+)
 
 
 DEFAULT_PATTERNS_19: tuple[str, ...] = ("coke", "petroleum", "refined")
@@ -76,6 +82,146 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
     _vprint(verbose, f"Wrote: {path.resolve()}")
+
+
+def _read_exio_to_eurostat_mapping_with_notes(
+    path: str | Path,
+    *,
+    aggregate_col: str = "aggregate_sector",
+    exio_col: str = "exio_sector",
+    notes_col: str = "notes",
+) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
+    df = pd.read_csv(path, dtype=str).fillna("")
+    mapping = read_weighted_mapping_csv(path, aggregate_col=aggregate_col, exio_col=exio_col)
+    validate_mapping_weights(mapping)
+
+    notes_by_sector: dict[str, list[str]] = {}
+    if notes_col in df.columns:
+        df[aggregate_col] = df[aggregate_col].astype(str).str.strip()
+        df[exio_col] = df[exio_col].astype(str).str.strip()
+        for _, row in df.iterrows():
+            agg = str(row[aggregate_col])
+            note_val = str(row.get(notes_col, "")).strip()
+            if note_val:
+                notes_by_sector.setdefault(agg, []).append(note_val)
+
+    condensed_notes: dict[str, str] = {}
+    for agg, notes in notes_by_sector.items():
+        uniq = []
+        seen = set()
+        for n in notes:
+            if n not in seen:
+                uniq.append(n)
+                seen.add(n)
+        condensed_notes[agg] = " | ".join(uniq)
+
+    return mapping, condensed_notes
+
+
+def _assert_mapping_integrity(
+    *,
+    sector_mapping: dict[str, dict[str, float]],
+    eurostat_Z: pd.DataFrame,
+    eurostat_Y: pd.DataFrame,
+    label: str,
+) -> None:
+    euro_x = (eurostat_Z.sum(axis=1) + eurostat_Y.sum(axis=1)).astype("float64")
+    euro_x.index = euro_x.index.astype(str)
+    euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
+    euro_codes = set(euro_x.index)
+    missing = sorted([c for c in euro_codes if c not in sector_mapping])
+    if missing:
+        show = ", ".join(missing[:10])
+        raise SystemExit(
+            "Mapping integrity check failed: missing Eurostat CPA codes in mapping "
+            f"({label}). Examples: {show}"
+        )
+    try:
+        validate_mapping_weights(sector_mapping)
+    except ValueError as exc:
+        raise SystemExit(f"Mapping integrity check failed ({label}): {exc}") from exc
+
+
+def _assert_output_consistency(
+    *,
+    sector_mapping: dict[str, dict[str, float]],
+    eurostat_Z: pd.DataFrame,
+    eurostat_Y: pd.DataFrame,
+    exio_slice: object,
+    rtol: float,
+    atol: float,
+    label: str,
+) -> None:
+    euro_x = (eurostat_Z.sum(axis=1) + eurostat_Y.sum(axis=1)).astype("float64")
+    euro_x.index = euro_x.index.astype(str)
+    euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
+
+    exio_out = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype("float64")
+    exio_out.index = exio_out.index.astype(str)
+    exio_out = pd.to_numeric(exio_out, errors="coerce").fillna(0.0)
+
+    # Map EXIO outputs to CPA using weights
+    mapped_exio: dict[str, float] = {}
+    for cpa, weights in sector_mapping.items():
+        if cpa not in euro_x.index:
+            continue
+        total = 0.0
+        for exio, w in weights.items():
+            if exio not in exio_out.index:
+                continue
+            total += float(exio_out.get(exio, 0.0)) * float(w)
+        mapped_exio[cpa] = total
+
+    exio_total = float(sum(mapped_exio.values()))
+    euro_total = float(euro_x.sum())
+    if not np.isfinite(exio_total) or not np.isfinite(euro_total) or exio_total <= 0 or euro_total <= 0:
+        raise SystemExit(
+            "Mapping consistency check failed: invalid total outputs for comparison "
+            f"({label}). EXIO total={exio_total}, Eurostat total={euro_total}."
+        )
+
+    scale = euro_total / exio_total
+    failures = []
+    for cpa, euro_val in euro_x.items():
+        exio_val = float(mapped_exio.get(cpa, 0.0)) * scale
+        diff = abs(exio_val - float(euro_val))
+        tol = max(atol, rtol * abs(float(euro_val)))
+        if diff > tol:
+            failures.append((cpa, exio_val, float(euro_val), diff, tol))
+
+    if failures:
+        failures.sort(key=lambda x: x[3], reverse=True)
+        top = failures[:8]
+        details = "; ".join(
+            f"{cpa}: exio={exio_val:.3g}, euro={euro_val:.3g}, diff={diff:.3g}, tol={tol:.3g}"
+            for cpa, exio_val, euro_val, diff, tol in top
+        )
+        raise SystemExit(
+            "Mapping consistency check failed: EXIO-mapped outputs do not match Eurostat outputs "
+            f"within tolerances (rtol={rtol}, atol={atol}) for {label}. Top mismatches: {details}"
+        )
+
+
+def _extract_year(value: object) -> int | None:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    s = str(value).strip()
+    if s.isdigit() and len(s) == 4:
+        return int(s)
+    m = re.search(r"(\\d{4})", s)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _should_check_output(flow_value: object, eurostat_year: int | None, exio_year: int) -> bool:
+    if str(flow_value).strip().upper() != "TOTAL":
+        return False
+    if eurostat_year is None:
+        return False
+    return int(exio_year) == int(eurostat_year)
     
 def _aggregate_exio_emissions_to_eurostat(
     exio_emissions: pd.DataFrame,
@@ -167,6 +313,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="How to apply RAS/GRAS balancing after splitting. "
         "local keeps the untouched parts of the IO table fixed and only balances cells that touch the new subsectors; "
         "global allows all cells to change.",
+    )
+    p.add_argument(
+        "--no-mapping-consistency-check",
+        action="store_true",
+        help="Disable consistency checks between mapped EXIO outputs and Eurostat outputs.",
+    )
+    p.add_argument(
+        "--mapping-consistency-rtol",
+        type=float,
+        default=0.2,
+        help="Relative tolerance for mapping consistency checks (scaled EXIO vs Eurostat output).",
+    )
+    p.add_argument(
+        "--mapping-consistency-atol",
+        type=float,
+        default=1e-6,
+        help="Absolute tolerance for mapping consistency checks.",
     )
 
     p.add_argument(
@@ -290,8 +453,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     co2_extension = str(args.co2_extension)
     co2_keywords = tuple(json.loads(args.co2_stressor_keywords))
     full_sector_mapping = None
+    full_sector_notes = None
     if args.exio_to_eurostat_mapping_csv:
-        full_sector_mapping = read_exio_sector_mapping_csv(args.exio_to_eurostat_mapping_csv)
+        full_sector_mapping, full_sector_notes = _read_exio_to_eurostat_mapping_with_notes(
+            args.exio_to_eurostat_mapping_csv
+        )
     qp_cache_dir = (
         data_root / f"exiobase3_{args.exio_year}" / "slices" / args.exio_region / "pxp" / "extensions"
     )
@@ -380,12 +546,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         else (args.sector_19, args.sector_35)
     )
 
+    eurostat_year = None
     if args.eurostat_dataset:
         if not (args.eurostat_filters and args.eurostat_row_dim and args.eurostat_col_dim):
             raise SystemExit(
                 "When using --eurostat-dataset, also provide --eurostat-filters, --eurostat-row-dim, --eurostat-col-dim."
             )
         base_filters = _normalize_eurostat_filters(json.loads(args.eurostat_filters))
+        time_val = base_filters.get("time")
+        if isinstance(time_val, (list, tuple)) and time_val:
+            time_val = time_val[0]
+        eurostat_year = _extract_year(time_val)
 
         if args.eurostat_stk_flows is not None:
             flows = list(map(str, json.loads(args.eurostat_stk_flows)))
@@ -431,6 +602,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 t = _Timer()
                 exio_flow = _exio_flow_for_eurostat_flow_value(flow)
                 exio_slice = exio_slices[exio_flow]
+                if full_sector_mapping is not None and not args.no_mapping_consistency_check:
+                    label = f"{args.eurostat_stk_flow_dim}={flow}"
+                    _assert_mapping_integrity(
+                        sector_mapping=full_sector_mapping,
+                        eurostat_Z=parsed.Z,
+                        eurostat_Y=parsed.Y,
+                        label=label,
+                    )
+                    if _should_check_output(flow, eurostat_year, args.exio_year):
+                        _assert_output_consistency(
+                            sector_mapping=full_sector_mapping,
+                            eurostat_Z=parsed.Z,
+                            eurostat_Y=parsed.Y,
+                            exio_slice=exio_slice,
+                            rtol=float(args.mapping_consistency_rtol),
+                            atol=float(args.mapping_consistency_atol),
+                            label=label,
+                        )
+                    else:
+                        _vprint(
+                            args.verbose,
+                            f"Skipping output consistency check for {label} "
+                            f"(flow != TOTAL or year mismatch: Eurostat={eurostat_year}, EXIO={args.exio_year}).",
+                        )
                 res = split_iot_using_exiobase_shares(
                     eurostat_Z=parsed.Z,
                     eurostat_Y=parsed.Y,
@@ -550,14 +745,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
                 if extract_co2 and full_sector_mapping is not None:
-                    exio_sectors_full: list[str] = []
-                    for members in full_sector_mapping.values():
-                        if isinstance(members, dict):
-                            for v in members.values():
-                                exio_sectors_full.extend(list(map(str, v)))
-                        else:
-                            exio_sectors_full.extend(list(map(str, members)))
-                    exio_sectors_full = list(dict.fromkeys(exio_sectors_full))
+                    exio_sectors_full = flatten_exio_sectors_from_mapping(full_sector_mapping)
 
                     available = set(map(str, exio_slice.sectors))
                     exio_sectors_full = [s for s in exio_sectors_full if s in available]
@@ -578,6 +766,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         eurostat_co2 = _aggregate_exio_emissions_to_eurostat(
                             exio_co2_full, full_sector_mapping
                         )
+                        if full_sector_notes is not None and not eurostat_co2.empty:
+                            eurostat_co2 = eurostat_co2.copy()
+                            eurostat_co2["mapping_notes"] = eurostat_co2["aggregated_sector"].map(
+                                full_sector_notes
+                            ).fillna("")
                         if not eurostat_co2.empty:
                             out = flow_dir / "eurostat_sector_co2_intensity.csv"
                             eurostat_co2.to_csv(out, index=False)
@@ -688,12 +881,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
     exio_slice_single = None
-    if extract_co2:
-        exio_sectors: list[str] = []
-        for agg in res.split_profiles.keys():
-            exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
-        exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
-
+    if full_sector_mapping is not None and not args.no_mapping_consistency_check:
         exio_slice_single = load_exiobase3_region_slice(
             year=args.exio_year,
             region=args.exio_region,
@@ -702,6 +890,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             cache_root=data_root,
             verbose=args.verbose,
         )
+        _assert_mapping_integrity(
+            sector_mapping=full_sector_mapping,
+            eurostat_Z=Z,
+            eurostat_Y=Y,
+            label="single",
+        )
+        flow_value_single = None
+        if args.eurostat_dataset:
+            flow_value_single = base_filters.get(args.eurostat_stk_flow_dim, "DOM")
+        if _should_check_output(flow_value_single, eurostat_year, args.exio_year):
+            _assert_output_consistency(
+                sector_mapping=full_sector_mapping,
+                eurostat_Z=Z,
+                eurostat_Y=Y,
+                exio_slice=exio_slice_single,
+                rtol=float(args.mapping_consistency_rtol),
+                atol=float(args.mapping_consistency_atol),
+                label="single",
+            )
+        else:
+            _vprint(
+                args.verbose,
+                "Skipping output consistency check for single flow "
+                f"(flow != TOTAL or year mismatch: Eurostat={eurostat_year}, EXIO={args.exio_year}).",
+            )
+    if extract_co2:
+        exio_sectors: list[str] = []
+        for agg in res.split_profiles.keys():
+            exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
+        exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
+
+        if exio_slice_single is None:
+            exio_slice_single = load_exiobase3_region_slice(
+                year=args.exio_year,
+                region=args.exio_region,
+                system="pxp",
+                flow=exio_flow_single,
+                cache_root=data_root,
+                verbose=args.verbose,
+            )
         exio_out = (exio_slice_single.Z_domestic.sum(axis=1) + exio_slice_single.Y_region.sum(axis=1)).astype(
             "float64"
         )
@@ -731,14 +959,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
     if extract_co2 and full_sector_mapping is not None:
-        exio_sectors_full: list[str] = []
-        for members in full_sector_mapping.values():
-            if isinstance(members, dict):
-                for v in members.values():
-                    exio_sectors_full.extend(list(map(str, v)))
-            else:
-                exio_sectors_full.extend(list(map(str, members)))
-        exio_sectors_full = list(dict.fromkeys(exio_sectors_full))
+        exio_sectors_full = flatten_exio_sectors_from_mapping(full_sector_mapping)
 
         if exio_slice_single is None:
             exio_slice_single = load_exiobase3_region_slice(
@@ -766,6 +987,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if exio_co2_full is not None:
             eurostat_co2 = _aggregate_exio_emissions_to_eurostat(exio_co2_full, full_sector_mapping)
+            if full_sector_notes is not None and not eurostat_co2.empty:
+                eurostat_co2 = eurostat_co2.copy()
+                eurostat_co2["mapping_notes"] = eurostat_co2["aggregated_sector"].map(
+                    full_sector_notes
+                ).fillna("")
             if not eurostat_co2.empty:
                 out = outdir / "eurostat_sector_co2_intensity.csv"
                 eurostat_co2.to_csv(out, index=False)
