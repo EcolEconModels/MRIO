@@ -31,6 +31,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.data import default_data_root
+
 
 EUROSTAT_API_BASE = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
 
@@ -57,6 +59,10 @@ class EurostatDataset:
     filters: dict[str, tuple[str, ...]]
     request_url: str
     raw_path: Path
+
+
+def default_eurostat_storage_folder() -> Path:
+    return default_data_root() / "eurostat"
 
 
 def _canonicalize_filters(filters: Mapping[str, Any] | None) -> dict[str, tuple[str, ...]]:
@@ -95,7 +101,7 @@ def download_eurostat_dataset(
     dataset: str,
     *,
     filters: Mapping[str, Any] | None = None,
-    storage_folder: str | Path = "data/eurostat",
+    storage_folder: str | Path | None = None,
     force_download: bool = False,
     timeout_s: int = 120,
 ) -> EurostatDataset:
@@ -123,7 +129,8 @@ def download_eurostat_dataset(
     """
     filt = _canonicalize_filters(filters)
     h = _request_hash(dataset, filt)
-    base = Path(storage_folder) / dataset / h
+    root = default_eurostat_storage_folder() if storage_folder is None else Path(storage_folder)
+    base = root / dataset / h
     _ensure_dir(base)
     raw_path = base / "raw.json"
 
@@ -249,7 +256,7 @@ def describe_eurostat_dataset(
     dataset: str,
     *,
     sample_filters: Mapping[str, Any] | None = None,
-    storage_folder: str | Path = "data/eurostat",
+    storage_folder: str | Path | None = None,
     force_download: bool = False,
     max_codes_per_dim: int = 50,
 ) -> dict[str, Any]:
@@ -371,7 +378,7 @@ def load_eurostat_iot(
     filters: Mapping[str, Any],
     row_dim: str,
     col_dim: str,
-    storage_folder: str | Path = "data/eurostat",
+    storage_folder: str | Path | None = None,
     force_download: bool = False,
     force_reparse: bool = False,
 ) -> ParsedEurostatIOT:
@@ -416,7 +423,7 @@ def load_eurostat_iot_variants(
     variant_values: Sequence[str],
     row_dim: str,
     col_dim: str,
-    storage_folder: str | Path = "data/eurostat",
+    storage_folder: str | Path | None = None,
     force_download: bool = False,
     force_reparse: bool = False,
 ) -> dict[str, ParsedEurostatIOT]:
@@ -440,3 +447,155 @@ def load_eurostat_iot_variants(
             force_reparse=force_reparse,
         )
     return out
+
+
+def parse_eurostat_table_2d(
+    payload: Mapping[str, Any],
+    *,
+    row_dim: str,
+    col_dim: str,
+    value_key: str = "value",
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Parse a Eurostat SDMX-JSON slice into a 2D DataFrame (row_dim x col_dim).
+
+    All remaining dimensions must be fixed singletons (typically enforced by filters).
+    """
+    series = sdmx_json_to_series(payload, value_key=value_key)
+    dims = list(series.index.names)
+    if row_dim not in dims or col_dim not in dims:
+        dim_info = eurostat_dimensions(payload)
+        raise EurostatFilterError(
+            "row_dim/col_dim not present in payload. "
+            f"row_dim={row_dim} col_dim={col_dim} available_dims={dims}. "
+            f"Observed dimension codes (filtered): { {k: list(v.keys())[:20] for k, v in dim_info.items()} }"
+        )
+
+    df = series.unstack(col_dim)
+    for d in dims:
+        if d in {row_dim, col_dim}:
+            continue
+        if d not in df.index.names:
+            continue
+        level_vals = df.index.get_level_values(d).unique()
+        if len(level_vals) != 1:
+            raise EurostatParseError(
+                f"Non-singleton extra dimension '{d}' in payload: {list(map(str, level_vals[:10]))}..."
+            )
+        df = df.droplevel(d)
+
+    df = df.astype("float64").fillna(0.0)
+    meta = {"dimensions": eurostat_dimensions(payload), "row_dim": row_dim, "col_dim": col_dim}
+    return df, meta
+
+
+def load_eurostat_table_2d(
+    *,
+    dataset: str,
+    filters: Mapping[str, Any],
+    row_dim: str,
+    col_dim: str,
+    value_key: str = "value",
+    storage_folder: str | Path | None = None,
+    force_download: bool = False,
+    force_reparse: bool = False,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Download+cache+parse a Eurostat slice into a 2D DataFrame (row_dim x col_dim).
+    """
+    ds = download_eurostat_dataset(
+        dataset,
+        filters=filters,
+        storage_folder=storage_folder,
+        force_download=force_download,
+    )
+    parsed_dir = ds.raw_path.parent / "parsed"
+    _ensure_dir(parsed_dir)
+    df_path = parsed_dir / f"table_{row_dim}_x_{col_dim}.pkl"
+    meta_path = parsed_dir / f"table_{row_dim}_x_{col_dim}_meta.json"
+
+    if df_path.exists() and meta_path.exists() and not force_reparse:
+        df = pd.read_pickle(df_path)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return df, meta
+
+    payload = read_eurostat_raw(ds.raw_path)
+    df, meta = parse_eurostat_table_2d(payload, row_dim=row_dim, col_dim=col_dim, value_key=value_key)
+    df.to_pickle(df_path)
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return df, meta
+
+
+def parse_eurostat_series_1d(
+    payload: Mapping[str, Any],
+    *,
+    dim: str,
+    value_key: str = "value",
+) -> tuple[pd.Series, dict[str, Any]]:
+    """
+    Parse a Eurostat SDMX-JSON slice into a Series indexed by `dim`.
+
+    All remaining dimensions must be fixed singletons.
+    """
+    series = sdmx_json_to_series(payload, value_key=value_key)
+    dims = list(series.index.names)
+    if dim not in dims:
+        dim_info = eurostat_dimensions(payload)
+        raise EurostatFilterError(
+            f"Requested dim not present in payload: dim={dim} available_dims={dims}. "
+            f"Observed dimension codes (filtered): {list(dim_info.keys())}"
+        )
+
+    for d in dims:
+        if d == dim:
+            continue
+        level_vals = series.index.get_level_values(d).unique()
+        if len(level_vals) != 1:
+            raise EurostatParseError(
+                f"Non-singleton extra dimension '{d}' in payload: {list(map(str, level_vals[:10]))}..."
+            )
+        series = series.droplevel(d)
+
+    if not isinstance(series.index, pd.Index):
+        raise EurostatParseError("Unexpected index type after dropping singleton dims.")
+
+    series.index = series.index.astype(str)
+    series = pd.to_numeric(series, errors="coerce").fillna(0.0).astype("float64")
+    meta = {"dimensions": eurostat_dimensions(payload), "dim": dim}
+    return series, meta
+
+
+def load_eurostat_series_1d(
+    *,
+    dataset: str,
+    filters: Mapping[str, Any],
+    dim: str,
+    value_key: str = "value",
+    storage_folder: str | Path | None = None,
+    force_download: bool = False,
+    force_reparse: bool = False,
+) -> tuple[pd.Series, dict[str, Any]]:
+    """
+    Download+cache+parse a Eurostat slice into a 1D Series indexed by `dim`.
+    """
+    ds = download_eurostat_dataset(
+        dataset,
+        filters=filters,
+        storage_folder=storage_folder,
+        force_download=force_download,
+    )
+    parsed_dir = ds.raw_path.parent / "parsed"
+    _ensure_dir(parsed_dir)
+    s_path = parsed_dir / f"series_{dim}.pkl"
+    meta_path = parsed_dir / f"series_{dim}_meta.json"
+
+    if s_path.exists() and meta_path.exists() and not force_reparse:
+        s = pd.read_pickle(s_path)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return s, meta
+
+    payload = read_eurostat_raw(ds.raw_path)
+    s, meta = parse_eurostat_series_1d(payload, dim=dim, value_key=value_key)
+    s.to_pickle(s_path)
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return s, meta
