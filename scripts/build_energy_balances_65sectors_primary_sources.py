@@ -77,8 +77,12 @@ def _match_target_sectors_to_cpa_codes(
     target_labels: list[str],
     *,
     cpa_code_to_label: dict[str, str],
-) -> dict[str, str]:
+    allow_missing: bool = True,
+    ignore_targets: set[str] | None = None,
+) -> tuple[dict[str, str], list[str]]:
     import difflib
+
+    ignore = set(ignore_targets or set())
 
     # Normalized exact match first
     norm_to_code: dict[str, list[str]] = {}
@@ -89,6 +93,9 @@ def _match_target_sectors_to_cpa_codes(
     missing: list[str] = []
     ambiguous: dict[str, list[str]] = {}
     for lab in target_labels:
+        if str(lab) in ignore:
+            missing.append(str(lab))
+            continue
         codes = norm_to_code.get(_norm(lab), [])
         if not codes:
             # Try substring containment in either direction (helps with minor wording differences)
@@ -117,10 +124,10 @@ def _match_target_sectors_to_cpa_codes(
     if ambiguous:
         first = next(iter(ambiguous.items()))
         raise SystemExit(f"Ambiguous CPA label matches. Example: {first[0]} -> {first[1]}")
-    if missing:
+    if missing and not allow_missing:
         show = ", ".join(missing[:10])
         raise SystemExit(f"Could not match some TargetSector labels to Eurostat CPA codes. Examples: {show}")
-    return out
+    return out, missing
 
 
 def main() -> None:
@@ -195,12 +202,19 @@ def main() -> None:
     row_labels = {str(k): str(v) for k, v in row_labels.items()}
 
     targets = mapping_df["TargetSector"].drop_duplicates().astype(str).tolist()
-    target_to_cpa = _match_target_sectors_to_cpa_codes(targets, cpa_code_to_label=row_labels)
-    target_output = {t: float(x.get(code, 0.0)) for t, code in target_to_cpa.items()}
+    target_to_cpa, _missing_targets = _match_target_sectors_to_cpa_codes(
+        targets,
+        cpa_code_to_label=row_labels,
+        allow_missing=True,
+        ignore_targets={"Households"},
+    )
+    target_output = {t: float(x.get(target_to_cpa.get(t, ""), 0.0)) for t in targets}
 
     # 3) Recompute split ratios using IOT outputs and disaggregate to 65 sectors
     mapping_w = compute_mapping_shares_from_outputs(mapping_df, target_output_by_target=target_output)
     sector_energy = disaggregate_unrolled_sources(eb.unrolled_sources, mapping_w)
+    # Preserve TargetSector order from the mapping file (and allow extra rows like "Households" at the end).
+    sector_energy = sector_energy.reindex(targets).fillna(0.0)
 
     # 4) Air emissions accounts (CO2) and intensities
     co2 = load_eurostat_air_emissions_by_nace(
@@ -222,7 +236,9 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for target_label, energy_row in sector_energy.iterrows():
         cpa_code = target_to_cpa.get(str(target_label))
-        out_mio_eur = float(x.get(str(cpa_code), 0.0)) if cpa_code is not None else 0.0
+        # Some TargetSectors (e.g. Households) are not CPA products and therefore have no IOT output.
+        # Keep these as missing (blank in Excel) rather than zero.
+        out_mio_eur = float(x.get(str(cpa_code), 0.0)) if cpa_code is not None else np.nan
         nace_code = _cpa_to_nace(str(cpa_code)) if cpa_code is not None else ""
         co2_t = float(co2_by_nace.get(nace_code, np.nan)) if nace_code else np.nan
 

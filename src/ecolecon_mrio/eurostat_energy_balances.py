@@ -41,6 +41,11 @@ PRIMARY_SOURCES: tuple[str, ...] = (
     "Other Renewables",
 )
 
+NRG_BAL_LABEL_ALIASES: Mapping[str, str] = {
+    # Some Eurostat labels appear in older spreadsheets / documentation in shortened forms.
+    "Final consumption - households - energy use": "Final consumption - other sectors - households - energy use",
+}
+
 
 DEFAULT_ENERGY_BALANCE_DATASET = "nrg_bal_c"
 DEFAULT_ELECTRICITY_HEAT_MIX_DATASET = "nrg_bal_peh"
@@ -127,6 +132,21 @@ def _sum_codes(values: pd.Series, codes: Sequence[str]) -> float:
 def _present_codes(code_to_label: Mapping[str, str], codes: Sequence[str]) -> tuple[str, ...]:
     have = set(map(str, code_to_label.keys()))
     return tuple([str(c) for c in codes if str(c) in have])
+
+
+def _resolve_nrg_bal_code(label: str, *, label_to_code: Mapping[str, str]) -> str | None:
+    """
+    Resolve a human-readable `nrg_bal` label to its code using normalized matching plus aliases.
+    """
+    key = _norm_label(label)
+    if key in label_to_code:
+        return label_to_code[key]
+    alias = NRG_BAL_LABEL_ALIASES.get(str(label))
+    if alias:
+        key2 = _norm_label(alias)
+        if key2 in label_to_code:
+            return label_to_code[key2]
+    return None
 
 
 @dataclass(frozen=True)
@@ -485,25 +505,23 @@ def build_tabelle1_from_eurostat(
     label_to_code: dict[str, str] = {_norm_label(v): str(k) for k, v in dim_nrg_bal.items()}
     code_to_label: dict[str, str] = {str(k): str(v) for k, v in dim_nrg_bal.items()}
 
-    def _resolve_nrg_bal(label: str) -> str:
-        key = _norm_label(label)
-        if key in label_to_code:
-            return label_to_code[key]
-        # Suggest close labels
-        keys = sorted(label_to_code.keys())
-        sample = ", ".join(keys[:10])
-        raise EurostatParseError(
-            f"Could not resolve nrg_bal label '{label}' in dataset={energy_dataset} (geo={geo} time={time}). "
-            f"Example available labels (normalized): {sample}"
-        )
-
     # Build a mapping from output category -> list of nrg_bal codes (to sum).
     category_to_codes: dict[str, list[str]] = {}
     all_component_codes: set[str] = set()
     for cat in categories:
         cat_s = str(cat)
         components = composites.get(cat_s, [cat_s])
-        codes = [_resolve_nrg_bal(c) for c in components]
+        codes: list[str] = []
+        for c in components:
+            code = _resolve_nrg_bal_code(str(c), label_to_code=label_to_code)
+            if code is None:
+                keys = sorted(label_to_code.keys())
+                sample = ", ".join(keys[:10])
+                raise EurostatParseError(
+                    f"Could not resolve nrg_bal label '{c}' in dataset={energy_dataset} (geo={geo} time={time}). "
+                    f"Example available labels (normalized): {sample}"
+                )
+            codes.append(code)
         category_to_codes[cat_s] = codes
         all_component_codes.update(codes)
 

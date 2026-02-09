@@ -42,3 +42,11 @@ def test_norm_label_allows_hyphen():
     from ecolecon_mrio import eurostat_energy_balances as eb
 
     assert eb._norm_label("Final-consumption") == "final-consumption"
+
+
+def test_nrg_bal_label_alias_resolves():
+    from ecolecon_mrio import eurostat_energy_balances as eb
+
+    label_to_code = {eb._norm_label("Final consumption - other sectors - households - energy use"): "FC_OTH_HH_E"}
+    code = eb._resolve_nrg_bal_code("Final consumption - households - energy use", label_to_code=label_to_code)
+    assert code == "FC_OTH_HH_E"
