@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Mapping
 
 import numpy as np
@@ -17,6 +18,12 @@ def principal_direction_index(
     x_by_year: Mapping[int, pd.Series],
     score_by_year: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
+    warnings.warn(
+        "principal_direction_index is deprecated; use growth_direction.principal_growth_panel "
+        "for eigenvector-based principal growth diagnostics.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     """Compute annual alignment between observed structural change and reference direction."""
     years = sorted(x_by_year.keys())
     rows: list[dict[str, float | int]] = []

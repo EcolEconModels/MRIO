@@ -20,6 +20,11 @@ from .diagnostics import (
     partial_sum_convergence,
     solve_safe_just_lp,
 )
+from .growth_direction import (
+    PrincipalDirectionResult,
+    principal_growth_direction,
+    principal_growth_panel,
+)
 from .metrics import (
     dependency_contributions,
     embodied_pressure,
@@ -63,6 +68,9 @@ __all__ = [
     "PanelDiagnostics",
     "compute_viability_panel",
     "decompose_slack_change",
+    "PrincipalDirectionResult",
+    "principal_growth_direction",
+    "principal_growth_panel",
     "principal_direction_index",
     "classify_transition_years",
     "run_panel_scenarios",

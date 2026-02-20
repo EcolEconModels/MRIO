@@ -23,6 +23,9 @@ class PanelDiagnostics:
     annual: pd.DataFrame
     sector_scores: pd.DataFrame
     x_by_year: dict[int, pd.Series]
+    A_by_year: dict[int, pd.DataFrame]
+    B_by_year: dict[int, pd.DataFrame]
+    state_by_year: dict[int, dict[str, Any]]
 
 
 def _series_from_any(obj: pd.Series | pd.DataFrame) -> pd.Series:
@@ -86,7 +89,7 @@ def _build_constraints(x: pd.Series, constraints_cfg: Mapping[str, Any]) -> tupl
     return E, S, e_bar, s_floor
 
 
-def _solve_with_relaxation(
+def _solve_safe_just(
     x: pd.Series,
     y: pd.Series,
     A: pd.DataFrame,
@@ -95,6 +98,23 @@ def _solve_with_relaxation(
     e_bar: pd.Series,
     s_floor: pd.Series,
 ) -> tuple[Any, float, pd.Series, pd.Series]:
+    result = solve_safe_just_lp(x, y, A, E, S, e_bar, s_floor)
+    return result, 1.0, e_bar, s_floor
+
+
+def _solve_with_optional_relaxation(
+    x: pd.Series,
+    y: pd.Series,
+    A: pd.DataFrame,
+    E: pd.DataFrame,
+    S: pd.DataFrame,
+    e_bar: pd.Series,
+    s_floor: pd.Series,
+    *,
+    allow_relaxation: bool = False,
+) -> tuple[Any, float, pd.Series, pd.Series]:
+    if not allow_relaxation:
+        return _solve_safe_just(x, y, A, E, S, e_bar, s_floor)
     for relax in [1.0, 1.02, 1.05, 1.1, 1.2, 1.35, 1.5]:
         try:
             result = solve_safe_just_lp(x, y, A, E, S, e_bar * relax, s_floor / relax)
@@ -134,10 +154,14 @@ def compute_viability_panel(
     constraints_cfg: Mapping[str, Any],
     *,
     max_sectors: int = 80,
+    allow_relaxation: bool = False,
 ) -> PanelDiagnostics:
     annual_rows: list[dict[str, Any]] = []
     score_rows: list[dict[str, Any]] = []
     x_by_year: dict[int, pd.Series] = {}
+    A_by_year: dict[int, pd.DataFrame] = {}
+    B_by_year: dict[int, pd.DataFrame] = {}
+    state_by_year: dict[int, dict[str, Any]] = {}
 
     for year in sorted(panel.keys()):
         mrio, y_full = panel[year]
@@ -150,10 +174,19 @@ def compute_viability_panel(
         A = _coerce_square(mrio.A, top_idx)
 
         rho, tech_slack = calc_tech_slack(A)
-        pf_sens = calc_pf_sensitivities(A)
+        pf_sens = calc_pf_sensitivities(A, strict=False)
 
         E, S, e_bar, s_floor = _build_constraints(x, constraints_cfg)
-        lp, relax, e_used, s_used = _solve_with_relaxation(x, y, A, E, S, e_bar, s_floor)
+        lp, relax, e_used, s_used = _solve_with_optional_relaxation(
+            x,
+            y,
+            A,
+            E,
+            S,
+            e_bar,
+            s_floor,
+            allow_relaxation=allow_relaxation,
+        )
         eco_slack, soc_slack = calc_boundary_slack(E, S, lp.x_opt, e_used, s_used)
         composite = aggregate_diagnostics(pf_sens, E, S, eco_slack, soc_slack)
 
@@ -178,9 +211,28 @@ def compute_viability_panel(
                 }
             )
         x_by_year[int(year)] = x
+        A_by_year[int(year)] = A
+        B_by_year[int(year)] = pd.DataFrame(np.eye(len(A)), index=A.index, columns=A.columns)
+        state_by_year[int(year)] = {
+            "A": A,
+            "B": B_by_year[int(year)],
+            "y": y,
+            "E": E,
+            "S": S,
+            "e_bar": e_used,
+            "s_floor": s_used,
+            "x": x,
+        }
 
     annual = pd.DataFrame(annual_rows).sort_values("year").reset_index(drop=True)
     annual["delta_viability"] = annual["tech_slack"].diff()
     sector_scores = pd.DataFrame(score_rows)
 
-    return PanelDiagnostics(annual=annual, sector_scores=sector_scores, x_by_year=x_by_year)
+    return PanelDiagnostics(
+        annual=annual,
+        sector_scores=sector_scores,
+        x_by_year=x_by_year,
+        A_by_year=A_by_year,
+        B_by_year=B_by_year,
+        state_by_year=state_by_year,
+    )
