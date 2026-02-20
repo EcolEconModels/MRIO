@@ -7,6 +7,17 @@ here rather than inside notebooks to keep the workflow reproducible.
 """
 
 from .data import load_mrio
+from .diagnostics import (
+    SafeJustResult,
+    aggregate_diagnostics,
+    calc_boundary_slack,
+    calc_pf_eigenvectors,
+    calc_pf_sensitivities,
+    calc_spectral_radius,
+    calc_tech_slack,
+    partial_sum_convergence,
+    solve_safe_just_lp,
+)
 from .metrics import (
     dependency_contributions,
     embodied_pressure,
@@ -44,6 +55,15 @@ from .clustering import sector_clustering
 
 __all__ = [
     "load_mrio",
+    "SafeJustResult",
+    "aggregate_diagnostics",
+    "calc_boundary_slack",
+    "calc_pf_eigenvectors",
+    "calc_pf_sensitivities",
+    "calc_spectral_radius",
+    "calc_tech_slack",
+    "partial_sum_convergence",
+    "solve_safe_just_lp",
     "dependency_contributions",
     "embodied_pressure",
     "rank_foundational_sectors",
