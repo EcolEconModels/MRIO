@@ -6,7 +6,9 @@ embodied pressure allocation, ranking foundational sectors). Extend functions
 here rather than inside notebooks to keep the workflow reproducible.
 """
 
+from .counterfactual import run_panel_scenarios
 from .data import load_mrio
+from .decomposition import decompose_slack_change
 from .diagnostics import (
     SafeJustResult,
     aggregate_diagnostics,
@@ -31,12 +33,12 @@ from .stranding import (
     decompose_stranding_rounds,
     aggregate_stranding_by_rounds,
     calc_external_stranding_multiplier,
-    calc_exposure_network
+    calc_exposure_network,
 )
 from .network_viz import (
     plot_cascade_network,
     plot_country_exposure_scatter,
-    plot_country_exposure_network
+    plot_country_exposure_network,
 )
 from .graph import (
     build_dependency_graph,
@@ -50,11 +52,20 @@ from .plotting import (
     plot_inverted_pyramid,
     plot_layered_pyramid,
 )
+from .temporal import PanelDiagnostics, compute_viability_panel, load_mrio_panel
+from .transition import classify_transition_years, principal_direction_index
 
 from .clustering import sector_clustering
 
 __all__ = [
     "load_mrio",
+    "load_mrio_panel",
+    "PanelDiagnostics",
+    "compute_viability_panel",
+    "decompose_slack_change",
+    "principal_direction_index",
+    "classify_transition_years",
+    "run_panel_scenarios",
     "SafeJustResult",
     "aggregate_diagnostics",
     "calc_boundary_slack",
@@ -76,6 +87,5 @@ __all__ = [
     "plot_inverted_pyramid",
     "plot_layered_pyramid",
     "symmetrize",
-
     "sector_clustering",
 ]
