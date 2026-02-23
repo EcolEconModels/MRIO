@@ -6,7 +6,8 @@ embodied pressure allocation, ranking foundational sectors). Extend functions
 here rather than inside notebooks to keep the workflow reproducible.
 """
 
-from .counterfactual import run_panel_scenarios
+from .constraints import BetaResult, build_constraints, solve_beta
+from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import load_mrio
 from .decomposition import decompose_slack_change
 from .diagnostics import (
@@ -74,6 +75,10 @@ __all__ = [
     "principal_direction_index",
     "classify_transition_years",
     "run_panel_scenarios",
+    "run_shock_suite",
+    "BetaResult",
+    "build_constraints",
+    "solve_beta",
     "SafeJustResult",
     "aggregate_diagnostics",
     "calc_boundary_slack",

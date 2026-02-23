@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
+from .constraints import build_constraints
 from .data import load_mrio
 from .diagnostics import (
     aggregate_diagnostics,
@@ -40,53 +41,6 @@ def _series_from_any(obj: pd.Series | pd.DataFrame) -> pd.Series:
 
 def _coerce_square(df: pd.DataFrame, index: pd.Index) -> pd.DataFrame:
     return pd.DataFrame(df, copy=True).reindex(index=index, columns=index).fillna(0.0).astype(float)
-
-
-def _normalize_positive(values: np.ndarray) -> np.ndarray:
-    clipped = np.clip(values, 1e-12, None)
-    return clipped / clipped.sum()
-
-
-def _weights_from_mode(mode: str, x: pd.Series) -> np.ndarray:
-    n = len(x)
-    if mode == "uniform":
-        return np.full(n, 1.0 / n)
-    if mode == "output_weighted":
-        return _normalize_positive(x.to_numpy())
-    rank = x.rank(pct=True).to_numpy()
-    if mode == "output_rank_high":
-        return _normalize_positive(rank)
-    if mode == "output_rank_low":
-        return _normalize_positive(1.0 - rank + 1e-3)
-    raise ValueError(f"Unknown constraint mode: {mode}")
-
-
-def _build_constraints(x: pd.Series, constraints_cfg: Mapping[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
-    eco_rows = []
-    eco_names = []
-    eco_bounds = []
-    for item in constraints_cfg["ecological"]:
-        w = _weights_from_mode(item["mode"], x)
-        cur = float(np.dot(w, x.to_numpy()))
-        eco_rows.append(w)
-        eco_names.append(item["name"])
-        eco_bounds.append(float(item["ceiling_share_of_current"]) * cur)
-
-    soc_rows = []
-    soc_names = []
-    soc_bounds = []
-    for item in constraints_cfg["social"]:
-        w = _weights_from_mode(item["mode"], x)
-        cur = float(np.dot(w, x.to_numpy()))
-        soc_rows.append(w)
-        soc_names.append(item["name"])
-        soc_bounds.append(float(item["floor_share_of_current"]) * cur)
-
-    E = pd.DataFrame(eco_rows, index=eco_names, columns=x.index, dtype=float)
-    S = pd.DataFrame(soc_rows, index=soc_names, columns=x.index, dtype=float)
-    e_bar = pd.Series(eco_bounds, index=eco_names, dtype=float)
-    s_floor = pd.Series(soc_bounds, index=soc_names, dtype=float)
-    return E, S, e_bar, s_floor
 
 
 def _solve_safe_just(
@@ -176,7 +130,7 @@ def compute_viability_panel(
         rho, tech_slack = calc_tech_slack(A)
         pf_sens = calc_pf_sensitivities(A, strict=False)
 
-        E, S, e_bar, s_floor = _build_constraints(x, constraints_cfg)
+        E, S, e_bar, s_floor = build_constraints(x, constraints_cfg)
         lp, relax, e_used, s_used = _solve_with_optional_relaxation(
             x,
             y,
