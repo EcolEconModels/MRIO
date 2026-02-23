@@ -108,3 +108,11 @@ def test_demand_reallocation_mass_conserved():
     shift = float(out[out["scenario_id"] == "shift"]["y_sum"].iloc[0])
     assert abs(base - shift) < 1e-9
 
+
+
+def test_pf_metadata_exposed_in_identity_fallback():
+    state = _toy_state()
+    res = principal_growth_direction(state["A"], B=None)
+    assert isinstance(res.pf_metadata, dict)
+    for key in ["reducible", "n_strong_components", "rho"]:
+        assert key in res.pf_metadata

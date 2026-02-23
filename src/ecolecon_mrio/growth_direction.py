@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,7 @@ class PrincipalDirectionResult:
     fallback_used: bool
     rotation_to_prev: float | None
     alignment_with_dx: float | None
+    pf_metadata: dict[str, Any] | None = None
 
 
 def _orient_and_normalize(vec: np.ndarray, index: pd.Index, tol: float = 1e-12) -> tuple[pd.Series, bool]:
@@ -66,7 +67,7 @@ def principal_growth_direction(
     if B is None:
         if require_generalized:
             raise ValueError("Generalized mode requested but B is missing.")
-        u, v, rho = calc_pf_eigenvectors(A_mat)
+        u, v, rho, pf_meta = calc_pf_eigenvectors(A_mat, return_metadata=True)
         alpha = float(1.0 / rho) if rho > 0 else np.inf
         q = v / float(v.sum())
         p = u / float(u.sum()) if float(u.sum()) > 0 else u
@@ -79,6 +80,7 @@ def principal_growth_direction(
             fallback_used=True,
             rotation_to_prev=None,
             alignment_with_dx=None,
+            pf_metadata=pf_meta,
         )
 
     B_mat = pd.DataFrame(B, copy=True).reindex(index=A_mat.index, columns=A_mat.columns)
@@ -124,6 +126,7 @@ def principal_growth_direction(
         fallback_used=fallback,
         rotation_to_prev=None,
         alignment_with_dx=None,
+        pf_metadata=None,
     )
 
 
