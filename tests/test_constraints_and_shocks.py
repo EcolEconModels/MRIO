@@ -3,7 +3,7 @@ import pandas as pd
 
 from ecolecon_mrio.constraints import build_constraints, solve_beta
 from ecolecon_mrio.counterfactual import run_panel_scenarios, run_shock_suite
-from ecolecon_mrio.diagnostics import calc_tech_slack
+from ecolecon_mrio.diagnostics import calc_coefficient_diagnostics, calc_tech_slack
 
 
 def _toy_state() -> dict:
@@ -171,3 +171,34 @@ def test_run_shock_suite_schema_and_row_count():
     }
     assert required.issubset(set(out.columns))
     assert {"capacity_cut", "trade_partner_cut"} == set(out["shock_family"].unique())
+
+
+
+def test_calc_coefficient_diagnostics_basic_bounds():
+    A = pd.DataFrame([[0.2, 0.0], [0.4, 0.9]], dtype=float)
+    out = calc_coefficient_diagnostics(A)
+    assert abs(out["a_min"] - 0.0) < 1e-12
+    assert abs(out["a_max"] - 0.9) < 1e-12
+    assert out["share_neg"] == 0.0
+    assert out["share_gt_upper"] == 0.0
+    assert out["share_zero_or_near_zero"] >= 0.25
+    assert abs(out["upper_margin_min"] - 0.1) < 1e-12
+
+
+def test_calc_coefficient_diagnostics_detects_neg_and_gt1():
+    A = pd.DataFrame([[1.2, -0.1], [0.2, 0.3]], dtype=float)
+    out = calc_coefficient_diagnostics(A)
+    assert out["share_neg"] > 0.0
+    assert out["share_gt_upper"] > 0.0
+    assert out["a_max"] > 1.0
+    assert out["upper_margin_min"] < 0.0
+
+
+def test_calc_coefficient_diagnostics_sparse_matrix():
+    A = pd.DataFrame(np.zeros((4, 4), dtype=float))
+    A.iloc[0, 1] = 0.25
+    out = calc_coefficient_diagnostics(A)
+    assert out["share_neg"] == 0.0
+    assert out["share_gt_upper"] == 0.0
+    assert out["share_zero_or_near_zero"] > 0.9
+    assert abs(out["a_max"] - 0.25) < 1e-12

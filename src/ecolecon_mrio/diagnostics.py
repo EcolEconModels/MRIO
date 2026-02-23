@@ -38,6 +38,41 @@ def calc_tech_slack(matrix: pd.DataFrame) -> tuple[float, float]:
     return rho, max(0.0, 1.0 - rho)
 
 
+def calc_coefficient_diagnostics(
+    matrix: pd.DataFrame,
+    *,
+    tol: float = 1e-12,
+    upper_bound: float = 1.0,
+) -> dict[str, float]:
+    """Compute local coefficient diagnostics (complementary to spectral metrics)."""
+    A = pd.DataFrame(matrix, copy=True).astype(float)
+    values = A.to_numpy(dtype=float)
+    if values.size == 0:
+        return {
+            "a_min": np.nan,
+            "a_max": np.nan,
+            "share_neg": np.nan,
+            "share_gt_upper": np.nan,
+            "share_zero_or_near_zero": np.nan,
+            "upper_margin_min": np.nan,
+            "col_sum_max": np.nan,
+            "row_sum_max": np.nan,
+        }
+
+    a_min = float(np.min(values))
+    a_max = float(np.max(values))
+    return {
+        "a_min": a_min,
+        "a_max": a_max,
+        "share_neg": float(np.mean(values < -tol)),
+        "share_gt_upper": float(np.mean(values > (float(upper_bound) + tol))),
+        "share_zero_or_near_zero": float(np.mean(values <= tol)),
+        "upper_margin_min": float(float(upper_bound) - a_max),
+        "col_sum_max": float(np.max(values.sum(axis=0))) if values.shape[1] else np.nan,
+        "row_sum_max": float(np.max(values.sum(axis=1))) if values.shape[0] else np.nan,
+    }
+
+
 def _orient_nonnegative(vec: np.ndarray, tol: float) -> tuple[np.ndarray, bool]:
     out = np.real(np.asarray(vec)).astype(float, copy=False)
     if np.all(out >= -tol):
