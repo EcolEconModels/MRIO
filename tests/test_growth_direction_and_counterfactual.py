@@ -57,8 +57,9 @@ def test_rotation_metric_bounds():
     }
     A_by_year = {2020: s0["A"], 2021: s1["A"]}
     B_by_year = {2020: s0["B"], 2021: s1["B"]}
-    summary, _ = principal_growth_panel(x_by_year, A_by_year, B_by_year)
-    rot = summary["rotation_to_prev"].dropna()
+    summary, pairs, _ = principal_growth_panel(x_by_year, A_by_year, B_by_year)
+    assert len(summary) == 2
+    rot = pairs["theta_forward"].dropna()
     if not rot.empty:
         assert ((rot >= 0.0) & (rot <= np.pi)).all()
 

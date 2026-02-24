@@ -106,9 +106,11 @@ def test_vn_identity_case_b_eq_i_matches_pf():
 def test_principal_growth_panel_metrics():
     panel = load_mrio_panel(dataset="test", years=[2020, 2021, 2022], calc_all=True, include_ghosh=True)
     out = compute_viability_panel(panel, CONSTRAINTS_CFG, max_sectors=20, allow_relaxation=True)
-    summary, details = principal_growth_panel(out.x_by_year, out.A_by_year, out.B_by_year)
+    summary, pairs, details = principal_growth_panel(out.x_by_year, out.A_by_year, out.B_by_year)
     assert len(summary) == 3
-    assert {"alpha", "rotation_to_prev", "alignment_with_dx"}.issubset(summary.columns)
+    assert {"year", "alpha", "method", "fallback_used"}.issubset(summary.columns)
+    assert {"year_from", "year_to", "theta_forward", "alignment_with_dx_forward"}.issubset(pairs.columns)
+    assert len(pairs) == 2
     assert all(y in details for y in [2020, 2021, 2022])
-    aligns = summary["alignment_with_dx"].dropna()
+    aligns = pairs["alignment_with_dx_forward"].dropna()
     assert ((aligns <= 1.0) & (aligns >= -1.0)).all()
