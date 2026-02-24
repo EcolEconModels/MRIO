@@ -20,8 +20,6 @@ class PrincipalDirectionResult:
     p: pd.Series
     method: str
     fallback_used: bool
-    rotation_to_prev: float | None
-    alignment_with_dx: float | None
     pf_metadata: dict[str, Any] | None = None
 
 
@@ -78,8 +76,6 @@ def principal_growth_direction(
             p=p,
             method="pf_fallback",
             fallback_used=True,
-            rotation_to_prev=None,
-            alignment_with_dx=None,
             pf_metadata=pf_meta,
         )
 
@@ -124,8 +120,6 @@ def principal_growth_direction(
         p=p,
         method="von_neumann_generalized",
         fallback_used=fallback,
-        rotation_to_prev=None,
-        alignment_with_dx=None,
         pf_metadata=None,
     )
 
@@ -136,7 +130,19 @@ def principal_growth_panel(
     B_by_year: Mapping[int, pd.DataFrame] | None = None,
     *,
     require_generalized: bool = False,
-) -> tuple[pd.DataFrame, dict[int, PrincipalDirectionResult]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[int, PrincipalDirectionResult]]:
+    """Compute annual principal directions and explicit pair-indexed diagnostics.
+
+    Returns
+    -------
+    year_summary : DataFrame
+        One row per year with year-local growth diagnostics (`alpha`, method, fallback flags).
+    pair_summary : DataFrame
+        One row per forward pair (`year_from`, `year_to`) with pairwise diagnostics computed
+        from q_year_from and observed output change x_year_to - x_year_from.
+    results : dict[int, PrincipalDirectionResult]
+        Year-keyed detailed results.
+    """
     years = sorted(set(x_by_year.keys()) & set(A_by_year.keys()))
     if not years:
         raise ValueError("No overlapping years between x_by_year and A_by_year.")
@@ -152,37 +158,58 @@ def principal_growth_panel(
         )
         results[year] = res
 
-    year_rows: list[dict[str, float | int | str | bool | None]] = []
-    for i, year in enumerate(years):
+    year_rows: list[dict[str, float | int | str | bool]] = []
+    for year in years:
         res = results[year]
-        rotation = np.nan
-        if i > 0:
-            prev = results[years[i - 1]]
-            dot = float(np.dot(prev.q.values, res.q.values))
-            denom = float(np.linalg.norm(prev.q.values) * np.linalg.norm(res.q.values))
-            if denom > 0:
-                rotation = float(np.arccos(np.clip(dot / denom, -1.0, 1.0)))
-        align = np.nan
-        if i < len(years) - 1:
-            next_year = years[i + 1]
-            x0 = x_by_year[year]
-            x1 = x_by_year[next_year].reindex(x0.index).fillna(0.0)
-            dx = (x1 - x0).to_numpy(dtype=float)
-            qv = res.q.reindex(x0.index).fillna(0.0).to_numpy(dtype=float)
-            denom = float(np.linalg.norm(dx) * np.linalg.norm(qv))
-            if denom > 0:
-                align = float(np.dot(dx, qv) / denom)
-        results[year].rotation_to_prev = None if np.isnan(rotation) else rotation
-        results[year].alignment_with_dx = None if np.isnan(align) else align
         year_rows.append(
             {
                 "year": int(year),
                 "alpha": float(res.alpha),
                 "method": res.method,
                 "fallback_used": bool(res.fallback_used),
-                "rotation_to_prev": rotation,
-                "alignment_with_dx": align,
             }
         )
 
-    return pd.DataFrame(year_rows).sort_values("year").reset_index(drop=True), results
+    pair_rows: list[dict[str, float | int]] = []
+    for i, year_from in enumerate(years[:-1]):
+        year_to = years[i + 1]
+        res0 = results[year_from]
+        res1 = results[year_to]
+
+        q0 = res0.q
+        q1 = res1.q.reindex(q0.index).fillna(0.0)
+        q0v = q0.to_numpy(dtype=float)
+        q1v = q1.to_numpy(dtype=float)
+        theta = np.nan
+        q_denom = float(np.linalg.norm(q0v) * np.linalg.norm(q1v))
+        if q_denom > 0:
+            theta = float(np.arccos(np.clip(float(np.dot(q0v, q1v)) / q_denom, -1.0, 1.0)))
+
+        x0 = x_by_year[year_from]
+        x1 = x_by_year[year_to].reindex(x0.index).fillna(0.0)
+        dx = (x1 - x0).to_numpy(dtype=float)
+        qv = res0.q.reindex(x0.index).fillna(0.0).to_numpy(dtype=float)
+        align = np.nan
+        denom = float(np.linalg.norm(dx) * np.linalg.norm(qv))
+        if denom > 0:
+            align = float(np.dot(dx, qv) / denom)
+
+        pair_rows.append(
+            {
+                "year_from": int(year_from),
+                "year_to": int(year_to),
+                "theta_forward": theta,
+                "alignment_with_dx_forward": align,
+            }
+        )
+
+    year_summary = pd.DataFrame(year_rows, columns=["year", "alpha", "method", "fallback_used"])
+    pair_summary = pd.DataFrame(
+        pair_rows,
+        columns=["year_from", "year_to", "theta_forward", "alignment_with_dx_forward"],
+    )
+    if not year_summary.empty:
+        year_summary = year_summary.sort_values("year").reset_index(drop=True)
+    if not pair_summary.empty:
+        pair_summary = pair_summary.sort_values(["year_from", "year_to"]).reset_index(drop=True)
+    return year_summary, pair_summary, results
