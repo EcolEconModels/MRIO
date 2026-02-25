@@ -8,7 +8,9 @@ from typing import Tuple
 
 import pandas as pd
 import pymrio
+from pymrio.tools.iodownloader import EXIOBASE3_CONFIG, HEADERS, MRIOMetaData, _get_url_datafiles
 
+from ecolecon_mrio.download_utils import DownloadSpec, download_file_resumable, zip_contains_member
 from ecolecon_mrio.wiod16 import load_wiod16
 
 
@@ -26,6 +28,88 @@ def default_data_root() -> Path:
     return Path(__file__).resolve().parents[2] / "data"
 
 
+def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = "10.5281/zenodo.3583070") -> str:
+    cfg = dict(EXIOBASE3_CONFIG)
+    cfg["url_db_view"] = "https://doi.org/" + str(doi)
+    exio_web_content = _get_url_datafiles(**cfg)
+    year_token = f"IOT_{int(year)}_{system}.zip"
+    for url in exio_web_content.data_urls:
+        if year_token in url:
+            return url
+    raise FileNotFoundError(f"Could not resolve EXIOBASE source URL for year={year}, system={system}, doi={doi}")
+
+
+def ensure_exiobase_year_zip(
+    year: int,
+    *,
+    data_dir: str | Path,
+    system: str = "pxp",
+    force_download: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = "10.5281/zenodo.3583070",
+    verbose: bool = False,
+) -> Path:
+    data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = data_dir / f"IOT_{int(year)}_{system}.zip"
+
+    if force_download and zip_path.exists():
+        ts = int(time.time())
+        zip_path.rename(data_dir / f"IOT_{int(year)}_{system}.zip.corrupt_or_forced.{ts}")
+
+    if zip_path.exists() and not zip_contains_member(zip_path, "file_parameters.json"):
+        ts = int(time.time())
+        zip_path.rename(data_dir / f"IOT_{int(year)}_{system}.zip.corrupt.{ts}")
+
+    if zip_path.exists():
+        return zip_path
+
+    if not allow_download_missing:
+        raise FileNotFoundError(f"EXIOBASE zip not found in local cache and downloads are disabled: {zip_path}")
+
+    url = _resolve_exiobase3_url(int(year), system=system, doi=doi)
+    if verbose:
+        print(f"EXIOBASE zip not found at {zip_path}; downloading {url} ...")
+
+    downlog = MRIOMetaData._make_download_log(
+        location=data_dir,
+        description="Download log of EXIOBASE3",
+        name="EXIO3",
+        system=str(system),
+        version=str(doi),
+    )
+
+    spec = DownloadSpec(
+        url=url,
+        dest_path=zip_path,
+        label=f"EXIOBASE {int(year)} {system}",
+        headers=HEADERS,
+        chunk_size=max(1, int(download_chunk_mb)) * 1024 * 1024,
+        integrity_check=lambda p: zip_contains_member(p, "file_parameters.json"),
+    )
+    res = download_file_resumable(
+        spec,
+        overwrite_existing=False,
+        resume=bool(resume_downloads),
+        progress=bool(show_download_progress and verbose),
+        timeout_seconds=download_timeout_seconds,
+        retries=max(1, int(download_retries)),
+    )
+    if res.status == "failed":
+        raise RuntimeError(f"EXIOBASE download failed for year={year}: {res.reason}")
+    if res.status == "skipped_existing":
+        downlog._add_fileio(f"Skip download existing file {zip_path.name}")
+    else:
+        downlog._add_fileio(f"Downloaded {url} to {zip_path.name}")
+    downlog.save()
+    return zip_path
+
+
 def load_mrio(
     dataset: str,
     year: int,
@@ -36,6 +120,12 @@ def load_mrio(
     calc_all: bool = True,
     include_ghosh: bool = True,
     verbose: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
 ) -> Tuple[pymrio.IOSystem, pd.Series]:
     """
     Load MRIO data using native pymrio download and parsing capabilities.
@@ -108,6 +198,11 @@ def load_mrio(
     elif dataset == "wiod16":
         root = Path(data_root) if data_root is not None else default_data_root()
         data_dir = root / "wiod16"
+        if not allow_download_missing:
+            cache_dir = data_dir / f"mrio_system_wiod16_{year}"
+            zip_path = data_dir / "WIOTS_in_STATA.zip"
+            if not cache_dir.exists() and not zip_path.exists():
+                raise FileNotFoundError(f"WIOD16 cache missing for year={year} and downloads are disabled: {data_dir}")
         parsed = load_wiod16(
             year=year,
             data_dir=data_dir,
@@ -165,6 +260,8 @@ def load_mrio(
                 pymrio.download_wiod2013(storage_folder=data_dir, years=[year])
                 candidates = _wiot_candidates()
             elif not candidates:
+                if not allow_download_missing:
+                    raise FileNotFoundError(f"WIOD WIOT file not found in local cache and downloads are disabled: {data_dir}")
                 if verbose:
                     print(f"WIOD WIOT file not found in {data_dir}; downloading via pymrio...")
                 pymrio.download_wiod2013(storage_folder=data_dir, years=[year])
@@ -233,34 +330,39 @@ def load_mrio(
             mrio_cache_dir.rename(data_dir / f"mrio_system.forced.{ts}")
 
         # Check if cached system exists to avoid reparsing
+        cache_para = mrio_cache_dir / "file_parameters.json"
+        if mrio_cache_dir.exists() and not cache_para.exists():
+            ts = int(time.time())
+            mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
+
         if mrio_cache_dir.exists():
             if verbose:
                 print(f"Loading cached EXIOBASE IOSystem from {mrio_cache_dir} ...")
-            mrio = pymrio.load(mrio_cache_dir)
-        else:
-             # Download if needed
-             zip_path = data_dir / f"IOT_{year}_pxp.zip"
-             if force_download and zip_path.exists():
-                 ts = int(time.time())
-                 zip_path.rename(data_dir / f"IOT_{year}_pxp.zip.corrupt_or_forced.{ts}")
+            try:
+                mrio = pymrio.load(mrio_cache_dir)
+            except FileNotFoundError:
+                ts = int(time.time())
+                mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
+                mrio = None
+            if mrio is None:
+                # fall through to zip parsing path below
+                pass
+        if not mrio_cache_dir.exists():
+             # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
+             zip_path = ensure_exiobase_year_zip(
+                 year=int(year),
+                 data_dir=data_dir,
+                 system="pxp",
+                 force_download=force_download,
+                 allow_download_missing=allow_download_missing,
+                 resume_downloads=resume_downloads,
+                 show_download_progress=show_download_progress,
+                 download_chunk_mb=download_chunk_mb,
+                 download_timeout_seconds=download_timeout_seconds,
+                 download_retries=download_retries,
+                 verbose=verbose,
+             )
 
-             def _zip_looks_ok(path: Path) -> bool:
-                 try:
-                     with zipfile.ZipFile(path, "r") as zf:
-                         names = set(zf.namelist())
-                     return "file_parameters.json" in names
-                 except Exception:
-                     return False
-
-             if zip_path.exists() and not _zip_looks_ok(zip_path):
-                 ts = int(time.time())
-                 zip_path.rename(data_dir / f"IOT_{year}_pxp.zip.corrupt.{ts}")
-
-             if not zip_path.exists():
-                 if verbose:
-                     print(f"EXIOBASE zip not found at {zip_path}; downloading via pymrio...")
-                 pymrio.download_exiobase3(storage_folder=data_dir, years=[year], system="pxp")
-             
              if verbose:
                  print(f"Parsing EXIOBASE zip {zip_path} (this can take a while)...")
              mrio = pymrio.parse_exiobase3(zip_path)

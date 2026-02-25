@@ -87,6 +87,12 @@ def load_mrio_panel(
     calc_all: bool = True,
     include_ghosh: bool = True,
     verbose: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
 ) -> dict[int, tuple[Any, pd.Series]]:
     panel: dict[int, tuple[Any, pd.Series]] = {}
     for year in years:
@@ -98,6 +104,12 @@ def load_mrio_panel(
             calc_all=calc_all,
             include_ghosh=include_ghosh,
             verbose=verbose,
+            allow_download_missing=allow_download_missing,
+            resume_downloads=resume_downloads,
+            show_download_progress=show_download_progress,
+            download_chunk_mb=download_chunk_mb,
+            download_timeout_seconds=download_timeout_seconds,
+            download_retries=download_retries,
         )
         panel[int(year)] = (mrio, _series_from_any(y_full))
     return panel

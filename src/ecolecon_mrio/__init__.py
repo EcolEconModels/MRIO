@@ -8,7 +8,7 @@ here rather than inside notebooks to keep the workflow reproducible.
 
 from .constraints import BetaResult, build_constraints, solve_beta
 from .counterfactual import run_panel_scenarios, run_shock_suite
-from .data import load_mrio
+from .data import load_mrio, ensure_exiobase_year_zip
 from .decomposition import decompose_slack_change
 from .diagnostics import (
     SafeJustResult,
@@ -62,10 +62,30 @@ from .plotting import (
 from .temporal import PanelDiagnostics, compute_viability_panel, load_mrio_panel
 from .transition import classify_transition_years, principal_direction_index
 
+from .download_utils import (
+    DownloadProgressEvent,
+    DownloadResult,
+    DownloadSpec,
+    download_file_resumable,
+    download_urls_resumable,
+    zip_contains_member,
+)
+
+from .panel_coverage import (
+    CoverageManifest,
+    YearAttemptRecord,
+    attempt_mrio_year,
+    build_year_coverage_manifest,
+    select_contiguous_year_block,
+    write_coverage_manifest,
+    read_coverage_manifest,
+)
+
 from .clustering import sector_clustering
 
 __all__ = [
     "load_mrio",
+    "ensure_exiobase_year_zip",
     "load_mrio_panel",
     "PanelDiagnostics",
     "compute_viability_panel",
@@ -75,6 +95,19 @@ __all__ = [
     "principal_growth_panel",
     "principal_direction_index",
     "classify_transition_years",
+    "read_coverage_manifest",
+    "write_coverage_manifest",
+    "select_contiguous_year_block",
+    "build_year_coverage_manifest",
+    "attempt_mrio_year",
+    "YearAttemptRecord",
+    "CoverageManifest",
+    "DownloadSpec",
+    "DownloadResult",
+    "DownloadProgressEvent",
+    "download_file_resumable",
+    "download_urls_resumable",
+    "zip_contains_member",
     "run_panel_scenarios",
     "run_shock_suite",
     "BetaResult",

@@ -250,14 +250,24 @@ def load_wiod16(
         except Exception:
             mrio_cache_dir = legacy_cache_dir
 
+    cache_para = mrio_cache_dir / "file_parameters.json"
+    if mrio_cache_dir.exists() and not cache_para.exists():
+        ts = int(time.time())
+        mrio_cache_dir.rename(data_dir / f"mrio_system_wiod16_{year}.invalid.{ts}")
+
     if mrio_cache_dir.exists() and not force_download:
         if verbose:
             print(f"Loading cached WIOD16 IOSystem from {mrio_cache_dir} ...")
-        mrio = pymrio.load(mrio_cache_dir)
-        y_full = mrio.Y.sum(axis=1)
-        if calc_all and getattr(mrio, "G", None) is None:
-            mrio.calc_all(include_ghosh=include_ghosh)
-        return WIOD16Parsed(mrio=mrio, y_full=y_full)
+        try:
+            mrio = pymrio.load(mrio_cache_dir)
+        except FileNotFoundError:
+            ts = int(time.time())
+            mrio_cache_dir.rename(data_dir / f"mrio_system_wiod16_{year}.invalid.{ts}")
+        else:
+            y_full = mrio.Y.sum(axis=1)
+            if calc_all and getattr(mrio, "G", None) is None:
+                mrio.calc_all(include_ghosh=include_ghosh)
+            return WIOD16Parsed(mrio=mrio, y_full=y_full)
 
     zip_path = ensure_wiod16_wiots_stata_zip(data_dir, force_download=force_download, verbose=verbose)
 
