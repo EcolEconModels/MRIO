@@ -90,6 +90,7 @@ def attempt_mrio_year(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
+    delete_source_zip_after_parse: bool = False,
 ) -> YearAttemptRecord:
     t0 = time.perf_counter()
     validator_statuses: dict[str, str] = {}
@@ -104,6 +105,7 @@ def attempt_mrio_year(
         "download_chunk_mb": int(download_chunk_mb),
         "download_timeout_seconds": (None if download_timeout_seconds is None else float(download_timeout_seconds)),
         "download_retries": int(download_retries),
+        "delete_source_zip_after_parse": bool(delete_source_zip_after_parse),
     }
 
     try:
@@ -121,6 +123,7 @@ def attempt_mrio_year(
             download_chunk_mb=download_chunk_mb,
             download_timeout_seconds=download_timeout_seconds,
             download_retries=download_retries,
+            delete_source_zip_after_parse=delete_source_zip_after_parse,
         )
         metadata["mrio_type"] = type(mrio).__name__
         metadata["y_len"] = int(len(y_full)) if hasattr(y_full, "__len__") else None
@@ -210,6 +213,7 @@ def build_year_coverage_manifest(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
+    delete_source_zip_after_parse: bool = False,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for year in sorted(set(int(y) for y in years)):
@@ -228,6 +232,7 @@ def build_year_coverage_manifest(
             download_chunk_mb=download_chunk_mb,
             download_timeout_seconds=download_timeout_seconds,
             download_retries=download_retries,
+            delete_source_zip_after_parse=delete_source_zip_after_parse,
         )
         rows.append(_record_to_row(rec))
     df = pd.DataFrame(rows)

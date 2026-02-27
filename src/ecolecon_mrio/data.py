@@ -110,6 +110,13 @@ def ensure_exiobase_year_zip(
     return zip_path
 
 
+def _is_complete_exio_parsed_cache(cache_dir: Path) -> bool:
+    """Best-effort completeness check for parsed EXIOBASE cache dirs."""
+    if not cache_dir.exists() or not cache_dir.is_dir():
+        return False
+    return (cache_dir / "file_parameters.json").exists()
+
+
 def load_mrio(
     dataset: str,
     year: int,
@@ -126,6 +133,7 @@ def load_mrio(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
+    delete_source_zip_after_parse: bool = False,
 ) -> Tuple[pymrio.IOSystem, pd.Series]:
     """
     Load MRIO data using native pymrio download and parsing capabilities.
@@ -373,6 +381,14 @@ def load_mrio(
              if verbose:
                  print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
              mrio.save(mrio_cache_dir)
+             if delete_source_zip_after_parse and _is_complete_exio_parsed_cache(mrio_cache_dir):
+                 try:
+                     zip_path.unlink(missing_ok=True)
+                     if verbose:
+                         print(f"Deleted EXIOBASE source zip after successful parse: {zip_path}")
+                 except Exception as exc:
+                     if verbose:
+                         print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
 
         y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
         y_full = mrio.Y[y_cols].sum(axis=1)

@@ -129,6 +129,7 @@ def test_attempt_mrio_year_passes_download_control_kwargs(monkeypatch):
         download_chunk_mb=4,
         download_timeout_seconds=12.5,
         download_retries=7,
+        delete_source_zip_after_parse=True,
     )
     assert rec.load_status == 'ok'
     assert captured['allow_download_missing'] is False
@@ -137,3 +138,4 @@ def test_attempt_mrio_year_passes_download_control_kwargs(monkeypatch):
     assert captured['download_chunk_mb'] == 4
     assert captured['download_timeout_seconds'] == 12.5
     assert captured['download_retries'] == 7
+    assert captured['delete_source_zip_after_parse'] is True

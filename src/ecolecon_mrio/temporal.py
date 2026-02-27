@@ -93,6 +93,7 @@ def load_mrio_panel(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
+    delete_source_zip_after_parse: bool = False,
 ) -> dict[int, tuple[Any, pd.Series]]:
     panel: dict[int, tuple[Any, pd.Series]] = {}
     for year in years:
@@ -110,6 +111,7 @@ def load_mrio_panel(
             download_chunk_mb=download_chunk_mb,
             download_timeout_seconds=download_timeout_seconds,
             download_retries=download_retries,
+            delete_source_zip_after_parse=delete_source_zip_after_parse,
         )
         panel[int(year)] = (mrio, _series_from_any(y_full))
     return panel
