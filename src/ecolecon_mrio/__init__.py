@@ -81,6 +81,18 @@ from .panel_coverage import (
     read_coverage_manifest,
 )
 
+from .inverse_primitives import (
+    RowBoundsInterval,
+    RowSolveDiagnostics,
+    MatrixInverseDiagnostics,
+    SpectralModeDiagnostics,
+    compute_row_interval_bounds,
+    row_min_norm_update,
+    matrix_min_norm_inverse_step,
+    dominant_mode_diagnostics,
+    calibrate_relative_change_caps,
+)
+
 from .clustering import sector_clustering
 
 __all__ = [
@@ -135,5 +147,14 @@ __all__ = [
     "plot_inverted_pyramid",
     "plot_layered_pyramid",
     "symmetrize",
+    "RowBoundsInterval",
+    "RowSolveDiagnostics",
+    "MatrixInverseDiagnostics",
+    "SpectralModeDiagnostics",
+    "compute_row_interval_bounds",
+    "row_min_norm_update",
+    "matrix_min_norm_inverse_step",
+    "dominant_mode_diagnostics",
+    "calibrate_relative_change_caps",
     "sector_clustering",
 ]
