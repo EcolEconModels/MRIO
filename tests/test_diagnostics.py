@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from ecolecon_mrio.diagnostics import (
+    aggregate_diagnostics,
     calc_boundary_slack,
     calc_pf_sensitivities,
     calc_spectral_radius,
@@ -66,3 +67,13 @@ def test_calc_boundary_slack_simple():
     eco_slack, soc_slack = calc_boundary_slack(E, S, x, e_bar, s_floor)
     assert pytest.approx(eco_slack.iloc[0], rel=1e-6) == 2.0 - (0.1 * 4 + 0.2 * 6)
     assert pytest.approx(soc_slack.iloc[0], rel=1e-6) == (0.05 * 4 + 0.05 * 6) - 1.0
+
+
+def test_aggregate_diagnostics_handles_negative_slack_without_blowup():
+    pf = pd.DataFrame([[0.2, 0.3], [0.1, 0.4]], index=["r1", "r2"], columns=["a", "b"])
+    E = pd.DataFrame([[1.0, 2.0]], index=["eco"], columns=["a", "b"])
+    S = pd.DataFrame([[0.5, 0.5]], index=["soc"], columns=["a", "b"])
+    eco_slack = pd.Series([-1e-3], index=["eco"])
+    soc_slack = pd.Series([1e-12], index=["soc"])
+    out = aggregate_diagnostics(pf, E, S, eco_slack, soc_slack)
+    assert np.isfinite(out.to_numpy(dtype=float)).all()

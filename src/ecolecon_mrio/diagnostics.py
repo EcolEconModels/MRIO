@@ -326,9 +326,13 @@ def aggregate_diagnostics(
     column_sensitivity = pf_sensitivities.sum(axis=0)
     pressure = pd.Series(0.0, index=column_sensitivity.index)
     if not eco_slack.empty:
-        eco_contrib = E.div(eco_slack + epsilon, axis=0).sum(axis=0)
+        eco_denom = eco_slack.copy().astype(float)
+        eco_denom = eco_denom.where(eco_denom > epsilon, np.nan)
+        eco_contrib = E.div(eco_denom, axis=0).replace([np.inf, -np.inf], np.nan).fillna(0.0).sum(axis=0)
         pressure = pressure.add(eco_contrib, fill_value=0.0)
     if not soc_slack.empty:
-        soc_contrib = S.div(soc_slack + epsilon, axis=0).sum(axis=0)
+        soc_denom = soc_slack.copy().astype(float)
+        soc_denom = soc_denom.where(soc_denom > epsilon, np.nan)
+        soc_contrib = S.div(soc_denom, axis=0).replace([np.inf, -np.inf], np.nan).fillna(0.0).sum(axis=0)
         pressure = pressure.add(soc_contrib, fill_value=0.0)
     return column_sensitivity + pressure

@@ -156,7 +156,7 @@ def _closed_form_row_solution(
 
         def _sum_at(lam: float) -> float:
             x_mid = np.clip(lam * d_pos[pos_mask], lower[pos_mask], upper[pos_mask])
-            return float(np.dot(d_pos[pos_mask], x_mid) + np.dot(d_pos[zero_mask], x[zero_mask]))
+            return float(np.dot(d_pos[pos_mask], x_mid) + np.dot(d[zero_mask], x[zero_mask]))
 
         s_lo = _sum_at(lam_lo)
         s_hi = _sum_at(lam_hi)

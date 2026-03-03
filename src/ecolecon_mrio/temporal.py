@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Mapping
+import time
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,7 @@ class PanelDiagnostics:
     A_by_year: dict[int, pd.DataFrame]
     B_by_year: dict[int, pd.DataFrame]
     state_by_year: dict[int, dict[str, Any]]
+    sector_universe_manifest: pd.DataFrame
 
 
 def _series_from_any(obj: pd.Series | pd.DataFrame) -> pd.Series:
@@ -41,6 +43,55 @@ def _series_from_any(obj: pd.Series | pd.DataFrame) -> pd.Series:
 
 def _coerce_square(df: pd.DataFrame, index: pd.Index) -> pd.DataFrame:
     return pd.DataFrame(df, copy=True).reindex(index=index, columns=index).fillna(0.0).astype(float)
+
+
+def _select_panel_union_zero_pad_top_n(
+    x_raw_by_year: Mapping[int, pd.Series],
+    *,
+    n: int,
+) -> tuple[pd.Index, pd.DataFrame]:
+    if not x_raw_by_year:
+        return pd.Index([], dtype=object), pd.DataFrame(columns=["sector", "score", "years_present", "selected", "rank", "sector_universe_mode", "sector_universe_n"])
+    union_labels: list[Any] = []
+    seen: set[Any] = set()
+    for y in sorted(x_raw_by_year.keys()):
+        for label in list(x_raw_by_year[y].index):
+            if label not in seen:
+                seen.add(label)
+                union_labels.append(label)
+    idx = pd.Index(union_labels, dtype=object)
+
+    shares_by_year: list[pd.Series] = []
+    for y in sorted(x_raw_by_year.keys()):
+        x = pd.to_numeric(x_raw_by_year[y], errors="coerce").fillna(0.0).astype(float)
+        denom = float(x.sum())
+        s = (x / denom) if denom > 0 else (x * 0.0)
+        shares_by_year.append(s.reindex(idx).fillna(0.0))
+    share_df = pd.DataFrame(shares_by_year, index=sorted(x_raw_by_year.keys()), columns=idx)
+    score = share_df.mean(axis=0)
+    years_present = pd.DataFrame(
+        [pd.to_numeric(x_raw_by_year[y], errors="coerce").fillna(0.0).reindex(idx).fillna(0.0) > 0 for y in sorted(x_raw_by_year.keys())],
+        index=sorted(x_raw_by_year.keys()),
+        columns=idx,
+    ).sum(axis=0)
+    ranked = (
+        pd.DataFrame(
+            {
+                "sector_obj": list(idx),
+                "sector": [str(x) for x in idx],
+                "score": score.to_numpy(dtype=float),
+                "years_present": years_present.to_numpy(dtype=float),
+            }
+        )
+        .sort_values(["score", "sector"], ascending=[False, True], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    ranked["rank"] = np.arange(1, len(ranked) + 1, dtype=int)
+    ranked["selected"] = ranked["rank"] <= int(max(1, n))
+    ranked["sector_universe_mode"] = "panel_union_zero_pad_top_n"
+    ranked["sector_universe_n"] = int(max(1, n))
+    selected = ranked.loc[ranked["selected"], "sector_obj"].tolist()
+    return pd.Index(selected, dtype=object), ranked[["sector", "score", "years_present", "selected", "rank", "sector_universe_mode", "sector_universe_n"]].copy()
 
 
 def _solve_safe_just(
@@ -96,7 +147,10 @@ def load_mrio_panel(
     delete_source_zip_after_parse: bool = False,
 ) -> dict[int, tuple[Any, pd.Series]]:
     panel: dict[int, tuple[Any, pd.Series]] = {}
-    for year in years:
+    for i, year in enumerate(years, start=1):
+        t0 = time.time()
+        if verbose:
+            print(f"[MRIO] loading {dataset} year={year} ({i}/{len(years)})...", flush=True)
         mrio, y_full = load_mrio(
             dataset=dataset,
             year=year,
@@ -114,6 +168,8 @@ def load_mrio_panel(
             delete_source_zip_after_parse=delete_source_zip_after_parse,
         )
         panel[int(year)] = (mrio, _series_from_any(y_full))
+        if verbose:
+            print(f"[MRIO] loaded {dataset} year={year} ({i}/{len(years)}) in {time.time()-t0:.1f}s", flush=True)
     return panel
 
 
@@ -122,6 +178,8 @@ def compute_viability_panel(
     constraints_cfg: Mapping[str, Any],
     *,
     max_sectors: int = 80,
+    sector_universe_mode: str = "per_year_top_n",
+    sector_universe_n: int | None = None,
     allow_relaxation: bool = False,
 ) -> PanelDiagnostics:
     annual_rows: list[dict[str, Any]] = []
@@ -130,13 +188,33 @@ def compute_viability_panel(
     A_by_year: dict[int, pd.DataFrame] = {}
     B_by_year: dict[int, pd.DataFrame] = {}
     state_by_year: dict[int, dict[str, Any]] = {}
-
+    x_raw_by_year: dict[int, pd.Series] = {}
+    y_raw_by_year: dict[int, pd.Series] = {}
     for year in sorted(panel.keys()):
         mrio, y_full = panel[year]
-        x = _series_from_any(mrio.x)
-        y = _series_from_any(y_full).reindex(x.index).fillna(0.0)
+        x_raw = _series_from_any(mrio.x)
+        y_raw = _series_from_any(y_full).reindex(x_raw.index).fillna(0.0)
+        x_raw_by_year[int(year)] = x_raw.astype(float)
+        y_raw_by_year[int(year)] = y_raw.astype(float)
 
-        top_idx = x.sort_values(ascending=False).head(max_sectors).index
+    n_sel = int(sector_universe_n or max_sectors)
+    mode = str(sector_universe_mode or "per_year_top_n").strip().lower()
+    fixed_index: pd.Index | None = None
+    sector_universe_manifest = pd.DataFrame()
+    if mode == "panel_union_zero_pad_top_n":
+        fixed_index, sector_universe_manifest = _select_panel_union_zero_pad_top_n(
+            x_raw_by_year,
+            n=n_sel,
+        )
+
+    for year in sorted(panel.keys()):
+        mrio, _yfull = panel[year]
+        x = x_raw_by_year[int(year)]
+        y = y_raw_by_year[int(year)]
+        if fixed_index is not None:
+            top_idx = fixed_index
+        else:
+            top_idx = x.sort_values(ascending=False).head(n_sel).index
         x = x.reindex(top_idx)
         y = y.reindex(top_idx).fillna(0.0)
         A = _coerce_square(mrio.A, top_idx)
@@ -194,6 +272,7 @@ def compute_viability_panel(
 
     annual = pd.DataFrame(annual_rows).sort_values("year").reset_index(drop=True)
     annual["delta_viability"] = annual["tech_slack"].diff()
+    annual.loc[annual["year"].diff() != 1, "delta_viability"] = np.nan
     sector_scores = pd.DataFrame(score_rows)
 
     return PanelDiagnostics(
@@ -203,4 +282,5 @@ def compute_viability_panel(
         A_by_year=A_by_year,
         B_by_year=B_by_year,
         state_by_year=state_by_year,
+        sector_universe_manifest=sector_universe_manifest,
     )

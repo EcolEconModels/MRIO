@@ -114,3 +114,21 @@ def test_principal_growth_panel_metrics():
     assert all(y in details for y in [2020, 2021, 2022])
     aligns = pairs["alignment_with_dx_forward"].dropna()
     assert ((aligns <= 1.0) & (aligns >= -1.0)).all()
+
+
+def test_panel_union_zero_pad_top_n_has_fixed_universe_manifest():
+    panel = load_mrio_panel(dataset="test", years=[2020, 2021, 2022], calc_all=True, include_ghosh=True)
+    out = compute_viability_panel(
+        panel,
+        CONSTRAINTS_CFG,
+        max_sectors=20,
+        sector_universe_mode="panel_union_zero_pad_top_n",
+        sector_universe_n=20,
+        allow_relaxation=True,
+    )
+    assert not out.sector_universe_manifest.empty
+    assert {"sector", "score", "selected", "rank", "sector_universe_mode", "sector_universe_n"}.issubset(
+        set(out.sector_universe_manifest.columns)
+    )
+    idx_sets = [tuple(pd.Index(x.index).astype(str)) for x in out.x_by_year.values()]
+    assert len(set(idx_sets)) == 1

@@ -174,8 +174,6 @@ def solve_beta(
         if denom > 0:
             if candidate < upper:
                 upper = candidate
-            if abs(candidate - upper) <= tol:
-                binding_eco.append(str(name))
         else:
             lower = max(lower, candidate)
 
@@ -201,8 +199,6 @@ def solve_beta(
         candidate = rhs / denom
         if denom > 0:
             lower = max(lower, candidate)
-            if abs(candidate - lower) <= tol:
-                binding_soc.append(str(name))
         else:
             if candidate < upper:
                 upper = candidate
