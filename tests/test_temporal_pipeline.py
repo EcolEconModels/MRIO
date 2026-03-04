@@ -42,13 +42,17 @@ def test_load_mrio_panel_test_dataset():
 
 def test_compute_viability_panel_outputs():
     panel = load_mrio_panel(dataset="test", years=[2020, 2021], calc_all=True, include_ghosh=True)
-    out = compute_viability_panel(panel, CONSTRAINTS_CFG, max_sectors=20, allow_relaxation=True)
+    out = compute_viability_panel(panel, CONSTRAINTS_CFG, dataset="test", max_sectors=20, allow_relaxation=True)
     assert not out.annual.empty
     assert {"year", "rho", "tech_slack", "delta_viability"}.issubset(out.annual.columns)
     assert not out.sector_scores.empty
     assert set(out.x_by_year.keys()) == {2020, 2021}
     assert set(out.A_by_year.keys()) == {2020, 2021}
     assert set(out.state_by_year.keys()) == {2020, 2021}
+    for year in [2020, 2021]:
+        state = out.state_by_year[year]
+        for key in ["eco_source_mode", "eco_selector_note", "eco_budget_factor", "eco_budget_ref_year", "eco_row_label"]:
+            assert key in state
 
 
 def test_decomposition_additive_identity():

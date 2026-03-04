@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from .constraints import build_constraints
+from .constraints import build_constraints_with_context
 from .data import load_mrio
 from .diagnostics import (
     aggregate_diagnostics,
@@ -177,6 +177,7 @@ def compute_viability_panel(
     panel: Mapping[int, tuple[Any, pd.Series]],
     constraints_cfg: Mapping[str, Any],
     *,
+    dataset: str | None = None,
     max_sectors: int = 80,
     sector_universe_mode: str = "per_year_top_n",
     sector_universe_n: int | None = None,
@@ -222,7 +223,16 @@ def compute_viability_panel(
         rho, tech_slack = calc_tech_slack(A)
         pf_sens = calc_pf_sensitivities(A, strict=False)
 
-        E, S, e_bar, s_floor = build_constraints(x, constraints_cfg)
+        E, S, e_bar, s_floor, cmeta = build_constraints_with_context(
+            x,
+            constraints_cfg,
+            mrio_obj=mrio,
+            year=int(year),
+            dataset=dataset,
+            selected_index=top_idx,
+            extra_cfg={"budget_paths_data": dict(constraints_cfg.get("_budget_paths_data", {}) or {})},
+            return_metadata=True,
+        )
         lp, relax, e_used, s_used = _solve_with_optional_relaxation(
             x,
             y,
@@ -268,6 +278,11 @@ def compute_viability_panel(
             "e_bar": e_used,
             "s_floor": s_used,
             "x": x,
+            "eco_source_mode": (cmeta or {}).get("eco_source_mode", "unknown"),
+            "eco_selector_note": (cmeta or {}).get("eco_selector_note", ""),
+            "eco_budget_factor": (cmeta or {}).get("eco_budget_factor", np.nan),
+            "eco_budget_ref_year": (cmeta or {}).get("eco_budget_ref_year", ""),
+            "eco_row_label": (cmeta or {}).get("eco_row_label", ""),
         }
 
     annual = pd.DataFrame(annual_rows).sort_values("year").reset_index(drop=True)

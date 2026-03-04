@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.constraints import build_constraints, solve_beta
+from ecolecon_mrio.constraints import build_constraints, build_constraints_with_context, solve_beta
 from ecolecon_mrio.counterfactual import run_panel_scenarios, run_shock_suite
 from ecolecon_mrio.diagnostics import calc_coefficient_diagnostics, calc_tech_slack
 
@@ -39,6 +39,87 @@ def test_build_constraints_shapes_and_names():
     assert list(S.columns) == ["a", "b"]
     assert float(e_bar.iloc[0]) > 0.0
     assert float(s_floor.iloc[0]) > 0.0
+
+
+def _toy_mrio_with_satellite(columns: list[str]) -> object:
+    sat = type("Satellite", (), {})()
+    sat.F = pd.DataFrame(
+        [[2.0, 1.0], [0.2, 0.4]],
+        index=["CO2 combustion", "other_extension"],
+        columns=columns,
+        dtype=float,
+    )
+    mrio = type("MRIOObj", (), {})()
+    mrio.satellite = sat
+    return mrio
+
+
+def test_build_constraints_extension_row_budget_factor():
+    x = pd.Series([100.0, 50.0], index=["a", "b"], dtype=float)
+    mrio = _toy_mrio_with_satellite(["a", "b"])
+    cfg = {
+        "ecological": [
+            {
+                "name": "eco_co2",
+                "source": "extension_row",
+                "selector": {"mode": "row_name_contains_any", "row_name_contains_any": ["co2"]},
+                "ceiling_mode": "budget_share_of_current",
+                "budget_path_ref": "paris_co2",
+            }
+        ],
+        "social": [{"name": "soc_u", "source": "proxy", "mode": "uniform", "floor_share_of_current": 0.8}],
+        "_budget_paths_data": {
+            "paths": {"paris_co2": {"test": {"2020": 0.9}}},
+            "reference_year": {"test": 2020},
+        },
+    }
+    E, S, e_bar, s_floor, meta = build_constraints_with_context(
+        x,
+        cfg,
+        mrio_obj=mrio,
+        year=2020,
+        dataset="test",
+        return_metadata=True,
+    )
+    assert list(E.index) == ["eco_co2"]
+    assert float(E.loc["eco_co2", "a"]) == 2.0
+    assert float(E.loc["eco_co2", "b"]) == 1.0
+    assert abs(float(e_bar.loc["eco_co2"]) - (0.9 * (2.0 * 100.0 + 1.0 * 50.0))) < 1e-9
+    assert list(S.index) == ["soc_u"]
+    assert float(s_floor.iloc[0]) > 0.0
+    assert isinstance(meta, dict)
+    assert meta.get("eco_source_mode") == "extension_row"
+    assert "satellite.F:match:CO2 combustion" in str(meta.get("eco_selector_note"))
+
+
+def test_build_constraints_extension_row_missing_budget_factor_fails():
+    x = pd.Series([100.0, 50.0], index=["a", "b"], dtype=float)
+    mrio = _toy_mrio_with_satellite(["a", "b"])
+    cfg = {
+        "ecological": [
+            {
+                "name": "eco_co2",
+                "source": "extension_row",
+                "selector": {"mode": "row_name_contains_any", "row_name_contains_any": ["co2"]},
+                "ceiling_mode": "budget_share_of_current",
+                "budget_path_ref": "paris_co2",
+            }
+        ],
+        "social": [{"name": "soc_u", "source": "proxy", "mode": "uniform", "floor_share_of_current": 0.8}],
+        "_budget_paths_data": {"paths": {"paris_co2": {"test": {"2021": 0.9}}}},
+    }
+    try:
+        build_constraints(
+            x,
+            cfg,
+            mrio_obj=mrio,
+            year=2020,
+            dataset="test",
+        )
+    except ValueError as exc:
+        assert "Missing budget factor" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for missing budget factor.")
 
 
 def test_solve_beta_feasible_and_binding_eco():

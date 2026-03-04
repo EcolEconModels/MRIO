@@ -6,7 +6,7 @@ embodied pressure allocation, ranking foundational sectors). Extend functions
 here rather than inside notebooks to keep the workflow reproducible.
 """
 
-from .constraints import BetaResult, build_constraints, solve_beta
+from .constraints import BetaResult, build_constraints, build_constraints_with_context, solve_beta
 from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import load_mrio, ensure_exiobase_year_zip
 from .decomposition import decompose_slack_change
@@ -124,6 +124,7 @@ __all__ = [
     "run_shock_suite",
     "BetaResult",
     "build_constraints",
+    "build_constraints_with_context",
     "solve_beta",
     "SafeJustResult",
     "aggregate_diagnostics",
