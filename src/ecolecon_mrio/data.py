@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pickle
 import time
 import zipfile
 from pathlib import Path
@@ -115,6 +116,21 @@ def _is_complete_exio_parsed_cache(cache_dir: Path) -> bool:
     if not cache_dir.exists() or not cache_dir.is_dir():
         return False
     return (cache_dir / "file_parameters.json").exists()
+
+
+def _load_fast_pickle(path: Path):
+    with path.open("rb") as fh:
+        return pickle.load(fh)
+
+
+def _save_fast_pickle(path: Path, obj, *, verbose: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("wb") as fh:
+        pickle.dump(obj, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.replace(path)
+    if verbose:
+        print(f"Saved EXIOBASE fast cache to {path}")
 
 
 def load_mrio(
@@ -316,7 +332,9 @@ def load_mrio(
         # extension (e.g., "mrio_system.pkl") because `MRIOMetaData.save()` will
         # treat that as a filename and fail with IsADirectoryError.
         mrio_cache_dir = data_dir / "mrio_system"
+        fast_cache_path = data_dir / "mrio_system.fast.pkl"
         legacy_cache_dir = data_dir / "mrio_system.pkl"
+        mrio = None
 
         if not mrio_cache_dir.exists() and legacy_cache_dir.is_dir():
             # Backward-compat: previous runs may have created a directory named
@@ -336,6 +354,9 @@ def load_mrio(
         if force_download and mrio_cache_dir.exists():
             ts = int(time.time())
             mrio_cache_dir.rename(data_dir / f"mrio_system.forced.{ts}")
+        if force_download and fast_cache_path.exists():
+            ts = int(time.time())
+            fast_cache_path.rename(data_dir / f"mrio_system.fast.forced.{ts}.pkl")
 
         # Check if cached system exists to avoid reparsing
         cache_para = mrio_cache_dir / "file_parameters.json"
@@ -343,19 +364,37 @@ def load_mrio(
             ts = int(time.time())
             mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
 
-        if mrio_cache_dir.exists():
+        if mrio_cache_dir.exists() and fast_cache_path.exists():
             if verbose:
-                print(f"Loading cached EXIOBASE IOSystem from {mrio_cache_dir} ...")
+                print(f"Loading EXIOBASE fast cache from {fast_cache_path} ...")
             try:
-                mrio = pymrio.load(mrio_cache_dir)
-            except FileNotFoundError:
+                mrio = _load_fast_pickle(fast_cache_path)
+            except Exception as exc:
                 ts = int(time.time())
-                mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
-                mrio = None
+                bad = data_dir / f"mrio_system.fast.invalid.{ts}.pkl"
+                try:
+                    fast_cache_path.rename(bad)
+                except Exception:
+                    pass
+                if verbose:
+                    print(f"Warning: failed fast-cache load ({type(exc).__name__}: {exc}); falling back to text cache.")
+
+        if mrio_cache_dir.exists():
+            if mrio is None:
+                if verbose:
+                    print(f"Loading cached EXIOBASE IOSystem from {mrio_cache_dir} ...")
+                try:
+                    mrio = pymrio.load(mrio_cache_dir)
+                    # Seed/update binary fast cache for subsequent runs.
+                    _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
+                except FileNotFoundError:
+                    ts = int(time.time())
+                    mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
+                    mrio = None
             if mrio is None:
                 # fall through to zip parsing path below
                 pass
-        if not mrio_cache_dir.exists():
+        if not mrio_cache_dir.exists() or mrio is None:
              # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
              zip_path = ensure_exiobase_year_zip(
                  year=int(year),
@@ -381,6 +420,8 @@ def load_mrio(
              if verbose:
                  print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
              mrio.save(mrio_cache_dir)
+             # Also persist fast cache so future runs bypass large text parsing.
+             _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
              if delete_source_zip_after_parse and _is_complete_exio_parsed_cache(mrio_cache_dir):
                  try:
                      zip_path.unlink(missing_ok=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 from pathlib import Path
 
 import pandas as pd
@@ -83,3 +84,60 @@ def test_load_mrio_exiobase_keeps_zip_if_cache_incomplete(monkeypatch, tmp_path)
 
     assert zip_path.exists()
 
+
+def test_load_mrio_exiobase_prefers_fast_cache_when_present(monkeypatch, tmp_path):
+    year = 2096
+    data_dir = tmp_path / f"exiobase3_{year}"
+    cache_dir = data_dir / "mrio_system"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "file_parameters.json").write_text("{}", encoding="utf-8")
+
+    fast_path = data_dir / "mrio_system.fast.pkl"
+    cached_obj = _FakeExioMrio(complete_cache=True)
+    fast_path.write_bytes(pickle.dumps(cached_obj, protocol=pickle.HIGHEST_PROTOCOL))
+
+    import ecolecon_mrio.data as data_mod
+
+    def _should_not_run(_path):
+        raise AssertionError("pymrio.load should not be called when fast cache exists")
+
+    monkeypatch.setattr(data_mod.pymrio, "load", _should_not_run)
+
+    mrio, y = load_mrio(
+        "exiobase",
+        year,
+        data_root=tmp_path,
+        calc_all=False,
+        allow_download_missing=False,
+        verbose=False,
+    )
+
+    assert isinstance(mrio.Y, pd.DataFrame)
+    assert list(y.index) == ["a", "b"]
+
+
+def test_load_mrio_exiobase_writes_fast_cache_after_text_load(monkeypatch, tmp_path):
+    year = 2095
+    data_dir = tmp_path / f"exiobase3_{year}"
+    cache_dir = data_dir / "mrio_system"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "file_parameters.json").write_text("{}", encoding="utf-8")
+    fast_path = data_dir / "mrio_system.fast.pkl"
+    assert not fast_path.exists()
+
+    import ecolecon_mrio.data as data_mod
+
+    monkeypatch.setattr(data_mod.pymrio, "load", lambda _path: _FakeExioMrio(complete_cache=True))
+
+    _mrio, _y = load_mrio(
+        "exiobase",
+        year,
+        data_root=tmp_path,
+        calc_all=False,
+        allow_download_missing=False,
+        verbose=False,
+    )
+
+    assert fast_path.exists()
+    loaded = pickle.loads(fast_path.read_bytes())
+    assert isinstance(loaded.Y, pd.DataFrame)
