@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
+import signal
 import time
+import traceback
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Callable, Tuple, TypeVar
 
 import pandas as pd
 import pymrio
@@ -117,6 +121,176 @@ def _is_complete_exio_parsed_cache(cache_dir: Path) -> bool:
     return (cache_dir / "file_parameters.json").exists()
 
 
+_T = TypeVar("_T")
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
+def _env_pos_float(name: str) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0.0 else None
+
+
+def _path_probe(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {"path": None, "exists": False}
+    out: dict[str, Any] = {
+        "path": str(path),
+        "exists": bool(path.exists()),
+        "is_file": bool(path.is_file()),
+        "is_dir": bool(path.is_dir()),
+    }
+    if path.exists():
+        try:
+            st = path.stat()
+            out["size_bytes"] = int(st.st_size)
+            out["mtime_epoch_s"] = float(st.st_mtime)
+        except Exception as exc:  # pragma: no cover - defensive
+            out["stat_error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+@contextmanager
+def _timeout_guard(timeout_seconds: float | None, *, stage: str):
+    if timeout_seconds is None or timeout_seconds <= 0:
+        yield
+        return
+    if os.name == "nt" or not hasattr(signal, "setitimer"):
+        # Keep behavior portable; timeout enforcement via SIGALRM is Unix-only.
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _handler(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"EXIO stage '{stage}' exceeded timeout ({float(timeout_seconds):.2f}s).")
+
+    signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, float(timeout_seconds))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _write_exio_debug_snapshot(
+    *,
+    year: int,
+    data_dir: Path,
+    stage: str,
+    event: str,
+    stage_timings: list[dict[str, Any]],
+    timeout_seconds: float | None,
+    zip_path: Path | None,
+    mrio_cache_dir: Path | None,
+    exc: Exception | None = None,
+) -> Path | None:
+    try:
+        debug_dir_env = os.environ.get("MRIO_EXIO_DEBUG_DIR")
+        debug_dir = Path(debug_dir_env).expanduser().resolve() if debug_dir_env else (data_dir / "debug")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        snap_path = debug_dir / f"exio_load_debug_{int(year)}_{int(time.time())}_{os.getpid()}.json"
+
+        zip_probe = _path_probe(zip_path)
+        if zip_path is not None and zip_path.exists() and zip_path.is_file():
+            try:
+                zip_probe["contains_file_parameters_json"] = bool(zip_contains_member(zip_path, "file_parameters.json"))
+            except Exception as zexc:  # pragma: no cover - defensive
+                zip_probe["zip_probe_error"] = f"{type(zexc).__name__}: {zexc}"
+
+        cache_probe = _path_probe(mrio_cache_dir)
+        if mrio_cache_dir is not None:
+            cache_probe["cache_complete"] = bool(_is_complete_exio_parsed_cache(mrio_cache_dir))
+
+        payload: dict[str, Any] = {
+            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "dataset": "exiobase",
+            "year": int(year),
+            "stage": stage,
+            "event": event,
+            "timeout_seconds": timeout_seconds,
+            "cwd": os.getcwd(),
+            "pid": os.getpid(),
+            "data_dir": _path_probe(data_dir),
+            "zip_probe": zip_probe,
+            "cache_probe": cache_probe,
+            "stage_timings": list(stage_timings),
+            "env": {
+                k: v
+                for (k, v) in sorted(os.environ.items())
+                if k.startswith("MRIO_") and k not in {"MRIO_TOKEN", "MRIO_PASSWORD"}
+            },
+        }
+        if exc is not None:
+            payload["error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+
+        snap_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        return snap_path
+    except Exception:  # pragma: no cover - diagnostics should not mask root cause
+        return None
+
+
+def _run_exio_stage(
+    stage: str,
+    fn: Callable[[], _T],
+    *,
+    year: int,
+    data_dir: Path,
+    mrio_cache_dir: Path | None,
+    zip_path: Path | None,
+    timeout_seconds: float | None,
+    stage_timings: list[dict[str, Any]],
+    verbose: bool,
+    debug_enabled: bool,
+) -> _T:
+    t0 = time.perf_counter()
+    if verbose or debug_enabled:
+        print(f"[EXIO][{int(year)}] stage={stage} start", flush=True)
+    try:
+        with _timeout_guard(timeout_seconds, stage=stage):
+            out = fn()
+    except Exception as exc:
+        elapsed = time.perf_counter() - t0
+        stage_timings.append({"stage": stage, "status": "error", "elapsed_s": float(elapsed)})
+        snap = _write_exio_debug_snapshot(
+            year=int(year),
+            data_dir=data_dir,
+            stage=stage,
+            event="exception",
+            stage_timings=stage_timings,
+            timeout_seconds=timeout_seconds,
+            zip_path=zip_path,
+            mrio_cache_dir=mrio_cache_dir,
+            exc=exc,
+        )
+        msg = f"EXIO load failed at stage='{stage}' year={int(year)} after {elapsed:.2f}s."
+        if snap is not None:
+            msg += f" Diagnostics: {snap}"
+        raise RuntimeError(msg) from exc
+
+    elapsed = time.perf_counter() - t0
+    stage_timings.append({"stage": stage, "status": "ok", "elapsed_s": float(elapsed)})
+    if verbose or debug_enabled:
+        print(f"[EXIO][{int(year)}] stage={stage} done in {elapsed:.2f}s", flush=True)
+    return out
+
+
 def load_mrio(
     dataset: str,
     year: int,
@@ -153,6 +327,13 @@ def load_mrio(
     y_full : pd.Series
         The total final demand vector (summed across categories).
     """
+    exio_debug_enabled = False
+    exio_stage_timeout_seconds: float | None = None
+    exio_stage_timings: list[dict[str, Any]] = []
+    exio_data_dir: Path | None = None
+    exio_cache_dir: Path | None = None
+    exio_zip_path_for_diag: Path | None = None
+
     if dataset == "test":
         if verbose:
             print("Loading internal pymrio test dataset (no download)...")
@@ -309,13 +490,22 @@ def load_mrio(
         root = Path(data_root) if data_root is not None else default_data_root()
         data_dir = root / f"exiobase3_{year}"
         data_dir.mkdir(parents=True, exist_ok=True)
+        exio_data_dir = data_dir
+        exio_debug_enabled = bool(verbose) or _env_bool("MRIO_EXIO_DEBUG", default=False)
+        exio_stage_timeout_seconds = _env_pos_float("MRIO_EXIO_STAGE_TIMEOUT_S")
         if verbose:
             print(f"Ensuring EXIOBASE 3 data for {year} in {data_dir}...")
+        if exio_debug_enabled and exio_stage_timeout_seconds is not None:
+            print(
+                f"[EXIO][{int(year)}] fail-fast timeout enabled at {exio_stage_timeout_seconds:.2f}s per stage",
+                flush=True,
+            )
         
         # Pymrio saves to a *directory*; avoid giving it a directory name with an
         # extension (e.g., "mrio_system.pkl") because `MRIOMetaData.save()` will
         # treat that as a filename and fail with IsADirectoryError.
         mrio_cache_dir = data_dir / "mrio_system"
+        exio_cache_dir = mrio_cache_dir
         legacy_cache_dir = data_dir / "mrio_system.pkl"
 
         if not mrio_cache_dir.exists() and legacy_cache_dir.is_dir():
@@ -347,48 +537,94 @@ def load_mrio(
             if verbose:
                 print(f"Loading cached EXIOBASE IOSystem from {mrio_cache_dir} ...")
             try:
-                mrio = pymrio.load(mrio_cache_dir)
-            except FileNotFoundError:
+                mrio = _run_exio_stage(
+                    "cache_load",
+                    lambda: pymrio.load(mrio_cache_dir),
+                    year=int(year),
+                    data_dir=data_dir,
+                    mrio_cache_dir=mrio_cache_dir,
+                    zip_path=exio_zip_path_for_diag,
+                    timeout_seconds=exio_stage_timeout_seconds,
+                    stage_timings=exio_stage_timings,
+                    verbose=verbose,
+                    debug_enabled=exio_debug_enabled,
+                )
+            except RuntimeError as exc:
+                if not isinstance(exc.__cause__, FileNotFoundError):
+                    raise
                 ts = int(time.time())
                 mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
                 mrio = None
             if mrio is None:
                 # fall through to zip parsing path below
                 pass
-        if not mrio_cache_dir.exists():
-             # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
-             zip_path = ensure_exiobase_year_zip(
-                 year=int(year),
-                 data_dir=data_dir,
-                 system="pxp",
-                 force_download=force_download,
-                 allow_download_missing=allow_download_missing,
-                 resume_downloads=resume_downloads,
-                 show_download_progress=show_download_progress,
-                 download_chunk_mb=download_chunk_mb,
-                 download_timeout_seconds=download_timeout_seconds,
-                 download_retries=download_retries,
-                 verbose=verbose,
-             )
+        if not mrio_cache_dir.exists() or mrio is None:
+            # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
+            exio_zip_path_for_diag = _run_exio_stage(
+                "ensure_zip",
+                lambda: ensure_exiobase_year_zip(
+                    year=int(year),
+                    data_dir=data_dir,
+                    system="pxp",
+                    force_download=force_download,
+                    allow_download_missing=allow_download_missing,
+                    resume_downloads=resume_downloads,
+                    show_download_progress=show_download_progress,
+                    download_chunk_mb=download_chunk_mb,
+                    download_timeout_seconds=download_timeout_seconds,
+                    download_retries=download_retries,
+                    verbose=verbose,
+                ),
+                year=int(year),
+                data_dir=data_dir,
+                mrio_cache_dir=mrio_cache_dir,
+                zip_path=exio_zip_path_for_diag,
+                timeout_seconds=exio_stage_timeout_seconds,
+                stage_timings=exio_stage_timings,
+                verbose=verbose,
+                debug_enabled=exio_debug_enabled,
+            )
 
-             if verbose:
-                 print(f"Parsing EXIOBASE zip {zip_path} (this can take a while)...")
-             mrio = pymrio.parse_exiobase3(zip_path)
-             # If a previous partial run created a directory at this path, move it aside.
-             if mrio_cache_dir.exists():
-                 ts = int(time.time())
-                 mrio_cache_dir.rename(data_dir / f"mrio_system.stale.{ts}")
-             if verbose:
-                 print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
-             mrio.save(mrio_cache_dir)
-             if delete_source_zip_after_parse and _is_complete_exio_parsed_cache(mrio_cache_dir):
-                 try:
-                     zip_path.unlink(missing_ok=True)
-                     if verbose:
-                         print(f"Deleted EXIOBASE source zip after successful parse: {zip_path}")
-                 except Exception as exc:
-                     if verbose:
-                         print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
+            if verbose:
+                print(f"Parsing EXIOBASE zip {exio_zip_path_for_diag} (this can take a while)...")
+            mrio = _run_exio_stage(
+                "parse_exiobase3",
+                lambda: pymrio.parse_exiobase3(exio_zip_path_for_diag),
+                year=int(year),
+                data_dir=data_dir,
+                mrio_cache_dir=mrio_cache_dir,
+                zip_path=exio_zip_path_for_diag,
+                timeout_seconds=exio_stage_timeout_seconds,
+                stage_timings=exio_stage_timings,
+                verbose=verbose,
+                debug_enabled=exio_debug_enabled,
+            )
+            # If a previous partial run created a directory at this path, move it aside.
+            if mrio_cache_dir.exists():
+                ts = int(time.time())
+                mrio_cache_dir.rename(data_dir / f"mrio_system.stale.{ts}")
+            if verbose:
+                print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
+            _run_exio_stage(
+                "save_cache",
+                lambda: mrio.save(mrio_cache_dir),
+                year=int(year),
+                data_dir=data_dir,
+                mrio_cache_dir=mrio_cache_dir,
+                zip_path=exio_zip_path_for_diag,
+                timeout_seconds=exio_stage_timeout_seconds,
+                stage_timings=exio_stage_timings,
+                verbose=verbose,
+                debug_enabled=exio_debug_enabled,
+            )
+            if delete_source_zip_after_parse and _is_complete_exio_parsed_cache(mrio_cache_dir):
+                try:
+                    exio_zip_path_for_diag.unlink(missing_ok=True)
+                    if verbose:
+                        print(f"Deleted EXIOBASE source zip after successful parse: {exio_zip_path_for_diag}")
+                except Exception as exc:
+                    if verbose:
+                        print(f"Warning: failed to delete EXIOBASE source zip {exio_zip_path_for_diag}: {exc}")
 
         y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
         y_full = mrio.Y[y_cols].sum(axis=1)
@@ -397,6 +633,27 @@ def load_mrio(
     if calc_all and getattr(mrio, "G", None) is None:
         if verbose:
             print("Computing MRIO derived matrices (calc_all)...")
-        mrio.calc_all(include_ghosh=include_ghosh)
+        if dataset == "exiobase" and exio_data_dir is not None:
+            _run_exio_stage(
+                "calc_all",
+                lambda: mrio.calc_all(include_ghosh=include_ghosh),
+                year=int(year),
+                data_dir=exio_data_dir,
+                mrio_cache_dir=exio_cache_dir,
+                zip_path=exio_zip_path_for_diag,
+                timeout_seconds=exio_stage_timeout_seconds,
+                stage_timings=exio_stage_timings,
+                verbose=verbose,
+                debug_enabled=exio_debug_enabled,
+            )
+        else:
+            mrio.calc_all(include_ghosh=include_ghosh)
+
+    if dataset == "exiobase" and exio_stage_timings and (verbose or exio_debug_enabled):
+        timing_bits = ", ".join(
+            f"{row.get('stage')}={float(row.get('elapsed_s', 0.0)):.2f}s[{row.get('status')}]"
+            for row in exio_stage_timings
+        )
+        print(f"[EXIO][{int(year)}] stage timings: {timing_bits}", flush=True)
         
     return mrio, y_full
