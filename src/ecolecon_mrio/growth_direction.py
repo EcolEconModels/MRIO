@@ -106,13 +106,17 @@ def principal_growth_direction(
         q, q_abs = _orient_and_normalize(right_vecs[:, idx], index=A_mat.columns)
         p, p_abs = _orient_and_normalize(left_vecs[:, idx], index=A_mat.index)
         fallback = bool(q_abs or p_abs)
+        consistent = not fallback
     else:
+        # Fallback to the largest real positive eigenvalue regardless of sign consistency
         idx = int(candidate[np.argmax(np.real(eigvals[candidate]))])
         q, q_abs = _orient_and_normalize(right_vecs[:, idx], index=A_mat.columns)
         p, p_abs = _orient_and_normalize(left_vecs[:, idx], index=A_mat.index)
         fallback = True
+        consistent = False
 
     alpha = float(np.real(eigvals[idx]))
+    pf_meta = {"mathematically_consistent": consistent}
     return PrincipalDirectionResult(
         year=year,
         alpha=alpha,
@@ -120,7 +124,7 @@ def principal_growth_direction(
         p=p,
         method="von_neumann_generalized",
         fallback_used=fallback,
-        pf_metadata=None,
+        pf_metadata=pf_meta,
     )
 
 
