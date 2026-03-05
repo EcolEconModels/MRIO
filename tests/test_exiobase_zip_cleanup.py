@@ -31,6 +31,12 @@ def _setup_zip(tmp_path: Path, year: int) -> Path:
     return zip_path
 
 
+def _exio_named_cache_paths(tmp_path: Path, year: int, system: str = "pxp") -> tuple[Path, Path]:
+    data_dir = tmp_path / f"exiobase3_{year}"
+    tag = f"{year}_{system}"
+    return data_dir / f"mrio_system_{tag}", data_dir / f"mrio_system_{tag}.fast.pkl"
+
+
 def test_load_mrio_exiobase_deletes_source_zip_after_successful_parse(monkeypatch, tmp_path):
     year = 2098
     zip_path = _setup_zip(tmp_path, year)
@@ -88,12 +94,10 @@ def test_load_mrio_exiobase_keeps_zip_if_cache_incomplete(monkeypatch, tmp_path)
 
 def test_load_mrio_exiobase_prefers_fast_cache_when_present(monkeypatch, tmp_path):
     year = 2096
-    data_dir = tmp_path / f"exiobase3_{year}"
-    cache_dir = data_dir / "mrio_system"
+    cache_dir, fast_path = _exio_named_cache_paths(tmp_path, year, system="pxp")
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / "file_parameters.json").write_text("{}", encoding="utf-8")
 
-    fast_path = data_dir / "mrio_system.fast.pkl"
     cached_obj = _FakeExioMrio(complete_cache=True)
     fast_path.write_bytes(pickle.dumps(cached_obj, protocol=pickle.HIGHEST_PROTOCOL))
 
@@ -119,11 +123,9 @@ def test_load_mrio_exiobase_prefers_fast_cache_when_present(monkeypatch, tmp_pat
 
 def test_load_mrio_exiobase_writes_fast_cache_after_text_load(monkeypatch, tmp_path):
     year = 2095
-    data_dir = tmp_path / f"exiobase3_{year}"
-    cache_dir = data_dir / "mrio_system"
+    cache_dir, fast_path = _exio_named_cache_paths(tmp_path, year, system="pxp")
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / "file_parameters.json").write_text("{}", encoding="utf-8")
-    fast_path = data_dir / "mrio_system.fast.pkl"
     assert not fast_path.exists()
 
     import ecolecon_mrio.data as data_mod
@@ -157,9 +159,7 @@ def test_load_mrio_exiobase_default_parse_writes_fast_only(monkeypatch, tmp_path
     )
     monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: _FakeExioMrio(complete_cache=True))
 
-    data_dir = tmp_path / f"exiobase3_{year}"
-    cache_dir = data_dir / "mrio_system"
-    fast_path = data_dir / "mrio_system.fast.pkl"
+    cache_dir, fast_path = _exio_named_cache_paths(tmp_path, year, system="pxp")
 
     _mrio, _y = load_mrio(
         "exiobase",

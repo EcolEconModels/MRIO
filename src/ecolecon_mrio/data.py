@@ -133,6 +133,18 @@ def _save_fast_pickle(path: Path, obj, *, verbose: bool = False) -> None:
         print(f"Saved EXIOBASE fast cache to {path}")
 
 
+def _exio_cache_paths(data_dir: Path, year: int, system: str) -> dict[str, Path]:
+    tag = f"{int(year)}_{system}"
+    return {
+        "text": data_dir / f"mrio_system_{tag}",
+        "fast": data_dir / f"mrio_system_{tag}.fast.pkl",
+        # Legacy names kept for backward-compatible pxp migration/loading.
+        "legacy_text": data_dir / "mrio_system",
+        "legacy_text_alt": data_dir / "mrio_system.pkl",
+        "legacy_fast": data_dir / "mrio_system.fast.pkl",
+    }
+
+
 def load_mrio(
     dataset: str,
     year: int,
@@ -151,6 +163,7 @@ def load_mrio(
     download_retries: int = 3,
     delete_source_zip_after_parse: bool = False,
     exio_save_text_cache: bool = False,
+    exio_system: str = "pxp",
 ) -> Tuple[pymrio.IOSystem, pd.Series]:
     """
     Load MRIO data using native pymrio download and parsing capabilities.
@@ -174,7 +187,7 @@ def load_mrio(
     -----
     EXIOBASE cache policy defaults to `zip + fast pickle`:
     - keep source zip locally for reproducibility/re-parse,
-    - write/use `mrio_system.fast.pkl` for fast reloads,
+    - write/use `mrio_system_<year>_<system>.fast.pkl` for fast reloads,
     - do not write large text cache directories unless
       `exio_save_text_cache=True`.
     """
@@ -331,33 +344,48 @@ def load_mrio(
 
     else:
         # Exiobase
+        system = str(exio_system).strip().lower()
+        if system not in {"pxp", "ixi"}:
+            raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
+
         root = Path(data_root) if data_root is not None else default_data_root()
         data_dir = root / f"exiobase3_{year}"
         data_dir.mkdir(parents=True, exist_ok=True)
         if verbose:
-            print(f"Ensuring EXIOBASE 3 data for {year} in {data_dir}...")
-        
-        # Pymrio saves to a *directory*; avoid giving it a directory name with an
-        # extension (e.g., "mrio_system.pkl") because `MRIOMetaData.save()` will
-        # treat that as a filename and fail with IsADirectoryError.
-        mrio_cache_dir = data_dir / "mrio_system"
-        fast_cache_path = data_dir / "mrio_system.fast.pkl"
-        legacy_cache_dir = data_dir / "mrio_system.pkl"
+            print(f"Ensuring EXIOBASE 3 data for {year} ({system}) in {data_dir}...")
+
+        paths = _exio_cache_paths(data_dir, int(year), system)
+        mrio_cache_dir = paths["text"]
+        fast_cache_path = paths["fast"]
+        legacy_cache_dir = paths["legacy_text"]
+        legacy_cache_dir_alt = paths["legacy_text_alt"]
+        legacy_fast_cache_path = paths["legacy_fast"]
+
         mrio = None
 
-        if not mrio_cache_dir.exists() and legacy_cache_dir.is_dir():
-            # Backward-compat: previous runs may have created a directory named
-            # "mrio_system.pkl". Prefer migrating it to the extension-less name.
-            if verbose:
-                print(f"Found legacy EXIOBASE cache dir at {legacy_cache_dir}")
+        # Backward-compat migration for historical pxp cache names.
+        if system == "pxp" and not mrio_cache_dir.exists():
+            for cand in (legacy_cache_dir, legacy_cache_dir_alt):
+                if cand.is_dir():
+                    if verbose:
+                        print(f"Found legacy EXIOBASE text cache dir at {cand}")
+                    try:
+                        cand.rename(mrio_cache_dir)
+                        if verbose:
+                            print(f"Migrated legacy text cache dir to {mrio_cache_dir}")
+                    except Exception:
+                        # Keep fallback path if rename fails.
+                        mrio_cache_dir = cand
+                    break
+
+        if system == "pxp" and not fast_cache_path.exists() and legacy_fast_cache_path.exists():
             try:
-                legacy_cache_dir.rename(mrio_cache_dir)
+                legacy_fast_cache_path.rename(fast_cache_path)
                 if verbose:
-                    print(f"Migrated legacy cache dir to {mrio_cache_dir}")
+                    print(f"Migrated legacy EXIOBASE fast cache to {fast_cache_path}")
             except Exception:
-                # If migration fails (e.g., permissions), just use the legacy dir
-                # for reading; avoid writing to it again.
-                mrio_cache_dir = legacy_cache_dir
+                if verbose:
+                    print(f"Using legacy EXIOBASE fast cache at {legacy_fast_cache_path}")
 
         # Optional: force re-download/re-parse
         if force_download and mrio_cache_dir.exists():
@@ -365,7 +393,12 @@ def load_mrio(
             mrio_cache_dir.rename(data_dir / f"mrio_system.forced.{ts}")
         if force_download and fast_cache_path.exists():
             ts = int(time.time())
-            fast_cache_path.rename(data_dir / f"mrio_system.fast.forced.{ts}.pkl")
+            fast_cache_path.rename(data_dir / f"{fast_cache_path.name}.forced.{ts}")
+
+        # In pxp mode, force refresh also invalidates remaining legacy fast cache.
+        if force_download and system == "pxp" and legacy_fast_cache_path.exists():
+            ts = int(time.time())
+            legacy_fast_cache_path.rename(data_dir / f"{legacy_fast_cache_path.name}.forced.{ts}")
 
         # Check if cached text system exists to avoid loading invalid directories.
         cache_para = mrio_cache_dir / "file_parameters.json"
@@ -374,43 +407,75 @@ def load_mrio(
             mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
 
         # Preferred cache path: binary fast cache (small load-time overhead).
-        if fast_cache_path.exists():
+        fast_candidates = [fast_cache_path]
+        if system == "pxp" and legacy_fast_cache_path.exists():
+            fast_candidates.append(legacy_fast_cache_path)
+
+        for fast_candidate in fast_candidates:
+            if not fast_candidate.exists():
+                continue
             if verbose:
-                print(f"Loading EXIOBASE fast cache from {fast_cache_path} ...")
+                print(f"Loading EXIOBASE fast cache from {fast_candidate} ...")
             try:
-                mrio = _load_fast_pickle(fast_cache_path)
+                mrio = _load_fast_pickle(fast_candidate)
+                if fast_candidate != fast_cache_path and not fast_cache_path.exists():
+                    try:
+                        fast_candidate.rename(fast_cache_path)
+                        if verbose:
+                            print(f"Migrated loaded legacy fast cache to {fast_cache_path}")
+                    except Exception:
+                        pass
+                break
             except Exception as exc:
                 ts = int(time.time())
-                bad = data_dir / f"mrio_system.fast.invalid.{ts}.pkl"
+                bad = data_dir / f"{fast_candidate.name}.invalid.{ts}"
                 try:
-                    fast_cache_path.rename(bad)
+                    fast_candidate.rename(bad)
                 except Exception:
                     pass
                 if verbose:
                     print(f"Warning: failed fast-cache load ({type(exc).__name__}: {exc}); falling back to text cache.")
 
-        # Backward-compatible fallback path: legacy parsed text cache.
-        if mrio is None and mrio_cache_dir.exists():
+        text_candidates = [mrio_cache_dir]
+        if system == "pxp":
+            text_candidates.extend([legacy_cache_dir, legacy_cache_dir_alt])
+
+        for text_candidate in text_candidates:
+            if mrio is not None:
+                break
+            if not text_candidate.exists() or not text_candidate.is_dir():
+                continue
+
+            cache_para = text_candidate / "file_parameters.json"
+            if not cache_para.exists():
+                ts = int(time.time())
+                try:
+                    text_candidate.rename(data_dir / f"{text_candidate.name}.invalid.{ts}")
+                except Exception:
+                    pass
+                continue
+
             if mrio is None:
                 if verbose:
-                    print(f"Loading cached EXIOBASE IOSystem from {mrio_cache_dir} ...")
+                    print(f"Loading cached EXIOBASE IOSystem from {text_candidate} ...")
                 try:
-                    mrio = pymrio.load(mrio_cache_dir)
+                    mrio = pymrio.load(text_candidate)
                     # Seed/update binary fast cache for subsequent runs.
                     _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
                 except FileNotFoundError:
                     ts = int(time.time())
-                    mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
+                    try:
+                        text_candidate.rename(data_dir / f"{text_candidate.name}.invalid.{ts}")
+                    except Exception:
+                        pass
                     mrio = None
-            if mrio is None:
-                # fall through to zip parsing path below
-                pass
+
         if mrio is None:
              # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
              zip_path = ensure_exiobase_year_zip(
                  year=int(year),
                  data_dir=data_dir,
-                 system="pxp",
+                 system=system,
                  force_download=force_download,
                  allow_download_missing=allow_download_missing,
                  resume_downloads=resume_downloads,
@@ -430,7 +495,7 @@ def load_mrio(
                  # If a previous partial run created a directory at this path, move it aside.
                  if mrio_cache_dir.exists():
                      ts = int(time.time())
-                     mrio_cache_dir.rename(data_dir / f"mrio_system.stale.{ts}")
+                     mrio_cache_dir.rename(data_dir / f"{mrio_cache_dir.name}.stale.{ts}")
                  if verbose:
                      print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
                  mrio.save(mrio_cache_dir)
