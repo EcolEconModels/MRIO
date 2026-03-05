@@ -173,3 +173,25 @@ def test_load_mrio_exiobase_default_parse_writes_fast_only(monkeypatch, tmp_path
     assert fast_path.exists()
     assert not cache_dir.exists()
     assert zip_path.exists()
+
+
+def test_resolve_exiobase3_url_falls_back_when_catalog_lookup_fails(monkeypatch):
+    import ecolecon_mrio.data as data_mod
+
+    def _boom(**_kwargs):
+        raise RuntimeError("catalog unreachable")
+
+    monkeypatch.setattr(data_mod, "_get_url_datafiles", _boom)
+    out = data_mod._resolve_exiobase3_url(2011, system="pxp")
+    assert out == "https://zenodo.org/records/15689391/files/IOT_2011_pxp.zip"
+
+
+def test_resolve_exiobase3_url_falls_back_when_token_missing(monkeypatch):
+    import ecolecon_mrio.data as data_mod
+
+    class _Catalog:
+        data_urls = ["https://zenodo.org/records/15689391/files/IOT_2000_pxp.zip"]
+
+    monkeypatch.setattr(data_mod, "_get_url_datafiles", lambda **_kwargs: _Catalog())
+    out = data_mod._resolve_exiobase3_url(2014, system="pxp")
+    assert out == "https://zenodo.org/records/15689391/files/IOT_2014_pxp.zip"

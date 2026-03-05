@@ -122,6 +122,72 @@ def test_build_constraints_extension_row_missing_budget_factor_fails():
         raise AssertionError("Expected ValueError for missing budget factor.")
 
 
+def test_build_constraints_extension_row_fallback_reference_year(monkeypatch):
+    import ecolecon_mrio.constraints as cmod
+    import ecolecon_mrio.data as data_mod
+
+    x = pd.Series([100.0, 50.0], index=["a", "b"], dtype=float)
+    mrio_missing = type("MRIOObj", (), {})()
+
+    air = type("Air", (), {})()
+    air.F = pd.DataFrame(
+        [[3.0, 1.0]],
+        index=["CO2 - combustion - air"],
+        columns=["a", "b"],
+        dtype=float,
+    )
+    mrio_ref = type("MRIOObj", (), {})()
+    mrio_ref.air_emissions = air
+
+    def _fake_load_mrio(dataset, year, **kwargs):
+        assert dataset == "exiobase"
+        assert year == 2010
+        return mrio_ref, pd.Series([0.0, 0.0], index=["a", "b"], dtype=float)
+
+    monkeypatch.setattr(data_mod, "load_mrio", _fake_load_mrio)
+    cmod._load_fallback_extension_table.cache_clear()
+
+    cfg = {
+        "ecological": [
+            {
+                "name": "eco_co2",
+                "source": "extension_row",
+                "selector": {
+                    "table": "air_emissions.F",
+                    "mode": "row_name_contains_any",
+                    "row_name_contains_any": ["co2"],
+                    "fallback_reference_year": 2010,
+                    "fallback_dataset": "exiobase",
+                    "fallback_table": "air_emissions.F",
+                },
+                "ceiling_mode": "budget_share_of_current",
+                "budget_path_ref": "paris_co2",
+            }
+        ],
+        "social": [{"name": "soc_u", "source": "proxy", "mode": "uniform", "floor_share_of_current": 0.8}],
+        "_budget_paths_data": {
+            "paths": {"paris_co2": {"exiobase": {"2020": 0.9}}},
+            "reference_year": {"exiobase": 2010},
+        },
+    }
+    E, S, e_bar, s_floor, meta = build_constraints_with_context(
+        x,
+        cfg,
+        mrio_obj=mrio_missing,
+        year=2020,
+        dataset="exiobase",
+        return_metadata=True,
+    )
+    assert list(E.index) == ["eco_co2"]
+    assert abs(float(E.loc["eco_co2", "a"]) - 3.0) < 1e-12
+    assert abs(float(E.loc["eco_co2", "b"]) - 1.0) < 1e-12
+    assert abs(float(e_bar.loc["eco_co2"]) - (0.9 * (3.0 * 100.0 + 1.0 * 50.0))) < 1e-9
+    assert list(S.index) == ["soc_u"]
+    assert float(s_floor.iloc[0]) > 0.0
+    assert isinstance(meta, dict)
+    assert "air_emissions.F->fallback:exiobase:2010:air_emissions.F" in str(meta.get("eco_selector_note"))
+
+
 def test_solve_beta_feasible_and_binding_eco():
     q = pd.Series([0.6, 0.4], index=["a", "b"], dtype=float)
     E = pd.DataFrame([[1.0, 2.0]], index=["eco_cap"], columns=q.index, dtype=float)
