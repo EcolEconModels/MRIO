@@ -79,6 +79,7 @@ def test_load_mrio_exiobase_keeps_zip_if_cache_incomplete(monkeypatch, tmp_path)
         calc_all=False,
         allow_download_missing=False,
         delete_source_zip_after_parse=True,
+        exio_save_text_cache=True,
         verbose=False,
     )
 
@@ -141,3 +142,34 @@ def test_load_mrio_exiobase_writes_fast_cache_after_text_load(monkeypatch, tmp_p
     assert fast_path.exists()
     loaded = pickle.loads(fast_path.read_bytes())
     assert isinstance(loaded.Y, pd.DataFrame)
+
+
+def test_load_mrio_exiobase_default_parse_writes_fast_only(monkeypatch, tmp_path):
+    year = 2094
+    zip_path = _setup_zip(tmp_path, year)
+
+    import ecolecon_mrio.data as data_mod
+
+    monkeypatch.setattr(
+        data_mod,
+        "ensure_exiobase_year_zip",
+        lambda **kwargs: zip_path,
+    )
+    monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: _FakeExioMrio(complete_cache=True))
+
+    data_dir = tmp_path / f"exiobase3_{year}"
+    cache_dir = data_dir / "mrio_system"
+    fast_path = data_dir / "mrio_system.fast.pkl"
+
+    _mrio, _y = load_mrio(
+        "exiobase",
+        year,
+        data_root=tmp_path,
+        calc_all=False,
+        allow_download_missing=False,
+        verbose=False,
+    )
+
+    assert fast_path.exists()
+    assert not cache_dir.exists()
+    assert zip_path.exists()

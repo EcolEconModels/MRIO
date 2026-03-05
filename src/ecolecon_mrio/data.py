@@ -150,6 +150,7 @@ def load_mrio(
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
     delete_source_zip_after_parse: bool = False,
+    exio_save_text_cache: bool = False,
 ) -> Tuple[pymrio.IOSystem, pd.Series]:
     """
     Load MRIO data using native pymrio download and parsing capabilities.
@@ -168,6 +169,14 @@ def load_mrio(
         The loaded input-output system with calculated inverses.
     y_full : pd.Series
         The total final demand vector (summed across categories).
+
+    Notes
+    -----
+    EXIOBASE cache policy defaults to `zip + fast pickle`:
+    - keep source zip locally for reproducibility/re-parse,
+    - write/use `mrio_system.fast.pkl` for fast reloads,
+    - do not write large text cache directories unless
+      `exio_save_text_cache=True`.
     """
     if dataset == "test":
         if verbose:
@@ -358,13 +367,14 @@ def load_mrio(
             ts = int(time.time())
             fast_cache_path.rename(data_dir / f"mrio_system.fast.forced.{ts}.pkl")
 
-        # Check if cached system exists to avoid reparsing
+        # Check if cached text system exists to avoid loading invalid directories.
         cache_para = mrio_cache_dir / "file_parameters.json"
         if mrio_cache_dir.exists() and not cache_para.exists():
             ts = int(time.time())
             mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
 
-        if mrio_cache_dir.exists() and fast_cache_path.exists():
+        # Preferred cache path: binary fast cache (small load-time overhead).
+        if fast_cache_path.exists():
             if verbose:
                 print(f"Loading EXIOBASE fast cache from {fast_cache_path} ...")
             try:
@@ -379,7 +389,8 @@ def load_mrio(
                 if verbose:
                     print(f"Warning: failed fast-cache load ({type(exc).__name__}: {exc}); falling back to text cache.")
 
-        if mrio_cache_dir.exists():
+        # Backward-compatible fallback path: legacy parsed text cache.
+        if mrio is None and mrio_cache_dir.exists():
             if mrio is None:
                 if verbose:
                     print(f"Loading cached EXIOBASE IOSystem from {mrio_cache_dir} ...")
@@ -394,7 +405,7 @@ def load_mrio(
             if mrio is None:
                 # fall through to zip parsing path below
                 pass
-        if not mrio_cache_dir.exists() or mrio is None:
+        if mrio is None:
              # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
              zip_path = ensure_exiobase_year_zip(
                  year=int(year),
@@ -413,16 +424,29 @@ def load_mrio(
              if verbose:
                  print(f"Parsing EXIOBASE zip {zip_path} (this can take a while)...")
              mrio = pymrio.parse_exiobase3(zip_path)
-             # If a previous partial run created a directory at this path, move it aside.
-             if mrio_cache_dir.exists():
-                 ts = int(time.time())
-                 mrio_cache_dir.rename(data_dir / f"mrio_system.stale.{ts}")
-             if verbose:
-                 print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
-             mrio.save(mrio_cache_dir)
+
+             # Optional text cache: disabled by default to avoid large on-disk caches.
+             if exio_save_text_cache:
+                 # If a previous partial run created a directory at this path, move it aside.
+                 if mrio_cache_dir.exists():
+                     ts = int(time.time())
+                     mrio_cache_dir.rename(data_dir / f"mrio_system.stale.{ts}")
+                 if verbose:
+                     print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
+                 mrio.save(mrio_cache_dir)
+
              # Also persist fast cache so future runs bypass large text parsing.
              _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
-             if delete_source_zip_after_parse and _is_complete_exio_parsed_cache(mrio_cache_dir):
+
+             # Keep source zip by default; only delete when explicitly requested.
+             # If text cache is enabled, require complete parsed cache; otherwise
+             # allow delete once the fast cache exists.
+             can_delete_zip = (
+                 _is_complete_exio_parsed_cache(mrio_cache_dir)
+                 if exio_save_text_cache
+                 else fast_cache_path.exists()
+             )
+             if delete_source_zip_after_parse and can_delete_zip:
                  try:
                      zip_path.unlink(missing_ok=True)
                      if verbose:
