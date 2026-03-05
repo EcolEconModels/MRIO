@@ -30,14 +30,18 @@ def default_data_root() -> Path:
 
 
 def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = "10.5281/zenodo.3583070") -> str:
+    year_token = f"IOT_{int(year)}_{system}.zip"
+    fallback_url = f"https://zenodo.org/records/15689391/files/{year_token}"
     cfg = dict(EXIOBASE3_CONFIG)
     cfg["url_db_view"] = "https://doi.org/" + str(doi)
-    exio_web_content = _get_url_datafiles(**cfg)
-    year_token = f"IOT_{int(year)}_{system}.zip"
+    try:
+        exio_web_content = _get_url_datafiles(**cfg)
+    except Exception:
+        return fallback_url
     for url in exio_web_content.data_urls:
         if year_token in url:
             return url
-    raise FileNotFoundError(f"Could not resolve EXIOBASE source URL for year={year}, system={system}, doi={doi}")
+    return fallback_url
 
 
 def ensure_exiobase_year_zip(

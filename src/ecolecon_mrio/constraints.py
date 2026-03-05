@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Mapping
 
 import numpy as np
@@ -61,25 +62,93 @@ def _resolve_nested_attr(obj: Any, dotted: str) -> Any:
     return cur
 
 
-def _coerce_extension_table(mrio_obj: Any, table_path: str) -> pd.DataFrame:
+@lru_cache(maxsize=16)
+def _load_fallback_extension_table(
+    dataset_id: str,
+    ref_year: int,
+    table_path: str,
+    data_root: str,
+) -> pd.DataFrame:
+    from ecolecon_mrio.data import load_mrio
+
+    root_arg = str(data_root).strip() or None
+    mrio_ref, _y_ref = load_mrio(
+        dataset_id,
+        int(ref_year),
+        data_root=root_arg,
+        calc_all=False,
+        include_ghosh=False,
+        verbose=False,
+        allow_download_missing=False,
+    )
+    raw_ref = _resolve_nested_attr(mrio_ref, table_path)
+    if raw_ref is None:
+        raise ValueError(
+            f"Fallback extension table not found at mrio_ref.{table_path} "
+            f"(dataset={dataset_id}, year={ref_year})."
+        )
+    tbl_ref = pd.DataFrame(raw_ref).copy()
+    if tbl_ref.empty:
+        raise ValueError(
+            f"Fallback extension table at mrio_ref.{table_path} is empty "
+            f"(dataset={dataset_id}, year={ref_year})."
+        )
+    return tbl_ref
+
+
+def _coerce_extension_table(
+    mrio_obj: Any,
+    table_path: str,
+    *,
+    selector: Mapping[str, Any] | None = None,
+    dataset: str | None = None,
+    year: int | None = None,
+    extra_cfg: Mapping[str, Any] | None = None,
+) -> tuple[pd.DataFrame, str]:
     if mrio_obj is None:
         raise ValueError("mrio_obj is required for source='extension_row' constraints.")
     raw = _resolve_nested_attr(mrio_obj, table_path)
     if raw is None:
+        sel = dict(selector or {})
+        ref_year_raw = sel.get("fallback_reference_year", None)
+        ref_dataset = str(sel.get("fallback_dataset", dataset or "")).strip().lower()
+        ref_table_path = str(sel.get("fallback_table", table_path)).strip() or table_path
+        root_txt = str(dict(extra_cfg or {}).get("data_root", "") or "")
+        if ref_year_raw is not None and ref_dataset:
+            ref_year = int(ref_year_raw)
+            tbl_ref = _load_fallback_extension_table(
+                ref_dataset,
+                ref_year,
+                ref_table_path,
+                root_txt,
+            )
+            note = f"{table_path}->fallback:{ref_dataset}:{ref_year}:{ref_table_path}"
+            return tbl_ref, note
         raise ValueError(f"Extension table not found at mrio_obj.{table_path}.")
     tbl = pd.DataFrame(raw).copy()
     if tbl.empty:
         raise ValueError(f"Extension table at mrio_obj.{table_path} is empty.")
-    return tbl
+    return tbl, table_path
 
 
 def _select_extension_row(
     mrio_obj: Any,
     selector: Mapping[str, Any] | None,
+    *,
+    dataset: str | None = None,
+    year: int | None = None,
+    extra_cfg: Mapping[str, Any] | None = None,
 ) -> tuple[pd.Series, str]:
     sel = dict(selector or {})
     table_path = str(sel.get("table", "satellite.F"))
-    table = _coerce_extension_table(mrio_obj, table_path)
+    table, table_note = _coerce_extension_table(
+        mrio_obj,
+        table_path,
+        selector=sel,
+        dataset=dataset,
+        year=year,
+        extra_cfg=extra_cfg,
+    )
     mode = str(sel.get("mode", "row_name_contains_any")).strip().lower()
     index_pairs = [(idx, str(idx)) for idx in table.index]
     index_labels = [lbl for _, lbl in index_pairs]
@@ -88,15 +157,15 @@ def _select_extension_row(
         row_name = str(sel.get("row_name", "")).strip()
         for raw_idx, label_txt in index_pairs:
             if label_txt == row_name:
-                return pd.to_numeric(table.loc[raw_idx], errors="coerce"), f"{table_path}:exact:{label_txt}"
-        raise ValueError(f"Exact extension row '{row_name}' not found in {table_path}.")
+                return pd.to_numeric(table.loc[raw_idx], errors="coerce"), f"{table_note}:exact:{label_txt}"
+        raise ValueError(f"Exact extension row '{row_name}' not found in {table_note}.")
 
     if mode == "row_index":
         idx = int(sel.get("row_index", 0))
         if idx < 0 or idx >= len(table.index):
-            raise ValueError(f"row_index={idx} is out of bounds for {table_path} (n_rows={len(table.index)}).")
+            raise ValueError(f"row_index={idx} is out of bounds for {table_note} (n_rows={len(table.index)}).")
         row_name = str(index_pairs[idx][1])
-        return pd.to_numeric(table.iloc[idx], errors="coerce"), f"{table_path}:row_index:{idx}:{row_name}"
+        return pd.to_numeric(table.iloc[idx], errors="coerce"), f"{table_note}:row_index:{idx}:{row_name}"
 
     tokens = [str(t).strip().lower() for t in (sel.get("row_name_contains_any", []) or []) if str(t).strip()]
     if not tokens:
@@ -104,12 +173,12 @@ def _select_extension_row(
     for raw_idx, label in index_pairs:
         low = label.lower()
         if any(tok in low for tok in tokens):
-            return pd.to_numeric(table.loc[raw_idx], errors="coerce"), f"{table_path}:match:{label}"
+            return pd.to_numeric(table.loc[raw_idx], errors="coerce"), f"{table_note}:match:{label}"
     if bool(sel.get("fallback_first_row", False)):
         row_name = str(index_pairs[0][1])
-        return pd.to_numeric(table.iloc[0], errors="coerce"), f"{table_path}:fallback_first_row:{row_name}"
+        return pd.to_numeric(table.iloc[0], errors="coerce"), f"{table_note}:fallback_first_row:{row_name}"
     raise ValueError(
-        f"No extension row matched tokens={tokens} in {table_path}; available sample={index_labels[:5]}."
+        f"No extension row matched tokens={tokens} in {table_note}; available sample={index_labels[:5]}."
     )
 
 
@@ -231,7 +300,13 @@ def build_constraints_with_context(
             continue
 
         if source == "extension_row":
-            row, note = _select_extension_row(mrio_obj, item.get("selector"))
+            row, note = _select_extension_row(
+                mrio_obj,
+                item.get("selector"),
+                dataset=dataset,
+                year=year,
+                extra_cfg=extra,
+            )
             row = pd.to_numeric(row.reindex(x_series.index), errors="coerce").fillna(0.0).astype(float)
             row = row.clip(lower=0.0)
             if float(row.sum()) <= tol:
