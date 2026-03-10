@@ -29,6 +29,37 @@ def default_data_root() -> Path:
     return Path(__file__).resolve().parents[2] / "data"
 
 
+def resolve_exiobase_year_dir(year: int, *, data_root: str | Path | None = None) -> Path:
+    """Return the shared EXIOBASE cache directory for a given year.
+
+    The repo keeps one year directory per EXIOBASE release year and stores
+    system-specific files ("pxp", "ixi") inside that directory.
+    """
+    root = Path(data_root) if data_root is not None else default_data_root()
+    return root / f"exiobase3_{int(year)}"
+
+
+def resolve_exiobase_cache_paths(
+    year: int,
+    *,
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+) -> dict[str, Path]:
+    """Return the standard EXIOBASE cache paths used by :func:`load_mrio`.
+
+    The returned mapping includes the shared year directory, the raw zip path,
+    the system-specific text cache, and the fast pickle cache.
+    """
+    system = str(system).strip().lower()
+    if system not in {"pxp", "ixi"}:
+        raise ValueError(f"Unsupported exiobase system '{system}'. Use 'pxp' or 'ixi'.")
+    data_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
+    paths = _exio_cache_paths(data_dir, int(year), system)
+    paths["data_dir"] = data_dir
+    paths["zip"] = data_dir / f"IOT_{int(year)}_{system}.zip"
+    return paths
+
+
 def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = "10.5281/zenodo.3583070") -> str:
     year_token = f"IOT_{int(year)}_{system}.zip"
     fallback_url = f"https://zenodo.org/records/15689391/files/{year_token}"
@@ -352,13 +383,12 @@ def load_mrio(
         if system not in {"pxp", "ixi"}:
             raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
 
-        root = Path(data_root) if data_root is not None else default_data_root()
-        data_dir = root / f"exiobase3_{year}"
+        data_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
         data_dir.mkdir(parents=True, exist_ok=True)
         if verbose:
             print(f"Ensuring EXIOBASE 3 data for {year} ({system}) in {data_dir}...")
 
-        paths = _exio_cache_paths(data_dir, int(year), system)
+        paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
         mrio_cache_dir = paths["text"]
         fast_cache_path = paths["fast"]
         legacy_cache_dir = paths["legacy_text"]
@@ -478,7 +508,7 @@ def load_mrio(
              # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
              zip_path = ensure_exiobase_year_zip(
                  year=int(year),
-                 data_dir=data_dir,
+                 data_dir=paths["data_dir"],
                  system=system,
                  force_download=force_download,
                  allow_download_missing=allow_download_missing,

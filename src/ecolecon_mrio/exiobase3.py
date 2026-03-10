@@ -151,8 +151,6 @@ def load_exiobase3(
     """
     if pymrio is None:
         raise ImportError("pymrio is required to load EXIOBASE 3.")
-    if system != "pxp":
-        raise ValueError("Only system='pxp' is supported by the repo loader currently.")
 
     from ecolecon_mrio.data import load_mrio
 
@@ -164,6 +162,7 @@ def load_exiobase3(
             data_root=cache_root,
             calc_all=calc_all,
             verbose=verbose,
+            exio_system=system,
         )
         return mrio
     except Exception as e:
@@ -209,12 +208,10 @@ def load_exiobase3_region_slice(
         y_path = slice_dir / "Y_total.pkl"
     meta_path = slice_dir / "meta.json"
 
-    source_zip = cache_root / f"exiobase3_{year}" / f"IOT_{year}_{system}.zip"
-    if not source_zip.exists():
-        # The repo loader names it IOT_{year}_pxp.zip (no system in suffix)
-        alt = cache_root / f"exiobase3_{year}" / f"IOT_{year}_pxp.zip"
-        if alt.exists():
-            source_zip = alt
+    from ecolecon_mrio.data import resolve_exiobase_cache_paths
+
+    exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
+    source_zip = exio_paths["zip"]
 
     if not force_rebuild_slice and z_path.exists() and y_path.exists():
         if verbose:
@@ -318,11 +315,10 @@ def load_exiobase3_region_slices(
                 missing_any = True
                 break
 
-    source_zip = cache_root / f"exiobase3_{year}" / f"IOT_{year}_{system}.zip"
-    if not source_zip.exists():
-        alt = cache_root / f"exiobase3_{year}" / f"IOT_{year}_pxp.zip"
-        if alt.exists():
-            source_zip = alt
+    from ecolecon_mrio.data import resolve_exiobase_cache_paths
+
+    exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
+    source_zip = exio_paths["zip"]
 
     if missing_any:
         mrio = load_exiobase3(

@@ -8,7 +8,12 @@ here rather than inside notebooks to keep the workflow reproducible.
 
 from .constraints import BetaResult, build_constraints, build_constraints_with_context, solve_beta
 from .counterfactual import run_panel_scenarios, run_shock_suite
-from .data import load_mrio, ensure_exiobase_year_zip
+from .data import (
+    load_mrio,
+    ensure_exiobase_year_zip,
+    resolve_exiobase_year_dir,
+    resolve_exiobase_cache_paths,
+)
 from .decomposition import decompose_slack_change
 from .diagnostics import (
     SafeJustResult,
@@ -98,6 +103,8 @@ from .clustering import sector_clustering
 __all__ = [
     "load_mrio",
     "ensure_exiobase_year_zip",
+    "resolve_exiobase_year_dir",
+    "resolve_exiobase_cache_paths",
     "load_mrio_panel",
     "PanelDiagnostics",
     "compute_viability_panel",
