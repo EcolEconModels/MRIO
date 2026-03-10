@@ -99,6 +99,7 @@ from .inverse_primitives import (
 )
 
 from .clustering import sector_clustering
+from .exiobase3_extensions import load_exiobase3_extension_for_year
 
 __all__ = [
     "load_mrio",
@@ -165,4 +166,5 @@ __all__ = [
     "dominant_mode_diagnostics",
     "calibrate_relative_change_caps",
     "sector_clustering",
+    "load_exiobase3_extension_for_year",
 ]

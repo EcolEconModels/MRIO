@@ -122,6 +122,57 @@ def read_extension_units(container: str | Path, *, extension: str) -> pd.Series:
     return out
 
 
+
+
+def load_exiobase3_extension_for_year(
+    year: int,
+    *,
+    extension: str,
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    region: str | None = None,
+    force_download: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = "10.5281/zenodo.3583070",
+    cache_dir: str | Path | None = None,
+    verbose: bool = False,
+) -> ExioExtension:
+    """Load one EXIOBASE 3 extension by year using the standard MRIO cache layout.
+
+    This helper keeps the raw EXIO zip in the shared year directory and reads the
+    extension directly from that zip unless an explicit extension cache directory
+    is provided.
+    """
+    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_year_dir
+
+    year_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
+    year_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = ensure_exiobase_year_zip(
+        int(year),
+        data_dir=year_dir,
+        system=str(system),
+        force_download=force_download,
+        allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads,
+        show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb,
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+        doi=str(doi),
+        verbose=verbose,
+    )
+    return load_exiobase3_extension(
+        zip_path,
+        extension=str(extension),
+        region=region,
+        cache_dir=cache_dir,
+    )
+
 @lru_cache(maxsize=32)
 def load_exiobase3_extension(
     container: str | Path,
