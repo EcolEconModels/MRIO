@@ -12,8 +12,8 @@ import pandas as pd
 
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
-    read_sector_aggregation_mapping_csv,
 )
+from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
 
 def _vprint(enabled: bool, msg: str) -> None:
@@ -1066,12 +1066,14 @@ def _write_sfc_workbook(
             else:
                 _write_num(ws, row=excel_r, col=c_fd0 + j, value=float(Y_ord.loc[row_code, col_code]))
 
-    # Template-only: update account rows for the new energy sectors and blank out energy-balance sheets.
+    # Template-only: update account rows for the new energy sectors and remove template-only sheets
+    # that would otherwise survive as blank tabs in the exported workbook.
     if template_xlsx is not None:
-        # Blank mapping sheets as requested (energy balances mapping left empty).
+        # Drop template-only mapping sheets instead of blanking them, so downstream consumers
+        # do not receive empty workbook tabs.
         for sheet_name in ("Mapping", "Aggregation"):
             if sheet_name in wb.sheetnames:
-                _clear_worksheet(wb[sheet_name])
+                wb.remove(wb[sheet_name])
 
         # Update Summary / Structure "Stock or flow" label if present.
         if "Summary" in wb.sheetnames:
@@ -1164,13 +1166,10 @@ def _write_sfc_workbook(
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
-    p = argparse.ArgumentParser(description="Aggregate (re-group) an IO table (Z,Y) using a CSV mapping.")
+    p = argparse.ArgumentParser(description="Aggregate (re-group) an IO table (Z,Y) using the canonical annotated mapping CSV format.")
     p.add_argument("--verbose", action="store_true")
 
-    p.add_argument("--mapping-csv", required=True, help="CSV with columns from_sector,to_sector[,enabled,notes].")
-    p.add_argument("--mapping-from-col", default="from_sector")
-    p.add_argument("--mapping-to-col", default="to_sector")
-    p.add_argument("--mapping-enabled-col", default="enabled")
+    p.add_argument("--mapping-csv", required=True, help="Canonical annotated aggregation mapping CSV.")
 
     p.add_argument(
         "--require-from-contains",
@@ -1221,12 +1220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = p.parse_args(argv)
 
-    mapping, mapping_df = read_sector_aggregation_mapping_csv(
-        args.mapping_csv,
-        from_col=args.mapping_from_col,
-        to_col=args.mapping_to_col,
-        enabled_col=args.mapping_enabled_col,
-    )
+    mapping, mapping_df = read_aggregation_mapping(args.mapping_csv)
 
     if args.require_from_contains is not None:
         bad = [k for k in mapping.keys() if args.require_from_contains not in str(k)]
@@ -1476,8 +1470,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 Z_after=res.Z,
                 Y_after=res.Y,
                 mapping_df=mapping_df,
-                mapping_from_col=str(args.mapping_from_col),
-                mapping_to_col=str(args.mapping_to_col),
+                mapping_from_col="from_sector",
+                mapping_to_col="to_sector",
                 verbose=args.verbose,
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,

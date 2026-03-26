@@ -14,7 +14,6 @@ import pandas as pd
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.exio_share_split import (
     load_local_iot,
-    read_exio_sector_mapping_csv,
     split_iot_using_exiobase_shares,
     write_split_report_xlsx,
     map_exio_value_per_physical_input,
@@ -26,9 +25,12 @@ from ecolecon_mrio.exiobase3_extensions import (
     extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
 )
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot, load_eurostat_iot_variants
-from ecolecon_mrio.weighted_mapping import (
+from ecolecon_mrio.mapping_csv import (
     flatten_exio_sectors_from_mapping,
-    read_weighted_mapping_csv,
+    load_split_mapping_frame,
+    load_weighted_mapping_frame,
+    read_split_mapping,
+    read_weighted_mapping,
     validate_mapping_weights,
 )
 
@@ -86,21 +88,16 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
 
 def _read_exio_to_eurostat_mapping_with_notes(
     path: str | Path,
-    *,
-    aggregate_col: str = "aggregate_sector",
-    exio_col: str = "exio_sector",
     notes_col: str = "notes",
 ) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
-    df = pd.read_csv(path, dtype=str).fillna("")
-    mapping = read_weighted_mapping_csv(path, aggregate_col=aggregate_col, exio_col=exio_col)
+    df = load_weighted_mapping_frame(path)
+    mapping = read_weighted_mapping(path)
     validate_mapping_weights(mapping)
 
     notes_by_sector: dict[str, list[str]] = {}
     if notes_col in df.columns:
-        df[aggregate_col] = df[aggregate_col].astype(str).str.strip()
-        df[exio_col] = df[exio_col].astype(str).str.strip()
         for _, row in df.iterrows():
-            agg = str(row[aggregate_col])
+            agg = str(row["aggregate_sector"])
             note_val = str(row.get(notes_col, "")).strip()
             if note_val:
                 notes_by_sector.setdefault(agg, []).append(note_val)
@@ -340,8 +337,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument(
         "--exio-mapping-csv",
         default=None,
-        help="CSV mapping file with columns aggregate_sector, exio_sector[,subsector,enabled]. "
-        "When provided, pattern matching is disabled (recommended).",
+        help="Canonical annotated split mapping CSV. When provided, pattern matching is disabled (recommended).",
     )
     p.add_argument(
         "--require-mapping-coverage",
@@ -415,7 +411,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--exio-to-eurostat-mapping-csv",
         default=None,
         help=(
-            "Optional mapping CSV (aggregate_sector, exio_sector) to map EXIO CO2 intensities to Eurostat sectors. "
+            "Optional canonical annotated weighted mapping CSV to map EXIO CO2 intensities to Eurostat sectors. "
             "If provided, writes eurostat_sector_co2_intensity.csv."
         ),
     )
@@ -509,22 +505,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     sector_to_exio_sectors = None
     coverage_expected_exio = None
     if args.exio_mapping_csv is not None:
-        _vprint(args.verbose, "Calling: read_exio_sector_mapping_csv(...)")
+        _vprint(args.verbose, "Calling: read_split_mapping(...)")
         t = _Timer()
-        sector_to_exio_sectors = read_exio_sector_mapping_csv(args.exio_mapping_csv)
-        _vprint(args.verbose, f"Returned: read_exio_sector_mapping_csv ({t.elapsed_s():.2f}s)")
+        sector_to_exio_sectors = read_split_mapping(args.exio_mapping_csv)
+        _vprint(args.verbose, f"Returned: read_split_mapping ({t.elapsed_s():.2f}s)")
         if args.verbose and (args.patterns_19 is not None or args.patterns_35 is not None or args.electricity_by_source):
             _vprint(args.verbose, "NOTE: --exio-mapping-csv provided; ignoring pattern selection flags.")
         if args.require_mapping_coverage:
-            df_all = pd.read_csv(args.exio_mapping_csv, dtype=str).fillna("")
-            needed = {"aggregate_sector", "exio_sector"}
-            missing = sorted(needed - set(df_all.columns))
-            if missing:
-                raise SystemExit(
-                    f"--require-mapping-coverage requires mapping CSV columns {sorted(needed)}; missing: {missing}"
-                )
-            df_all["aggregate_sector"] = df_all["aggregate_sector"].astype(str).str.strip()
-            df_all["exio_sector"] = df_all["exio_sector"].astype(str).str.strip()
+            df_all = load_split_mapping_frame(args.exio_mapping_csv)
             df_all = df_all[(df_all["aggregate_sector"] != "") & (df_all["exio_sector"] != "")]
             if "constituent" in df_all.columns:
                 def _boolish(v: object) -> bool:

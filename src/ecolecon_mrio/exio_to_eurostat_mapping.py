@@ -5,60 +5,11 @@ from typing import Iterable, Mapping
 
 import pandas as pd
 
-try:  # Optional dependency in case sklearn isn't installed in some environments.
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    _HAVE_SKLEARN = True
-except Exception:  # pragma: no cover - fallback path only
-    TfidfVectorizer = None
-    cosine_similarity = None
-    _HAVE_SKLEARN = False
-
 
 def _normalize_text(value: str) -> str:
     s = str(value).lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
-
-
-def _tokenize(value: str) -> set[str]:
-    return {t for t in _normalize_text(value).split(" ") if t}
-
-
-def _similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    ta = _tokenize(a)
-    tb = _tokenize(b)
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
-
-
-def _default_rule_overrides() -> list[tuple[str, str]]:
-    return []
-
-
-def _rule_based_cpa(exio_name: str, overrides: list[tuple[str, str]]) -> str | None:
-    s = _normalize_text(exio_name)
-    for pat, code in overrides:
-        if re.search(pat, s):
-            return code
-    return None
-
-
-def _label_match_score(exio_name: str, label: str, *, min_similarity: float) -> float:
-    n_exio = _normalize_text(exio_name)
-    n_label = _normalize_text(label)
-    if not n_exio or not n_label:
-        return 0.0
-    if n_exio in n_label or n_label in n_exio:
-        return 1.0
-    score = _similarity(exio_name, label)
-    if score >= min_similarity:
-        return score
-    return 0.0
 
 
 _NACE2_SECTIONS: dict[str, list[int]] = {
@@ -150,6 +101,25 @@ _NACE11_TO_NACE2: dict[int, list[int]] = {
 }
 
 
+_OFFICIAL_NACE2_DIVISION_OVERRIDES: tuple[tuple[re.Pattern[str], tuple[int, ...], str], ...] = (
+    (
+        re.compile(r"^p23\.1", re.IGNORECASE),
+        (19,),
+        "official-exio-nace:C.19.1 coke oven products",
+    ),
+    (
+        re.compile(r"^p23\.20", re.IGNORECASE),
+        (19,),
+        "official-exio-nace:C.19.2 refined petroleum products",
+    ),
+    (
+        re.compile(r"^p23\.3$", re.IGNORECASE),
+        (24,),
+        "official-exio-nace:C.24.46 nuclear fuel processing",
+    ),
+)
+
+
 def _parse_cpa_divisions(code: str) -> list[int]:
     if not code.startswith("CPA_"):
         return []
@@ -203,16 +173,42 @@ def _exio_division_from_code(exio_code: str) -> int | None:
         return None
 
 
-def _candidate_cpa_codes_for_exio(
-    exio_code: str | None,
-    div_to_cpa: dict[int, list[str]],
-) -> list[str]:
+def _official_nace2_divisions_for_exio(exio_code: str | None) -> tuple[list[int], str | None]:
+    code = str(exio_code or "").strip()
+    if not code:
+        return [], None
+    for pattern, divisions, note in _OFFICIAL_NACE2_DIVISION_OVERRIDES:
+        if pattern.search(code):
+            return list(divisions), note
+    return [], None
+
+
+def _generic_nace2_divisions_for_exio(exio_code: str | None) -> list[int]:
     if not exio_code:
         return []
     div = _exio_division_from_code(exio_code)
     if div is None:
         return []
-    nace2_divs = _NACE11_TO_NACE2.get(div, [div])
+    return list(_NACE11_TO_NACE2.get(div, [div]))
+
+
+def _candidate_nace2_divisions_for_exio(exio_code: str | None) -> tuple[list[int], str]:
+    official_divisions, official_note = _official_nace2_divisions_for_exio(exio_code)
+    if official_divisions:
+        return official_divisions, official_note or "official-exio-nace"
+    generic_divisions = _generic_nace2_divisions_for_exio(exio_code)
+    if generic_divisions:
+        return generic_divisions, "nace11-to-nace2-fallback"
+    return [], "unmapped"
+
+
+def _candidate_cpa_codes_for_exio(
+    exio_code: str | None,
+    div_to_cpa: dict[int, list[str]],
+) -> list[str]:
+    nace2_divs, _ = _candidate_nace2_divisions_for_exio(exio_code)
+    if not nace2_divs:
+        return []
     candidates: list[str] = []
     for d in nace2_divs:
         candidates.extend(div_to_cpa.get(d, []))
@@ -224,54 +220,7 @@ def _candidate_cpa_codes_for_exio(
             seen.add(c)
             out.append(c)
     return out
-
-
-_PHARMA_KEYWORDS = (
-    "pharm",
-    "pharmaceutical",
-    "drug",
-    "medicine",
-    "medic",
-    "vaccine",
-    "vaccin",
-    "medical",
-)
-
-_PHARMA_PROXY_KEYWORDS = (
-    "chemicals nec",
-    "chemical products nec",
-    "chemical products n e c",
-    "other chemicals",
-)
-
-_FUEL_KEYWORDS = (
-    "petroleum",
-    "refined",
-    "coke",
-    "gasoline",
-    "diesel",
-    "kerosene",
-    "jet fuel",
-    "biofuel",
-    "biodiesel",
-    "biogasoline",
-    "charcoal",
-    "fuel",
-    "crude oil",
-    "natural gas",
-)
-
-
 def _filter_candidates_by_keywords(exio_name: str, candidates: list[str]) -> list[str]:
-    if not candidates:
-        return candidates
-    s = _normalize_text(exio_name)
-    if "CPA_C19" in candidates and any(k in s for k in _FUEL_KEYWORDS):
-        return ["CPA_C19"]
-    if "CPA_C21" in candidates and not any(k in s for k in _PHARMA_KEYWORDS):
-        if any(k in s for k in _PHARMA_PROXY_KEYWORDS):
-            return candidates
-        return [c for c in candidates if c != "CPA_C21"]
     return candidates
 
 
@@ -293,42 +242,6 @@ def filter_cpa_candidates_for_exio(exio_name: str, candidates: list[str]) -> lis
     return _filter_candidates_by_keywords(exio_name, candidates)
 
 
-def _build_tfidf_similarity(
-    exio_names: list[str],
-    cpa_label_map: dict[str, str],
-) -> tuple[list[str], list[str], list[list[float]]]:
-    if not _HAVE_SKLEARN:
-        return exio_names, list(cpa_label_map.keys()), []
-
-    cpa_codes = list(cpa_label_map.keys())
-    cpa_labels = [cpa_label_map[c] for c in cpa_codes]
-    docs = list(exio_names) + list(cpa_labels)
-    vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5))
-    matrix = vectorizer.fit_transform(docs)
-    exio_mat = matrix[: len(exio_names)]
-    cpa_mat = matrix[len(exio_names) :]
-    sims = cosine_similarity(exio_mat, cpa_mat)
-    return exio_names, cpa_codes, sims.tolist()
-
-
-def _best_cpa_by_label(
-    exio_name: str,
-    cpa_label_map: dict[str, str],
-    *,
-    min_similarity: float,
-) -> str | None:
-    best_code = None
-    best_score = 0.0
-    for code, label in cpa_label_map.items():
-        score = _label_match_score(exio_name, label, min_similarity=min_similarity)
-        if score > best_score:
-            best_score = score
-            best_code = code
-    if best_score > 0.0:
-        return best_code
-    return None
-
-
 def build_exio_to_eurostat_mapping(
     exio_names: Iterable[str],
     cpa_codes: Iterable[str],
@@ -341,59 +254,17 @@ def build_exio_to_eurostat_mapping(
 ) -> pd.DataFrame:
     exio_list = [str(x).strip() for x in exio_names if str(x).strip()]
     cpa_set = {str(c).strip() for c in cpa_codes if str(c).strip()}
-
-    overrides = rule_overrides if rule_overrides is not None else _default_rule_overrides()
     div_to_cpa = _build_division_to_cpa_codes(cpa_set)
-
-    tfidf_exio, tfidf_cpa_codes, tfidf_sims = _build_tfidf_similarity(exio_list, cpa_label_map)
-    tfidf_index = {name: i for i, name in enumerate(tfidf_exio)}
-    tfidf_code_index = {code: i for i, code in enumerate(tfidf_cpa_codes)}
 
     rows = []
     seen = set()
     for exio_name in exio_list:
         exio_code = exio_code_map.get(exio_name) if exio_code_map else None
-        target = _rule_based_cpa(exio_name, overrides) if overrides else None
-        note = "rule-override" if target is not None else "label-match"
-        if target is None and exio_code:
-            candidates = _candidate_cpa_codes_for_exio(exio_code, div_to_cpa)
-            candidates = _filter_candidates_by_keywords(exio_name, candidates)
-            candidates = [c for c in candidates if c in cpa_set]
-            if candidates:
-                if len(candidates) == 1:
-                    target = candidates[0]
-                    note = "code-map"
-                elif tfidf_sims:
-                    exio_idx = tfidf_index.get(exio_name)
-                    if exio_idx is not None:
-                        best_code = None
-                        best_score = -1.0
-                        for code in candidates:
-                            c_idx = tfidf_code_index.get(code)
-                            if c_idx is None:
-                                continue
-                            score = tfidf_sims[exio_idx][c_idx]
-                            if score > best_score:
-                                best_score = score
-                                best_code = code
-                        if best_code is not None:
-                            target = best_code
-                            note = "code-map+label"
-        if target is None and tfidf_sims:
-            exio_idx = tfidf_index.get(exio_name)
-            if exio_idx is not None:
-                best_code = None
-                best_score = -1.0
-                for code, c_idx in tfidf_code_index.items():
-                    score = tfidf_sims[exio_idx][c_idx]
-                    if score > best_score:
-                        best_score = score
-                        best_code = code
-                if best_code is not None and best_score >= min_tfidf_similarity:
-                    target = best_code
-                    note = "tfidf-label"
-        if target is None:
-            target = _best_cpa_by_label(exio_name, cpa_label_map, min_similarity=min_similarity)
+        candidates = _candidate_cpa_codes_for_exio(exio_code, div_to_cpa)
+        candidates = _filter_candidates_by_keywords(exio_name, candidates)
+        candidates = [c for c in candidates if c in cpa_set]
+        target = candidates[0] if candidates else None
+        _, note = _candidate_nace2_divisions_for_exio(exio_code)
         if not target or target not in cpa_set:
             continue
         key = (target, exio_name)

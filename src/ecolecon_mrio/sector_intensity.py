@@ -4,7 +4,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from ecolecon_mrio.weighted_mapping import validate_mapping_weights
+from ecolecon_mrio.mapping_csv import validate_mapping_weights
 
 def _flatten_exio_list(exio_sectors: list[str] | dict[str, list[str]] | dict[str, float]) -> list[str]:
     if isinstance(exio_sectors, dict):

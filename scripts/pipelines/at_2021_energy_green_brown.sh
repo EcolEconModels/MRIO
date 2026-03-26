@@ -54,20 +54,12 @@ STK_FLOWS_JSON='["DOM","IMP","TOTAL"]'
 
 set -x
 
-# 1) Generate mapping CSVs (EXIO->Eurostat mapping uses Eurostat x-weighted splits)
-"$PY" "$ROOT_DIR/scripts/generate_exio_energy_split_mapping.py" \
-  --out "$MAP_EXIO_TO_EUROSTAT" \
-  --electricity-by-source
-
-"$PY" "$ROOT_DIR/scripts/generate_exio_to_eurostat_mapping.py" \
-  --eurostat-dataset naio_10_cp1700 \
-  --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
-  --eurostat-row-dim prd_ava \
-  --eurostat-col-dim prd_use \
-  --eurostat-stk-flow-dim stk_flow \
-  --eurostat-stk-flow-value TOTAL \
+# 1) Generate the canonical mapping CSVs.
+"$PY" "$ROOT_DIR/scripts/generate_mapping_csvs.py" \
+  --geo "$EUROSTAT_GEO" \
+  --year "$EUROSTAT_TIME" \
   --eurostat-storage-folder "$ROOT_DIR/data/eurostat" \
-  --out "$EXIO_TO_EUROSTAT_MAP"
+  --outdir "$ROOT_DIR/scripts/mappings"
 
 # 2) Split Eurostat IOT (batch over stk_flow)
 EXIO_TO_EUROSTAT_ARGS=()

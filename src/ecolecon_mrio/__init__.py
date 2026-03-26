@@ -100,6 +100,19 @@ from .inverse_primitives import (
 
 from .clustering import sector_clustering
 from .exiobase3_extensions import load_exiobase3_extension_for_year
+from .mapping_csv import (
+    MAPPING_CSV_COLUMNS,
+    flatten_exio_sectors_from_mapping,
+    load_aggregation_mapping_frame,
+    load_category_mapping_frame,
+    load_split_mapping_frame,
+    load_weighted_mapping_frame,
+    read_aggregation_mapping,
+    read_mapping_csv,
+    read_split_mapping,
+    read_weighted_mapping,
+    validate_mapping_weights,
+)
 
 __all__ = [
     "load_mrio",
@@ -167,4 +180,15 @@ __all__ = [
     "calibrate_relative_change_caps",
     "sector_clustering",
     "load_exiobase3_extension_for_year",
+    "MAPPING_CSV_COLUMNS",
+    "read_mapping_csv",
+    "load_weighted_mapping_frame",
+    "load_split_mapping_frame",
+    "load_category_mapping_frame",
+    "load_aggregation_mapping_frame",
+    "read_weighted_mapping",
+    "read_split_mapping",
+    "read_aggregation_mapping",
+    "validate_mapping_weights",
+    "flatten_exio_sectors_from_mapping",
 ]

@@ -1,50 +1,39 @@
 from __future__ import annotations
 
-import pandas as pd
 
-
-def test_build_exio_to_eurostat_mapping_rules_and_labels():
+def test_build_exio_to_eurostat_mapping_uses_validated_official_override():
     from ecolecon_mrio.exio_to_eurostat_mapping import build_exio_to_eurostat_mapping
 
     exio_names = [
-        "Paper and paper products",
-        "Food products",
-        "Unmatched sector",
+        "Nuclear fuel",
     ]
-    cpa_codes = [
-        "CPA_C17",
-        "CPA_C10",
-    ]
-    cpa_label_map = {
-        "CPA_C17": "Paper and paper products",
-        "CPA_C10": "Food products",
+    exio_code_map = {
+        "Nuclear fuel": "p23.3",
     }
-
-    df = build_exio_to_eurostat_mapping(exio_names, cpa_codes, cpa_label_map)
-
-    got = {(r["aggregate_sector"], r["exio_sector"]) for _, r in df.iterrows()}
-    assert ("CPA_C17", "Paper and paper products") in got
-    assert ("CPA_C10", "Food products") in got
-    assert ("CPA_C17", "Unmatched sector") not in got
-
-
-def test_build_exio_to_eurostat_mapping_min_similarity_filters():
-    from ecolecon_mrio.exio_to_eurostat_mapping import build_exio_to_eurostat_mapping
-
-    exio_names = ["Food products nec", "Misc services"]
-    cpa_codes = ["CPA_C10", "CPA_S96"]
-    cpa_label_map = {
-        "CPA_C10": "Food products",
-        "CPA_S96": "Other personal services",
-    }
+    cpa_codes = ["CPA_C19", "CPA_C24"]
+    cpa_label_map = {code: code for code in cpa_codes}
 
     df = build_exio_to_eurostat_mapping(
         exio_names,
         cpa_codes,
         cpa_label_map,
-        min_similarity=0.7,
-        min_tfidf_similarity=1.01,
+        exio_code_map=exio_code_map,
     )
 
-    assert (df["exio_sector"] == "Food products nec").any()
-    assert not (df["exio_sector"] == "Misc services").any()
+    got = dict(zip(df["exio_sector"], df["aggregate_sector"]))
+    assert got["Nuclear fuel"] == "CPA_C24"
+
+
+def test_candidate_cpa_codes_for_exio_keeps_required_fallback_splits():
+    from ecolecon_mrio.exio_to_eurostat_mapping import build_cpa_division_index, candidate_cpa_codes_for_exio
+
+    division_index = build_cpa_division_index(
+        ["CPA_C18", "CPA_C19", "CPA_C20", "CPA_C21", "CPA_C24", "CPA_C28", "CPA_C33", "CPA_H53", "CPA_J58", "CPA_J61", "CPA_J59_60", "CPA_R90-92", "CPA_R93", "CPA_S95", "CPA_S96"]
+    )
+
+    assert candidate_cpa_codes_for_exio("p22", division_index=division_index) == ["CPA_C18", "CPA_J58"]
+    assert candidate_cpa_codes_for_exio("p24.d", division_index=division_index) == ["CPA_C20", "CPA_C21"]
+    assert candidate_cpa_codes_for_exio("p29", division_index=division_index) == ["CPA_C28", "CPA_C33"]
+    assert candidate_cpa_codes_for_exio("p64", division_index=division_index) == ["CPA_H53", "CPA_J61"]
+    assert candidate_cpa_codes_for_exio("p92", division_index=division_index) == ["CPA_J59_60", "CPA_R90-92", "CPA_R93"]
+    assert candidate_cpa_codes_for_exio("p93", division_index=division_index) == ["CPA_S95", "CPA_S96"]
