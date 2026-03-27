@@ -180,6 +180,22 @@ def _exio_cache_paths(data_dir: Path, year: int, system: str) -> dict[str, Path]
     }
 
 
+def _validate_exiobase_system(mrio: pymrio.IOSystem, system: str) -> None:
+    expected_counts = {"pxp": 200, "ixi": 163}
+    expected = expected_counts[str(system)]
+
+    z_matrix = getattr(mrio, "Z", None)
+    if z_matrix is None or not isinstance(z_matrix.index, pd.MultiIndex):
+        raise ValueError("Loaded EXIOBASE object has no MultiIndex Z table; cannot validate system.")
+
+    actual = len(z_matrix.index.get_level_values(1).unique())
+    if actual != expected:
+        raise ValueError(
+            f"Loaded EXIOBASE cache/archive does not match requested system '{system}': "
+            f"found {actual} sector labels in Z, expected {expected}."
+        )
+
+
 def load_mrio(
     dataset: str,
     year: int,
@@ -553,6 +569,8 @@ def load_mrio(
                  except Exception as exc:
                      if verbose:
                          print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
+
+        _validate_exiobase_system(mrio, system)
 
         y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
         y_full = mrio.Y[y_cols].sum(axis=1)
