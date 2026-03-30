@@ -35,8 +35,14 @@ def build_totals_row(df: pd.DataFrame) -> pd.DataFrame:
     unique_sources = df.drop_duplicates(subset=["exio_source_code"])
     unique_targets = df.drop_duplicates(subset=["eurostat_sector_code"])
 
+    domestic_final_demand_total = sector_total(unique_targets["eurostat_domestic_final_demand_meur_2021"])
+    domestic_final_demand_dom_total = sector_total(unique_targets["eurostat_domestic_final_demand_dom_meur_2021"])
+    domestic_final_demand_imp_total = sector_total(unique_targets["eurostat_domestic_final_demand_imp_meur_2021"])
+    total_final_demand_total = sector_total(unique_targets["eurostat_total_final_demand_meur_2021"])
+    exports_total = sector_total(unique_targets["eurostat_exports_meur_2021"])
     gross_total = sector_total(unique_targets["eurostat_gross_output_meur_2021"])
     domestic_total = sector_total(unique_targets["eurostat_domestic_output_meur_2021"])
+    export_output_total = sector_total(unique_targets["eurostat_export_output_meur_2021"])
     energy_total = sector_total(unique_targets["eurostat_energy_balance_total_gwh_2021"])
     energy_balance_emissions_total = sector_total(unique_targets["energy_balance_emissions_tco2_2021"])
     mapped_output_total = sector_total(unique_targets["mapped_mrio_sector_output_meur_2020"])
@@ -44,7 +50,10 @@ def build_totals_row(df: pd.DataFrame) -> pd.DataFrame:
     mapped_co2_total = sector_total(unique_targets["mapped_mrio_sector_co2_tco2_2020"])
     official_total = sector_total(unique_targets["eurostat_air_emissions_tco2_2021"])
     mrio_domestic_total = sector_total(unique_targets["mrio_domestic_output_emissions_tco2_2021"])
+    mrio_gross_total = sector_total(unique_targets["mrio_gross_output_emissions_tco2_2021"])
+    mrio_export_total = sector_total(unique_targets["mrio_export_output_emissions_tco2_2021"])
     gap = energy_balance_emissions_total - mrio_domestic_total
+    gross_gap = energy_balance_emissions_total - mrio_gross_total
 
     totals = {
         "eurostat_order": np.nan,
@@ -60,8 +69,17 @@ def build_totals_row(df: pd.DataFrame) -> pd.DataFrame:
         "mapped_mrio_energy_gwh_2020": sector_total(df["mapped_mrio_energy_gwh_2020"]),
         "mrio_exio_co2_tco2_2020": sector_total(unique_sources["mrio_exio_co2_tco2_2020"]),
         "mapped_mrio_co2_tco2_2020": sector_total(df["mapped_mrio_co2_tco2_2020"]),
+        "eurostat_domestic_final_demand_meur_2021": domestic_final_demand_total,
+        "eurostat_domestic_final_demand_dom_meur_2021": domestic_final_demand_dom_total,
+        "eurostat_domestic_final_demand_imp_meur_2021": domestic_final_demand_imp_total,
+        "eurostat_total_final_demand_meur_2021": total_final_demand_total,
+        "eurostat_exports_meur_2021": exports_total,
+        "eurostat_domestic_final_demand_share_2021": (domestic_final_demand_total / total_final_demand_total) if total_final_demand_total else np.nan,
+        "eurostat_import_share_of_domestic_final_demand_2021": (domestic_final_demand_imp_total / domestic_final_demand_total) if domestic_final_demand_total else np.nan,
+        "eurostat_export_share_of_final_demand_2021": (exports_total / total_final_demand_total) if total_final_demand_total else np.nan,
         "eurostat_gross_output_meur_2021": gross_total,
         "eurostat_domestic_output_meur_2021": domestic_total,
+        "eurostat_export_output_meur_2021": export_output_total,
         "eurostat_energy_balance_total_gwh_2021": energy_total,
         "energy_balance_weighted_co2_factor_tco2_per_gwh_2021": (energy_balance_emissions_total / energy_total) if energy_total else np.nan,
         "energy_balance_emissions_tco2_2021": energy_balance_emissions_total,
@@ -74,9 +92,15 @@ def build_totals_row(df: pd.DataFrame) -> pd.DataFrame:
         "mapped_mrio_sector_co2_intensity_tco2_per_meur_2020": (mapped_co2_total / mapped_output_total) if mapped_output_total else np.nan,
         "mrio_domestic_output_emissions_tco2_2021": mrio_domestic_total,
         "mrio_domestic_output_per_tco2_meur_2021": (domestic_total / mrio_domestic_total) if mrio_domestic_total else np.nan,
+        "mrio_gross_output_emissions_tco2_2021": mrio_gross_total,
+        "mrio_gross_output_per_tco2_meur_2021": (gross_total / mrio_gross_total) if mrio_gross_total else np.nan,
+        "mrio_export_output_emissions_tco2_2021": mrio_export_total,
         "energy_balance_over_mrio_multiple_2021": (energy_balance_emissions_total / mrio_domestic_total) if mrio_domestic_total else np.nan,
         "emissions_gap_tco2_2021": gap,
         "emissions_gap_pct_of_mrio_2021": (100.0 * gap / mrio_domestic_total) if mrio_domestic_total else np.nan,
+        "energy_balance_over_mrio_gross_multiple_2021": (energy_balance_emissions_total / mrio_gross_total) if mrio_gross_total else np.nan,
+        "emissions_gap_vs_mrio_gross_tco2_2021": gross_gap,
+        "emissions_gap_vs_mrio_gross_pct_of_mrio_2021": (100.0 * gross_gap / mrio_gross_total) if mrio_gross_total else np.nan,
         "eurostat_air_emissions_tco2_2021": official_total,
         "official_air_emissions_source": OFFICIAL_AIR_EMISSIONS_SOURCE,
         "provenance": "",
@@ -108,6 +132,8 @@ def main() -> int:
     air_emissions_mod = import_repo_module(repo_root, "ecolecon_mrio.eurostat_air_emissions")
     exio_ext = import_repo_module(repo_root, "ecolecon_mrio.exiobase3_extensions")
     parsed_total, _gross_output_sumcheck, _ = load_eurostat_iot_bundle(repo_root, geo=args.geo, year=args.year, flow_code="TOTAL")
+    parsed_dom, _, _ = load_eurostat_iot_bundle(repo_root, geo=args.geo, year=args.year, flow_code="DOM")
+    parsed_imp, _, _ = load_eurostat_iot_bundle(repo_root, geo=args.geo, year=args.year, flow_code="IMP")
     exio_slice = load_exio_slice(repo_root, region=args.region, year=args.exio_year, flow_name="total")
 
     z_total = parsed_total.Z.astype("float64")
@@ -117,7 +143,12 @@ def main() -> int:
     a_matrix = z_total.divide(gross_with_zero_fix, axis=1).fillna(0.0)
     leontief_inverse = np.linalg.inv(np.eye(len(a_matrix)) - a_matrix.to_numpy())
     domestic_final_demand = (y_total["P3"] + y_total["P5"]).astype("float64")
+    domestic_final_demand_dom = (parsed_dom.Y["P3"] + parsed_dom.Y["P5"]).astype("float64")
+    domestic_final_demand_imp = (parsed_imp.Y["P3"] + parsed_imp.Y["P5"]).astype("float64")
+    total_final_demand = y_total["TFU"].astype("float64")
+    exports_final_demand = y_total["P6"].astype("float64")
     domestic_output = pd.Series(leontief_inverse @ domestic_final_demand.to_numpy(), index=gross_output.index, dtype="float64")
+    export_output = gross_output - domestic_output
 
     exio_energy = exio_ext.extract_quantity_and_price(
         container=exio_slice.source_zip,
@@ -179,8 +210,29 @@ def main() -> int:
     sector_df["eurostat_order"] = sector_df.index.map(order_lookup)
     sector_df["eurostat_sector_name"] = sector_df.index.map(target_labels)
     sector_df["energy_balance_sector_name"] = sector_df["eurostat_sector_name"]
+    sector_df["eurostat_domestic_final_demand_meur_2021"] = sector_df.index.map(domestic_final_demand)
+    sector_df["eurostat_domestic_final_demand_dom_meur_2021"] = sector_df.index.map(domestic_final_demand_dom)
+    sector_df["eurostat_domestic_final_demand_imp_meur_2021"] = sector_df.index.map(domestic_final_demand_imp)
+    sector_df["eurostat_total_final_demand_meur_2021"] = sector_df.index.map(total_final_demand)
+    sector_df["eurostat_exports_meur_2021"] = sector_df.index.map(exports_final_demand)
+    sector_df["eurostat_domestic_final_demand_share_2021"] = np.where(
+        sector_df["eurostat_total_final_demand_meur_2021"] > 0,
+        sector_df["eurostat_domestic_final_demand_meur_2021"] / sector_df["eurostat_total_final_demand_meur_2021"],
+        np.nan,
+    )
+    sector_df["eurostat_import_share_of_domestic_final_demand_2021"] = np.where(
+        sector_df["eurostat_domestic_final_demand_meur_2021"] > 0,
+        sector_df["eurostat_domestic_final_demand_imp_meur_2021"] / sector_df["eurostat_domestic_final_demand_meur_2021"],
+        np.nan,
+    )
+    sector_df["eurostat_export_share_of_final_demand_2021"] = np.where(
+        sector_df["eurostat_total_final_demand_meur_2021"] > 0,
+        sector_df["eurostat_exports_meur_2021"] / sector_df["eurostat_total_final_demand_meur_2021"],
+        np.nan,
+    )
     sector_df["eurostat_gross_output_meur_2021"] = sector_df.index.map(gross_output)
     sector_df["eurostat_domestic_output_meur_2021"] = sector_df.index.map(domestic_output)
+    sector_df["eurostat_export_output_meur_2021"] = sector_df.index.map(export_output)
     energy_balance_lookup = energy_balance.set_index("energy_balance_sector_name")
     sector_df["eurostat_energy_balance_total_gwh_2021"] = sector_df["energy_balance_sector_name"].map(
         energy_balance_lookup["energy_balance_total_energy_gwh_2021"]
@@ -222,6 +274,17 @@ def main() -> int:
         sector_df["eurostat_domestic_output_meur_2021"] / sector_df["mrio_domestic_output_emissions_tco2_2021"],
         np.nan,
     )
+    sector_df["mrio_gross_output_emissions_tco2_2021"] = (
+        sector_df["eurostat_gross_output_meur_2021"] * sector_df["mapped_mrio_sector_co2_intensity_tco2_per_meur_2020"]
+    )
+    sector_df["mrio_gross_output_per_tco2_meur_2021"] = np.where(
+        sector_df["mrio_gross_output_emissions_tco2_2021"] > 0,
+        sector_df["eurostat_gross_output_meur_2021"] / sector_df["mrio_gross_output_emissions_tco2_2021"],
+        np.nan,
+    )
+    sector_df["mrio_export_output_emissions_tco2_2021"] = (
+        sector_df["mrio_gross_output_emissions_tco2_2021"] - sector_df["mrio_domestic_output_emissions_tco2_2021"]
+    )
     sector_df["energy_balance_over_mrio_multiple_2021"] = np.where(
         sector_df["mrio_domestic_output_emissions_tco2_2021"] > 0,
         sector_df["energy_balance_emissions_tco2_2021"] / sector_df["mrio_domestic_output_emissions_tco2_2021"],
@@ -233,6 +296,19 @@ def main() -> int:
     sector_df["emissions_gap_pct_of_mrio_2021"] = np.where(
         sector_df["mrio_domestic_output_emissions_tco2_2021"] > 0,
         100.0 * sector_df["emissions_gap_tco2_2021"] / sector_df["mrio_domestic_output_emissions_tco2_2021"],
+        np.nan,
+    )
+    sector_df["energy_balance_over_mrio_gross_multiple_2021"] = np.where(
+        sector_df["mrio_gross_output_emissions_tco2_2021"] > 0,
+        sector_df["energy_balance_emissions_tco2_2021"] / sector_df["mrio_gross_output_emissions_tco2_2021"],
+        np.nan,
+    )
+    sector_df["emissions_gap_vs_mrio_gross_tco2_2021"] = (
+        sector_df["energy_balance_emissions_tco2_2021"] - sector_df["mrio_gross_output_emissions_tco2_2021"]
+    )
+    sector_df["emissions_gap_vs_mrio_gross_pct_of_mrio_2021"] = np.where(
+        sector_df["mrio_gross_output_emissions_tco2_2021"] > 0,
+        100.0 * sector_df["emissions_gap_vs_mrio_gross_tco2_2021"] / sector_df["mrio_gross_output_emissions_tco2_2021"],
         np.nan,
     )
     sector_df["eurostat_air_emissions_tco2_2021"] = [air.get(code.removeprefix("CPA_"), np.nan) for code in sector_df.index]
@@ -277,8 +353,17 @@ def main() -> int:
             "mapped_mrio_energy_gwh_2020",
             "mrio_exio_co2_tco2_2020",
             "mapped_mrio_co2_tco2_2020",
+            "eurostat_domestic_final_demand_meur_2021",
+            "eurostat_domestic_final_demand_dom_meur_2021",
+            "eurostat_domestic_final_demand_imp_meur_2021",
+            "eurostat_total_final_demand_meur_2021",
+            "eurostat_exports_meur_2021",
+            "eurostat_domestic_final_demand_share_2021",
+            "eurostat_import_share_of_domestic_final_demand_2021",
+            "eurostat_export_share_of_final_demand_2021",
             "eurostat_gross_output_meur_2021",
             "eurostat_domestic_output_meur_2021",
+            "eurostat_export_output_meur_2021",
             "eurostat_energy_balance_total_gwh_2021",
             "energy_balance_weighted_co2_factor_tco2_per_gwh_2021",
             "energy_balance_emissions_tco2_2021",
@@ -291,9 +376,15 @@ def main() -> int:
             "mapped_mrio_sector_co2_intensity_tco2_per_meur_2020",
             "mrio_domestic_output_emissions_tco2_2021",
             "mrio_domestic_output_per_tco2_meur_2021",
+            "mrio_gross_output_emissions_tco2_2021",
+            "mrio_gross_output_per_tco2_meur_2021",
+            "mrio_export_output_emissions_tco2_2021",
             "energy_balance_over_mrio_multiple_2021",
             "emissions_gap_tco2_2021",
             "emissions_gap_pct_of_mrio_2021",
+            "energy_balance_over_mrio_gross_multiple_2021",
+            "emissions_gap_vs_mrio_gross_tco2_2021",
+            "emissions_gap_vs_mrio_gross_pct_of_mrio_2021",
             "eurostat_air_emissions_tco2_2021",
             "official_air_emissions_source",
             "provenance",
