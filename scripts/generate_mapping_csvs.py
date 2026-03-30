@@ -103,7 +103,6 @@ def _generate_weighted_rows(*, geo: str, year: int, eurostat_storage_folder: Pat
         force_reparse=False,
     )
     z = parsed.Z
-    y = parsed.Y
     x = build_eurostat_product_use_reference(parsed)
     cpa_codes = list(map(str, z.index.astype(str)))
     cpa_labels = {str(code): str(label) for code, label in ((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items()}
@@ -126,8 +125,7 @@ def _generate_weighted_rows(*, geo: str, year: int, eurostat_storage_folder: Pat
     if "weight" not in base_df.columns:
         base_df["weight"] = 1.0
 
-    x_series = (z.sum(axis=1) + y.sum(axis=1)).astype("float64")
-    x_series = pd.to_numeric(x_series, errors="coerce").fillna(0.0)
+    x_series = pd.to_numeric(x.astype("float64"), errors="coerce").fillna(0.0)
     division_index = build_cpa_division_index(cpa_codes)
     split_rows: list[dict[str, object]] = []
     split_exio: set[str] = set()
@@ -192,7 +190,8 @@ def _detailed_weighted_note(group: pd.DataFrame, row: pd.Series) -> str:
         f"No direct official EXIOBASE-to-Eurostat concordance row is used for {exio_code} ({exio_name}). "
         f"This row is derived deterministically from EXIO code prefix {first_div} through the repo's {mapping_rule} bridge, "
         f"yielding NACE Rev. 2 division(s) {division_text}. Because those divisions span multiple sectors in the current CPA_65 target set, "
-        f"the EXIO product is split across targets using Austrian Eurostat output shares x = Z + Y. Current split: {'; '.join(targets)}."
+        f"the EXIO product is split across targets using Austrian Eurostat product-use reference shares x = Z + atomic final demand. "
+        f"Current split: {'; '.join(targets)}."
     )
 
 
