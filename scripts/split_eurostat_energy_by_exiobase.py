@@ -24,7 +24,7 @@ from ecolecon_mrio.exiobase3_extensions import (
     extract_emissions_and_intensity as extract_exio_emissions_and_intensity,
     extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
 )
-from ecolecon_mrio.eurostat_iot import load_eurostat_iot, load_eurostat_iot_variants
+from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot, load_eurostat_iot_variants
 from ecolecon_mrio.mapping_csv import (
     flatten_exio_sectors_from_mapping,
     load_split_mapping_frame,
@@ -122,7 +122,12 @@ def _assert_mapping_integrity(
     eurostat_Y: pd.DataFrame,
     label: str,
 ) -> None:
-    euro_x = (eurostat_Z.sum(axis=1) + eurostat_Y.sum(axis=1)).astype("float64")
+    class _Parsed:
+        def __init__(self, Z: pd.DataFrame, Y: pd.DataFrame) -> None:
+            self.Z = Z
+            self.Y = Y
+
+    euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
     euro_x.index = euro_x.index.astype(str)
     euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
     euro_codes = set(euro_x.index)
@@ -149,7 +154,12 @@ def _assert_output_consistency(
     atol: float,
     label: str,
 ) -> None:
-    euro_x = (eurostat_Z.sum(axis=1) + eurostat_Y.sum(axis=1)).astype("float64")
+    class _Parsed:
+        def __init__(self, Z: pd.DataFrame, Y: pd.DataFrame) -> None:
+            self.Z = Z
+            self.Y = Y
+
+    euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
     euro_x.index = euro_x.index.astype(str)
     euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
 

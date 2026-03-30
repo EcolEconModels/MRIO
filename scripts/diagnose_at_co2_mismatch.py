@@ -22,7 +22,7 @@ from ecolecon_mrio.eurostat_energy_balances import (
     compute_mapping_shares_from_outputs,
 )
 from ecolecon_mrio.eurostat_air_emissions import load_eurostat_air_emissions_by_nace
-from ecolecon_mrio.eurostat_iot import load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
 from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
 from ecolecon_mrio.exiobase3_extensions import extract_emissions_and_intensity, extract_quantity_and_price
 from ecolecon_mrio.mapping_csv import load_category_mapping_frame, load_weighted_mapping_frame
@@ -43,7 +43,7 @@ def _load_eurostat_outputs(*, geo: str, year: int, storage_folder: Path) -> pd.S
         force_download=False,
         force_reparse=False,
     )
-    x = (parsed.Z.sum(axis=1) + parsed.Y.sum(axis=1)).astype("float64")
+    x = build_eurostat_product_use_reference(parsed).astype("float64")
     x.index = x.index.astype(str)
     x.name = "eurostat_output"
     return x
@@ -83,7 +83,7 @@ def _load_eurostat_iot_bundle(*, geo: str, year: int, storage_folder: Path):
         force_download=False,
         force_reparse=False,
     )
-    x = (parsed.Z.sum(axis=1) + parsed.Y.sum(axis=1)).astype("float64")
+    x = build_eurostat_product_use_reference(parsed).astype("float64")
     x.index = x.index.astype(str)
     return parsed, x
 

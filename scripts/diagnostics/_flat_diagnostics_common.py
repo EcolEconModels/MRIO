@@ -51,6 +51,22 @@ def load_weighted_mapping(repo_root: Path, mapping_csv: Path | None = None) -> p
     return mapping_mod.load_weighted_mapping_frame(path)
 
 
+def select_eurostat_atomic_final_demand_columns(
+    parsed,
+    *,
+    include_exports: bool = True,
+) -> list[str]:
+    from ecolecon_mrio.eurostat_iot import select_eurostat_atomic_final_demand_columns as _shared
+
+    return _shared(parsed, include_exports=include_exports)
+
+
+def build_eurostat_atomic_final_demand(parsed, *, include_exports: bool = True) -> pd.DataFrame:
+    from ecolecon_mrio.eurostat_iot import build_eurostat_atomic_final_demand as _shared
+
+    return _shared(parsed, include_exports=include_exports)
+
+
 def load_eurostat_iot_bundle(repo_root: Path, *, geo: str, year: int, flow_code: str):
     eurostat_iot = import_repo_module(repo_root, "ecolecon_mrio.eurostat_iot")
     data_mod = import_repo_module(repo_root, "ecolecon_mrio.data")
@@ -69,7 +85,7 @@ def load_eurostat_iot_bundle(repo_root: Path, *, geo: str, year: int, flow_code:
         force_download=False,
         force_reparse=False,
     )
-    output = (parsed.Z.sum(axis=1) + parsed.Y.sum(axis=1)).astype("float64")
+    output = build_eurostat_product_use_reference(parsed)
     output.index = output.index.astype(str)
     labels = {
         str(code): str(label)
@@ -83,14 +99,9 @@ def build_eurostat_product_use_reference(
     *,
     exclude_final_demand_codes: tuple[str, ...] = (),
 ) -> pd.Series:
-    y_block = parsed.Y.copy()
-    if exclude_final_demand_codes:
-        drop_cols = [col for col in y_block.columns if str(col) in set(map(str, exclude_final_demand_codes))]
-        if drop_cols:
-            y_block = y_block.drop(columns=drop_cols)
-    reference = (parsed.Z.sum(axis=1) + y_block.sum(axis=1)).astype("float64")
-    reference.index = reference.index.astype(str)
-    return reference
+    from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference as _shared
+
+    return _shared(parsed, exclude_final_demand_codes=exclude_final_demand_codes)
 
 
 def load_exio_slice(repo_root: Path, *, region: str, year: int, flow_name: str):

@@ -29,6 +29,11 @@ FLOW_SPECS = {
     "total": ("TOTAL", "total", "at2020_total_mapping_detail.csv"),
 }
 
+COMPARISON_BASIS = (
+    "Eurostat benchmark = Z + atomic final-demand columns with P6 excluded; "
+    "EXIO benchmark = Austria-destination use slice for the selected flow."
+)
+
 
 def build_totals_row(df: pd.DataFrame, *, flow_code: str) -> pd.DataFrame:
     unique_sources = df.drop_duplicates(subset=["exio_source_code"])
@@ -52,7 +57,8 @@ def build_totals_row(df: pd.DataFrame, *, flow_code: str) -> pd.DataFrame:
         "gap_pct_of_eurostat_2020": (100.0 * gap / euro_total) if euro_total else np.nan,
         "provenance": "",
         "certainty": "",
-        "notes": "Totals row: source-sector totals are summed over unique EXIO source codes; Eurostat and mapped sector totals are summed over unique Eurostat sectors. Eurostat reference values exclude final-demand code P6 so the comparison stays on domestic absorption rather than exports.",
+        "comparison_basis": COMPARISON_BASIS,
+        "notes": "Totals row: source-sector totals are summed over unique EXIO source codes; Eurostat and mapped sector totals are summed over unique Eurostat sectors. Eurostat reference values are built from atomic final-demand columns only, with P6 excluded, so the comparison stays on domestic absorption and avoids double counting Eurostat subtotal columns.",
     }
     return pd.DataFrame([totals])
 
@@ -86,6 +92,7 @@ def generate_flow_detail(repo_root: Path, *, geo: str, region: str, year: int, f
     detail["gap_meur_2020"] = pd.to_numeric(detail["gap"], errors="coerce")
     detail["gap_pct_of_eurostat_2020"] = pd.to_numeric(detail["gap_pct"], errors="coerce")
     detail["certainty"] = detail["certainty"].fillna("")
+    detail["comparison_basis"] = COMPARISON_BASIS
     detail = detail.sort_values(["eurostat_order", "eurostat_sector_code", "mapped_exio_split_value_meur_2020"], ascending=[True, True, False])
     out = detail[
         [
@@ -104,6 +111,7 @@ def generate_flow_detail(repo_root: Path, *, geo: str, region: str, year: int, f
             "gap_pct_of_eurostat_2020",
             "provenance",
             "certainty",
+            "comparison_basis",
             "notes",
         ]
     ].copy()

@@ -115,9 +115,12 @@ contains:
 - provenance, certainty, and notes from the concordance row
 
 For these 2020 flow files, the Eurostat reference is built as product use
-within Austria with `P6` exports excluded. This matches the EXIO comparator more
-closely, because the EXIO slice used here is an Austria-destination use block,
-not Austrian total product output including exports.
+within Austria from atomic final-demand columns only, with `P6` exports
+excluded. This matches the EXIO comparator more closely, because the EXIO slice
+used here is an Austria-destination use block, not Austrian total product
+output including exports, and the Eurostat `prd_use` table also contains
+subtotal columns such as `P3`, `P5`, `TFU`, `TOTAL`, and `TU` that would
+otherwise double count final demand.
 
 The totals row avoids double counting by:
 

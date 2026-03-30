@@ -297,6 +297,62 @@ class ParsedEurostatIOT:
     meta: dict[str, Any]
 
 
+def select_eurostat_atomic_final_demand_columns(
+    parsed: ParsedEurostatIOT,
+    *,
+    include_exports: bool = True,
+) -> list[str]:
+    cols = [str(col) for col in parsed.Y.columns]
+    selected: list[str] = []
+
+    p3_detail = [code for code in ("P3_S13", "P3_S14", "P3_S15") if code in cols]
+    if p3_detail:
+        selected.extend(p3_detail)
+    elif "P3" in cols:
+        selected.append("P3")
+
+    p5_detail = [code for code in ("P51G", "P52", "P53") if code in cols]
+    if p5_detail:
+        selected.extend(p5_detail)
+    elif "P5" in cols:
+        selected.append("P5")
+
+    if include_exports:
+        if "P6" in cols:
+            selected.append("P6")
+        else:
+            selected.extend(sorted(code for code in cols if code.startswith("P6_")))
+
+    return selected
+
+
+def build_eurostat_atomic_final_demand(
+    parsed: ParsedEurostatIOT,
+    *,
+    include_exports: bool = True,
+) -> pd.DataFrame:
+    cols = select_eurostat_atomic_final_demand_columns(parsed, include_exports=include_exports)
+    if not cols:
+        return parsed.Y.iloc[:, 0:0].copy()
+    return parsed.Y.loc[:, cols].astype("float64").copy()
+
+
+def build_eurostat_product_use_reference(
+    parsed: ParsedEurostatIOT,
+    *,
+    exclude_final_demand_codes: Sequence[str] = (),
+) -> pd.Series:
+    y_block = build_eurostat_atomic_final_demand(parsed, include_exports=True)
+    if exclude_final_demand_codes:
+        exclude = {str(code) for code in exclude_final_demand_codes}
+        drop_cols = [col for col in y_block.columns if str(col) in exclude]
+        if drop_cols:
+            y_block = y_block.drop(columns=drop_cols)
+    reference = (parsed.Z.sum(axis=1) + y_block.sum(axis=1)).astype("float64")
+    reference.index = reference.index.astype(str)
+    return reference
+
+
 def parse_eurostat_iot(
     payload: Mapping[str, Any],
     *,

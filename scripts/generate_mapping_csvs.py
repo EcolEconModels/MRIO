@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ecolecon_mrio.eurostat_iot import load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
 from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
 from ecolecon_mrio.exio_to_eurostat_mapping import (
     _candidate_nace2_divisions_for_exio,
@@ -104,6 +104,7 @@ def _generate_weighted_rows(*, geo: str, year: int, eurostat_storage_folder: Pat
     )
     z = parsed.Z
     y = parsed.Y
+    x = build_eurostat_product_use_reference(parsed)
     cpa_codes = list(map(str, z.index.astype(str)))
     cpa_labels = {str(code): str(label) for code, label in ((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items()}
 

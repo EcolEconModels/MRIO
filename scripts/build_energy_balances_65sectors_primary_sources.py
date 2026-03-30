@@ -20,7 +20,7 @@ from ecolecon_mrio.eurostat_energy_balances import (
     validate_energy_balance_closure,
 )
 from ecolecon_mrio.data import default_data_root
-from ecolecon_mrio.eurostat_iot import load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
 
 
 def _norm(s: str) -> str:
@@ -195,7 +195,7 @@ def main() -> None:
         force_download=args.force_download,
         force_reparse=args.force_reparse,
     )
-    x = (parsed.Z.sum(axis=1) + parsed.Y.sum(axis=1)).astype("float64").fillna(0.0)
+    x = build_eurostat_product_use_reference(parsed).astype("float64").fillna(0.0)
     x.index = x.index.astype(str)
 
     row_labels = (parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}
