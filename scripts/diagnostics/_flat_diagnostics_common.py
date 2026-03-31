@@ -4,6 +4,7 @@ import importlib
 import sys
 import types
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -52,39 +53,20 @@ def load_weighted_mapping(repo_root: Path, mapping_csv: Path | None = None) -> p
 
 
 def select_eurostat_atomic_final_demand_columns(
-    parsed,
+    parsed: Any,
     *,
     include_exports: bool = True,
 ) -> list[str]:
-    cols = [str(col) for col in parsed.Y.columns]
-    selected: list[str] = []
-
-    p3_detail = [code for code in ("P3_S13", "P3_S14", "P3_S15") if code in cols]
-    if p3_detail:
-        selected.extend(p3_detail)
-    elif "P3" in cols:
-        selected.append("P3")
-
-    p5_detail = [code for code in ("P51G", "P52", "P53") if code in cols]
-    if p5_detail:
-        selected.extend(p5_detail)
-    elif "P5" in cols:
-        selected.append("P5")
-
-    if include_exports:
-        if "P6" in cols:
-            selected.append("P6")
-        else:
-            selected.extend(sorted(code for code in cols if code.startswith("P6_")))
-
-    return selected
+    eurostat_iot = import_repo_module(repo_root_from_file(__file__), "ecolecon_mrio.eurostat_iot")
+    return eurostat_iot.select_eurostat_atomic_final_demand_columns(
+        parsed,
+        include_exports=include_exports,
+    )
 
 
-def build_eurostat_atomic_final_demand(parsed, *, include_exports: bool = True) -> pd.DataFrame:
-    cols = select_eurostat_atomic_final_demand_columns(parsed, include_exports=include_exports)
-    if not cols:
-        return parsed.Y.iloc[:, 0:0].copy()
-    return parsed.Y.loc[:, cols].astype("float64").copy()
+def build_eurostat_atomic_final_demand(parsed: Any, *, include_exports: bool = True) -> pd.DataFrame:
+    eurostat_iot = import_repo_module(repo_root_from_file(__file__), "ecolecon_mrio.eurostat_iot")
+    return eurostat_iot.build_eurostat_atomic_final_demand(parsed, include_exports=include_exports)
 
 
 def load_eurostat_iot_bundle(repo_root: Path, *, geo: str, year: int, flow_code: str):
@@ -107,26 +89,25 @@ def load_eurostat_iot_bundle(repo_root: Path, *, geo: str, year: int, flow_code:
     )
     output = build_eurostat_product_use_reference(parsed)
     output.index = output.index.astype(str)
+    dimensions = cast(dict[str, Any], parsed.meta.get("dimensions", {}) or {})
+    prd_ava = cast(dict[str, Any], dimensions.get("prd_ava", {}) or {})
     labels = {
         str(code): str(label)
-        for code, label in (((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items())
+        for code, label in prd_ava.items()
     }
     return parsed, output, labels
 
 
 def build_eurostat_product_use_reference(
-    parsed,
+    parsed: Any,
     *,
     exclude_final_demand_codes: tuple[str, ...] = (),
 ) -> pd.Series:
-    y_block = build_eurostat_atomic_final_demand(parsed, include_exports=True)
-    if exclude_final_demand_codes:
-        drop_cols = [col for col in y_block.columns if str(col) in set(map(str, exclude_final_demand_codes))]
-        if drop_cols:
-            y_block = y_block.drop(columns=drop_cols)
-    reference = (parsed.Z.sum(axis=1) + y_block.sum(axis=1)).astype("float64")
-    reference.index = reference.index.astype(str)
-    return reference
+    eurostat_iot = import_repo_module(repo_root_from_file(__file__), "ecolecon_mrio.eurostat_iot")
+    return eurostat_iot.build_eurostat_product_use_reference(
+        parsed,
+        exclude_final_demand_codes=exclude_final_demand_codes,
+    )
 
 
 def load_exio_slice(repo_root: Path, *, region: str, year: int, flow_name: str):
@@ -146,20 +127,20 @@ def eurostat_order_map(reference_index: pd.Index) -> dict[str, int]:
 
 
 def mapping_label_maps(mapping_df: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
-    target_labels = (
+    target_labels_series = (
         mapping_df.loc[:, ["aggregate_sector", "target_label"]]
         .drop_duplicates(subset=["aggregate_sector"])
         .set_index("aggregate_sector")["target_label"]
         .astype(str)
-        .to_dict()
     )
-    source_labels = (
+    source_labels_series = (
         mapping_df.loc[:, ["exio_sector", "source_label"]]
         .drop_duplicates(subset=["exio_sector"])
         .set_index("exio_sector")["source_label"]
         .astype(str)
-        .to_dict()
     )
+    target_labels = {str(key): str(value) for key, value in target_labels_series.items()}
+    source_labels = {str(key): str(value) for key, value in source_labels_series.items()}
     return target_labels, source_labels
 
 
