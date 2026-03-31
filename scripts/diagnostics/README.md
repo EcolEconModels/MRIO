@@ -91,6 +91,7 @@ Run from the MRIO repository root:
 python scripts/diagnostics/generate_at2020_flow_mapping_details.py
 python scripts/diagnostics/generate_at2021_co2_mapping_detail.py
 python scripts/diagnostics/generate_at2020_strict_zij_outliers.py
+python scripts/diagnostics/generate_at2020_strict_zij_outliers.py --flow all
 ```
 
 Optional arguments:
@@ -117,6 +118,13 @@ python scripts/diagnostics/generate_at2020_strict_zij_outliers.py \
   --flow dom \
   --material-threshold 10 \
   --output-dir /custom/output/path
+
+python scripts/diagnostics/generate_at2020_strict_zij_outliers.py \
+  --geo AT \
+  --region AT \
+  --year 2020 \
+  --flow all \
+  --material-threshold 10
 ```
 
 ## Method Notes

@@ -143,27 +143,23 @@ def _build_row_outliers(
     return out.sort_values(["abs_gap_meur_2020", "target_sector"], ascending=[False, True], kind="stable")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate strict 1:1 z_ij outlier diagnostics for Austria 2020.")
-    parser.add_argument("--geo", default="AT")
-    parser.add_argument("--region", default="AT")
-    parser.add_argument("--year", type=int, default=2020)
-    parser.add_argument("--flow", choices=sorted(FLOW_SPECS), default="dom")
-    parser.add_argument("--material-threshold", type=float, default=10.0)
-    parser.add_argument("--output-dir", type=Path, default=None)
-    args = parser.parse_args()
-
-    repo_root = repo_root_from_file(__file__)
-    output_dir = args.output_dir or default_output_dir(repo_root)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    flow_code, exio_flow = FLOW_SPECS[args.flow]
+def _run_single_flow(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    geo: str,
+    region: str,
+    year: int,
+    flow_key: str,
+    material_threshold: float,
+) -> tuple[Path, Path]:
+    flow_code, exio_flow = FLOW_SPECS[flow_key]
     mapping_df = load_weighted_mapping(repo_root)
     target_labels, source_labels = mapping_label_maps(mapping_df)
     strict_pairs = _strict_pairs(mapping_df)
 
-    parsed_iot, _, _ = load_eurostat_iot_bundle(repo_root, geo=args.geo, year=args.year, flow_code=flow_code)
-    exio_slice = load_exio_slice(repo_root, region=args.region, year=args.year, flow_name=exio_flow)
+    parsed_iot, _, _ = load_eurostat_iot_bundle(repo_root, geo=geo, year=year, flow_code=flow_code)
+    exio_slice = load_exio_slice(repo_root, region=region, year=year, flow_name=exio_flow)
     z_euro = parsed_iot.Z.astype("float64")
     z_exio = exio_slice.Z_domestic.astype("float64")
 
@@ -174,7 +170,7 @@ def main() -> int:
         target_labels=target_labels,
         source_labels=source_labels,
         flow_code=flow_code,
-        material_threshold=args.material_threshold,
+        material_threshold=material_threshold,
     )
     row_outliers = _build_row_outliers(
         strict_pairs=strict_pairs,
@@ -185,13 +181,40 @@ def main() -> int:
         flow_code=flow_code,
     )
 
-    cell_path = output_dir / f"at2020_{args.flow}_strict_zij_outliers.csv"
-    row_path = output_dir / f"at2020_{args.flow}_strict_row_outliers.csv"
+    cell_path = output_dir / f"at2020_{flow_key}_strict_zij_outliers.csv"
+    row_path = output_dir / f"at2020_{flow_key}_strict_row_outliers.csv"
     write_csv(cell_outliers, cell_path)
     write_csv(row_outliers, row_path)
+    return cell_path, row_path
 
-    print(f"Wrote strict z_ij outliers to {cell_path}")
-    print(f"Wrote strict row outliers to {row_path}")
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate strict 1:1 z_ij outlier diagnostics for Austria 2020.")
+    parser.add_argument("--geo", default="AT")
+    parser.add_argument("--region", default="AT")
+    parser.add_argument("--year", type=int, default=2020)
+    parser.add_argument("--flow", choices=sorted(FLOW_SPECS) + ["all"], default="dom")
+    parser.add_argument("--material-threshold", type=float, default=10.0)
+    parser.add_argument("--output-dir", type=Path, default=None)
+    args = parser.parse_args()
+
+    repo_root = repo_root_from_file(__file__)
+    output_dir = args.output_dir or default_output_dir(repo_root)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    flow_keys = list(FLOW_SPECS) if args.flow == "all" else [args.flow]
+    for flow_key in flow_keys:
+        cell_path, row_path = _run_single_flow(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            geo=args.geo,
+            region=args.region,
+            year=args.year,
+            flow_key=flow_key,
+            material_threshold=args.material_threshold,
+        )
+        print(f"Wrote strict z_ij outliers to {cell_path}")
+        print(f"Wrote strict row outliers to {row_path}")
     return 0
 
 
