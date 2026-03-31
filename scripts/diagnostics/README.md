@@ -14,17 +14,6 @@ Austria diagnostics files written to
     - `at2020_dom_mapping_detail.csv`
     - `at2020_imp_mapping_detail.csv`
     - `at2020_total_mapping_detail.csv`
-- `generate_at2020_intermediate_block_details.py`
-  - Regenerates the 2020 intermediate-use block diagnostics files:
-    - `at2020_dom_intermediate_cell_detail.csv`
-    - `at2020_dom_intermediate_compact_summary.csv`
-    - `at2020_dom_intermediate_split_trace.csv`
-    - `at2020_imp_intermediate_cell_detail.csv`
-    - `at2020_imp_intermediate_compact_summary.csv`
-    - `at2020_imp_intermediate_split_trace.csv`
-    - `at2020_total_intermediate_cell_detail.csv`
-    - `at2020_total_intermediate_compact_summary.csv`
-    - `at2020_total_intermediate_split_trace.csv`
 - `generate_at2021_co2_mapping_detail.py`
   - Regenerates the 2021 CO2 comparison file:
     - `at2021_co2_mapping_detail.csv`
@@ -89,27 +78,20 @@ These are read from the PostGrowth repo:
 Run from the MRIO repository root:
 
 ```bash
-.venv/bin/python scripts/diagnostics/generate_at2020_flow_mapping_details.py
-.venv/bin/python scripts/diagnostics/generate_at2020_intermediate_block_details.py
-.venv/bin/python scripts/diagnostics/generate_at2021_co2_mapping_detail.py
+python scripts/diagnostics/generate_at2020_flow_mapping_details.py
+python scripts/diagnostics/generate_at2021_co2_mapping_detail.py
 ```
 
 Optional arguments:
 
 ```bash
-.venv/bin/python scripts/diagnostics/generate_at2020_flow_mapping_details.py \
+python scripts/diagnostics/generate_at2020_flow_mapping_details.py \
   --geo AT \
   --region AT \
   --year 2020 \
   --output-dir /custom/output/path
 
-.venv/bin/python scripts/diagnostics/generate_at2020_intermediate_block_details.py \
-  --geo AT \
-  --region AT \
-  --year 2020 \
-  --output-dir /custom/output/path
-
-.venv/bin/python scripts/diagnostics/generate_at2021_co2_mapping_detail.py \
+python scripts/diagnostics/generate_at2021_co2_mapping_detail.py \
   --geo AT \
   --region AT \
   --year 2021 \
@@ -144,27 +126,6 @@ The totals row avoids double counting by:
 
 - summing source totals over unique EXIO source codes
 - summing Eurostat and mapped target totals over unique Eurostat sectors
-
-### 2020 intermediate block cell files
-
-Each row is one Eurostat-sector by Eurostat-sector intermediate-use cell from
-the Austria `Z` block, alongside the same cell after mapping the EXIO Austria
-destination-region `Z` block onto Eurostat CPA sectors on both axes.
-
-These files intentionally exclude final demand. They are the strict
-sector-by-sector block comparison, while the existing 2020 flow detail files
-remain the broader domestic-absorption comparison based on `Z +` atomic final
-demand.
-
-The same generator also writes two supplementary files per flow:
-
-- compact summary files
-  - rank the largest row-total, column-total, and cell-level `Z` gaps
-- split trace files
-  - decompose the worst target-cell gaps back to the largest EXIO source-cell
-    contributions involving split sectors where possible
-  - if a worst target cell has no split-sector contribution, the trace falls
-    back to the largest contributing EXIO source pairs for that cell
 
 ### 2021 CO2 detail file
 

@@ -22,7 +22,7 @@ from ecolecon_mrio.eurostat_energy_balances import (
     compute_mapping_shares_from_outputs,
 )
 from ecolecon_mrio.eurostat_air_emissions import load_eurostat_air_emissions_by_nace
-from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import load_eurostat_iot
 from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
 from ecolecon_mrio.exiobase3_extensions import extract_emissions_and_intensity, extract_quantity_and_price
 from ecolecon_mrio.mapping_csv import load_category_mapping_frame, load_weighted_mapping_frame
@@ -43,7 +43,7 @@ def _load_eurostat_outputs(*, geo: str, year: int, storage_folder: Path) -> pd.S
         force_download=False,
         force_reparse=False,
     )
-    x = build_eurostat_product_use_reference(parsed).astype("float64")
+    x = (parsed.Z.sum(axis=1) + parsed.Y.sum(axis=1)).astype("float64")
     x.index = x.index.astype(str)
     x.name = "eurostat_output"
     return x
@@ -83,7 +83,24 @@ def _load_eurostat_iot_bundle(*, geo: str, year: int, storage_folder: Path):
         force_download=False,
         force_reparse=False,
     )
-    x = build_eurostat_product_use_reference(parsed).astype("float64")
+    y_cols: list[str] = []
+    parsed_y_cols = [str(col) for col in parsed.Y.columns]
+    p3_detail = [code for code in ("P3_S13", "P3_S14", "P3_S15") if code in parsed_y_cols]
+    if p3_detail:
+        y_cols.extend(p3_detail)
+    elif "P3" in parsed_y_cols:
+        y_cols.append("P3")
+    p5_detail = [code for code in ("P51G", "P52", "P53") if code in parsed_y_cols]
+    if p5_detail:
+        y_cols.extend(p5_detail)
+    elif "P5" in parsed_y_cols:
+        y_cols.append("P5")
+    if "P6" in parsed_y_cols:
+        y_cols.append("P6")
+    else:
+        y_cols.extend(sorted(code for code in parsed_y_cols if code.startswith("P6_")))
+    y_block = parsed.Y.loc[:, y_cols].astype("float64") if y_cols else parsed.Y.iloc[:, 0:0].copy()
+    x = (parsed.Z.sum(axis=1) + y_block.sum(axis=1)).astype("float64")
     x.index = x.index.astype(str)
     return parsed, x
 
