@@ -27,19 +27,19 @@ from ecolecon_mrio.eurostat_iot import (
     eurostat_dimensions,
     load_eurostat_table_2d,
 )
+from ecolecon_mrio.mapping_csv import read_product_source_mapping, read_source_bucket_mapping
 
 
-PRIMARY_SOURCES: tuple[str, ...] = (
-    "Solid fossil fuels",
-    "Fossil gas",
-    "Oil and petroleum products (excluding biofuel portion)",
-    "Hydro",
-    "Wind",
-    "Solar",
-    "Biofuels",
-    "Waste",
-    "Other Renewables",
-)
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+DEFAULT_PRIMARY_SOURCE_BUCKETS_PATH = _repo_root() / "scripts" / "mappings" / "energy_primary_source_buckets.csv"
+DEFAULT_PRODUCT_SOURCE_MAPPING_PATH = _repo_root() / "scripts" / "mappings" / "siec_to_primary_energy_sources.csv"
+
+
+PRIMARY_SOURCES: tuple[str, ...] = tuple(read_source_bucket_mapping(DEFAULT_PRIMARY_SOURCE_BUCKETS_PATH))
+PRODUCT_SOURCE_MAPPING: dict[str, tuple[str, ...]] = read_product_source_mapping(DEFAULT_PRODUCT_SOURCE_MAPPING_PATH)
 
 NRG_BAL_LABEL_ALIASES: Mapping[str, str] = {
     # Some Eurostat labels appear in older spreadsheets / documentation in shortened forms.
@@ -63,29 +63,12 @@ SIEC_TOTAL = "TOTAL"
 SIEC_ELECTRICITY = "E7000"
 SIEC_HEAT = "H8000"
 
-SIEC_SOLID_FOSSIL = ("C0000X0350-0370",)
-SIEC_FOSSIL_GAS = ("G3000", "C0350-0370")
-SIEC_OIL_EX_BIO = ("O4000XBIO",)
-
-SIEC_HYDRO = ("RA100", "RA130")
-SIEC_WIND = ("RA300",)
-SIEC_SOLAR = ("RA410", "RA420")
-SIEC_OTHER_RENEW = ("RA200", "RA500", "RA600")
-
-SIEC_WASTE = ("W6210", "W6100_6220")
 SIEC_RENEWABLES_AND_BIOFUELS_AGG = "RA000"
 
-SIEC_BIOFUELS_DETAILED = (
-    "R5110-5150_W6000RI",
-    "R5210P",
-    "R5210B",
-    "R5220P",
-    "R5220B",
-    "R5230P",
-    "R5230B",
-    "R5290",
-    "R5300",
-)
+
+def _codes_for_source_bucket(source_bucket: str, *, code_to_label: Mapping[str, str]) -> tuple[str, ...]:
+    declared_codes = PRODUCT_SOURCE_MAPPING.get(str(source_bucket), tuple())
+    return _present_codes(code_to_label, declared_codes)
 
 
 def _as_path(p: str | Path | None) -> Path:
@@ -168,20 +151,32 @@ def read_category_target_mapping_csv(path: str | Path) -> pd.DataFrame:
     """
     Read a Category -> TargetSector mapping CSV.
 
-    Expected columns:
+    Supports both the legacy three-column format and the canonical
+    `kind=category-target` schema defined in `mapping_csv.py`.
+
+    Returned columns:
       - Category
       - TargetSector
-    Optional columns:
-      - Share_total (used only as a fallback weighting scheme)
+      - Share_total (optional fallback weighting scheme)
     """
     df = pd.read_csv(path)
-    if not {"Category", "TargetSector"}.issubset(set(df.columns)):
-        raise ValueError(f"Mapping CSV must have columns Category, TargetSector. Got: {df.columns.tolist()}")
-    df["Category"] = df["Category"].astype(str).str.strip()
-    df["TargetSector"] = df["TargetSector"].astype(str).str.strip()
-    if "Share_total" in df.columns:
-        df["Share_total"] = pd.to_numeric(df["Share_total"], errors="coerce").fillna(0.0)
-    return df
+    if {"Category", "TargetSector"}.issubset(set(df.columns)):
+        out = df.copy()
+    elif {"kind", "source_key", "target_key", "share"}.issubset(set(df.columns)):
+        from ecolecon_mrio.mapping_csv import load_category_mapping_frame
+
+        canonical = load_category_mapping_frame(path)
+        out = canonical.loc[:, ["Category", "TargetSector", "Share_total"]].copy()
+    else:
+        raise ValueError(
+            "Mapping CSV must have legacy columns Category, TargetSector or the canonical "
+            f"category-target schema. Got: {df.columns.tolist()}"
+        )
+    out["Category"] = out["Category"].astype(str).str.strip()
+    out["TargetSector"] = out["TargetSector"].astype(str).str.strip()
+    if "Share_total" in out.columns:
+        out["Share_total"] = pd.to_numeric(out["Share_total"], errors="coerce").fillna(0.0)
+    return out
 
 
 def match_labels_to_codes(
@@ -215,6 +210,9 @@ def compute_mapping_shares_from_outputs(
     category_col: str = "Category",
     target_col: str = "TargetSector",
     fallback_share_col: str = "Share_total",
+    use_fallback_shares: bool = True,
+    equal_split_if_no_output: bool = True,
+    require_output_weights: bool = False,
 ) -> pd.DataFrame:
     """
     Compute Category -> TargetSector shares using monetary outputs as weights.
@@ -230,22 +228,91 @@ def compute_mapping_shares_from_outputs(
 
     have_fallback = fallback_share_col in df.columns
     for cat, grp in df.groupby(category_col, sort=False):
+        if len(grp) == 1:
+            share_used.append(1.0)
+            continue
         w = np.array([max(0.0, outputs.get(str(t), 0.0)) for t in grp[target_col].astype(str)], dtype="float64")
         s = float(w.sum())
         if s > 0:
             shares = (w / s).tolist()
         else:
-            if have_fallback:
+            if use_fallback_shares and have_fallback:
                 fb = pd.to_numeric(grp[fallback_share_col], errors="coerce").fillna(0.0).to_numpy(dtype="float64")
                 fb = np.clip(fb, 0.0, None)
                 fbs = float(fb.sum())
-                shares = (fb / fbs).tolist() if fbs > 0 else (np.ones(len(grp)) / len(grp)).tolist()
+                if fbs > 0:
+                    shares = (fb / fbs).tolist()
+                elif equal_split_if_no_output:
+                    shares = (np.ones(len(grp)) / len(grp)).tolist()
+                elif require_output_weights:
+                    raise ValueError(
+                        f"No positive output weights or fallback shares available for category {cat!r}."
+                    )
+                else:
+                    shares = (np.ones(len(grp)) / len(grp)).tolist()
+            elif equal_split_if_no_output:
+                shares = (np.ones(len(grp)) / len(grp)).tolist()
+            elif require_output_weights:
+                raise ValueError(f"No positive output weights available for category {cat!r}.")
             else:
                 shares = (np.ones(len(grp)) / len(grp)).tolist()
         share_used.extend(shares)
 
     df["Share_used"] = np.array(share_used, dtype="float64")
     return df
+
+
+def build_postgrowth_energy_balance(
+    mapped_df: pd.DataFrame,
+    *,
+    source_group_by_source: Mapping[str, str],
+    sector_col: str = "TargetSector",
+    split_energy_green_brown: bool = False,
+    brown_label: str = "Energy Brown",
+    green_label: str = "Energy Green",
+    coke_label: str = "Coke and refined petroleum products",
+    electricity_label: str = "Electricity, gas, steam and air conditioning",
+) -> pd.DataFrame:
+    source_cols = [src for src in PRIMARY_SOURCES if src in mapped_df.columns]
+    if not source_cols:
+        raise ValueError("Mapped energy balance is missing primary source columns.")
+    if sector_col not in mapped_df.columns:
+        raise ValueError(f"Mapped energy balance is missing sector column {sector_col!r}.")
+
+    out = mapped_df.loc[:, [sector_col, *source_cols]].copy()
+    out = out.rename(columns={sector_col: "Sector"})
+    out["Sector"] = out["Sector"].astype(str).str.strip()
+
+    if split_energy_green_brown:
+        coke_rows = out.index[out["Sector"] == coke_label].tolist()
+        electricity_rows = out.index[out["Sector"] == electricity_label].tolist()
+        if len(coke_rows) != 1 or len(electricity_rows) != 1:
+            raise ValueError(
+                "Expected exactly one coke row and one electricity row when splitting to Energy Brown/Green."
+            )
+        coke_idx = coke_rows[0]
+        electricity_idx = electricity_rows[0]
+
+        combined = pd.to_numeric(out.loc[coke_idx, source_cols], errors="coerce").fillna(0.0) + pd.to_numeric(
+            out.loc[electricity_idx, source_cols], errors="coerce"
+        ).fillna(0.0)
+        brown_sources = [src for src in source_cols if str(source_group_by_source.get(src, "")).casefold() == "fossil"]
+        green_sources = [src for src in source_cols if src not in set(brown_sources)]
+
+        brown_row = combined.copy()
+        green_row = combined.copy()
+        for source in green_sources:
+            brown_row[source] = 0.0
+        for source in brown_sources:
+            green_row[source] = 0.0
+
+        out.loc[coke_idx, source_cols] = brown_row[source_cols].to_numpy(dtype="float64")
+        out.loc[electricity_idx, source_cols] = green_row[source_cols].to_numpy(dtype="float64")
+        out.at[coke_idx, "Sector"] = brown_label
+        out.at[electricity_idx, "Sector"] = green_label
+
+    out["Total_energy_GWh"] = pd.to_numeric(out[source_cols].stack(), errors="coerce").unstack(fill_value=0.0).sum(axis=1)
+    return out.loc[:, ["Sector", *source_cols, "Total_energy_GWh"]]
 
 
 def disaggregate_unrolled_sources(
@@ -365,15 +432,15 @@ def load_eurostat_electricity_heat_mix(
 
     # Use a non-overlapping SIEC-to-primary-source mapping (codes, not regex) and allocate
     # any small remainder to Other Renewables to ensure closure.
-    c_solid = _present_codes(siec_labels, SIEC_SOLID_FOSSIL)
-    c_gas = _present_codes(siec_labels, SIEC_FOSSIL_GAS)
-    c_oil = _present_codes(siec_labels, SIEC_OIL_EX_BIO)
-    c_hydro = _present_codes(siec_labels, SIEC_HYDRO)
-    c_wind = _present_codes(siec_labels, SIEC_WIND)
-    c_solar = _present_codes(siec_labels, SIEC_SOLAR)
-    c_other = _present_codes(siec_labels, SIEC_OTHER_RENEW)
-    c_waste = _present_codes(siec_labels, SIEC_WASTE)
-    c_bio = _present_codes(siec_labels, SIEC_BIOFUELS_DETAILED)
+    c_solid = _codes_for_source_bucket("Solid fossil fuels", code_to_label=siec_labels)
+    c_gas = _codes_for_source_bucket("Fossil gas", code_to_label=siec_labels)
+    c_oil = _codes_for_source_bucket("Oil and petroleum products (excluding biofuel portion)", code_to_label=siec_labels)
+    c_hydro = _codes_for_source_bucket("Hydro", code_to_label=siec_labels)
+    c_wind = _codes_for_source_bucket("Wind", code_to_label=siec_labels)
+    c_solar = _codes_for_source_bucket("Solar", code_to_label=siec_labels)
+    c_other = _codes_for_source_bucket("Other Renewables", code_to_label=siec_labels)
+    c_waste = _codes_for_source_bucket("Waste", code_to_label=siec_labels)
+    c_bio = _codes_for_source_bucket("Biofuels", code_to_label=siec_labels)
     have_ra000 = str(SIEC_RENEWABLES_AND_BIOFUELS_AGG) in set(map(str, siec_labels.keys()))
 
     def _shares_for(items: Sequence[str]) -> pd.Series:
@@ -562,15 +629,15 @@ def build_tabelle1_from_eurostat(
 
     # 4) Identify direct-fuel codes using the same non-overlapping code sets used for the mix.
     # We intentionally avoid aggregates like RA000/BIOE to prevent double counting.
-    c_solid = _present_codes(siec_labels, SIEC_SOLID_FOSSIL)
-    c_gas = _present_codes(siec_labels, SIEC_FOSSIL_GAS)
-    c_oil = _present_codes(siec_labels, SIEC_OIL_EX_BIO)
-    c_hydro = _present_codes(siec_labels, SIEC_HYDRO)
-    c_wind = _present_codes(siec_labels, SIEC_WIND)
-    c_solar = _present_codes(siec_labels, SIEC_SOLAR)
-    c_other = _present_codes(siec_labels, SIEC_OTHER_RENEW)
-    c_waste = _present_codes(siec_labels, SIEC_WASTE)
-    c_bio = _present_codes(siec_labels, SIEC_BIOFUELS_DETAILED)
+    c_solid = _codes_for_source_bucket("Solid fossil fuels", code_to_label=siec_labels)
+    c_gas = _codes_for_source_bucket("Fossil gas", code_to_label=siec_labels)
+    c_oil = _codes_for_source_bucket("Oil and petroleum products (excluding biofuel portion)", code_to_label=siec_labels)
+    c_hydro = _codes_for_source_bucket("Hydro", code_to_label=siec_labels)
+    c_wind = _codes_for_source_bucket("Wind", code_to_label=siec_labels)
+    c_solar = _codes_for_source_bucket("Solar", code_to_label=siec_labels)
+    c_other = _codes_for_source_bucket("Other Renewables", code_to_label=siec_labels)
+    c_waste = _codes_for_source_bucket("Waste", code_to_label=siec_labels)
+    c_bio = _codes_for_source_bucket("Biofuels", code_to_label=siec_labels)
     have_ra000 = str(SIEC_RENEWABLES_AND_BIOFUELS_AGG) in set(map(str, siec_labels.keys()))
 
     # 5) Load electricity/heat production shares by source.

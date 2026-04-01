@@ -183,9 +183,79 @@ def read_aggregation_mapping(path: str | Path) -> tuple[dict[str, str], pd.DataF
 def load_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="category-target").copy()
     frame["Category"] = frame["source_key"].astype(str).str.strip()
-    frame["TargetSector"] = frame["target_key"].astype(str).str.strip()
-    frame["Share_total"] = pd.to_numeric(frame["share"], errors="raise")
+    frame["TargetCode"] = frame["target_code"].astype(str).str.strip()
+    frame["TargetSector"] = frame["target_label"].astype(str).str.strip()
+    blank_target_sector = frame["TargetSector"] == ""
+    frame.loc[blank_target_sector, "TargetSector"] = frame.loc[blank_target_sector, "target_key"].astype(str).str.strip()
+    frame["Share_total"] = pd.to_numeric(frame["share"], errors="coerce")
+    frame["AllocationRule"] = frame["transformation_rule"].astype(str).str.strip()
     return frame
+
+
+def read_category_mapping_frame(path: str | Path) -> pd.DataFrame:
+    frame = load_category_mapping_frame(path)
+    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+    frame = frame[(frame["Category"] != "") & (frame["TargetSector"] != "")]
+    return frame
+
+
+def load_category_aggregate_mapping_frame(path: str | Path) -> pd.DataFrame:
+    frame = read_mapping_csv(path, expected_kind="category-aggregate").copy()
+    frame["ComponentCategory"] = frame["source_key"].astype(str).str.strip()
+    frame["AggregateCategory"] = frame["target_key"].astype(str).str.strip()
+    return frame
+
+
+def read_category_aggregate_mapping(path: str | Path) -> dict[str, list[str]]:
+    frame = load_category_aggregate_mapping_frame(path)
+    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+    frame = frame[(frame["ComponentCategory"] != "") & (frame["AggregateCategory"] != "")]
+
+    out: dict[str, list[str]] = {}
+    for aggregate_category, group in frame.groupby("AggregateCategory", sort=False):
+        out[str(aggregate_category)] = list(map(str, group["ComponentCategory"].tolist()))
+    return out
+
+
+def load_source_bucket_mapping_frame(path: str | Path) -> pd.DataFrame:
+    frame = read_mapping_csv(path, expected_kind="source-bucket").copy()
+    frame["SourceBucket"] = frame["source_key"].astype(str).str.strip()
+    frame["BucketGroup"] = frame["target_key"].astype(str).str.strip()
+    frame["BucketOrder"] = pd.to_numeric(frame["weight"], errors="raise")
+    return frame
+
+
+def read_source_bucket_mapping(path: str | Path) -> list[str]:
+    frame = load_source_bucket_mapping_frame(path)
+    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+    frame = frame[frame["SourceBucket"] != ""]
+    frame = frame.sort_values(["BucketOrder", "SourceBucket"], kind="stable")
+    return list(map(str, frame["SourceBucket"].tolist()))
+
+
+def read_source_bucket_groups(path: str | Path) -> dict[str, str]:
+    frame = load_source_bucket_mapping_frame(path)
+    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+    frame = frame[(frame["SourceBucket"] != "") & (frame["BucketGroup"] != "")]
+    return dict(zip(frame["SourceBucket"].astype(str), frame["BucketGroup"].astype(str), strict=False))
+
+
+def load_product_source_mapping_frame(path: str | Path) -> pd.DataFrame:
+    frame = read_mapping_csv(path, expected_kind="product-source").copy()
+    frame["ProductCode"] = frame["source_key"].astype(str).str.strip()
+    frame["SourceBucket"] = frame["target_key"].astype(str).str.strip()
+    return frame
+
+
+def read_product_source_mapping(path: str | Path) -> dict[str, tuple[str, ...]]:
+    frame = load_product_source_mapping_frame(path)
+    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+    frame = frame[(frame["ProductCode"] != "") & (frame["SourceBucket"] != "")]
+
+    out: dict[str, tuple[str, ...]] = {}
+    for source_bucket, group in frame.groupby("SourceBucket", sort=False):
+        out[str(source_bucket)] = tuple(map(str, group["ProductCode"].tolist()))
+    return out
 
 
 def flatten_exio_sectors_from_mapping(

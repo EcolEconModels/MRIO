@@ -13,14 +13,16 @@ from openpyxl import Workbook
 from ecolecon_mrio.eurostat_air_emissions import load_eurostat_air_emissions_by_nace
 from ecolecon_mrio.eurostat_energy_balances import (
     PRIMARY_SOURCES,
+    DEFAULT_PRIMARY_SOURCE_BUCKETS_PATH,
+    build_postgrowth_energy_balance,
     build_tabelle1_from_eurostat,
     compute_mapping_shares_from_outputs,
     disaggregate_unrolled_sources,
-    read_category_target_mapping_csv,
     validate_energy_balance_closure,
 )
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
+from ecolecon_mrio.mapping_csv import read_category_aggregate_mapping, read_category_mapping_frame, read_source_bucket_groups
 
 
 def _norm(s: str) -> str:
@@ -58,78 +60,6 @@ def _write_xlsx(path: Path, sheets: list[tuple[str, pd.DataFrame]]) -> None:
     wb.save(path)
 
 
-def _default_composites() -> dict[str, list[str]]:
-    return {
-        # Custom aggregates used in scripts/mappings/energy_balance_to_nace2_mapping.csv
-        "metal and other minerals": [
-            "Final consumption - industry sector - iron and steel - energy use",
-            "Final consumption - industry sector - non-ferrous metals - energy use",
-            "Final consumption - industry sector - non-metallic minerals - energy use",
-        ],
-        "transport sector - land": [
-            "Final consumption - transport sector - road - energy use",
-            "Final consumption - transport sector - rail - energy use",
-        ],
-    }
-
-
-def _match_target_sectors_to_cpa_codes(
-    target_labels: list[str],
-    *,
-    cpa_code_to_label: dict[str, str],
-    allow_missing: bool = True,
-    ignore_targets: set[str] | None = None,
-) -> tuple[dict[str, str], list[str]]:
-    import difflib
-
-    ignore = set(ignore_targets or set())
-
-    # Normalized exact match first
-    norm_to_code: dict[str, list[str]] = {}
-    for code, lab in cpa_code_to_label.items():
-        norm_to_code.setdefault(_norm(lab), []).append(str(code))
-
-    out: dict[str, str] = {}
-    missing: list[str] = []
-    ambiguous: dict[str, list[str]] = {}
-    for lab in target_labels:
-        if str(lab) in ignore:
-            missing.append(str(lab))
-            continue
-        codes = norm_to_code.get(_norm(lab), [])
-        if not codes:
-            # Try substring containment in either direction (helps with minor wording differences)
-            key = _norm(lab)
-            cand = [c for k, cs in norm_to_code.items() if key in k or k in key for c in cs]
-            cand = sorted(set(cand))
-            if len(cand) == 1:
-                out[lab] = cand[0]
-                continue
-            if len(cand) > 1:
-                ambiguous[lab] = cand
-                continue
-
-            # Finally, fuzzy match on normalized strings.
-            close = difflib.get_close_matches(key, list(norm_to_code.keys()), n=3, cutoff=0.88)
-            if len(close) == 1 and len(norm_to_code.get(close[0], [])) == 1:
-                out[lab] = norm_to_code[close[0]][0]
-                continue
-            missing.append(lab)
-            continue
-        if len(codes) > 1:
-            ambiguous[lab] = codes
-            continue
-        out[lab] = codes[0]
-
-    if ambiguous:
-        first = next(iter(ambiguous.items()))
-        raise SystemExit(f"Ambiguous CPA label matches. Example: {first[0]} -> {first[1]}")
-    if missing and not allow_missing:
-        show = ", ".join(missing[:10])
-        raise SystemExit(f"Could not match some TargetSector labels to Eurostat CPA codes. Examples: {show}")
-    return out, missing
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--geo", default="AT", help="Eurostat geo code (default AT)")
@@ -138,6 +68,16 @@ def main() -> None:
         "--mapping",
         default="scripts/mappings/energy_balance_to_nace2_mapping.csv",
         help="Category -> 65-sector mapping CSV",
+    )
+    ap.add_argument(
+        "--category-aggregate-mapping",
+        default="scripts/mappings/energy_balance_category_aggregates.csv",
+        help="Energy-balance category harmonization CSV",
+    )
+    ap.add_argument(
+        "--primary-source-buckets",
+        default=str(DEFAULT_PRIMARY_SOURCE_BUCKETS_PATH),
+        help="Primary energy source bucket registry CSV",
     )
     ap.add_argument("--out", default="outputs/AT_2021_energy_balances_65sectors_primary_sources.xlsx")
     ap.add_argument(
@@ -153,17 +93,33 @@ def main() -> None:
     ap.add_argument("--energy-unit", default="GWH", help="Energy unit in Eurostat downloads (default GWH)")
     ap.add_argument("--force-download", action="store_true", help="Force re-download Eurostat payloads")
     ap.add_argument("--force-reparse", action="store_true", help="Force re-parse cached payloads")
-    ap.add_argument("--no-composites", action="store_true", help="Disable built-in composite categories")
+    ap.add_argument(
+        "--no-category-aggregates",
+        action="store_true",
+        help="Disable declared category harmonization aggregates",
+    )
+    ap.add_argument(
+        "--postgrowth-sheet-name",
+        default="Energy_1.0",
+        help="Sheet name for the PostGrowth-compatible 65-sector energy balance export",
+    )
+    ap.add_argument(
+        "--split-energy-green-brown",
+        action="store_true",
+        help="Replace the two aggregate energy rows with Energy Brown and Energy Green using declared source groups",
+    )
     args = ap.parse_args()
 
     mapping_path = Path(args.mapping)
+    aggregate_mapping_path = Path(args.category_aggregate_mapping)
+    primary_source_buckets_path = Path(args.primary_source_buckets)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = out_path.with_name(out_path.stem + ".__writing__.xlsx")
 
-    mapping_df = read_category_target_mapping_csv(mapping_path)
+    mapping_df = read_category_mapping_frame(mapping_path)
     categories = mapping_df["Category"].drop_duplicates().astype(str).tolist()
-    composites = {} if args.no_composites else _default_composites()
+    composites = {} if args.no_category_aggregates else read_category_aggregate_mapping(aggregate_mapping_path)
 
     # 1) Energy balances -> Tabelle1 + unrolled primary sources by Category
     eb = build_tabelle1_from_eurostat(
@@ -198,20 +154,24 @@ def main() -> None:
     x = build_eurostat_product_use_reference(parsed).astype("float64").fillna(0.0)
     x.index = x.index.astype(str)
 
-    row_labels = (parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}
-    row_labels = {str(k): str(v) for k, v in row_labels.items()}
-
     targets = mapping_df["TargetSector"].drop_duplicates().astype(str).tolist()
-    target_to_cpa, _missing_targets = _match_target_sectors_to_cpa_codes(
-        targets,
-        cpa_code_to_label=row_labels,
-        allow_missing=True,
-        ignore_targets={"Households"},
-    )
+    target_codes = mapping_df[["TargetSector", "TargetCode"]].drop_duplicates().copy()
+    dup_targets = target_codes.groupby("TargetSector")["TargetCode"].nunique()
+    dup_targets = dup_targets[dup_targets > 1]
+    if not dup_targets.empty:
+        example = dup_targets.index.tolist()[0]
+        raise SystemExit(f"TargetSector maps to multiple target codes: {example}")
+    target_to_cpa = dict(zip(target_codes["TargetSector"].astype(str), target_codes["TargetCode"].astype(str), strict=False))
     target_output = {t: float(x.get(target_to_cpa.get(t, ""), 0.0)) for t in targets}
 
     # 3) Recompute split ratios using IOT outputs and disaggregate to 65 sectors
-    mapping_w = compute_mapping_shares_from_outputs(mapping_df, target_output_by_target=target_output)
+    mapping_w = compute_mapping_shares_from_outputs(
+        mapping_df,
+        target_output_by_target=target_output,
+        use_fallback_shares=False,
+        equal_split_if_no_output=False,
+        require_output_weights=True,
+    )
     sector_energy = disaggregate_unrolled_sources(eb.unrolled_sources, mapping_w)
     # Preserve TargetSector order from the mapping file (and allow extra rows like "Households" at the end).
     sector_energy = sector_energy.reindex(targets).fillna(0.0)
@@ -264,8 +224,16 @@ def main() -> None:
     tail = [c for c in mapped_df.columns if c not in set(front)]
     mapped_df = mapped_df[front + tail]
 
+    source_group_by_source = read_source_bucket_groups(primary_source_buckets_path)
+    postgrowth_df = build_postgrowth_energy_balance(
+        mapped_df,
+        source_group_by_source=source_group_by_source,
+        split_energy_green_brown=args.split_energy_green_brown,
+    )
+
     # 5) Write single Excel output (atomically), using openpyxl directly for maximum Excel compatibility.
     sheets: list[tuple[str, pd.DataFrame]] = [
+        (args.postgrowth_sheet_name, _xlsx_sanitize_df(postgrowth_df)),
         ("Tabelle1", _xlsx_sanitize_df(eb.tabelle1)),
         ("Mapped_65", _xlsx_sanitize_df(mapped_df)),
     ]

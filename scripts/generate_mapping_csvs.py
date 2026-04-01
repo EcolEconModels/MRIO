@@ -385,15 +385,15 @@ def _canonicalize_category_mapping(path: Path, *, cpa_labels: dict[str, str]) ->
     out["share"] = raw["Share_total"].astype(str)
     out["enabled"] = "1"
     out["provenance"] = "methodological"
-    out["certainty"] = "methodological-seed-share"
-    out["transformation_rule"] = "energy-balance-category-share-seed"
+    out["certainty"] = "repo-authored-concordance"
+    out["transformation_rule"] = "output-share-by-target-code"
     out["source_name"] = path.name
     out["official_source"] = ENERGY_METADATA_SOURCE
     out["notes"] = out.apply(
         lambda row: (
             f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
-            f"Share_total = {row['share']} is the checked-in seed share in the source-of-truth CSV; runtime code may recompute Share_used "
-            f"from observed Eurostat outputs for the chosen year."
+            f"Target code = {row['target_code']}. Share_total = {row['share']} is retained as legacy reference metadata only; "
+            f"runtime code computes Share_used from observed Eurostat outputs for the chosen year using direct target-code matches."
         ),
         axis=1,
     )
