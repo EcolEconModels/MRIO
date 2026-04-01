@@ -18,6 +18,8 @@ set -euo pipefail
 #   EXIO_REGION=AT
 #   EUROSTAT_TIME=2021
 #   EUROSTAT_GEO=AT
+#   MAPPING_CONSISTENCY_RTOL=0.2
+#   MAPPING_CONSISTENCY_ATOL=1e-6
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"
@@ -39,6 +41,8 @@ EXIO_TO_EUROSTAT_MAP="${EXIO_TO_EUROSTAT_MAP:-$ROOT_DIR/scripts/mappings/exio_to
 
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/AT_2021_energy_split_flows_with_source}"
 OUT_AGG="${OUT_AGG:-$ROOT_DIR/outputs/AT_2021_energy_green_brown_flows_with_source}"
+MAPPING_CONSISTENCY_RTOL="${MAPPING_CONSISTENCY_RTOL:-0.2}"
+MAPPING_CONSISTENCY_ATOL="${MAPPING_CONSISTENCY_ATOL:-1e-6}"
 
 TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_2021_Eurostat.xlsx}"
 if [[ -z "${SFC_OUTNAME:-}" ]]; then
@@ -67,6 +71,11 @@ if [[ -f "$EXIO_TO_EUROSTAT_MAP" ]]; then
   EXIO_TO_EUROSTAT_ARGS=(--exio-to-eurostat-mapping-csv "$EXIO_TO_EUROSTAT_MAP")
 fi
 
+CONSISTENCY_ARGS=(
+  --mapping-consistency-rtol "$MAPPING_CONSISTENCY_RTOL"
+  --mapping-consistency-atol "$MAPPING_CONSISTENCY_ATOL"
+)
+
 "$PY" "$ROOT_DIR/scripts/split_eurostat_energy_by_exiobase.py" --verbose \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
@@ -77,6 +86,7 @@ fi
   --exio-mapping-csv "$MAP_EXIO_TO_EUROSTAT" \
   --require-mapping-coverage --coverage-tol 0 \
   --balancing-scope local \
+  "${CONSISTENCY_ARGS[@]}" \
   "${EXIO_TO_EUROSTAT_ARGS[@]}" \
   --outdir "$OUT_SPLIT"
 

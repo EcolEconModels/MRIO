@@ -144,6 +144,58 @@ def _assert_mapping_integrity(
         raise SystemExit(f"Mapping integrity check failed ({label}): {exc}") from exc
 
 
+def _build_output_consistency_frame(
+    *,
+    sector_mapping: dict[str, dict[str, float]],
+    eurostat_Z: pd.DataFrame,
+    eurostat_Y: pd.DataFrame,
+    exio_slice: object,
+) -> tuple[pd.DataFrame, float, float]:
+    class _Parsed:
+        def __init__(self, Z: pd.DataFrame, Y: pd.DataFrame) -> None:
+            self.Z = Z
+            self.Y = Y
+
+    euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
+    euro_x.index = euro_x.index.astype(str)
+    euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
+
+    exio_out = pd.to_numeric(getattr(exio_slice, "x_region"), errors="coerce").fillna(0.0).astype("float64")
+    exio_out.index = exio_out.index.astype(str)
+
+    mapped_rows: list[dict[str, float | str | bool]] = []
+    for cpa, euro_val in euro_x.items():
+        total = 0.0
+        for exio, weight in sector_mapping.get(str(cpa), {}).items():
+            if exio in exio_out.index:
+                total += float(exio_out.get(exio, 0.0)) * float(weight)
+        mapped_rows.append(
+            {
+                "cpa": str(cpa),
+                "eurostat_output": float(euro_val),
+                "exio_mapped_output": float(total),
+            }
+        )
+
+    frame = pd.DataFrame(mapped_rows)
+    exio_total = float(frame["exio_mapped_output"].sum())
+    euro_total = float(frame["eurostat_output"].sum())
+    if np.isfinite(exio_total) and exio_total > 0 and np.isfinite(euro_total) and euro_total > 0:
+        scale = euro_total / exio_total
+    else:
+        scale = np.nan
+
+    frame["exio_scale_to_eurostat_total"] = scale
+    frame["exio_scaled_output"] = frame["exio_mapped_output"] * scale
+    frame["abs_diff_scaled"] = (frame["exio_scaled_output"] - frame["eurostat_output"]).abs()
+    frame["rel_diff_scaled"] = np.where(
+        frame["eurostat_output"].abs() > 0,
+        frame["abs_diff_scaled"] / frame["eurostat_output"].abs(),
+        np.nan,
+    )
+    return frame, exio_total, euro_total
+
+
 def _assert_output_consistency(
     *,
     sector_mapping: dict[str, dict[str, float]],
@@ -154,58 +206,25 @@ def _assert_output_consistency(
     atol: float,
     label: str,
 ) -> None:
-    class _Parsed:
-        def __init__(self, Z: pd.DataFrame, Y: pd.DataFrame) -> None:
-            self.Z = Z
-            self.Y = Y
-
-    euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
-    euro_x.index = euro_x.index.astype(str)
-    euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
-
-    exio_out = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype("float64")
-    exio_out.index = exio_out.index.astype(str)
-    exio_out = pd.to_numeric(exio_out, errors="coerce").fillna(0.0)
-
-    # Map EXIO outputs to CPA using weights
-    mapped_exio: dict[str, float] = {}
-    for cpa, weights in sector_mapping.items():
-        if cpa not in euro_x.index:
-            continue
-        total = 0.0
-        for exio, w in weights.items():
-            if exio not in exio_out.index:
-                continue
-            total += float(exio_out.get(exio, 0.0)) * float(w)
-        mapped_exio[cpa] = total
-
-    exio_total = float(sum(mapped_exio.values()))
-    euro_total = float(euro_x.sum())
+    _, exio_total, euro_total = _build_output_consistency_frame(
+        sector_mapping=sector_mapping,
+        eurostat_Z=eurostat_Z,
+        eurostat_Y=eurostat_Y,
+        exio_slice=exio_slice,
+    )
     if not np.isfinite(exio_total) or not np.isfinite(euro_total) or exio_total <= 0 or euro_total <= 0:
         raise SystemExit(
             "Mapping consistency check failed: invalid total outputs for comparison "
             f"({label}). EXIO total={exio_total}, Eurostat total={euro_total}."
         )
 
-    scale = euro_total / exio_total
-    failures = []
-    for cpa, euro_val in euro_x.items():
-        exio_val = float(mapped_exio.get(cpa, 0.0)) * scale
-        diff = abs(exio_val - float(euro_val))
-        tol = max(atol, rtol * abs(float(euro_val)))
-        if diff > tol:
-            failures.append((cpa, exio_val, float(euro_val), diff, tol))
-
-    if failures:
-        failures.sort(key=lambda x: x[3], reverse=True)
-        top = failures[:8]
-        details = "; ".join(
-            f"{cpa}: exio={exio_val:.3g}, euro={euro_val:.3g}, diff={diff:.3g}, tol={tol:.3g}"
-            for cpa, exio_val, euro_val, diff, tol in top
-        )
+    diff_total = abs(exio_total - euro_total)
+    tol_total = max(atol, rtol * abs(euro_total))
+    if diff_total > tol_total:
         raise SystemExit(
-            "Mapping consistency check failed: EXIO-mapped outputs do not match Eurostat outputs "
-            f"within tolerances (rtol={rtol}, atol={atol}) for {label}. Top mismatches: {details}"
+            "Mapping consistency check failed: EXIO-mapped total output does not match the Eurostat "
+            f"total output reference within tolerances (rtol={rtol}, atol={atol}) for {label}. "
+            f"EXIO total={exio_total:.6g}, Eurostat total={euro_total:.6g}, diff={diff_total:.6g}, tol={tol_total:.6g}."
         )
 
 
@@ -609,6 +628,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                         label=label,
                     )
                     if _should_check_output(flow, eurostat_year, args.exio_year):
+                        output_consistency, _, _ = _build_output_consistency_frame(
+                            sector_mapping=full_sector_mapping,
+                            eurostat_Z=parsed.Z,
+                            eurostat_Y=parsed.Y,
+                            exio_slice=exio_slice,
+                        )
+                        out = flow_dir / "mapped_output_consistency.csv"
+                        output_consistency.to_csv(out, index=False)
+                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
                         _assert_output_consistency(
                             sector_mapping=full_sector_mapping,
                             eurostat_Z=parsed.Z,
@@ -692,10 +720,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
                     exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
 
-                    # Use the same monetary-output convention as the slice (Eurostat-style Z+Y totals).
-                    exio_out = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype(
-                        "float64"
-                    )
+                    exio_out = exio_slice.x_region.astype("float64")
 
                     # Final-demand monetary totals by EXIO category (EUR)
                     y_by_category = exio_slice.Y_region.sum(axis=0)
@@ -748,9 +773,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     available = set(map(str, exio_slice.sectors))
                     exio_sectors_full = [s for s in exio_sectors_full if s in available]
 
-                    exio_out_full = (
-                        exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)
-                    ).astype("float64")
+                    exio_out_full = exio_slice.x_region.astype("float64")
                     exio_co2_full = extract_exio_emissions_and_intensity(
                         container=exio_slice.source_zip,
                         region=exio_slice.region,
@@ -898,6 +921,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.eurostat_dataset:
             flow_value_single = base_filters.get(args.eurostat_stk_flow_dim, "DOM")
         if _should_check_output(flow_value_single, eurostat_year, args.exio_year):
+            output_consistency, _, _ = _build_output_consistency_frame(
+                sector_mapping=full_sector_mapping,
+                eurostat_Z=Z,
+                eurostat_Y=Y,
+                exio_slice=exio_slice_single,
+            )
+            out = outdir / "mapped_output_consistency.csv"
+            output_consistency.to_csv(out, index=False)
+            _vprint(args.verbose, f"Wrote: {out.resolve()}")
             _assert_output_consistency(
                 sector_mapping=full_sector_mapping,
                 eurostat_Z=Z,
@@ -928,9 +960,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cache_root=data_root,
                 verbose=args.verbose,
             )
-        exio_out = (exio_slice_single.Z_domestic.sum(axis=1) + exio_slice_single.Y_region.sum(axis=1)).astype(
-            "float64"
-        )
+        exio_out = exio_slice_single.x_region.astype("float64")
         exio_co2 = extract_exio_emissions_and_intensity(
             container=exio_slice_single.source_zip,
             region=exio_slice_single.region,
@@ -971,9 +1001,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         available = set(map(str, exio_slice_single.sectors))
         exio_sectors_full = [s for s in exio_sectors_full if s in available]
 
-        exio_out_full = (
-            exio_slice_single.Z_domestic.sum(axis=1) + exio_slice_single.Y_region.sum(axis=1)
-        ).astype("float64")
+        exio_out_full = exio_slice_single.x_region.astype("float64")
         exio_co2_full = extract_exio_emissions_and_intensity(
             container=exio_slice_single.source_zip,
             region=exio_slice_single.region,

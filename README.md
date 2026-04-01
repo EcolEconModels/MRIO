@@ -10,6 +10,7 @@ Workflow scaffold to replicate Cahen-Fourot et al. (2020) inverted pyramid analy
 - `data/`: place downloaded MRIO datasets here (gitignored).
 - `scripts/run_replication.py`: scriptable replication (downloads/caches WIOD 2013, computes Leontief/Ghosh, prunes graph, detects communities).
 - `scripts/split_eurostat_energy_by_exiobase.py` + `scripts/aggregate_iot_by_mapping.py`: optional `*_value_per_physical_input.csv` unit-value proxies (monetary output / physical quantity).
+- `scripts/README.md`: script-by-script workflow and concordance documentation for the Eurostat/EXIO/PostGrowth pipelines.
 
 ## Quickstart
 1) Create/activate the local venv and install deps:
@@ -93,3 +94,55 @@ make at-2021-energy-green-brown
 
 The script uses `.venv/bin/python` and supports overrides via environment variables:
 `TEMPLATE_XLSX`, `OUT_SPLIT`, `OUT_AGG`, `EXIO_YEAR`, `EXIO_REGION`, `EUROSTAT_TIME`, `EUROSTAT_GEO`.
+
+Detailed documentation for the scripts and mapping files used by this pipeline lives in `scripts/README.md`.
+
+## Exporting PostGrowth Inputs
+
+The exact CLI workflow for the current PostGrowth inputs is now wrapped in:
+
+```
+bash scripts/pipelines/export_postgrowth_inputs.sh
+```
+
+By default this writes the following files into the sibling repo `../PostGrowth-SFC-Austria/`:
+
+- `Energy_Balances_2021_Eurostat_green_brown.xlsx`
+- `IOT_AT_2020_TOTAL_energy_green_brown.xlsx`
+- `IOT_AT_2021_TOTAL_energy_green_brown.xlsx`
+
+Detailed behavior:
+
+1. Restores nothing and does not touch the legacy manual workbook `Energy_Balances_2021_Eurostat.xlsx`.
+2. Rebuilds the harmonized 2021 energy-balance workbook from the Eurostat download/cache path using the declared mapping CSVs.
+3. Forces the upstream brown/green split for the energy balance export, so PostGrowth no longer needs to do that split in R.
+4. Rebuilds the 2020 and 2021 `TOTAL` brown/green IO workbooks from the MRIO split-and-aggregate workflow.
+5. Copies the generated `TOTAL` workbooks into the PostGrowth repo under the filenames expected by the model.
+6. Writes `mapped_output_consistency.csv` for any `TOTAL` flow where the EXIO-to-Eurostat output sanity check is evaluated, so the scaled sector-level comparison remains inspectable.
+
+Useful overrides:
+
+```
+POSTGROWTH_DIR=/abs/path/to/PostGrowth-SFC-Austria \
+TEMPLATE_XLSX=/abs/path/to/IOT_Austria_2021_Eurostat.xlsx \
+ENERGY_OUT=/abs/path/to/Energy_Balances_2021_Eurostat_green_brown.xlsx \
+bash scripts/pipelines/export_postgrowth_inputs.sh
+```
+
+Low-level commands are still available if you only want one artifact:
+
+```
+OUT_XLSX=/abs/path/to/Energy_Balances_2021_Eurostat_green_brown.xlsx \
+POSTGROWTH_SHEET_NAME=Energy_1.0 \
+SPLIT_ENERGY_GREEN_BROWN=1 \
+bash scripts/pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh
+```
+
+```
+EUROSTAT_TIME=2021 \
+TEMPLATE_XLSX=/abs/path/to/IOT_Austria_2021_Eurostat.xlsx \
+SFC_OUTNAME=IOT_AT_2021_{variant}_energy_green_brown.xlsx \
+bash scripts/pipelines/at_2021_energy_green_brown.sh
+```
+
+The `TOTAL` flow run now keeps the EXIO-to-Eurostat mapping sanity check enabled for both 2020 and 2021. The hard failure criterion is total-scale consistency, while `mapped_output_consistency.csv` records the scaled sector-by-sector comparison for inspection.

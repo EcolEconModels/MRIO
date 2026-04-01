@@ -30,6 +30,9 @@ def test_build_exio_region_use_slice_from_pymrio_test_data(tmp_path):
 
     Z_tot = Z_to_r.groupby(level=1).sum()
     Y_tot = Y_to_r.groupby(level=1).sum()
+    Z_from_r = Z.xs(region, level=0, axis=0)
+    Y_from_r = Y.xs(region, level=0, axis=0)
+    x_output = (Z_from_r.sum(axis=1) + Y_from_r.sum(axis=1)).astype("float64")
 
     # Domestic
     s_dom = build_exio_region_use_slice_from_mrio(
@@ -38,7 +41,7 @@ def test_build_exio_region_use_slice_from_pymrio_test_data(tmp_path):
     assert s_dom.flow == "domestic"
     pd.testing.assert_frame_equal(s_dom.Z_domestic, Z_dom)
     pd.testing.assert_frame_equal(s_dom.Y_region, Y_dom)
-    pd.testing.assert_series_equal(s_dom.x_region, (Z_dom.sum(axis=1) + Y_dom.sum(axis=1)).astype("float64"))
+    pd.testing.assert_series_equal(s_dom.x_region, x_output.reindex(Z_dom.index))
 
     # Imports
     s_imp = build_exio_region_use_slice_from_mrio(
@@ -47,7 +50,7 @@ def test_build_exio_region_use_slice_from_pymrio_test_data(tmp_path):
     assert s_imp.flow == "imports"
     pd.testing.assert_frame_equal(s_imp.Z_domestic, Z_imp)
     pd.testing.assert_frame_equal(s_imp.Y_region, Y_imp)
-    pd.testing.assert_series_equal(s_imp.x_region, (Z_imp.sum(axis=1) + Y_imp.sum(axis=1)).astype("float64"))
+    pd.testing.assert_series_equal(s_imp.x_region, x_output.reindex(Z_imp.index))
 
     # Total
     s_tot = build_exio_region_use_slice_from_mrio(
@@ -56,7 +59,7 @@ def test_build_exio_region_use_slice_from_pymrio_test_data(tmp_path):
     assert s_tot.flow == "total"
     pd.testing.assert_frame_equal(s_tot.Z_domestic, Z_tot)
     pd.testing.assert_frame_equal(s_tot.Y_region, Y_tot)
-    pd.testing.assert_series_equal(s_tot.x_region, (Z_tot.sum(axis=1) + Y_tot.sum(axis=1)).astype("float64"))
+    pd.testing.assert_series_equal(s_tot.x_region, x_output.reindex(Z_tot.index))
 
     # Additivity check (pure accounting identity on use side)
     pd.testing.assert_frame_equal(Z_tot, Z_dom + Z_imp)

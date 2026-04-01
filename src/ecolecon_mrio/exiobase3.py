@@ -65,6 +65,15 @@ def _normalize_flow(flow: str) -> str:
     raise ValueError("flow must be one of: domestic, imports, total")
 
 
+def _compute_region_output_from_mrio(*, Z: pd.DataFrame, Y: pd.DataFrame, region: str) -> pd.Series:
+    """Return producer-side output for one region across all destinations/final-demand columns."""
+    Z_from_r = Z.xs(region, level=0, axis=0)
+    Y_from_r = Y.xs(region, level=0, axis=0)
+    x_output = (Z_from_r.sum(axis=1) + Y_from_r.sum(axis=1)).astype("float64")
+    x_output.index = x_output.index.astype(str)
+    return x_output
+
+
 def build_exio_region_use_slice_from_mrio(
     *,
     year: int,
@@ -83,7 +92,8 @@ def build_exio_region_use_slice_from_mrio(
     - flow='imports' : sum over origins != region
     - flow='total'   : sum over all origins
 
-    Returns an `ExioRegionSlice` whose `Z_domestic`/`Y_region` contain the chosen use matrices.
+    Returns an `ExioRegionSlice` whose `Z_domestic`/`Y_region` contain the chosen use matrices,
+    while `x_region` stores producer-side regional output across all destinations.
     """
     flow_norm = _normalize_flow(flow)
 
@@ -118,7 +128,7 @@ def build_exio_region_use_slice_from_mrio(
         Z_use, Y_use = Z_tot, Y_tot
 
     sectors = pd.Index(Z_use.index.astype(str))
-    x_use = (Z_use.sum(axis=1) + Y_use.sum(axis=1)).astype("float64")
+    x_output = _compute_region_output_from_mrio(Z=Z, Y=Y, region=region).reindex(sectors).astype("float64")
 
     return ExioRegionSlice(
         year=year,
@@ -127,7 +137,7 @@ def build_exio_region_use_slice_from_mrio(
         sectors=sectors,
         Z_domestic=Z_use,
         Y_region=Y_use,
-        x_region=x_use,
+        x_region=x_output,
         source_zip=source_zip,
         flow=flow_norm,
     )
@@ -185,7 +195,8 @@ def load_exiobase3_region_slice(
     """
     Load (and cache) a single-region slice needed for domestic split profiles.
 
-    Caches `Z_domestic`, `Y_region`, and `x_region` as pickles to avoid re-loading the full MRIO.
+    Caches the chosen use slice (`Z_domestic`, `Y_region`) together with producer-side `x_region`
+    to avoid re-loading the full MRIO.
     """
     if cache_root is None:
         from ecolecon_mrio.data import default_data_root
@@ -206,6 +217,7 @@ def load_exiobase3_region_slice(
     else:  # total
         z_path = slice_dir / "Z_total.pkl"
         y_path = slice_dir / "Y_total.pkl"
+    x_path = slice_dir / "x_region.pkl"
     meta_path = slice_dir / "meta.json"
 
     from ecolecon_mrio.data import resolve_exiobase_cache_paths
@@ -219,7 +231,22 @@ def load_exiobase3_region_slice(
         Z_use = pd.read_pickle(z_path)
         Y_use = pd.read_pickle(y_path)
         sectors = pd.Index(Z_use.index.astype(str))
-        x_use = (Z_use.sum(axis=1) + Y_use.sum(axis=1)).astype("float64")
+        if x_path.exists():
+            x_output = _coerce_single_column_df_to_series(pd.read_pickle(x_path), name="x_region").astype("float64")
+            x_output.index = x_output.index.astype(str)
+        else:
+            if verbose:
+                print(f"Cached slice missing {x_path.name}; rebuilding producer-side output vector ...")
+            mrio = load_exiobase3(
+                year,
+                system=system,
+                force_download=force_download,
+                cache_root=cache_root,
+                calc_all=False,
+                verbose=verbose,
+            )
+            x_output = _compute_region_output_from_mrio(Z=mrio.Z, Y=mrio.Y, region=region)
+            x_output.to_pickle(x_path)
         return ExioRegionSlice(
             year=year,
             system=system,
@@ -227,7 +254,7 @@ def load_exiobase3_region_slice(
             sectors=sectors,
             Z_domestic=Z_use,
             Y_region=Y_use,
-            x_region=x_use,
+            x_region=x_output.reindex(sectors).astype("float64"),
             source_zip=source_zip,
             flow=flow_norm,
         )
@@ -268,6 +295,7 @@ def load_exiobase3_region_slice(
         print(f"Writing EXIOBASE region slice cache to {slice_dir} ...")
     slice_obj.Z_domestic.to_pickle(z_path)
     slice_obj.Y_region.to_pickle(y_path)
+    slice_obj.x_region.to_pickle(x_path)
     meta_path.write_text(
         f'{{"year":{year},"system":"{system}","region":"{region}","flow":"{flow_norm}"}}',
         encoding="utf-8",
