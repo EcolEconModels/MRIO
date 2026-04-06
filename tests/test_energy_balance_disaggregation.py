@@ -60,8 +60,8 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
         "\n".join(
             [
                 "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
             ]
         ),
         encoding="utf-8",
@@ -69,7 +69,10 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
 
     out = read_category_target_mapping_csv(mapping_path)
     assert list(out.columns) == ["Category", "TargetSector"]
-    assert out["Category"].tolist() == ["metal and other minerals", "metal and other minerals"]
+    assert out["Category"].tolist() == [
+        "Final consumption - industry sector - iron and steel - energy use",
+        "Final consumption - industry sector - iron and steel - energy use",
+    ]
     assert out["TargetSector"].tolist() == ["Basic metals", "Other non-metallic mineral products"]
 
 
@@ -81,8 +84,8 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
         "\n".join(
             [
                 "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
             ]
         ),
         encoding="utf-8",
@@ -91,80 +94,6 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
     out = read_category_mapping_frame(mapping_path)
     assert out["TargetCode"].tolist() == ["CPA_C24", "CPA_C23"]
     assert out["AllocationRule"].tolist() == ["split-by-energy-product-prd-use", "split-by-energy-product-prd-use"]
-
-
-def test_read_category_aggregate_mapping_accepts_canonical_schema(tmp_path):
-    import pandas as pd
-
-    from ecolecon_mrio.mapping_csv import read_category_aggregate_mapping
-
-    mapping_path = tmp_path / "energy_balance_category_aggregates.csv"
-    pd.DataFrame(
-        [
-            {
-                "kind": "category-aggregate",
-                "source_dataset": "Eurostat_Energy_Balances",
-                "source_system": "nrg_bal",
-                "source_version": "current",
-                "source_level": "category",
-                "target_dataset": "Eurostat_Energy_Balances",
-                "target_system": "nrg_bal",
-                "target_version": "current",
-                "target_level": "category",
-                "source_key": "Final consumption - transport sector - road - energy use",
-                "source_code": "",
-                "source_label": "Final consumption - transport sector - road - energy use",
-                "target_key": "transport sector - land",
-                "target_code": "",
-                "target_label": "transport sector - land",
-                "subtarget_key": "",
-                "weight": "",
-                "share": "",
-                "enabled": "1",
-                "provenance": "methodological",
-                "certainty": "repo-authored-harmonization",
-                "transformation_rule": "energy-balance-category-harmonization",
-                "source_name": "energy_balance_category_aggregates.csv",
-                "official_source": "",
-                "notes": "",
-            },
-            {
-                "kind": "category-aggregate",
-                "source_dataset": "Eurostat_Energy_Balances",
-                "source_system": "nrg_bal",
-                "source_version": "current",
-                "source_level": "category",
-                "target_dataset": "Eurostat_Energy_Balances",
-                "target_system": "nrg_bal",
-                "target_version": "current",
-                "target_level": "category",
-                "source_key": "Final consumption - transport sector - rail - energy use",
-                "source_code": "",
-                "source_label": "Final consumption - transport sector - rail - energy use",
-                "target_key": "transport sector - land",
-                "target_code": "",
-                "target_label": "transport sector - land",
-                "subtarget_key": "",
-                "weight": "",
-                "share": "",
-                "enabled": "1",
-                "provenance": "methodological",
-                "certainty": "repo-authored-harmonization",
-                "transformation_rule": "energy-balance-category-harmonization",
-                "source_name": "energy_balance_category_aggregates.csv",
-                "official_source": "",
-                "notes": "",
-            },
-        ]
-    ).to_csv(mapping_path, index=False)
-
-    out = read_category_aggregate_mapping(mapping_path)
-    assert out == {
-        "transport sector - land": [
-            "Final consumption - transport sector - road - energy use",
-            "Final consumption - transport sector - rail - energy use",
-        ]
-    }
 
 
 def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
@@ -233,6 +162,56 @@ def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
     ).to_csv(mapping_path, index=False)
 
     assert read_source_bucket_mapping(mapping_path) == ["Bucket A", "Bucket B"]
+
+
+def test_direct_raw_category_mapping_matches_aggregate_then_split():
+    from ecolecon_mrio.eurostat_energy_balances import (
+        PRIMARY_SOURCES,
+        compute_mapping_shares_from_outputs,
+        disaggregate_unrolled_sources,
+    )
+
+    unrolled_direct = pd.DataFrame(
+        [
+            {"Category": "Final consumption - transport sector - road - energy use", **{s: 10.0 for s in PRIMARY_SOURCES}},
+            {"Category": "Final consumption - transport sector - rail - energy use", **{s: 2.0 for s in PRIMARY_SOURCES}},
+        ]
+    )
+    mapping_direct = pd.DataFrame(
+        [
+            {"Category": "Final consumption - transport sector - road - energy use", "TargetSector": "Land transport services and transport services via pipelines"},
+            {"Category": "Final consumption - transport sector - road - energy use", "TargetSector": "Postal and courier services"},
+            {"Category": "Final consumption - transport sector - rail - energy use", "TargetSector": "Land transport services and transport services via pipelines"},
+            {"Category": "Final consumption - transport sector - rail - energy use", "TargetSector": "Postal and courier services"},
+        ]
+    )
+    unrolled_aggregate = pd.DataFrame(
+        [
+            {"Category": "transport sector - land", **{s: 12.0 for s in PRIMARY_SOURCES}},
+        ]
+    )
+    mapping_aggregate = pd.DataFrame(
+        [
+            {"Category": "transport sector - land", "TargetSector": "Land transport services and transport services via pipelines"},
+            {"Category": "transport sector - land", "TargetSector": "Postal and courier services"},
+        ]
+    )
+
+    outputs = {
+        "Land transport services and transport services via pipelines": 9.0,
+        "Postal and courier services": 3.0,
+    }
+
+    direct = disaggregate_unrolled_sources(
+        unrolled_direct,
+        compute_mapping_shares_from_outputs(mapping_direct, target_output_by_target=outputs),
+    )
+    aggregate = disaggregate_unrolled_sources(
+        unrolled_aggregate,
+        compute_mapping_shares_from_outputs(mapping_aggregate, target_output_by_target=outputs),
+    )
+
+    pd.testing.assert_frame_equal(direct.sort_index(), aggregate.sort_index())
 
 
 def test_read_product_source_mapping_groups_codes_by_bucket(tmp_path):

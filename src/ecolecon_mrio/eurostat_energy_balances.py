@@ -16,7 +16,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -497,7 +497,6 @@ def build_tabelle1_from_eurostat(
     geo: str,
     time: int,
     categories: Sequence[str],
-    composite_categories: Mapping[str, Sequence[str]] | None = None,
     unit: str = "GWH",
     freq: str = "A",
     energy_dataset: str = DEFAULT_ENERGY_BALANCE_DATASET,
@@ -517,14 +516,8 @@ def build_tabelle1_from_eurostat(
     Parameters
     ----------
     categories:
-        Output category labels. Each label must exist as an `nrg_bal` label in the Eurostat energy balance dataset,
-        unless overridden via `composite_categories`.
-    composite_categories:
-        Optional mapping from output category label -> list of component `nrg_bal` labels to sum.
-        This is useful for custom aggregates (e.g. "metal and other minerals").
+        Output category labels. Each label must exist as an `nrg_bal` label in the Eurostat energy balance dataset.
     """
-    composites = {str(k): [str(x) for x in v] for k, v in (composite_categories or {}).items()}
-
     # 1) Load an nrg_bal label map (cheap: siec=TOTAL slice) to resolve category labels -> codes.
     df_total, meta_total = load_eurostat_energy_balance_slice(
         geo=geo,
@@ -550,18 +543,16 @@ def build_tabelle1_from_eurostat(
     all_component_codes: set[str] = set()
     for cat in categories:
         cat_s = str(cat)
-        components = composites.get(cat_s, [cat_s])
         codes: list[str] = []
-        for c in components:
-            code = _resolve_nrg_bal_code(str(c), label_to_code=label_to_code)
-            if code is None:
-                keys = sorted(label_to_code.keys())
-                sample = ", ".join(keys[:10])
-                raise EurostatParseError(
-                    f"Could not resolve nrg_bal label '{c}' in dataset={energy_dataset} (geo={geo} time={time}). "
-                    f"Example available labels (normalized): {sample}"
-                )
-            codes.append(code)
+        code = _resolve_nrg_bal_code(cat_s, label_to_code=label_to_code)
+        if code is None:
+            keys = sorted(label_to_code.keys())
+            sample = ", ".join(keys[:10])
+            raise EurostatParseError(
+                f"Could not resolve nrg_bal label '{cat_s}' in dataset={energy_dataset} (geo={geo} time={time}). "
+                f"Example available labels (normalized): {sample}"
+            )
+        codes.append(code)
         category_to_codes[cat_s] = codes
         all_component_codes.update(codes)
 

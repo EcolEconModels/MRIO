@@ -26,7 +26,7 @@ from ecolecon_mrio.eurostat_iot import (
     build_eurostat_product_use_reference,
     load_eurostat_iot,
 )
-from ecolecon_mrio.mapping_csv import read_category_aggregate_mapping, read_category_mapping_frame, read_source_bucket_groups
+from ecolecon_mrio.mapping_csv import read_category_mapping_frame, read_source_bucket_groups
 
 
 DEFAULT_ENERGY_PRODUCT_CPA_CODES = ("CPA_C19", "CPA_D")
@@ -77,11 +77,6 @@ def main() -> None:
         help="Category -> 65-sector mapping CSV",
     )
     ap.add_argument(
-        "--category-aggregate-mapping",
-        default="scripts/mappings/energy_balance_category_aggregates.csv",
-        help="Energy-balance category harmonization CSV",
-    )
-    ap.add_argument(
         "--primary-source-buckets",
         default=str(DEFAULT_PRIMARY_SOURCE_BUCKETS_PATH),
         help="Primary energy source bucket registry CSV",
@@ -101,11 +96,6 @@ def main() -> None:
     ap.add_argument("--force-download", action="store_true", help="Force re-download Eurostat payloads")
     ap.add_argument("--force-reparse", action="store_true", help="Force re-parse cached payloads")
     ap.add_argument(
-        "--no-category-aggregates",
-        action="store_true",
-        help="Disable declared category harmonization aggregates",
-    )
-    ap.add_argument(
         "--postgrowth-sheet-name",
         default="Energy_1.0",
         help="Sheet name for the PostGrowth-compatible 65-sector energy balance export",
@@ -118,7 +108,6 @@ def main() -> None:
     args = ap.parse_args()
 
     mapping_path = Path(args.mapping)
-    aggregate_mapping_path = Path(args.category_aggregate_mapping)
     primary_source_buckets_path = Path(args.primary_source_buckets)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,14 +115,12 @@ def main() -> None:
 
     mapping_df = read_category_mapping_frame(mapping_path)
     categories = mapping_df["Category"].drop_duplicates().astype(str).tolist()
-    composites = {} if args.no_category_aggregates else read_category_aggregate_mapping(aggregate_mapping_path)
 
     # 1) Energy balances -> Tabelle1 + unrolled primary sources by Category
     eb = build_tabelle1_from_eurostat(
         geo=args.geo,
         time=args.year,
         categories=categories,
-        composite_categories=composites,
         unit=args.energy_unit,
         storage_folder=args.storage_folder,
         force_download=args.force_download,

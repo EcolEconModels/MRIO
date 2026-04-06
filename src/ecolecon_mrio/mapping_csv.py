@@ -198,24 +198,6 @@ def read_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     return frame
 
 
-def load_category_aggregate_mapping_frame(path: str | Path) -> pd.DataFrame:
-    frame = read_mapping_csv(path, expected_kind="category-aggregate").copy()
-    frame["ComponentCategory"] = frame["source_key"].astype(str).str.strip()
-    frame["AggregateCategory"] = frame["target_key"].astype(str).str.strip()
-    return frame
-
-
-def read_category_aggregate_mapping(path: str | Path) -> dict[str, list[str]]:
-    frame = load_category_aggregate_mapping_frame(path)
-    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
-    frame = frame[(frame["ComponentCategory"] != "") & (frame["AggregateCategory"] != "")]
-
-    out: dict[str, list[str]] = {}
-    for aggregate_category, group in frame.groupby("AggregateCategory", sort=False):
-        out[str(aggregate_category)] = list(map(str, group["ComponentCategory"].tolist()))
-    return out
-
-
 def load_source_bucket_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="source-bucket").copy()
     frame["SourceBucket"] = frame["source_key"].astype(str).str.strip()

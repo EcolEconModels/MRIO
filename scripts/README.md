@@ -7,10 +7,10 @@ This directory contains the reproducible workflow used to generate the PostGrowt
 | Path | Role |
 | --- | --- |
 | `aggregate_iot_by_mapping.py` | Re-aggregate already split IO tables using a mapping CSV and optionally write Eurostat-shaped SFC workbooks. |
-| `build_energy_balances_65sectors_primary_sources.py` | Build the harmonized 65-sector Austrian energy-balance workbook on the model carrier basis. |
+| `build_energy_balances_65sectors_primary_sources.py` | Build the direct-mapped 65-sector Austrian energy-balance workbook on the model carrier basis. |
 | `generate_mapping_csvs.py` | Regenerate the annotated EXIO-to-Eurostat and energy-sector mapping CSVs from the checked-in rules plus Eurostat output shares. |
 | `split_eurostat_energy_by_exiobase.py` | Split Eurostat IO energy sectors using EXIO profiles, run local/global balancing, and emit diagnostics. |
-| `pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh` | End-to-end shell entrypoint for the harmonized energy-balance workbook export. |
+| `pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh` | End-to-end shell entrypoint for the direct-mapped energy-balance workbook export. |
 | `pipelines/at_2021_energy_green_brown.sh` | End-to-end shell entrypoint for split-and-reaggregate Eurostat IO workbooks; despite the filename it accepts `EUROSTAT_TIME` and works for 2020 and 2021. |
 | `pipelines/export_postgrowth_inputs.sh` | One-command wrapper that exports the current PostGrowth input set into the sibling PostGrowth repo. |
 | `diagnostics/` | Targeted one-off diagnostics used to inspect mapping details, CO2 mappings, and outliers. |
@@ -25,8 +25,7 @@ The workflow depends on the following checked-in concordance files under `script
 | `exio_energy_split_cpa_with_electricity_source.csv` | checked in | Split map from the two aggregate Eurostat energy sectors to detailed EXIO energy subsectors, preserving electricity-by-source detail. |
 | `exio_energy_split_cpa_no_electricity_source.csv` | checked in | Alternate split map without electricity-by-source detail. |
 | `energy_green_brown_2sector_from_split_subsectors.csv` | checked in | Collapse the detailed split subsectors into the analytical `ENERGY_GREEN` / `ENERGY_BROWN` sectors. |
-| `energy_balance_category_aggregates.csv` | checked in | Pre-harmonization aggregation rules for Eurostat energy-balance rows. |
-| `energy_balance_to_nace2_mapping.csv` | checked in | Concordance from harmonized energy-balance categories to the 65 IO sectors plus households. |
+| `energy_balance_to_nace2_mapping.csv` | checked in | Direct concordance from raw Eurostat energy-balance categories to the 65 IO sectors plus households. |
 | `siec_to_primary_energy_sources.csv` | checked in | Map Eurostat SIEC carriers into the model’s primary-source carrier basis. |
 | `energy_primary_source_buckets.csv` | checked in | Group the primary-source carriers into the analytical brown/green buckets used in the exported workbook. |
 
@@ -45,7 +44,7 @@ cd /home/agilra/EcolEconModels/MRIO
   --outdir scripts/mappings
 ```
 
-### 2. Export the harmonized energy-balance workbook
+### 2. Export the direct-mapped energy-balance workbook
 
 ```bash
 cd /home/agilra/EcolEconModels/MRIO

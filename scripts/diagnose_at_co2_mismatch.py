@@ -138,17 +138,6 @@ def _run_energy_diagnostics(
         geo=geo,
         time=year,
         categories=energy_mapping["Category"].drop_duplicates().astype(str).tolist(),
-        composite_categories={
-            "metal and other minerals": [
-                "Final consumption - industry sector - iron and steel - energy use",
-                "Final consumption - industry sector - non-ferrous metals - energy use",
-                "Final consumption - industry sector - non-metallic minerals - energy use",
-            ],
-            "transport sector - land": [
-                "Final consumption - transport sector - road - energy use",
-                "Final consumption - transport sector - rail - energy use",
-            ],
-        },
         unit="GWH",
         storage_folder=data_root / "eurostat",
         force_download=False,
