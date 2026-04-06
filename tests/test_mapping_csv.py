@@ -126,4 +126,5 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     frame = load_category_mapping_frame(csv_path)
     assert frame.loc[0, "Category"] == "Industry"
     assert frame.loc[0, "TargetSector"] == "Chemicals"
-    assert float(frame.loc[0, "Share_total"]) == 0.75
+    assert frame.loc[0, "TargetCode"] == ""
+    assert frame.loc[0, "AllocationRule"] == "test"

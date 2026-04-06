@@ -21,8 +21,15 @@ from ecolecon_mrio.eurostat_energy_balances import (
     validate_energy_balance_closure,
 )
 from ecolecon_mrio.data import default_data_root
-from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import (
+    build_eurostat_intermediate_use_reference_from_rows,
+    build_eurostat_product_use_reference,
+    load_eurostat_iot,
+)
 from ecolecon_mrio.mapping_csv import read_category_aggregate_mapping, read_category_mapping_frame, read_source_bucket_groups
+
+
+DEFAULT_ENERGY_PRODUCT_CPA_CODES = ("CPA_C19", "CPA_D")
 
 
 def _norm(s: str) -> str:
@@ -134,7 +141,7 @@ def main() -> None:
     )
     validate_energy_balance_closure(eb.diagnostics, tol_abs=1e-6)
 
-    # 2) Eurostat IOT -> total output by CPA product code (monetary weights)
+    # 2) Eurostat IOT -> energy-product intermediate use by CPA product code (monetary weights)
     iot_filters: dict[str, Any] = {
         "geo": str(args.geo),
         "time": str(args.year),
@@ -151,8 +158,13 @@ def main() -> None:
         force_download=args.force_download,
         force_reparse=args.force_reparse,
     )
-    x = build_eurostat_product_use_reference(parsed).astype("float64").fillna(0.0)
-    x.index = x.index.astype(str)
+    total_output_reference = build_eurostat_product_use_reference(parsed).astype("float64").fillna(0.0)
+    total_output_reference.index = total_output_reference.index.astype(str)
+    energy_use_reference = build_eurostat_intermediate_use_reference_from_rows(
+        parsed,
+        source_row_codes=DEFAULT_ENERGY_PRODUCT_CPA_CODES,
+    ).astype("float64").fillna(0.0)
+    energy_use_reference.index = energy_use_reference.index.astype(str)
 
     targets = mapping_df["TargetSector"].drop_duplicates().astype(str).tolist()
     target_codes = mapping_df[["TargetSector", "TargetCode"]].drop_duplicates().copy()
@@ -162,15 +174,12 @@ def main() -> None:
         example = dup_targets.index.tolist()[0]
         raise SystemExit(f"TargetSector maps to multiple target codes: {example}")
     target_to_cpa = dict(zip(target_codes["TargetSector"].astype(str), target_codes["TargetCode"].astype(str), strict=False))
-    target_output = {t: float(x.get(target_to_cpa.get(t, ""), 0.0)) for t in targets}
+    target_output = {t: float(energy_use_reference.get(target_to_cpa.get(t, ""), 0.0)) for t in targets}
 
     # 3) Recompute split ratios using IOT outputs and disaggregate to 65 sectors
     mapping_w = compute_mapping_shares_from_outputs(
         mapping_df,
         target_output_by_target=target_output,
-        use_fallback_shares=False,
-        equal_split_if_no_output=False,
-        require_output_weights=True,
     )
     sector_energy = disaggregate_unrolled_sources(eb.unrolled_sources, mapping_w)
     # Preserve TargetSector order from the mapping file (and allow extra rows like "Households" at the end).
@@ -198,7 +207,7 @@ def main() -> None:
         cpa_code = target_to_cpa.get(str(target_label))
         # Some TargetSectors (e.g. Households) are not CPA products and therefore have no IOT output.
         # Keep these as missing (blank in Excel) rather than zero.
-        out_mio_eur = float(x.get(str(cpa_code), 0.0)) if cpa_code is not None else np.nan
+        out_mio_eur = float(total_output_reference.get(str(cpa_code), 0.0)) if cpa_code is not None else np.nan
         nace_code = _cpa_to_nace(str(cpa_code)) if cpa_code is not None else ""
         co2_t = float(co2_by_nace.get(nace_code, np.nan)) if nace_code else np.nan
 

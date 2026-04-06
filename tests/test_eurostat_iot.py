@@ -43,3 +43,29 @@ def test_parse_eurostat_iot_bad_dim_raises_helpful_error():
         parse_eurostat_iot(_mini_payload(), row_dim="bad", col_dim="col")
     assert "available_dims" in str(e.value)
 
+
+def test_build_eurostat_intermediate_use_reference_from_rows_uses_selected_rows_only():
+    from ecolecon_mrio.eurostat_iot import (
+        build_eurostat_intermediate_use_reference_from_rows,
+        parse_eurostat_iot,
+    )
+
+    parsed = parse_eurostat_iot(_mini_payload(), row_dim="row", col_dim="col")
+    ref = build_eurostat_intermediate_use_reference_from_rows(parsed, source_row_codes=("A",))
+
+    assert list(ref.index) == ["A", "B"]
+    assert ref.loc["A"] == 1.0
+    assert ref.loc["B"] == 2.0
+
+
+def test_build_eurostat_intermediate_use_reference_from_rows_raises_on_missing_row():
+    from ecolecon_mrio.eurostat_iot import (
+        build_eurostat_intermediate_use_reference_from_rows,
+        parse_eurostat_iot,
+    )
+
+    parsed = parse_eurostat_iot(_mini_payload(), row_dim="row", col_dim="col")
+
+    with pytest.raises(KeyError):
+        build_eurostat_intermediate_use_reference_from_rows(parsed, source_row_codes=("MISSING",))
+

@@ -353,6 +353,31 @@ def build_eurostat_product_use_reference(
     return reference
 
 
+def build_eurostat_intermediate_use_reference_from_rows(
+    parsed: ParsedEurostatIOT,
+    *,
+    source_row_codes: Sequence[str],
+) -> pd.Series:
+    """
+    Build a target-sector weighting reference from a subset of PRD_USE rows.
+
+    For each target product/sector column in ``parsed.Z``, this sums the selected
+    source-product rows and returns an intermediate-use-only reference vector.
+    """
+    selected = [str(code) for code in source_row_codes]
+    if not selected:
+        raise ValueError("source_row_codes must not be empty.")
+
+    available = set(parsed.Z.index.astype(str))
+    missing = [code for code in selected if code not in available]
+    if missing:
+        raise KeyError(f"Requested PRD_USE source rows not found: {missing}")
+
+    reference = parsed.Z.loc[selected, :].sum(axis=0).astype("float64")
+    reference.index = reference.index.astype(str)
+    return reference
+
+
 def parse_eurostat_iot(
     payload: Mapping[str, Any],
     *,

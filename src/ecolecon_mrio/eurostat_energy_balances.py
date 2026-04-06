@@ -157,16 +157,15 @@ def read_category_target_mapping_csv(path: str | Path) -> pd.DataFrame:
     Returned columns:
       - Category
       - TargetSector
-      - Share_total (optional fallback weighting scheme)
     """
     df = pd.read_csv(path)
     if {"Category", "TargetSector"}.issubset(set(df.columns)):
-        out = df.copy()
+        out = df.loc[:, ["Category", "TargetSector"]].copy()
     elif {"kind", "source_key", "target_key", "share"}.issubset(set(df.columns)):
         from ecolecon_mrio.mapping_csv import load_category_mapping_frame
 
         canonical = load_category_mapping_frame(path)
-        out = canonical.loc[:, ["Category", "TargetSector", "Share_total"]].copy()
+        out = canonical.loc[:, ["Category", "TargetSector"]].copy()
     else:
         raise ValueError(
             "Mapping CSV must have legacy columns Category, TargetSector or the canonical "
@@ -174,8 +173,6 @@ def read_category_target_mapping_csv(path: str | Path) -> pd.DataFrame:
         )
     out["Category"] = out["Category"].astype(str).str.strip()
     out["TargetSector"] = out["TargetSector"].astype(str).str.strip()
-    if "Share_total" in out.columns:
-        out["Share_total"] = pd.to_numeric(out["Share_total"], errors="coerce").fillna(0.0)
     return out
 
 
@@ -209,13 +206,9 @@ def compute_mapping_shares_from_outputs(
     target_output_by_target: Mapping[str, float],
     category_col: str = "Category",
     target_col: str = "TargetSector",
-    fallback_share_col: str = "Share_total",
-    use_fallback_shares: bool = True,
-    equal_split_if_no_output: bool = True,
-    require_output_weights: bool = False,
 ) -> pd.DataFrame:
     """
-    Compute Category -> TargetSector shares using monetary outputs as weights.
+    Compute Category -> TargetSector shares using an external weighting reference.
 
     Returns a copy of mapping_df with a new column `Share_used`.
     """
@@ -226,7 +219,6 @@ def compute_mapping_shares_from_outputs(
     outputs = {str(k): float(v) for k, v in target_output_by_target.items()}
     share_used: list[float] = []
 
-    have_fallback = fallback_share_col in df.columns
     for cat, grp in df.groupby(category_col, sort=False):
         if len(grp) == 1:
             share_used.append(1.0)
@@ -236,26 +228,7 @@ def compute_mapping_shares_from_outputs(
         if s > 0:
             shares = (w / s).tolist()
         else:
-            if use_fallback_shares and have_fallback:
-                fb = pd.to_numeric(grp[fallback_share_col], errors="coerce").fillna(0.0).to_numpy(dtype="float64")
-                fb = np.clip(fb, 0.0, None)
-                fbs = float(fb.sum())
-                if fbs > 0:
-                    shares = (fb / fbs).tolist()
-                elif equal_split_if_no_output:
-                    shares = (np.ones(len(grp)) / len(grp)).tolist()
-                elif require_output_weights:
-                    raise ValueError(
-                        f"No positive output weights or fallback shares available for category {cat!r}."
-                    )
-                else:
-                    shares = (np.ones(len(grp)) / len(grp)).tolist()
-            elif equal_split_if_no_output:
-                shares = (np.ones(len(grp)) / len(grp)).tolist()
-            elif require_output_weights:
-                raise ValueError(f"No positive output weights available for category {cat!r}.")
-            else:
-                shares = (np.ones(len(grp)) / len(grp)).tolist()
+            raise ValueError(f"No positive weighting reference available for category {cat!r}.")
         share_used.extend(shares)
 
     df["Share_used"] = np.array(share_used, dtype="float64")

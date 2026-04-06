@@ -60,18 +60,17 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
         "\n".join(
             [
                 "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Basic metals,CPA_C24,Basic metals,,,0.6,1,methodological,methodological-seed-share,energy-balance-category-share-seed,energy_balance_to_nace2_mapping.csv,,",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,0.4,1,methodological,methodological-seed-share,energy-balance-category-share-seed,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
             ]
         ),
         encoding="utf-8",
     )
 
     out = read_category_target_mapping_csv(mapping_path)
-    assert list(out.columns) == ["Category", "TargetSector", "Share_total"]
+    assert list(out.columns) == ["Category", "TargetSector"]
     assert out["Category"].tolist() == ["metal and other minerals", "metal and other minerals"]
     assert out["TargetSector"].tolist() == ["Basic metals", "Other non-metallic mineral products"]
-    assert out["Share_total"].tolist() == [0.6, 0.4]
 
 
 def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
@@ -82,8 +81,8 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
         "\n".join(
             [
                 "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Basic metals,CPA_C24,Basic metals,,,0.6,1,methodological,repo-authored-concordance,output-share-by-target-code,energy_balance_to_nace2_mapping.csv,,",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,0.4,1,methodological,repo-authored-concordance,output-share-by-target-code,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,metal and other minerals,,metal and other minerals,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
             ]
         ),
         encoding="utf-8",
@@ -91,7 +90,7 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
 
     out = read_category_mapping_frame(mapping_path)
     assert out["TargetCode"].tolist() == ["CPA_C24", "CPA_C23"]
-    assert out["AllocationRule"].tolist() == ["output-share-by-target-code", "output-share-by-target-code"]
+    assert out["AllocationRule"].tolist() == ["split-by-energy-product-prd-use", "split-by-energy-product-prd-use"]
 
 
 def test_read_category_aggregate_mapping_accepts_canonical_schema(tmp_path):
@@ -321,13 +320,13 @@ def test_primary_sources_are_loaded_from_declared_registry():
     assert PRODUCT_SOURCE_MAPPING["Fossil gas"] == ("G3000", "C0350-0370")
 
 
-def test_compute_mapping_shares_requires_output_weights_when_requested():
+def test_compute_mapping_shares_requires_positive_weighting_reference():
     from ecolecon_mrio.eurostat_energy_balances import compute_mapping_shares_from_outputs
 
     mapping = pd.DataFrame(
         [
-            {"Category": "A", "TargetSector": "T1", "Share_total": 0.6},
-            {"Category": "A", "TargetSector": "T2", "Share_total": 0.4},
+            {"Category": "A", "TargetSector": "T1"},
+            {"Category": "A", "TargetSector": "T2"},
         ]
     )
 
@@ -335,14 +334,11 @@ def test_compute_mapping_shares_requires_output_weights_when_requested():
         compute_mapping_shares_from_outputs(
             mapping,
             target_output_by_target={"T1": 0.0, "T2": 0.0},
-            use_fallback_shares=False,
-            equal_split_if_no_output=False,
-            require_output_weights=True,
         )
     except ValueError as exc:
-        assert "No positive output weights" in str(exc)
+        assert "No positive weighting reference" in str(exc)
     else:
-        raise AssertionError("Expected strict output-share allocation to fail without positive output weights")
+        raise AssertionError("Expected strict allocation to fail without positive weighting reference")
 
 
 def test_build_postgrowth_energy_balance_splits_energy_rows():

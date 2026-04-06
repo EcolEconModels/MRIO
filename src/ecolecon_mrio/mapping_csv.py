@@ -187,7 +187,6 @@ def load_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame["TargetSector"] = frame["target_label"].astype(str).str.strip()
     blank_target_sector = frame["TargetSector"] == ""
     frame.loc[blank_target_sector, "TargetSector"] = frame.loc[blank_target_sector, "target_key"].astype(str).str.strip()
-    frame["Share_total"] = pd.to_numeric(frame["share"], errors="coerce")
     frame["AllocationRule"] = frame["transformation_rule"].astype(str).str.strip()
     return frame
 

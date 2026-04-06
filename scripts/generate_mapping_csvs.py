@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import build_eurostat_intermediate_use_reference_from_rows, load_eurostat_iot
 from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
 from ecolecon_mrio.exio_to_eurostat_mapping import (
     _candidate_nace2_divisions_for_exio,
@@ -32,6 +32,7 @@ FALLBACK_OFFICIAL_SOURCE = (
     "NACE%20Rev.%201.1%20-%20NACE%20Rev.%202%20-%20short%20version.pdf"
 )
 ENERGY_METADATA_SOURCE = "https://ec.europa.eu/eurostat/cache/metadata/en/nrg_bal_esms.htm"
+DEFAULT_ENERGY_PRODUCT_CPA_CODES = ("CPA_C19", "CPA_D")
 
 
 def _find_any_eurostat_meta() -> dict[str, str]:
@@ -81,14 +82,12 @@ def _weights_for_candidates(candidates: list[str], x_series: pd.Series | None) -
     if not candidates:
         return {}
     if x_series is None:
-        w = 1.0 / len(candidates)
-        return {candidate: w for candidate in candidates}
+        raise ValueError("A weighting reference is required for candidate weighting.")
     values = [float(x_series.get(candidate, 0.0)) for candidate in candidates]
     values = [value if value > 0 else 0.0 for value in values]
     total = float(sum(values))
     if total <= 0:
-        w = 1.0 / len(candidates)
-        return {candidate: w for candidate in candidates}
+        raise ValueError(f"No positive weighting reference available for candidates: {candidates}")
     return {candidate: value / total for candidate, value in zip(candidates, values)}
 
 
@@ -103,7 +102,10 @@ def _generate_weighted_rows(*, geo: str, year: int, eurostat_storage_folder: Pat
         force_reparse=False,
     )
     z = parsed.Z
-    x = build_eurostat_product_use_reference(parsed)
+    x = build_eurostat_intermediate_use_reference_from_rows(
+        parsed,
+        source_row_codes=DEFAULT_ENERGY_PRODUCT_CPA_CODES,
+    )
     cpa_codes = list(map(str, z.index.astype(str)))
     cpa_labels = {str(code): str(label) for code, label in ((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items()}
 
@@ -145,7 +147,7 @@ def _generate_weighted_rows(*, geo: str, year: int, eurostat_storage_folder: Pat
                     "exio_sector": exio_name,
                     "weight": float(weights.get(cpa_code, 0.0)),
                     "enabled": "1",
-                    "notes": "split-by-eurostat-output-share",
+                    "notes": "split-by-energy-product-prd-use",
                 }
             )
     if split_exio:
@@ -190,7 +192,7 @@ def _detailed_weighted_note(group: pd.DataFrame, row: pd.Series) -> str:
         f"No direct official EXIOBASE-to-Eurostat concordance row is used for {exio_code} ({exio_name}). "
         f"This row is derived deterministically from EXIO code prefix {first_div} through the repo's {mapping_rule} bridge, "
         f"yielding NACE Rev. 2 division(s) {division_text}. Because those divisions span multiple sectors in the current CPA_65 target set, "
-        f"the EXIO product is split across targets using Austrian Eurostat product-use reference shares x = Z + atomic final demand. "
+        f"the EXIO product is split across targets using Austrian Eurostat energy-product intermediate-use reference shares derived from PRD_USE rows for CPA_C19 and CPA_D. "
         f"Current split: {'; '.join(targets)}."
     )
 
@@ -361,7 +363,19 @@ def _canonicalize_category_mapping(path: Path, *, cpa_labels: dict[str, str]) ->
         out.loc[blank, "target_code"] = out.loc[blank, "target_key"].map(lambda key: _match_target_code(str(key), cpa_labels))
         out.loc[out["target_label"].astype(str) == "", "target_label"] = out["target_key"].astype(str)
         out.loc[out["source_label"].astype(str) == "", "source_label"] = out["source_key"].astype(str)
+        out["share"] = ""
+        out["provenance"] = "methodological"
+        out["certainty"] = "repo-authored-concordance"
+        out["transformation_rule"] = "split-by-energy-product-prd-use"
         out.loc[out["official_source"].astype(str) == "", "official_source"] = ENERGY_METADATA_SOURCE
+        out["notes"] = out.apply(
+            lambda row: (
+                f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
+                f"Target code = {row['target_code']}. Runtime allocation uses the Austrian energy-product PRD_USE intermediate-use reference "
+                f"for CPA_C19 and CPA_D over the admissible targets for the chosen year; this file stores the admissible target set and rule metadata only."
+            ),
+            axis=1,
+        )
         return out
 
     out = pd.DataFrame(index=raw.index)
@@ -382,18 +396,18 @@ def _canonicalize_category_mapping(path: Path, *, cpa_labels: dict[str, str]) ->
     out["target_label"] = raw["TargetSector"].astype(str)
     out["subtarget_key"] = ""
     out["weight"] = ""
-    out["share"] = raw["Share_total"].astype(str)
+    out["share"] = ""
     out["enabled"] = "1"
     out["provenance"] = "methodological"
     out["certainty"] = "repo-authored-concordance"
-    out["transformation_rule"] = "output-share-by-target-code"
+    out["transformation_rule"] = "split-by-energy-product-prd-use"
     out["source_name"] = path.name
     out["official_source"] = ENERGY_METADATA_SOURCE
     out["notes"] = out.apply(
         lambda row: (
             f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
-            f"Target code = {row['target_code']}. Share_total = {row['share']} is retained as legacy reference metadata only; "
-            f"runtime code computes Share_used from observed Eurostat outputs for the chosen year using direct target-code matches."
+            f"Target code = {row['target_code']}. Runtime allocation uses the Austrian energy-product PRD_USE intermediate-use reference "
+            f"for CPA_C19 and CPA_D over the admissible targets for the chosen year; this file stores the admissible target set and rule metadata only."
         ),
         axis=1,
     )

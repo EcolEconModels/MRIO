@@ -35,7 +35,6 @@ CANONICAL_SPLIT_COLUMNS: tuple[str, ...] = (
 CANONICAL_CATEGORY_COLUMNS: tuple[str, ...] = (
     "Category",
     "TargetSector",
-    "Share_total",
     "notes",
     "source_name",
     "provenance",
@@ -245,7 +244,6 @@ def normalize_category_target_mapping_frame(
         {
             "Category": df[category_col].astype(str).str.strip(),
             "TargetSector": df[target_col].astype(str).str.strip(),
-            "Share_total": np.nan if share_col is None else pd.to_numeric(df[share_col], errors="coerce"),
             "notes": "" if notes_col is None else df[notes_col].astype(str).str.strip(),
             "source_name": str(source_name).strip(),
             "provenance": _validate_provenance(provenance),
