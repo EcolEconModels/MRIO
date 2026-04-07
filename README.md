@@ -114,7 +114,7 @@ By default this writes the following files into the sibling repo `../PostGrowth-
 Detailed behavior:
 
 1. Restores nothing and does not touch the legacy manual workbook `Energy_Balances_2021_Eurostat.xlsx`.
-2. Rebuilds the harmonized 2021 energy-balance workbook from the Eurostat download/cache path using the declared mapping CSVs.
+2. Rebuilds the 2021 model-aligned energy-balance workbook from the Eurostat download/cache path using the declared mapping CSVs.
 3. Forces the upstream brown/green split for the energy balance export, so PostGrowth no longer needs to do that split in R.
 4. Rebuilds the 2020 and 2021 `TOTAL` brown/green IO workbooks from the MRIO split-and-aggregate workflow.
 5. Copies the generated `TOTAL` workbooks into the PostGrowth repo under the filenames expected by the model.

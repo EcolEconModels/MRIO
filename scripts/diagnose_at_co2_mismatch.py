@@ -131,9 +131,10 @@ def _run_energy_diagnostics(
     targets = energy_mapping["TargetSector"].drop_duplicates().astype(str).tolist()
     row_labels = {str(k): str(v) for k, v in ((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items()}
     target_to_cpa, missing_targets = _match_target_sectors_to_cpa_codes(targets, cpa_code_to_label=row_labels)
-    target_output = {target: float(eurostat_output.get(target_to_cpa.get(target, ""), 0.0)) for target in targets}
-
-    mapping_w = compute_mapping_shares_from_outputs(energy_mapping, target_output_by_target=target_output)
+    mapping_w = compute_mapping_shares_from_outputs(
+        energy_mapping,
+        target_output_by_code=eurostat_output.to_dict(),
+    )
     eb = build_tabelle1_from_eurostat(
         geo=geo,
         time=year,

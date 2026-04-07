@@ -16,7 +16,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ from ecolecon_mrio.eurostat_iot import (
     eurostat_dimensions,
     load_eurostat_table_2d,
 )
-from ecolecon_mrio.mapping_csv import read_product_source_mapping, read_source_bucket_mapping
+from ecolecon_mrio.mapping_csv import read_category_mapping_frame, read_product_source_mapping, read_source_bucket_mapping
 
 
 def _repo_root() -> Path:
@@ -149,28 +149,13 @@ class EnergyBalanceResult:
 
 def read_category_target_mapping_csv(path: str | Path) -> pd.DataFrame:
     """
-    Read a Category -> TargetSector mapping CSV.
-
-    Supports both the legacy three-column format and the canonical
-    `kind=category-target` schema defined in `mapping_csv.py`.
+    Read the canonical Category -> TargetSector mapping CSV.
 
     Returned columns:
       - Category
       - TargetSector
     """
-    df = pd.read_csv(path)
-    if {"Category", "TargetSector"}.issubset(set(df.columns)):
-        out = df.loc[:, ["Category", "TargetSector"]].copy()
-    elif {"kind", "source_key", "target_key", "share"}.issubset(set(df.columns)):
-        from ecolecon_mrio.mapping_csv import load_category_mapping_frame
-
-        canonical = load_category_mapping_frame(path)
-        out = canonical.loc[:, ["Category", "TargetSector"]].copy()
-    else:
-        raise ValueError(
-            "Mapping CSV must have legacy columns Category, TargetSector or the canonical "
-            f"category-target schema. Got: {df.columns.tolist()}"
-        )
+    out = read_category_mapping_frame(path).loc[:, ["Category", "TargetSector"]].copy()
     out["Category"] = out["Category"].astype(str).str.strip()
     out["TargetSector"] = out["TargetSector"].astype(str).str.strip()
     return out
@@ -203,12 +188,27 @@ def match_labels_to_codes(
 def compute_mapping_shares_from_outputs(
     mapping_df: pd.DataFrame,
     *,
-    target_output_by_target: Mapping[str, float],
+    target_output_by_target: Mapping[str, float] | None = None,
+    target_output_by_code: Mapping[str, float] | None = None,
     category_col: str = "Category",
     target_col: str = "TargetSector",
+    target_code_col: str = "TargetCode",
+    allocation_rule_col: str = "AllocationRule",
+    declared_share_col: str = "DeclaredShare",
+    atol: float = 1e-9,
 ) -> pd.DataFrame:
     """
-    Compute Category -> TargetSector shares using an external weighting reference.
+    Compute Category -> TargetSector shares from the mapping CSV contract.
+
+        Resolution order per category:
+            1. If every row declares `DeclaredShare`, use those shares exactly.
+            2. If the category has one target row, assign share 1.0.
+            3. Otherwise interpret `AllocationRule` and derive shares from the supplied weighting reference.
+
+    Supported runtime rules:
+      - `split-by-energy-product-prd-use`: weight admissible targets by the supplied
+        `target_output_by_code` reference when `TargetCode` is present, otherwise by
+        `target_output_by_target`.
 
     Returns a copy of mapping_df with a new column `Share_used`.
     """
@@ -216,19 +216,63 @@ def compute_mapping_shares_from_outputs(
     if category_col not in df.columns or target_col not in df.columns:
         raise ValueError(f"mapping_df must include columns {category_col}, {target_col}")
 
-    outputs = {str(k): float(v) for k, v in target_output_by_target.items()}
+    outputs_by_target = {str(k): float(v) for k, v in (target_output_by_target or {}).items()}
+    outputs_by_code = {str(k): float(v) for k, v in (target_output_by_code or {}).items()}
     share_used: list[float] = []
 
     for cat, grp in df.groupby(category_col, sort=False):
+        if declared_share_col in grp.columns:
+            declared = pd.to_numeric(grp[declared_share_col], errors="coerce")
+            if declared.notna().any():
+                if not declared.notna().all():
+                    raise ValueError(
+                        f"Category {cat!r} mixes declared and undeclared shares."
+                    )
+                total = float(declared.sum())
+                if not np.isfinite(total) or abs(total - 1.0) > atol:
+                    raise ValueError(
+                        f"Declared shares for category {cat!r} must sum to 1.0; got {total:.12g}."
+                    )
+                share_used.extend(declared.astype("float64").tolist())
+                continue
+
         if len(grp) == 1:
             share_used.append(1.0)
             continue
-        w = np.array([max(0.0, outputs.get(str(t), 0.0)) for t in grp[target_col].astype(str)], dtype="float64")
+
+        if allocation_rule_col not in grp.columns:
+            raise ValueError(
+                f"Category {cat!r} has multiple targets but no {allocation_rule_col!r} column."
+            )
+        rules = [rule for rule in grp[allocation_rule_col].astype(str).str.strip().unique().tolist() if rule]
+        if len(rules) != 1:
+            raise ValueError(
+                f"Category {cat!r} must have exactly one non-empty allocation rule when multiple targets are present; got {rules!r}."
+            )
+        rule = rules[0]
+
+        if rule != "split-by-energy-product-prd-use":
+            raise ValueError(f"Unsupported allocation rule for category {cat!r}: {rule!r}.")
+
+        if target_code_col in grp.columns and grp[target_code_col].astype(str).str.strip().ne("").all() and outputs_by_code:
+            weight_keys = grp[target_code_col].astype(str).tolist()
+            weights = outputs_by_code
+        elif outputs_by_target:
+            weight_keys = grp[target_col].astype(str).tolist()
+            weights = outputs_by_target
+        else:
+            raise ValueError(
+                f"Allocation rule {rule!r} for category {cat!r} requires a target weighting reference."
+            )
+
+        w = np.array([max(0.0, weights.get(str(t), 0.0)) for t in weight_keys], dtype="float64")
         s = float(w.sum())
         if s > 0:
             shares = (w / s).tolist()
         else:
-            raise ValueError(f"No positive weighting reference available for category {cat!r}.")
+            raise ValueError(
+                f"No positive weighting reference available for category {cat!r} under rule {rule!r}."
+            )
         share_used.extend(shares)
 
     df["Share_used"] = np.array(share_used, dtype="float64")

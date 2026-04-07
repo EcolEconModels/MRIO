@@ -17,9 +17,9 @@ def test_compute_mapping_shares_from_outputs_and_disaggregate():
 
     mapping = pd.DataFrame(
         [
-            {"Category": "A", "TargetSector": "T1"},
-            {"Category": "A", "TargetSector": "T2"},
-            {"Category": "B", "TargetSector": "T2"},
+            {"Category": "A", "TargetSector": "T1", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "A", "TargetSector": "T2", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "B", "TargetSector": "T2", "AllocationRule": "fixed-share", "DeclaredShare": 1.0},
         ]
     )
 
@@ -179,10 +179,10 @@ def test_direct_raw_category_mapping_matches_aggregate_then_split():
     )
     mapping_direct = pd.DataFrame(
         [
-            {"Category": "Final consumption - transport sector - road - energy use", "TargetSector": "Land transport services and transport services via pipelines"},
-            {"Category": "Final consumption - transport sector - road - energy use", "TargetSector": "Postal and courier services"},
-            {"Category": "Final consumption - transport sector - rail - energy use", "TargetSector": "Land transport services and transport services via pipelines"},
-            {"Category": "Final consumption - transport sector - rail - energy use", "TargetSector": "Postal and courier services"},
+            {"Category": "Final consumption - transport sector - road - energy use", "TargetSector": "Land transport services and transport services via pipelines", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "Final consumption - transport sector - road - energy use", "TargetSector": "Postal and courier services", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "Final consumption - transport sector - rail - energy use", "TargetSector": "Land transport services and transport services via pipelines", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "Final consumption - transport sector - rail - energy use", "TargetSector": "Postal and courier services", "AllocationRule": "split-by-energy-product-prd-use"},
         ]
     )
     unrolled_aggregate = pd.DataFrame(
@@ -192,8 +192,8 @@ def test_direct_raw_category_mapping_matches_aggregate_then_split():
     )
     mapping_aggregate = pd.DataFrame(
         [
-            {"Category": "transport sector - land", "TargetSector": "Land transport services and transport services via pipelines"},
-            {"Category": "transport sector - land", "TargetSector": "Postal and courier services"},
+            {"Category": "transport sector - land", "TargetSector": "Land transport services and transport services via pipelines", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "transport sector - land", "TargetSector": "Postal and courier services", "AllocationRule": "split-by-energy-product-prd-use"},
         ]
     )
 
@@ -304,8 +304,8 @@ def test_compute_mapping_shares_requires_positive_weighting_reference():
 
     mapping = pd.DataFrame(
         [
-            {"Category": "A", "TargetSector": "T1"},
-            {"Category": "A", "TargetSector": "T2"},
+            {"Category": "A", "TargetSector": "T1", "AllocationRule": "split-by-energy-product-prd-use"},
+            {"Category": "A", "TargetSector": "T2", "AllocationRule": "split-by-energy-product-prd-use"},
         ]
     )
 
@@ -318,6 +318,49 @@ def test_compute_mapping_shares_requires_positive_weighting_reference():
         assert "No positive weighting reference" in str(exc)
     else:
         raise AssertionError("Expected strict allocation to fail without positive weighting reference")
+
+
+def test_compute_mapping_shares_uses_declared_shares_without_runtime_weights():
+    from ecolecon_mrio.eurostat_energy_balances import compute_mapping_shares_from_outputs
+
+    mapping = pd.DataFrame(
+        [
+            {"Category": "A", "TargetSector": "T1", "DeclaredShare": 0.2, "AllocationRule": "fixed-share", "TargetCode": "CPA_T1"},
+            {"Category": "A", "TargetSector": "T2", "DeclaredShare": 0.8, "AllocationRule": "fixed-share", "TargetCode": "CPA_T2"},
+        ]
+    )
+
+    out = compute_mapping_shares_from_outputs(mapping)
+    assert out["Share_used"].tolist() == [0.2, 0.8]
+
+
+def test_compute_mapping_shares_can_weight_by_target_code():
+    from ecolecon_mrio.eurostat_energy_balances import compute_mapping_shares_from_outputs
+
+    mapping = pd.DataFrame(
+        [
+            {
+                "Category": "A",
+                "TargetSector": "Chemicals and chemical products",
+                "TargetCode": "CPA_C20",
+                "AllocationRule": "split-by-energy-product-prd-use",
+            },
+            {
+                "Category": "A",
+                "TargetSector": "Basic pharmaceutical products and pharmaceutical preparations",
+                "TargetCode": "CPA_C21",
+                "AllocationRule": "split-by-energy-product-prd-use",
+            },
+        ]
+    )
+
+    out = compute_mapping_shares_from_outputs(
+        mapping,
+        target_output_by_code={"CPA_C20": 2.0, "CPA_C21": 6.0},
+    )
+    shares = out.set_index("TargetCode")["Share_used"]
+    assert abs(shares.loc["CPA_C20"] - 0.25) < 1e-12
+    assert abs(shares.loc["CPA_C21"] - 0.75) < 1e-12
 
 
 def test_build_postgrowth_energy_balance_splits_energy_rows():

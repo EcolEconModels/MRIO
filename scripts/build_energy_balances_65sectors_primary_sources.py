@@ -161,12 +161,11 @@ def main() -> None:
         example = dup_targets.index.tolist()[0]
         raise SystemExit(f"TargetSector maps to multiple target codes: {example}")
     target_to_cpa = dict(zip(target_codes["TargetSector"].astype(str), target_codes["TargetCode"].astype(str), strict=False))
-    target_output = {t: float(energy_use_reference.get(target_to_cpa.get(t, ""), 0.0)) for t in targets}
 
     # 3) Recompute split ratios using IOT outputs and disaggregate to 65 sectors
     mapping_w = compute_mapping_shares_from_outputs(
         mapping_df,
-        target_output_by_target=target_output,
+        target_output_by_code=energy_use_reference.to_dict(),
     )
     sector_energy = disaggregate_unrolled_sources(eb.unrolled_sources, mapping_w)
     # Preserve TargetSector order from the mapping file (and allow extra rows like "Households" at the end).

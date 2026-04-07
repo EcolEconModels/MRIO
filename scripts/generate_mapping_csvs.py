@@ -33,6 +33,7 @@ FALLBACK_OFFICIAL_SOURCE = (
 )
 ENERGY_METADATA_SOURCE = "https://ec.europa.eu/eurostat/cache/metadata/en/nrg_bal_esms.htm"
 DEFAULT_ENERGY_PRODUCT_CPA_CODES = ("CPA_C19", "CPA_D")
+CHECKED_IN_MAPPINGS_DIR = Path(__file__).resolve().parent / "mappings"
 
 
 def _find_any_eurostat_meta() -> dict[str, str]:
@@ -76,6 +77,13 @@ def _write_mapping_csv(path: Path, frame: pd.DataFrame) -> None:
     ordered = list(MAPPING_CSV_COLUMNS) + extras
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.loc[:, ordered].to_csv(path, index=False)
+
+
+def _checked_in_mapping_path(filename: str) -> Path:
+    path = CHECKED_IN_MAPPINGS_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(f"Checked-in mapping file not found: {path}")
+    return path
 
 
 def _weights_for_candidates(candidates: list[str], x_series: pd.Series | None) -> dict[str, float]:
@@ -363,16 +371,15 @@ def _canonicalize_category_mapping(path: Path, *, cpa_labels: dict[str, str]) ->
         out.loc[blank, "target_code"] = out.loc[blank, "target_key"].map(lambda key: _match_target_code(str(key), cpa_labels))
         out.loc[out["target_label"].astype(str) == "", "target_label"] = out["target_key"].astype(str)
         out.loc[out["source_label"].astype(str) == "", "source_label"] = out["source_key"].astype(str)
-        out["share"] = ""
-        out["provenance"] = "methodological"
-        out["certainty"] = "repo-authored-concordance"
-        out["transformation_rule"] = "split-by-energy-product-prd-use"
+        out.loc[out["provenance"].astype(str) == "", "provenance"] = "methodological"
+        out.loc[out["certainty"].astype(str) == "", "certainty"] = "repo-authored-concordance"
+        out.loc[out["transformation_rule"].astype(str) == "", "transformation_rule"] = "split-by-energy-product-prd-use"
+        out.loc[out["source_name"].astype(str) == "", "source_name"] = path.name
         out.loc[out["official_source"].astype(str) == "", "official_source"] = ENERGY_METADATA_SOURCE
-        out["notes"] = out.apply(
+        out.loc[out["notes"].astype(str) == "", "notes"] = out.loc[out["notes"].astype(str) == ""].apply(
             lambda row: (
                 f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
-                f"Target code = {row['target_code']}. Runtime allocation uses the Austrian energy-product PRD_USE intermediate-use reference "
-                f"for CPA_C19 and CPA_D over the admissible targets for the chosen year; this file stores the admissible target set and rule metadata only."
+                f"Target code = {row['target_code']}. Allocation rule = {row['transformation_rule'] or 'unspecified'}; declared share = {row['share'] or 'runtime-derived'}."
             ),
             axis=1,
         )
@@ -406,8 +413,7 @@ def _canonicalize_category_mapping(path: Path, *, cpa_labels: dict[str, str]) ->
     out["notes"] = out.apply(
         lambda row: (
             f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
-            f"Target code = {row['target_code']}. Runtime allocation uses the Austrian energy-product PRD_USE intermediate-use reference "
-            f"for CPA_C19 and CPA_D over the admissible targets for the chosen year; this file stores the admissible target set and rule metadata only."
+            f"Target code = {row['target_code']}. Allocation rule = {row['transformation_rule']}; declared share = runtime-derived."
         ),
         axis=1,
     )
@@ -485,13 +491,13 @@ def main() -> int:
     split_without = _build_split_mapping_csv(electricity_by_source=False, cpa_labels=cached_cpa_labels)
     _write_mapping_csv(outdir / "exio_energy_split_cpa_no_electricity_source.csv", split_without)
 
-    category_path = outdir / "energy_balance_to_nace2_mapping.csv"
-    category = _canonicalize_category_mapping(category_path, cpa_labels=cached_cpa_labels)
-    _write_mapping_csv(category_path, category)
+    category_source_path = _checked_in_mapping_path("energy_balance_to_nace2_mapping.csv")
+    category = _canonicalize_category_mapping(category_source_path, cpa_labels=cached_cpa_labels)
+    _write_mapping_csv(outdir / category_source_path.name, category)
 
-    aggregate_path = outdir / "energy_green_brown_2sector_from_split_subsectors.csv"
-    aggregate = _canonicalize_aggregation_mapping(aggregate_path)
-    _write_mapping_csv(aggregate_path, aggregate)
+    aggregate_source_path = _checked_in_mapping_path("energy_green_brown_2sector_from_split_subsectors.csv")
+    aggregate = _canonicalize_aggregation_mapping(aggregate_source_path)
+    _write_mapping_csv(outdir / aggregate_source_path.name, aggregate)
 
     print(f"Wrote canonical annotated mapping CSVs to {outdir.resolve()}")
     return 0

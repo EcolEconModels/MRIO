@@ -4,6 +4,8 @@
 
 The source of truth for sector mapping in this repo is now the annotated CSV files in `scripts/mappings/`.
 
+Legacy ad hoc mapping tables such as bare `Category,TargetSector` CSVs are no longer a supported runtime contract.
+
 Each mapping row is both:
 
 - machine-readable for runtime use
@@ -99,7 +101,7 @@ The generator script is:
 
 - `scripts/generate_mapping_csvs.py`
 
-It is the only supported creation path for the canonical mapping CSVs.
+It is the only supported creation path for the canonical mapping CSVs. When writing to a custom output directory, it canonicalizes the checked-in rule files from `scripts/mappings/` and writes the resulting CSVs there; it does not expect seed mapping files to already exist in the target directory.
 
 ## Validation
 

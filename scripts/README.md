@@ -29,6 +29,8 @@ The workflow depends on the following checked-in concordance files under `script
 | `siec_to_primary_energy_sources.csv` | checked in | Map Eurostat SIEC carriers into the model’s primary-source carrier basis. |
 | `energy_primary_source_buckets.csv` | checked in | Group the primary-source carriers into the analytical brown/green buckets used in the exported workbook. |
 
+The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported.
+
 ## Reproducible Commands
 
 All commands below assume the repo root is `/home/agilra/EcolEconModels/MRIO` and use the local virtual environment interpreter `.venv/bin/python`.
