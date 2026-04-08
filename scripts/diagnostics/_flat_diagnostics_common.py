@@ -211,7 +211,7 @@ def load_ghg_protocol_factors(postgrowth_root: Path) -> dict[str, float]:
         pick_one([r"^Motor gasoline"], "Oil products"),
         pick_one([r"^Residual fuel oil"], "Oil products"),
     ]
-    waste_fossil_share = 0.5
+    mixed_waste_fossil_share = 0.5
     return {
         "Solid fossil fuels": convert(
             pick_one([r"^Other bituminous coal$", r"^Coking coal$", r"^Sub bituminous coal$", r"^Lignite$"], "Coal products")
@@ -222,8 +222,9 @@ def load_ghg_protocol_factors(postgrowth_root: Path) -> dict[str, float]:
         "Wind": 0.0,
         "Solar": 0.0,
         "Biofuels": convert(pick_one([r"^Biodiesels$", r"^Biogasoline$", r"^Other liquid biofuels$"], "Biomass")),
-        "Waste": convert(pick_one([r"^Municipal waste \(Non biomass fraction\)$"], "Other wastes")) * waste_fossil_share
-        + convert(pick_one([r"^Municipal wastes \(Biomass fraction\)$"], "Biomass")) * (1.0 - waste_fossil_share),
+        "Non-renewable waste": convert(pick_one([r"^Municipal waste \(Non biomass fraction\)$"], "Other wastes")),
+        "Renewable waste and mixed waste": convert(pick_one([r"^Municipal waste \(Non biomass fraction\)$"], "Other wastes")) * mixed_waste_fossil_share
+        + convert(pick_one([r"^Municipal wastes \(Biomass fraction\)$"], "Biomass")) * (1.0 - mixed_waste_fossil_share),
         "Other Renewables": 0.0,
     }
 

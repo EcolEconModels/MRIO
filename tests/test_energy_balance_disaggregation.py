@@ -293,7 +293,8 @@ def test_primary_sources_are_loaded_from_declared_registry():
         "Wind",
         "Solar",
         "Biofuels",
-        "Waste",
+        "Non-renewable waste",
+        "Renewable waste and mixed waste",
         "Other Renewables",
     )
     assert PRODUCT_SOURCE_MAPPING["Fossil gas"] == ("G3000", "C0350-0370")
@@ -377,7 +378,8 @@ def test_build_postgrowth_energy_balance_splits_energy_rows():
                 "Wind": 0.0,
                 "Solar": 0.0,
                 "Biofuels": 1.0,
-                "Waste": 2.0,
+                "Non-renewable waste": 1.0,
+                "Renewable waste and mixed waste": 1.0,
                 "Other Renewables": 3.0,
             },
             {
@@ -389,7 +391,8 @@ def test_build_postgrowth_energy_balance_splits_energy_rows():
                 "Wind": 5.0,
                 "Solar": 6.0,
                 "Biofuels": 7.0,
-                "Waste": 8.0,
+                "Non-renewable waste": 4.0,
+                "Renewable waste and mixed waste": 4.0,
                 "Other Renewables": 9.0,
             },
             {
@@ -401,7 +404,8 @@ def test_build_postgrowth_energy_balance_splits_energy_rows():
                 "Wind": 0.0,
                 "Solar": 0.0,
                 "Biofuels": 0.0,
-                "Waste": 0.0,
+                "Non-renewable waste": 0.0,
+                "Renewable waste and mixed waste": 0.0,
                 "Other Renewables": 0.0,
             },
         ]
@@ -417,7 +421,8 @@ def test_build_postgrowth_energy_balance_splits_energy_rows():
             "Wind": "Renewable",
             "Solar": "Renewable",
             "Biofuels": "Renewable",
-            "Waste": "Other",
+            "Non-renewable waste": "Fossil",
+            "Renewable waste and mixed waste": "Renewable",
             "Other Renewables": "Renewable",
         },
         split_energy_green_brown=True,
@@ -434,14 +439,102 @@ def test_build_postgrowth_energy_balance_splits_energy_rows():
     assert brown["Oil and petroleum products (excluding biofuel portion)"] == 33.0
     assert brown["Hydro"] == 0.0
     assert brown["Biofuels"] == 0.0
-    assert brown["Waste"] == 0.0
-    assert brown["Total_energy_GWh"] == 66.0
+    assert brown["Non-renewable waste"] == 5.0
+    assert brown["Total_energy_GWh"] == 71.0
 
     assert green["Solid fossil fuels"] == 0.0
     assert green["Hydro"] == 4.0
     assert green["Wind"] == 5.0
     assert green["Solar"] == 6.0
     assert green["Biofuels"] == 8.0
-    assert green["Waste"] == 10.0
+    assert green["Non-renewable waste"] == 0.0
+    assert green["Renewable waste and mixed waste"] == 5.0
     assert green["Other Renewables"] == 12.0
-    assert green["Total_energy_GWh"] == 45.0
+    assert green["Total_energy_GWh"] == 40.0
+
+
+def test_build_postgrowth_energy_balance_can_split_single_electricity_row():
+    from ecolecon_mrio.eurostat_energy_balances import build_postgrowth_energy_balance
+
+    mapped = pd.DataFrame(
+        [
+            {
+                "TargetSector": "Agriculture",
+                "Solid fossil fuels": 1.0,
+                "Fossil gas": 0.0,
+                "Oil and petroleum products (excluding biofuel portion)": 0.0,
+                "Hydro": 0.0,
+                "Wind": 0.0,
+                "Solar": 0.0,
+                "Biofuels": 0.0,
+                "Non-renewable waste": 0.0,
+                "Renewable waste and mixed waste": 0.0,
+                "Other Renewables": 0.0,
+            },
+            {
+                "TargetSector": "Electricity, gas, steam and air conditioning",
+                "Solid fossil fuels": 10.0,
+                "Fossil gas": 20.0,
+                "Oil and petroleum products (excluding biofuel portion)": 30.0,
+                "Hydro": 4.0,
+                "Wind": 5.0,
+                "Solar": 6.0,
+                "Biofuels": 7.0,
+                "Non-renewable waste": 8.0,
+                "Renewable waste and mixed waste": 9.0,
+                "Other Renewables": 10.0,
+            },
+            {
+                "TargetSector": "Households",
+                "Solid fossil fuels": 0.5,
+                "Fossil gas": 1.5,
+                "Oil and petroleum products (excluding biofuel portion)": 2.5,
+                "Hydro": 0.0,
+                "Wind": 0.0,
+                "Solar": 0.0,
+                "Biofuels": 0.0,
+                "Non-renewable waste": 0.0,
+                "Renewable waste and mixed waste": 0.0,
+                "Other Renewables": 0.0,
+            },
+        ]
+    )
+
+    out = build_postgrowth_energy_balance(
+        mapped,
+        source_group_by_source={
+            "Solid fossil fuels": "Fossil",
+            "Fossil gas": "Fossil",
+            "Oil and petroleum products (excluding biofuel portion)": "Fossil",
+            "Hydro": "Renewable",
+            "Wind": "Renewable",
+            "Solar": "Renewable",
+            "Biofuels": "Renewable",
+            "Non-renewable waste": "Fossil",
+            "Renewable waste and mixed waste": "Renewable",
+            "Other Renewables": "Renewable",
+        },
+        split_energy_green_brown=True,
+    )
+
+    assert out["Sector"].tolist() == ["Agriculture", "Energy Brown", "Energy Green", "Households"]
+
+    brown = out[out["Sector"] == "Energy Brown"].iloc[0]
+    green = out[out["Sector"] == "Energy Green"].iloc[0]
+
+    assert brown["Solid fossil fuels"] == 10.0
+    assert brown["Fossil gas"] == 20.0
+    assert brown["Oil and petroleum products (excluding biofuel portion)"] == 30.0
+    assert brown["Non-renewable waste"] == 8.0
+    assert brown["Renewable waste and mixed waste"] == 0.0
+    assert brown["Total_energy_GWh"] == 68.0
+
+    assert green["Solid fossil fuels"] == 0.0
+    assert green["Hydro"] == 4.0
+    assert green["Wind"] == 5.0
+    assert green["Solar"] == 6.0
+    assert green["Biofuels"] == 7.0
+    assert green["Non-renewable waste"] == 0.0
+    assert green["Renewable waste and mixed waste"] == 9.0
+    assert green["Other Renewables"] == 10.0
+    assert green["Total_energy_GWh"] == 41.0

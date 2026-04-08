@@ -303,30 +303,50 @@ def build_postgrowth_energy_balance(
     if split_energy_green_brown:
         coke_rows = out.index[out["Sector"] == coke_label].tolist()
         electricity_rows = out.index[out["Sector"] == electricity_label].tolist()
-        if len(coke_rows) != 1 or len(electricity_rows) != 1:
+        if len(electricity_rows) != 1:
             raise ValueError(
-                "Expected exactly one coke row and one electricity row when splitting to Energy Brown/Green."
+                "Expected exactly one electricity row when splitting to Energy Brown/Green."
             )
-        coke_idx = coke_rows[0]
         electricity_idx = electricity_rows[0]
-
-        combined = pd.to_numeric(out.loc[coke_idx, source_cols], errors="coerce").fillna(0.0) + pd.to_numeric(
-            out.loc[electricity_idx, source_cols], errors="coerce"
-        ).fillna(0.0)
         brown_sources = [src for src in source_cols if str(source_group_by_source.get(src, "")).casefold() == "fossil"]
         green_sources = [src for src in source_cols if src not in set(brown_sources)]
 
-        brown_row = combined.copy()
-        green_row = combined.copy()
-        for source in green_sources:
-            brown_row[source] = 0.0
-        for source in brown_sources:
-            green_row[source] = 0.0
+        if len(coke_rows) == 1:
+            coke_idx = coke_rows[0]
+            combined = pd.to_numeric(out.loc[coke_idx, source_cols], errors="coerce").fillna(0.0) + pd.to_numeric(
+                out.loc[electricity_idx, source_cols], errors="coerce"
+            ).fillna(0.0)
 
-        out.loc[coke_idx, source_cols] = brown_row[source_cols].to_numpy(dtype="float64")
-        out.loc[electricity_idx, source_cols] = green_row[source_cols].to_numpy(dtype="float64")
-        out.at[coke_idx, "Sector"] = brown_label
-        out.at[electricity_idx, "Sector"] = green_label
+            brown_row = combined.copy()
+            green_row = combined.copy()
+            for source in green_sources:
+                brown_row[source] = 0.0
+            for source in brown_sources:
+                green_row[source] = 0.0
+
+            out.loc[coke_idx, source_cols] = brown_row[source_cols].to_numpy(dtype="float64")
+            out.loc[electricity_idx, source_cols] = green_row[source_cols].to_numpy(dtype="float64")
+            out.at[coke_idx, "Sector"] = brown_label
+            out.at[electricity_idx, "Sector"] = green_label
+        elif len(coke_rows) == 0:
+            combined = pd.to_numeric(out.loc[electricity_idx, source_cols], errors="coerce").fillna(0.0)
+
+            brown_row = combined.copy()
+            green_row = combined.copy()
+            for source in green_sources:
+                brown_row[source] = 0.0
+            for source in brown_sources:
+                green_row[source] = 0.0
+
+            brown_df = pd.DataFrame([{**{"Sector": brown_label}, **brown_row.to_dict()}])
+            out.loc[electricity_idx, source_cols] = green_row[source_cols].to_numpy(dtype="float64")
+            out.at[electricity_idx, "Sector"] = green_label
+            insert_at = out.index.get_loc(electricity_idx)
+            out = pd.concat([out.iloc[:insert_at], brown_df, out.iloc[insert_at:]], ignore_index=True)
+        else:
+            raise ValueError(
+                "Expected at most one coke row when splitting to Energy Brown/Green."
+            )
 
     out["Total_energy_GWh"] = pd.to_numeric(out[source_cols].stack(), errors="coerce").unstack(fill_value=0.0).sum(axis=1)
     return out.loc[:, ["Sector", *source_cols, "Total_energy_GWh"]]
@@ -456,7 +476,8 @@ def load_eurostat_electricity_heat_mix(
     c_wind = _codes_for_source_bucket("Wind", code_to_label=siec_labels)
     c_solar = _codes_for_source_bucket("Solar", code_to_label=siec_labels)
     c_other = _codes_for_source_bucket("Other Renewables", code_to_label=siec_labels)
-    c_waste = _codes_for_source_bucket("Waste", code_to_label=siec_labels)
+    c_nonrenew_waste = _codes_for_source_bucket("Non-renewable waste", code_to_label=siec_labels)
+    c_renew_mixed_waste = _codes_for_source_bucket("Renewable waste and mixed waste", code_to_label=siec_labels)
     c_bio = _codes_for_source_bucket("Biofuels", code_to_label=siec_labels)
     have_ra000 = str(SIEC_RENEWABLES_AND_BIOFUELS_AGG) in set(map(str, siec_labels.keys()))
 
@@ -473,7 +494,8 @@ def load_eurostat_electricity_heat_mix(
                 + _sum_codes(totals, c_wind)
                 + _sum_codes(totals, c_solar)
                 + _sum_codes(totals, c_bio)
-                + _sum_codes(totals, c_waste)
+                + _sum_codes(totals, c_nonrenew_waste)
+                + _sum_codes(totals, c_renew_mixed_waste)
                 + _sum_codes(totals, c_other)
             )
         if not np.isfinite(total_all) or total_all <= 0:
@@ -490,7 +512,8 @@ def load_eurostat_electricity_heat_mix(
             "Wind": _sum_codes(totals, c_wind),
             "Solar": _sum_codes(totals, c_solar),
             "Biofuels": _sum_codes(totals, c_bio),
-            "Waste": _sum_codes(totals, c_waste),
+            "Non-renewable waste": _sum_codes(totals, c_nonrenew_waste),
+            "Renewable waste and mixed waste": _sum_codes(totals, c_renew_mixed_waste),
             "Other Renewables": _sum_codes(totals, c_other),
         }
         if mapped["Biofuels"] == 0.0 and have_ra000:
@@ -530,7 +553,8 @@ def load_eurostat_electricity_heat_mix(
             "wind": c_wind,
             "solar": c_solar,
             "biofuels_detailed": c_bio,
-            "waste": c_waste,
+            "nonrenewable_waste": c_nonrenew_waste,
+            "renewable_mixed_waste": c_renew_mixed_waste,
             "other_renew": c_other,
         },
     }
@@ -644,7 +668,8 @@ def build_tabelle1_from_eurostat(
     c_wind = _codes_for_source_bucket("Wind", code_to_label=siec_labels)
     c_solar = _codes_for_source_bucket("Solar", code_to_label=siec_labels)
     c_other = _codes_for_source_bucket("Other Renewables", code_to_label=siec_labels)
-    c_waste = _codes_for_source_bucket("Waste", code_to_label=siec_labels)
+    c_nonrenew_waste = _codes_for_source_bucket("Non-renewable waste", code_to_label=siec_labels)
+    c_renew_mixed_waste = _codes_for_source_bucket("Renewable waste and mixed waste", code_to_label=siec_labels)
     c_bio = _codes_for_source_bucket("Biofuels", code_to_label=siec_labels)
     have_ra000 = str(SIEC_RENEWABLES_AND_BIOFUELS_AGG) in set(map(str, siec_labels.keys()))
 
@@ -681,7 +706,8 @@ def build_tabelle1_from_eurostat(
             "Wind": _sum_codes(block, c_wind),
             "Solar": _sum_codes(block, c_solar),
             "Biofuels": _sum_codes(block, c_bio),
-            "Waste": _sum_codes(block, c_waste),
+            "Non-renewable waste": _sum_codes(block, c_nonrenew_waste),
+            "Renewable waste and mixed waste": _sum_codes(block, c_renew_mixed_waste),
             "Other Renewables": _sum_codes(block, c_other),
         }
         if direct_vals["Biofuels"] == 0.0 and have_ra000:
@@ -775,7 +801,8 @@ def build_tabelle1_from_eurostat(
             "wind": c_wind,
             "solar": c_solar,
             "biofuels_detailed": c_bio,
-            "waste": c_waste,
+            "nonrenewable_waste": c_nonrenew_waste,
+            "renewable_mixed_waste": c_renew_mixed_waste,
             "other_renew": c_other,
         },
         "mix": mix_meta,
