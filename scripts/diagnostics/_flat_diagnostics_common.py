@@ -168,9 +168,19 @@ def build_signed_value_summary(
 
 
 def read_energy_balance_table(postgrowth_root: Path, *, year: int) -> pd.DataFrame:
-    path = postgrowth_root / f"Energy_Balances_{year}_Eurostat.xlsx"
-    df = pd.read_excel(path)
-    df = df.rename(columns={"SIEC (Labels)": "energy_balance_sector_name", "Total": "energy_balance_total_energy_gwh_2021"})
+    path = postgrowth_root / f"Energy_Balances_{year}_Eurostat_green_brown.xlsx"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Expected split green/brown energy balance workbook: {path}"
+        )
+
+    df = pd.read_excel(path, sheet_name="Energy_1.0")
+    df = df.rename(
+        columns={
+            "Sector": "energy_balance_sector_name",
+            "Total_energy_GWh": "energy_balance_total_energy_gwh_2021",
+        }
+    )
     return df
 
 
