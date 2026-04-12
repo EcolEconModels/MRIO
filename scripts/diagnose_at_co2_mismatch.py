@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, cast
 
 import pandas as pd
 
@@ -35,13 +36,15 @@ def _write_csv(df: pd.DataFrame, out_path: Path) -> None:
 
 
 def _meta_dimension_labels(meta: Mapping[str, Any], dimension: str) -> dict[str, str]:
-    dimensions = meta.get("dimensions")
-    if not isinstance(dimensions, dict):
+    raw_dimensions = meta.get("dimensions")
+    if not isinstance(raw_dimensions, Mapping):
         return {}
+    dimensions = cast(Mapping[str, object], raw_dimensions)
 
-    labels = dimensions.get(dimension)
-    if not isinstance(labels, dict):
+    raw_labels = dimensions.get(dimension)
+    if not isinstance(raw_labels, Mapping):
         return {}
+    labels = cast(Mapping[object, object], raw_labels)
 
     return {str(key): str(value) for key, value in labels.items()}
 
@@ -255,8 +258,10 @@ def _run_energy_diagnostics(
     euro_reconstructed = euro_detail.category_reconstructed.reindex(unrolled_sources.index).fillna(0.0).astype("float64")
     euro_source = unrolled_sources
     for category in euro_source.index:
-        src_total = sum(float(value) for value in euro_source.loc[category].tolist())
-        rec_total = sum(float(value) for value in euro_reconstructed.loc[category].tolist())
+        src_row = cast(pd.Series, euro_source.loc[category])
+        rec_row = cast(pd.Series, euro_reconstructed.loc[category])
+        src_total = float(src_row.sum())
+        rec_total = float(rec_row.sum())
         closure_rows.append(
             {
                 "category": category,
