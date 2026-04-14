@@ -73,6 +73,9 @@ def _match_target_code(target_label: str, cpa_labels: dict[str, str]) -> str:
 
 
 def _write_mapping_csv(path: Path, frame: pd.DataFrame) -> None:
+    missing = [column for column in MAPPING_CSV_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError(f"Mapping frame for {path} missing required columns: {missing}")
     extras = [column for column in frame.columns if column not in MAPPING_CSV_COLUMNS]
     ordered = list(MAPPING_CSV_COLUMNS) + extras
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +240,9 @@ def _build_weighted_mapping_csv(*, geo: str, year: int, eurostat_storage_folder:
         lambda value: WEIGHTED_OFFICIAL_SOURCE if value.startswith("official-exio-nace:") else FALLBACK_OFFICIAL_SOURCE
     )
     out["notes"] = weighted_rows["notes"].astype(str)
+    out["source_balance_role"] = ""
+    out["target_sector_role"] = ""
+    out["include_in_direct_energy"] = ""
     out.loc[out["notes"].str.startswith("official-exio-nace:"), "certainty"] = "semi-official-retained"
 
     enriched_notes: list[str] = []
@@ -349,6 +355,9 @@ def _build_split_mapping_csv(*, electricity_by_source: bool, cpa_labels: dict[st
         else "exio_energy_split_cpa_no_electricity_source.csv"
     )
     out["official_source"] = "Repo-authored split template built on EXIOBASE classification codes"
+    out["source_balance_role"] = ""
+    out["target_sector_role"] = ""
+    out["include_in_direct_energy"] = ""
     out["notes"] = frame.apply(
         lambda row: (
             f"Repo-authored split template row. EXIO product {row['source_code']} ({row['source_label']}) is included under "
@@ -363,104 +372,20 @@ def _build_split_mapping_csv(*, electricity_by_source: bool, cpa_labels: dict[st
 
 
 def _canonicalize_category_mapping(path: Path, *, cpa_labels: dict[str, str]) -> pd.DataFrame:
-    raw = pd.read_csv(path, dtype=str).fillna("")
-    if set(MAPPING_CSV_COLUMNS).issubset(raw.columns):
-        out = read_mapping_csv(path, expected_kind="category-target").copy()
-        out["target_code"] = out["target_code"].astype(str)
-        blank = out["target_code"] == ""
-        out.loc[blank, "target_code"] = out.loc[blank, "target_key"].map(lambda key: _match_target_code(str(key), cpa_labels))
-        out.loc[out["target_label"].astype(str) == "", "target_label"] = out["target_key"].astype(str)
-        out.loc[out["source_label"].astype(str) == "", "source_label"] = out["source_key"].astype(str)
-        out.loc[out["provenance"].astype(str) == "", "provenance"] = "methodological"
-        out.loc[out["certainty"].astype(str) == "", "certainty"] = "repo-authored-concordance"
-        out.loc[out["transformation_rule"].astype(str) == "", "transformation_rule"] = "split-by-energy-product-prd-use"
-        out.loc[out["source_name"].astype(str) == "", "source_name"] = path.name
-        out.loc[out["official_source"].astype(str) == "", "official_source"] = ENERGY_METADATA_SOURCE
-        out.loc[out["notes"].astype(str) == "", "notes"] = out.loc[out["notes"].astype(str) == ""].apply(
-            lambda row: (
-                f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
-                f"Target code = {row['target_code']}. Allocation rule = {row['transformation_rule'] or 'unspecified'}; declared share = {row['share'] or 'runtime-derived'}."
-            ),
-            axis=1,
-        )
-        return out
-
-    out = pd.DataFrame(index=raw.index)
-    out["kind"] = "category-target"
-    out["source_dataset"] = "Eurostat_Energy_Balances"
-    out["source_system"] = "nrg_bal"
-    out["source_version"] = "current"
-    out["source_level"] = "category"
-    out["target_dataset"] = "Eurostat_IO"
-    out["target_system"] = "pxp"
-    out["target_version"] = "CPA_65"
-    out["target_level"] = "target-label"
-    out["source_key"] = raw["Category"].astype(str)
-    out["source_code"] = ""
-    out["source_label"] = raw["Category"].astype(str)
-    out["target_key"] = raw["TargetSector"].astype(str)
-    out["target_code"] = raw["TargetSector"].astype(str).map(lambda label: _match_target_code(str(label), cpa_labels))
-    out["target_label"] = raw["TargetSector"].astype(str)
-    out["subtarget_key"] = ""
-    out["weight"] = ""
-    out["share"] = ""
-    out["enabled"] = "1"
-    out["provenance"] = "methodological"
-    out["certainty"] = "repo-authored-concordance"
-    out["transformation_rule"] = "split-by-energy-product-prd-use"
-    out["source_name"] = path.name
-    out["official_source"] = ENERGY_METADATA_SOURCE
-    out["notes"] = out.apply(
-        lambda row: (
-            f"Repo-authored bridge from Eurostat energy-balance category '{row['source_key']}' to Eurostat IO target '{row['target_key']}'. "
-            f"Target code = {row['target_code']}. Allocation rule = {row['transformation_rule']}; declared share = runtime-derived."
-        ),
-        axis=1,
-    )
+    out = read_mapping_csv(path, expected_kind="category-target").copy()
+    if (out["source_label"].astype(str).str.strip() == "").any():
+        raise ValueError(f"Category mapping {path} must provide explicit source_label values.")
+    if (out["target_label"].astype(str).str.strip() == "").any():
+        raise ValueError(f"Category mapping {path} must provide explicit target_label values.")
     return out.loc[:, list(MAPPING_CSV_COLUMNS)]
 
 
 def _canonicalize_aggregation_mapping(path: Path) -> pd.DataFrame:
-    raw = pd.read_csv(path, dtype=str).fillna("")
-    if set(MAPPING_CSV_COLUMNS).issubset(raw.columns):
-        out = read_mapping_csv(path, expected_kind="aggregate").copy()
-        out.loc[out["source_label"].astype(str) == "", "source_label"] = out["source_key"].astype(str)
-        out.loc[out["target_label"].astype(str) == "", "target_label"] = out["target_key"].astype(str)
-        out.loc[out["official_source"].astype(str) == "", "official_source"] = "Repo analytical aggregation rule"
-        return out
-
-    out = pd.DataFrame(index=raw.index)
-    out["kind"] = "aggregate"
-    out["source_dataset"] = "Eurostat_IO"
-    out["source_system"] = "pxp"
-    out["source_version"] = "CPA_65"
-    out["source_level"] = "product"
-    out["target_dataset"] = "Repo_Analytical"
-    out["target_system"] = "energy_2sector"
-    out["target_version"] = "current"
-    out["target_level"] = "aggregate"
-    out["source_key"] = raw["from_sector"].astype(str)
-    out["source_code"] = ""
-    out["source_label"] = raw["from_sector"].astype(str)
-    out["target_key"] = raw["to_sector"].astype(str)
-    out["target_code"] = raw["to_sector"].astype(str)
-    out["target_label"] = raw["to_sector"].astype(str)
-    out["subtarget_key"] = ""
-    out["weight"] = ""
-    out["share"] = ""
-    out["enabled"] = raw.get("enabled", pd.Series("1", index=raw.index)).astype(str)
-    out["provenance"] = "methodological"
-    out["certainty"] = "analytical-aggregation"
-    out["transformation_rule"] = "energy-green-brown-aggregation"
-    out["source_name"] = path.name
-    out["official_source"] = "Repo analytical aggregation rule"
-    out["notes"] = raw.apply(
-        lambda row: (
-            f"Repo analytical aggregation rule. Source sector '{row['from_sector']}' is assigned to aggregate '{row['to_sector']}'."
-            + (f" Existing note: {row['notes']}" if str(row.get('notes', '')).strip() else "")
-        ),
-        axis=1,
-    )
+    out = read_mapping_csv(path, expected_kind="aggregate").copy()
+    if (out["source_label"].astype(str).str.strip() == "").any():
+        raise ValueError(f"Aggregation mapping {path} must provide explicit source_label values.")
+    if (out["target_label"].astype(str).str.strip() == "").any():
+        raise ValueError(f"Aggregation mapping {path} must provide explicit target_label values.")
     return out.loc[:, list(MAPPING_CSV_COLUMNS)]
 
 

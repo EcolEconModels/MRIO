@@ -24,7 +24,7 @@ These are the only mapping CSVs that should be used by code and by humans:
 - `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
   - same split template, but electricity rows are grouped
 - `scripts/mappings/energy_balance_to_nace2_mapping.csv`
-  - Eurostat energy-balance category to Eurostat IO target-sector bridge
+  - Eurostat energy-balance category to Eurostat IO target-sector bridge, including explicit direct-combustion transformation rows for `CPA_C19` and `CPA_D`
 - `scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv`
   - analytical aggregation from split sectors to the repo’s 2-sector energy view
 
@@ -50,6 +50,14 @@ All canonical mapping CSVs use the same base schema defined in `src/ecolecon_mri
 - `official_source`
 - `notes`
 
+The canonical schema now always includes these accounting-semantics columns:
+
+- `source_balance_role`
+- `target_sector_role`
+- `include_in_direct_energy`
+
+Outside `category-target` mappings these fields are usually blank, but the columns themselves are part of the required checked-in schema.
+
 Some mapping families may also carry extra columns needed by a downstream script. For example, the split templates keep `constituent` so the split pipeline can run coverage checks.
 
 ## Meaning of the Main Fields
@@ -74,6 +82,12 @@ Some mapping families may also carry extra columns needed by a downstream script
   - the relevant upstream source URL or metadata page when one exists
 - `notes`
   - the detailed human-readable explanation of how and why that exact row exists
+- `source_balance_role`
+  - classifies the Eurostat energy-balance row as `final_use`, `transformation_input`, `energy_sector_own_use`, `transformation_output`, or `non_energy_use`
+- `target_sector_role`
+  - classifies the Eurostat IO target as `end_use_sector`, `transformation_sector`, or `households`
+- `include_in_direct_energy`
+  - marks whether the row belongs in the repo's direct-combustion energy accounting object
 
 ## Generation
 
@@ -153,6 +167,8 @@ Relevant CSVs:
 
 - `scripts/mappings/exio_to_eurostat_cpa.csv`
 - `scripts/mappings/energy_balance_to_nace2_mapping.csv`
+
+For the energy-balance bridge specifically, the runtime contract is now broader than a final-use concordance. It includes final-use rows, refinery direct-use and refinery own-use rows for `CPA_C19`, main-activity electricity and heat transformation-input rows for `CPA_D`, and the `Households` analytical row. The CSV remains the single source of truth for which Eurostat energy-balance rows enter direct-combustion accounting.
 
 ## Provenance Policy
 

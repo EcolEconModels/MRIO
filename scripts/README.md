@@ -25,11 +25,11 @@ The workflow depends on the following checked-in concordance files under `script
 | `exio_energy_split_cpa_with_electricity_source.csv` | checked in | Split map from the two aggregate Eurostat energy sectors to detailed EXIO energy subsectors, preserving electricity-by-source detail. |
 | `exio_energy_split_cpa_no_electricity_source.csv` | checked in | Alternate split map without electricity-by-source detail. |
 | `energy_green_brown_2sector_from_split_subsectors.csv` | checked in | Collapse the detailed split subsectors into the analytical `ENERGY_GREEN` / `ENERGY_BROWN` sectors. |
-| `energy_balance_to_nace2_mapping.csv` | checked in | Direct concordance from raw Eurostat energy-balance categories to the 65 IO sectors plus households. |
+| `energy_balance_to_nace2_mapping.csv` | checked in | Direct-combustion bridge from raw Eurostat energy-balance rows to the 65 IO sectors plus households, including explicit refinery and electricity/heat transformation rows where applicable. |
 | `siec_to_primary_energy_sources.csv` | checked in | Map Eurostat SIEC carriers into the model’s primary-source carrier basis. |
 | `energy_primary_source_buckets.csv` | checked in | Group the primary-source carriers into the analytical brown/green buckets used in the exported workbook. |
 
-The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported.
+The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported, and all checked-in mapping files must carry the full header including `source_balance_role`, `target_sector_role`, and `include_in_direct_energy`.
 
 ## Reproducible Commands
 

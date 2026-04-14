@@ -32,6 +32,27 @@ MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "source_name",
     "official_source",
     "notes",
+    "source_balance_role",
+    "target_sector_role",
+    "include_in_direct_energy",
+)
+
+SOURCE_BALANCE_ROLES: frozenset[str] = frozenset(
+    {
+        "final_use",
+        "transformation_input",
+        "energy_sector_own_use",
+        "transformation_output",
+        "non_energy_use",
+    }
+)
+
+TARGET_SECTOR_ROLES: frozenset[str] = frozenset(
+    {
+        "end_use_sector",
+        "transformation_sector",
+        "households",
+    }
 )
 
 
@@ -48,6 +69,30 @@ def _parse_boolish(x: object) -> bool:
     if s in {"0", "false", "f", "no", "n", "off"}:
         return False
     raise ValueError(f"Could not parse boolean value: {x!r}")
+
+
+def _parse_required_boolish(x: object, *, column: str) -> bool:
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        raise ValueError(f"Mapping CSV requires an explicit boolean value in {column!r}.")
+    s = str(x).strip()
+    if s == "":
+        raise ValueError(f"Mapping CSV requires an explicit boolean value in {column!r}.")
+    return _parse_boolish(s)
+
+
+def _normalize_role_column(
+    frame: pd.DataFrame,
+    *,
+    column: str,
+    allowed: frozenset[str],
+) -> pd.Series:
+    values = frame[column].astype(str).str.strip().str.lower()
+    invalid = sorted({value for value in values.unique().tolist() if value and value not in allowed})
+    if invalid:
+        raise ValueError(
+            f"Mapping CSV contains unsupported values in {column!r}: {invalid!r}."
+        )
+    return values
 
 
 def read_mapping_csv(path: str | Path, *, expected_kind: str | None = None) -> pd.DataFrame:
@@ -190,6 +235,30 @@ def load_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     declared_share = frame["share"].astype(str).str.strip()
     frame["DeclaredShare"] = pd.to_numeric(declared_share.mask(declared_share == ""), errors="raise")
     frame["AllocationRule"] = frame["transformation_rule"].astype(str).str.strip()
+    frame["SourceBalanceRole"] = _normalize_role_column(
+        frame,
+        column="source_balance_role",
+        allowed=SOURCE_BALANCE_ROLES,
+    )
+    missing_source_roles = frame["SourceBalanceRole"] == ""
+    if missing_source_roles.any():
+        raise ValueError(
+            "Category-target mapping CSV requires explicit 'source_balance_role' values for all rows."
+        )
+
+    frame["TargetSectorRole"] = _normalize_role_column(
+        frame,
+        column="target_sector_role",
+        allowed=TARGET_SECTOR_ROLES,
+    )
+    missing_target_roles = frame["TargetSectorRole"] == ""
+    if missing_target_roles.any():
+        raise ValueError(
+            "Category-target mapping CSV requires explicit 'target_sector_role' values for all rows."
+        )
+    frame["IncludeInDirectEnergy"] = frame["include_in_direct_energy"].map(
+        lambda value: _parse_required_boolish(value, column="include_in_direct_energy")
+    )
     return frame
 
 

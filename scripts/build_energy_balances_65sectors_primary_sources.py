@@ -29,9 +29,6 @@ from ecolecon_mrio.eurostat_iot import (
 from ecolecon_mrio.mapping_csv import read_category_mapping_frame, read_source_bucket_groups
 
 
-DEFAULT_ENERGY_PRODUCT_CPA_CODES = ("CPA_C19", "CPA_D")
-
-
 def _norm(s: str) -> str:
     return (
         str(s)
@@ -49,6 +46,22 @@ def _xlsx_sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df.replace([np.inf, -np.inf], np.nan)
     # Cast to object so missing values can become real blanks (None).
     return out.astype(object).where(pd.notna(out), None)
+
+
+def _resolve_energy_weighting_target_codes(mapping_df: pd.DataFrame) -> list[str]:
+    mask = mapping_df["TargetSectorRole"].astype(str).eq("transformation_sector")
+    mask = mask & mapping_df["IncludeInDirectEnergy"].astype(bool)
+
+    target_codes = [
+        str(code).strip()
+        for code in mapping_df.loc[mask, "TargetCode"].tolist()
+        if str(code).strip() != ""
+    ]
+    if not target_codes:
+        raise ValueError(
+            "Category mapping must declare at least one direct-energy transformation-sector target code."
+        )
+    return list(dict.fromkeys(target_codes))
 
 
 def _write_xlsx(path: Path, sheets: list[tuple[str, pd.DataFrame]]) -> None:
@@ -147,9 +160,10 @@ def main() -> None:
     )
     total_output_reference = build_eurostat_product_use_reference(parsed).astype("float64").fillna(0.0)
     total_output_reference.index = total_output_reference.index.astype(str)
+    energy_weighting_target_codes = _resolve_energy_weighting_target_codes(mapping_df)
     energy_use_reference = build_eurostat_intermediate_use_reference_from_rows(
         parsed,
-        source_row_codes=DEFAULT_ENERGY_PRODUCT_CPA_CODES,
+        source_row_codes=energy_weighting_target_codes,
     ).astype("float64").fillna(0.0)
     energy_use_reference.index = energy_use_reference.index.astype(str)
 

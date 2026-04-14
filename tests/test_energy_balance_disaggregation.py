@@ -59,9 +59,9 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
     mapping_path.write_text(
         "\n".join(
             [
-                "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes,source_balance_role,target_sector_role,include_in_direct_energy",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
             ]
         ),
         encoding="utf-8",
@@ -83,9 +83,9 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
     mapping_path.write_text(
         "\n".join(
             [
-                "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,",
+                "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes,source_balance_role,target_sector_role,include_in_direct_energy",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
             ]
         ),
         encoding="utf-8",
@@ -94,6 +94,9 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
     out = read_category_mapping_frame(mapping_path)
     assert out["TargetCode"].tolist() == ["CPA_C24", "CPA_C23"]
     assert out["AllocationRule"].tolist() == ["split-by-energy-product-prd-use", "split-by-energy-product-prd-use"]
+    assert out["SourceBalanceRole"].tolist() == ["final_use", "final_use"]
+    assert out["TargetSectorRole"].tolist() == ["end_use_sector", "end_use_sector"]
+    assert out["IncludeInDirectEnergy"].tolist() == [True, True]
 
 
 def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
@@ -130,6 +133,9 @@ def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
                 "source_name": "energy_primary_source_buckets.csv",
                 "official_source": "",
                 "notes": "",
+                "source_balance_role": "",
+                "target_sector_role": "",
+                "include_in_direct_energy": "",
             },
             {
                 "kind": "source-bucket",
@@ -157,6 +163,9 @@ def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
                 "source_name": "energy_primary_source_buckets.csv",
                 "official_source": "",
                 "notes": "",
+                "source_balance_role": "",
+                "target_sector_role": "",
+                "include_in_direct_energy": "",
             },
         ]
     ).to_csv(mapping_path, index=False)
@@ -248,6 +257,9 @@ def test_read_product_source_mapping_groups_codes_by_bucket(tmp_path):
                 "source_name": "siec_to_primary_energy_sources.csv",
                 "official_source": "",
                 "notes": "",
+                "source_balance_role": "",
+                "target_sector_role": "",
+                "include_in_direct_energy": "",
             },
             {
                 "kind": "product-source",
@@ -275,6 +287,9 @@ def test_read_product_source_mapping_groups_codes_by_bucket(tmp_path):
                 "source_name": "siec_to_primary_energy_sources.csv",
                 "official_source": "",
                 "notes": "",
+                "source_balance_role": "",
+                "target_sector_role": "",
+                "include_in_direct_energy": "",
             },
         ]
     ).to_csv(mapping_path, index=False)

@@ -33,6 +33,9 @@ def _canonical_base(kind: str) -> dict[str, str]:
         "source_name": "sample.csv",
         "official_source": "",
         "notes": "",
+        "source_balance_role": "",
+        "target_sector_role": "",
+        "include_in_direct_energy": "",
     }
 
 
@@ -118,8 +121,13 @@ def test_read_category_mapping(tmp_path: Path) -> None:
 
     row = _canonical_base("category-target")
     row["source_key"] = "Industry"
+    row["source_label"] = "Industry"
     row["target_key"] = "Chemicals"
+    row["target_label"] = "Chemicals"
     row["share"] = "0.75"
+    row["source_balance_role"] = "final_use"
+    row["target_sector_role"] = "end_use_sector"
+    row["include_in_direct_energy"] = "1"
     csv_path = tmp_path / "category.csv"
     pd.DataFrame([row]).to_csv(csv_path, index=False)
 
@@ -129,3 +137,45 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     assert frame.loc[0, "TargetCode"] == ""
     assert frame.loc[0, "DeclaredShare"] == 0.75
     assert frame.loc[0, "AllocationRule"] == "test"
+    assert frame.loc[0, "SourceBalanceRole"] == "final_use"
+    assert frame.loc[0, "TargetSectorRole"] == "end_use_sector"
+    assert frame.loc[0, "IncludeInDirectEnergy"] == True
+
+
+def test_read_category_mapping_requires_explicit_semantic_roles(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import load_category_mapping_frame
+
+    row = _canonical_base("category-target")
+    row["source_key"] = "Industry"
+    row["source_label"] = "Industry"
+    row["target_key"] = "Chemicals"
+    row["target_label"] = "Chemicals"
+    row["share"] = "0.75"
+    csv_path = tmp_path / "category_missing_semantics.csv"
+    pd.DataFrame([row]).to_csv(csv_path, index=False)
+
+    with pytest.raises(ValueError, match="source_balance_role"):
+        load_category_mapping_frame(csv_path)
+
+
+def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import load_category_mapping_frame
+
+    row = _canonical_base("category-target")
+    row["source_key"] = "Transformation input - refineries and petrochemical industry - direct use - energy use"
+    row["source_code"] = "TI_RPI_DU_E"
+    row["target_key"] = "Coke and refined petroleum products"
+    row["target_code"] = "CPA_C19"
+    row["target_label"] = "Coke and refined petroleum products"
+    row["share"] = "1"
+    row["transformation_rule"] = "fixed-share"
+    row["source_balance_role"] = "transformation_input"
+    row["target_sector_role"] = "transformation_sector"
+    row["include_in_direct_energy"] = "1"
+    csv_path = tmp_path / "category_semantics.csv"
+    pd.DataFrame([row]).to_csv(csv_path, index=False)
+
+    frame = load_category_mapping_frame(csv_path)
+    assert frame.loc[0, "SourceBalanceRole"] == "transformation_input"
+    assert frame.loc[0, "TargetSectorRole"] == "transformation_sector"
+    assert frame.loc[0, "IncludeInDirectEnergy"] == True
