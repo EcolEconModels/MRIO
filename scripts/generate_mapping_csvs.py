@@ -416,6 +416,7 @@ def main() -> int:
     split_without = _build_split_mapping_csv(electricity_by_source=False, cpa_labels=cached_cpa_labels)
     _write_mapping_csv(outdir / "exio_energy_split_cpa_no_electricity_source.csv", split_without)
 
+    # Legacy filename retained for compatibility; the checked-in bridge targets CPA_65 product rows.
     category_source_path = _checked_in_mapping_path("energy_balance_to_nace2_mapping.csv")
     category = _canonicalize_category_mapping(category_source_path, cpa_labels=cached_cpa_labels)
     _write_mapping_csv(outdir / category_source_path.name, category)

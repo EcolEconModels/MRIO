@@ -72,9 +72,11 @@ The generators depend on four input groups.
 Important distinction:
 
 - Eurostat CPA and NACE classifications are official standards.
+- Eurostat NACE classifies economic activities, whereas Eurostat CPA classifies products by activity.
 - The repo's EXIOBASE-to-Eurostat bridge is not an official Eurostat or EXIOBASE
   standard. It is a weighted concordance assembled in this repo, using a mix of
   retained semi-official source material plus deterministic fallback rules.
+- The checked-in `scripts/mappings/energy_balance_to_nace2_mapping.csv` file keeps a legacy filename, but its operational targets are Eurostat IO `CPA_65` product rows plus households.
 
 ### 4. Austria-side energy and emissions workbooks
 

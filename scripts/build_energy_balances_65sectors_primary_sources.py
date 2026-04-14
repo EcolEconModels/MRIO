@@ -87,7 +87,7 @@ def main() -> None:
     ap.add_argument(
         "--mapping",
         default="scripts/mappings/energy_balance_to_nace2_mapping.csv",
-        help="Category -> 65-sector mapping CSV",
+        help="Category -> 65-sector CPA_65 mapping CSV (legacy nace2 filename retained for compatibility)",
     )
     ap.add_argument(
         "--primary-source-buckets",

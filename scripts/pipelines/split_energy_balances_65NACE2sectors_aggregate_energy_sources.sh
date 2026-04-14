@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Pipeline: AT 2021 Eurostat Energy Balances -> primary sources -> 65 sectors (+ CO2 intensities)
+# Pipeline: AT 2021 Eurostat Energy Balances -> primary sources -> 65 CPA_65 sectors (+ CO2 intensities)
 #
 # This pipeline reuses the repo's Eurostat SDMX download+cache scaffold:
 #   - `ecolecon_mrio.eurostat_iot.download_eurostat_dataset`
@@ -10,12 +10,14 @@ set -euo pipefail
 #
 # Usage:
 #   bash scripts/pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh
+# The script name is legacy compatibility naming; the operative target classification is Eurostat IO CPA_65.
 #
 # Optional env vars:
 #   EUROSTAT_GEO=AT
 #   EUROSTAT_TIME=2021
 #   OUT_XLSX=outputs/AT_2021_energy_balances_65sectors_primary_sources.xlsx
 #   MAP_CSV=scripts/mappings/energy_balance_to_nace2_mapping.csv
+# The default mapping file also keeps a legacy name, but it maps into CPA_65 rows plus households.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"

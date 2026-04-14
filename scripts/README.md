@@ -10,7 +10,7 @@ This directory contains the reproducible workflow used to generate the PostGrowt
 | `build_energy_balances_65sectors_primary_sources.py` | Build the direct-mapped 65-sector Austrian energy-balance workbook on the model carrier basis. |
 | `generate_mapping_csvs.py` | Regenerate the annotated EXIO-to-Eurostat and energy-sector mapping CSVs from the checked-in rules plus Eurostat output shares. |
 | `split_eurostat_energy_by_exiobase.py` | Split Eurostat IO energy sectors using EXIO profiles, run local/global balancing, and emit diagnostics. |
-| `pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh` | End-to-end shell entrypoint for the direct-mapped energy-balance workbook export. |
+| `pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh` | Legacy-named end-to-end shell entrypoint for the direct-mapped energy-balance workbook export to Eurostat IO `CPA_65` product rows. |
 | `pipelines/at_2021_energy_green_brown.sh` | End-to-end shell entrypoint for split-and-reaggregate Eurostat IO workbooks; despite the filename it accepts `EUROSTAT_TIME` and works for 2020 and 2021. |
 | `pipelines/export_postgrowth_inputs.sh` | One-command wrapper that exports the current PostGrowth input set into the sibling PostGrowth repo. |
 | `diagnostics/` | Targeted one-off diagnostics used to inspect mapping details, CO2 mappings, and outliers. |
@@ -25,11 +25,13 @@ The workflow depends on the following checked-in concordance files under `script
 | `exio_energy_split_cpa_with_electricity_source.csv` | checked in | Split map from the two aggregate Eurostat energy sectors to detailed EXIO energy subsectors, preserving electricity-by-source detail. |
 | `exio_energy_split_cpa_no_electricity_source.csv` | checked in | Alternate split map without electricity-by-source detail. |
 | `energy_green_brown_2sector_from_split_subsectors.csv` | checked in | Collapse the detailed split subsectors into the analytical `ENERGY_GREEN` / `ENERGY_BROWN` sectors. |
-| `energy_balance_to_nace2_mapping.csv` | checked in | Direct-combustion bridge from raw Eurostat energy-balance rows to the 65 IO sectors plus households, including explicit refinery and electricity/heat transformation rows where applicable. |
+| `energy_balance_to_nace2_mapping.csv` | checked in | Legacy filename retained for compatibility; direct-combustion bridge from raw Eurostat energy-balance rows to the 65 Eurostat IO `CPA_65` product rows plus households, including explicit refinery and electricity/heat transformation rows where applicable. |
 | `siec_to_primary_energy_sources.csv` | checked in | Map Eurostat SIEC carriers into the model’s primary-source carrier basis. |
 | `energy_primary_source_buckets.csv` | checked in | Group the primary-source carriers into the analytical brown/green buckets used in the exported workbook. |
 
 The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported, and all checked-in mapping files must carry the full header including `source_balance_role`, `target_sector_role`, and `include_in_direct_energy`.
+
+Terminology note: Eurostat's NACE classification is for economic activities, while CPA is for products by activity. The direct energy-balance bridge in this repo therefore targets `CPA_65` product rows. The retained `nace2` naming in one bridge filename and one shell script path is historical compatibility naming rather than the operative target classification.
 
 ## Reproducible Commands
 
@@ -55,6 +57,8 @@ POSTGROWTH_SHEET_NAME=Energy_1.0 \
 SPLIT_ENERGY_GREEN_BROWN=1 \
 bash scripts/pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh
 ```
+
+Despite the legacy `NACE2` token in the shell script filename, this export uses the checked-in energy-balance bridge to populate Eurostat IO `CPA_65` product rows plus households.
 
 ### 3. Export split-and-reaggregated IO workbooks
 
