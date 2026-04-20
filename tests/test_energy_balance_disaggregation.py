@@ -55,13 +55,13 @@ def test_nrg_bal_label_alias_resolves():
 def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
     from ecolecon_mrio.eurostat_energy_balances import read_category_target_mapping_csv
 
-    mapping_path = tmp_path / "energy_balance_to_nace2_mapping.csv"
+    mapping_path = tmp_path / "energy_balance_to_cpa65_products_mapping.csv"
     mapping_path.write_text(
         "\n".join(
             [
                 "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes,source_balance_role,target_sector_role,include_in_direct_energy",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_cpa65_products_mapping.csv,,,final_use,end_use_sector,1",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_cpa65_products_mapping.csv,,,final_use,end_use_sector,1",
             ]
         ),
         encoding="utf-8",
@@ -79,13 +79,13 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
 def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
     from ecolecon_mrio.mapping_csv import read_category_mapping_frame
 
-    mapping_path = tmp_path / "energy_balance_to_nace2_mapping.csv"
+    mapping_path = tmp_path / "energy_balance_to_cpa65_products_mapping.csv"
     mapping_path.write_text(
         "\n".join(
             [
                 "kind,source_dataset,source_system,source_version,source_level,target_dataset,target_system,target_version,target_level,source_key,source_code,source_label,target_key,target_code,target_label,subtarget_key,weight,share,enabled,provenance,certainty,transformation_rule,source_name,official_source,notes,source_balance_role,target_sector_role,include_in_direct_energy",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
-                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_nace2_mapping.csv,,,final_use,end_use_sector,1",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Basic metals,CPA_C24,Basic metals,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_cpa65_products_mapping.csv,,,final_use,end_use_sector,1",
+                "category-target,Eurostat_Energy_Balances,nrg_bal,current,category,Eurostat_IO,pxp,CPA_65,target-label,Final consumption - industry sector - iron and steel - energy use,,Final consumption - industry sector - iron and steel - energy use,Other non-metallic mineral products,CPA_C23,Other non-metallic mineral products,,,,1,methodological,repo-authored-concordance,split-by-energy-product-prd-use,energy_balance_to_cpa65_products_mapping.csv,,,final_use,end_use_sector,1",
             ]
         ),
         encoding="utf-8",

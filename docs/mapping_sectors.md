@@ -23,14 +23,14 @@ These are the only mapping CSVs that should be used by code and by humans:
   - EXIO sector split template for `CPA_C19` and `CPA_D`, preserving electricity by source
 - `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
   - same split template, but electricity rows are grouped
-- `scripts/mappings/energy_balance_to_nace2_mapping.csv`
-  - legacy filename retained for compatibility; the bridge itself maps Eurostat energy-balance rows to Eurostat IO `CPA_65` product targets plus `Households`, including explicit direct-combustion transformation rows for `CPA_C19` and `CPA_D`
+- `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
+  - legacy filename retained for compatibility; the bridge itself maps Eurostat energy-balance rows, whose official row definitions are often activity-based, to the repo's 65-product CPA-based IO targets plus `Households`, including explicit direct-combustion transformation rows for `CPA_C19` and `CPA_D`
 - `scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv`
   - analytical aggregation from split sectors to the repo’s 2-sector energy view
 
 There should be no parallel `.mapping.csv` duplicates and no separate mapping tables in the markdown documentation.
 
-Terminology note: under Eurostat's statistical classifications, NACE classifies economic activities, while CPA classifies products by activity. In this repo, the direct energy-balance bridge is operationally a `CPA_65` product mapping. The retained `nace2` filename reflects legacy naming only; NACE enters on the activity-definition side of some correspondence logic, not as the bridge's target classification.
+Terminology note: under Eurostat's statistical classifications, NACE classifies economic activities, while CPA classifies products by activity. In this repo, the direct energy-balance bridge uses NACE only on the source-definition side of some correspondence logic; operationally it is a mapping into the repo's 65-product CPA-based IO targets. The retained `nace2` filename reflects legacy naming only, not the bridge's target classification.
 
 ## CSV Schema
 
@@ -168,9 +168,9 @@ Relevant CSV:
 Relevant CSVs:
 
 - `scripts/mappings/exio_to_eurostat_cpa.csv`
-- `scripts/mappings/energy_balance_to_nace2_mapping.csv`
+- `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
 
-For the energy-balance bridge specifically, the runtime contract is now broader than a final-use concordance. It includes final-use rows, refinery direct-use and refinery own-use rows for `CPA_C19`, main-activity electricity and heat transformation-input rows for `CPA_D`, and the `Households` analytical row. The CSV remains the single source of truth for which Eurostat energy-balance rows enter direct-combustion accounting. Despite the legacy filename, the operative targets in that CSV are Eurostat IO `CPA_65` product rows rather than NACE activity classes.
+For the energy-balance bridge specifically, the runtime contract is now broader than a final-use concordance. It includes final-use rows, refinery direct-use and refinery own-use rows for `CPA_C19`, main-activity electricity and heat transformation-input rows for `CPA_D`, and the `Households` analytical row. The CSV remains the single source of truth for which Eurostat energy-balance rows enter direct-combustion accounting. Despite the legacy filename, the operative targets in that CSV are the repo's 65-product CPA-based IO rows rather than NACE activity classes.
 
 ## Provenance Policy
 

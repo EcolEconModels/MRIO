@@ -203,7 +203,7 @@ def _detailed_weighted_note(group: pd.DataFrame, row: pd.Series) -> str:
         f"No direct official EXIOBASE-to-Eurostat concordance row is used for {exio_code} ({exio_name}). "
         f"This row is derived deterministically from EXIO code prefix {first_div} through the repo's {mapping_rule} bridge, "
         f"yielding NACE Rev. 2 division(s) {division_text}. Because those divisions span multiple sectors in the current CPA_65 target set, "
-        f"the EXIO product is split across targets using Austrian Eurostat energy-product intermediate-use reference shares derived from PRD_USE rows for CPA_C19 and CPA_D. "
+        f"the EXIO product is split across targets using Austrian Eurostat energy-product intermediate-use reference shares derived from the Eurostat symmetric product-by-product IOT column dimension `prd_use`, restricted to CPA_C19 and CPA_D. "
         f"Current split: {'; '.join(targets)}."
     )
 
@@ -416,8 +416,8 @@ def main() -> int:
     split_without = _build_split_mapping_csv(electricity_by_source=False, cpa_labels=cached_cpa_labels)
     _write_mapping_csv(outdir / "exio_energy_split_cpa_no_electricity_source.csv", split_without)
 
-    # Legacy filename retained for compatibility; the checked-in bridge targets CPA_65 product rows.
-    category_source_path = _checked_in_mapping_path("energy_balance_to_nace2_mapping.csv")
+    # Legacy filename retained for compatibility; the checked-in bridge targets the repo's 65-product CPA-based IO rows.
+    category_source_path = _checked_in_mapping_path("energy_balance_to_cpa65_products_mapping.csv")
     category = _canonicalize_category_mapping(category_source_path, cpa_labels=cached_cpa_labels)
     _write_mapping_csv(outdir / category_source_path.name, category)
 

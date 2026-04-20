@@ -86,8 +86,8 @@ def main() -> None:
     ap.add_argument("--year", type=int, default=2021, help="Year (default 2021)")
     ap.add_argument(
         "--mapping",
-        default="scripts/mappings/energy_balance_to_nace2_mapping.csv",
-        help="Category -> 65-sector CPA_65 mapping CSV (legacy nace2 filename retained for compatibility)",
+        default="scripts/mappings/energy_balance_to_cpa65_products_mapping.csv",
+        help="Category -> project 65-product CPA-based target mapping CSV (legacy nace2 filename retained for compatibility; source row definitions may still be activity-based)",
     )
     ap.add_argument(
         "--primary-source-buckets",

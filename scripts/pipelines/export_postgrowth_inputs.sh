@@ -43,7 +43,7 @@ echo "Exporting PostGrowth energy workbook to: $ENERGY_OUT"
 export OUT_XLSX="$ENERGY_OUT"
 export POSTGROWTH_SHEET_NAME="Energy_1.0"
 export SPLIT_ENERGY_GREEN_BROWN="1"
-bash "$ROOT_DIR/scripts/pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh"
+bash "$ROOT_DIR/scripts/pipelines/split_energy_balances_65CPAproducts_aggregate_energy_sources.sh"
 
 for year in 2020 2021; do
   echo "Exporting IOT TOTAL workbook for year $year"

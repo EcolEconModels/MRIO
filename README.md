@@ -120,7 +120,7 @@ Detailed behavior:
 5. Copies the generated `TOTAL` workbooks into the PostGrowth repo under the filenames expected by the model.
 6. Writes `mapped_output_consistency.csv` for any `TOTAL` flow where the EXIO-to-Eurostat output sanity check is evaluated, so the scaled sector-level comparison remains inspectable.
 
-For classification terminology, Eurostat NACE is the activity classification and Eurostat CPA is the product classification by activity. The direct energy-balance export in this repo targets Eurostat IO `CPA_65` product rows; retained `NACE2` tokens in one shell-script filename and one mapping filename are legacy compatibility names rather than the operative target classification.
+For classification terminology, Eurostat NACE is the activity classification and Eurostat CPA is the product classification by activity. The direct energy-balance export in this repo targets a project-specific 65-product CPA-based IO classification used downstream in PostGrowth. Retained `NACE2` tokens in one shell-script filename and one mapping filename are legacy compatibility names only: NACE enters on the activity-definition side of parts of the concordance logic, while the operative bridge targets are CPA-based product rows plus households.
 
 Useful overrides:
 
@@ -137,10 +137,10 @@ Low-level commands are still available if you only want one artifact:
 OUT_XLSX=/abs/path/to/Energy_Balances_2021_Eurostat_green_brown.xlsx \
 POSTGROWTH_SHEET_NAME=Energy_1.0 \
 SPLIT_ENERGY_GREEN_BROWN=1 \
-bash scripts/pipelines/split_energy_balances_65NACE2sectors_aggregate_energy_sources.sh
+bash scripts/pipelines/split_energy_balances_65CPAproducts_aggregate_energy_sources.sh
 ```
 
-Despite the legacy script name, that command exports a workbook mapped to Eurostat IO `CPA_65` product rows plus households.
+Despite the legacy script name, that command exports a workbook mapped to the repo's 65-product CPA-based IO rows plus households.
 
 ```
 EUROSTAT_TIME=2021 \

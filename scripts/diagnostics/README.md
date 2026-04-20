@@ -66,7 +66,7 @@ The generators depend on four input groups.
 ### 3. Concordance and mapping inputs
 
 - `scripts/mappings/exio_to_eurostat_cpa.csv`
-- `scripts/mappings/energy_balance_to_nace2_mapping.csv`
+- `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
 - `data/exiobase_concordance_sources/table_correspondance_nace-gics-exiobase_20230816.xlsx`
 
 Important distinction:
@@ -76,7 +76,7 @@ Important distinction:
 - The repo's EXIOBASE-to-Eurostat bridge is not an official Eurostat or EXIOBASE
   standard. It is a weighted concordance assembled in this repo, using a mix of
   retained semi-official source material plus deterministic fallback rules.
-- The checked-in `scripts/mappings/energy_balance_to_nace2_mapping.csv` file keeps a legacy filename, but its operational targets are Eurostat IO `CPA_65` product rows plus households.
+- The checked-in `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv` file keeps a legacy filename, but its operational targets are the repo's 65-product CPA-based IO rows plus households; NACE matters there only because many source-row definitions are activity-based.
 
 ### 4. Austria-side energy and emissions workbooks
 
@@ -147,7 +147,7 @@ For these 2020 flow files, the Eurostat reference is built as product use
 within Austria from atomic final-demand columns only, with `P6` exports
 excluded. This matches the EXIO comparator more closely, because the EXIO slice
 used here is an Austria-destination use block, not Austrian total product
-output including exports, and the Eurostat `prd_use` table also contains
+output including exports, and the Eurostat symmetric product-by-product IOT column dimension `prd_use` also contains
 subtotal columns such as `P3`, `P5`, `TFU`, `TOTAL`, and `TU` that would
 otherwise double count final demand.
 

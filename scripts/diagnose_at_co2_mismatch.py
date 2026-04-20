@@ -356,8 +356,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--energy-mapping-csv",
-        default="scripts/mappings/energy_balance_to_nace2_mapping.csv",
-        help="Canonical energy-balance mapping CSV for energy diagnostics; despite the legacy filename, it targets Eurostat IO CPA_65 rows.",
+        default="scripts/mappings/energy_balance_to_cpa65_products_mapping.csv",
+        help="Canonical energy-balance mapping CSV for energy diagnostics; despite the legacy filename, it maps activity-defined Eurostat energy-balance rows into the repo's 65-product CPA-based IO targets.",
     )
     parser.add_argument(
         "--exio-nace-concordance-xlsx",
