@@ -9,6 +9,14 @@ Austria diagnostics files written to
 - `_flat_diagnostics_common.py`
   - Shared loaders and helpers for Eurostat IOT data, EXIOBASE slices,
     weighted concordance loading, energy-balance factors, and CSV writing.
+- `check_energy_workbook_scope.py`
+  - Generic workbook-scope check for grouped energy columns. Summarizes totals
+    for all sectors, industry-only rows, and household rows, with optional
+    deviation against a provided reference total.
+- `check_transition_closure_targets.py`
+  - Generic transition-target and closure check. Computes annualized renewable
+    and non-renewable endpoint growth rates and verifies closure consistency for
+    a weighted sector block split (`ren`, `nren`, `other`).
 - `generate_at2020_flow_mapping_details.py`
   - Regenerates the 2020 flow comparison files:
     - `at2020_dom_mapping_detail.csv`
@@ -94,6 +102,19 @@ python scripts/diagnostics/generate_at2020_flow_mapping_details.py
 python scripts/diagnostics/generate_at2021_co2_mapping_detail.py
 python scripts/diagnostics/generate_at2020_strict_zij_outliers.py
 python scripts/diagnostics/generate_at2020_strict_zij_outliers.py --flow all
+python scripts/diagnostics/check_energy_workbook_scope.py \
+  --workbook /path/to/workbook.xlsx \
+  --sheet Energy_1.0 \
+  --group-name nren \
+  --group-cols 'Solid fossil fuels,Fossil gas,Oil and petroleum products (excluding biofuel portion),Non-renewable waste'
+python scripts/diagnostics/check_transition_closure_targets.py \
+  --weights-csv /path/to/weights.csv \
+  --years 20 \
+  --ren-start 146.91 \
+  --ren-end 196.28 \
+  --nren-start 197.70 \
+  --nren-end 84.26 \
+  --aggregate-growth 0.0137
 ```
 
 Optional arguments:
@@ -127,6 +148,27 @@ python scripts/diagnostics/generate_at2020_strict_zij_outliers.py \
   --year 2020 \
   --flow all \
   --material-threshold 10
+
+python scripts/diagnostics/check_energy_workbook_scope.py \
+  --workbook /path/to/workbook.xlsx \
+  --sheet Energy_1.0 \
+  --group-name ren \
+  --group-cols '["Hydro", "Wind", "Solar"]' \
+  --reference-total 123.4
+
+python scripts/diagnostics/check_transition_closure_targets.py \
+  --weights-csv /path/to/weights.csv \
+  --weight-col weight \
+  --block-col block \
+  --renewable-label ren \
+  --nonrenewable-label nren \
+  --closure-option residual-others \
+  --years 20 \
+  --ren-start 115.17 \
+  --ren-end 196.88 \
+  --nren-start 197.70 \
+  --nren-end 120.19 \
+  --aggregate-growth 0.0129
 ```
 
 ## Method Notes
