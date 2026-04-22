@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import pickle
 import time
@@ -178,6 +179,133 @@ def _exio_cache_paths(data_dir: Path, year: int, system: str) -> dict[str, Path]
         "legacy_text_alt": data_dir / "mrio_system.pkl",
         "legacy_fast": data_dir / "mrio_system.fast.pkl",
     }
+
+
+@contextmanager
+def _exclusive_cache_lock(
+    lock_path: Path,
+    *,
+    label: str,
+    timeout_seconds: float | None = 6 * 60 * 60,
+    poll_seconds: float = 1.0,
+    stale_seconds: float = 12 * 60 * 60,
+    verbose: bool = False,
+):
+    start = time.time()
+    next_log_at = start
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age_seconds = time.time() - lock_path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+
+            if age_seconds >= stale_seconds:
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+
+            waited = time.time() - start
+            if timeout_seconds is not None and waited >= timeout_seconds:
+                raise TimeoutError(f"Timed out waiting for cache lock {lock_path} ({label}).")
+            if verbose and time.time() >= next_log_at:
+                print(f"Waiting for cache lock {lock_path.name} ({label}) ...")
+                next_log_at = time.time() + 30.0
+            time.sleep(max(0.1, float(poll_seconds)))
+            continue
+
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(f"pid={os.getpid()}\nstarted_at={int(time.time())}\nlabel={label}\n")
+        break
+
+    try:
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _load_cached_exiobase(
+    *,
+    data_dir: Path,
+    system: str,
+    mrio_cache_dir: Path,
+    fast_cache_path: Path,
+    legacy_cache_dir: Path,
+    legacy_cache_dir_alt: Path,
+    legacy_fast_cache_path: Path,
+    verbose: bool = False,
+):
+    mrio = None
+
+    fast_candidates = [fast_cache_path]
+    if system == "pxp" and legacy_fast_cache_path.exists():
+        fast_candidates.append(legacy_fast_cache_path)
+
+    for fast_candidate in fast_candidates:
+        if not fast_candidate.exists():
+            continue
+        if verbose:
+            print(f"Loading EXIOBASE fast cache from {fast_candidate} ...")
+        try:
+            mrio = _load_fast_pickle(fast_candidate)
+            if fast_candidate != fast_cache_path and not fast_cache_path.exists():
+                try:
+                    fast_candidate.rename(fast_cache_path)
+                    if verbose:
+                        print(f"Migrated loaded legacy fast cache to {fast_cache_path}")
+                except Exception:
+                    pass
+            break
+        except Exception as exc:
+            ts = int(time.time())
+            bad = data_dir / f"{fast_candidate.name}.invalid.{ts}"
+            try:
+                fast_candidate.rename(bad)
+            except Exception:
+                pass
+            if verbose:
+                print(f"Warning: failed fast-cache load ({type(exc).__name__}: {exc}); falling back to text cache.")
+
+    text_candidates = [mrio_cache_dir]
+    if system == "pxp":
+        text_candidates.extend([legacy_cache_dir, legacy_cache_dir_alt])
+
+    for text_candidate in text_candidates:
+        if mrio is not None:
+            break
+        if not text_candidate.exists() or not text_candidate.is_dir():
+            continue
+
+        cache_para = text_candidate / "file_parameters.json"
+        if not cache_para.exists():
+            ts = int(time.time())
+            try:
+                text_candidate.rename(data_dir / f"{text_candidate.name}.invalid.{ts}")
+            except Exception:
+                pass
+            continue
+
+        if verbose:
+            print(f"Loading cached EXIOBASE IOSystem from {text_candidate} ...")
+        try:
+            mrio = pymrio.load(text_candidate)
+            _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
+        except FileNotFoundError:
+            ts = int(time.time())
+            try:
+                text_candidate.rename(data_dir / f"{text_candidate.name}.invalid.{ts}")
+            except Exception:
+                pass
+            mrio = None
+
+    return mrio
 
 
 def _validate_exiobase_system(mrio: pymrio.IOSystem, system: str) -> None:
@@ -456,119 +584,84 @@ def load_mrio(
             ts = int(time.time())
             mrio_cache_dir.rename(data_dir / f"mrio_system.invalid.{ts}")
 
-        # Preferred cache path: binary fast cache (small load-time overhead).
-        fast_candidates = [fast_cache_path]
-        if system == "pxp" and legacy_fast_cache_path.exists():
-            fast_candidates.append(legacy_fast_cache_path)
-
-        for fast_candidate in fast_candidates:
-            if not fast_candidate.exists():
-                continue
-            if verbose:
-                print(f"Loading EXIOBASE fast cache from {fast_candidate} ...")
-            try:
-                mrio = _load_fast_pickle(fast_candidate)
-                if fast_candidate != fast_cache_path and not fast_cache_path.exists():
-                    try:
-                        fast_candidate.rename(fast_cache_path)
-                        if verbose:
-                            print(f"Migrated loaded legacy fast cache to {fast_cache_path}")
-                    except Exception:
-                        pass
-                break
-            except Exception as exc:
-                ts = int(time.time())
-                bad = data_dir / f"{fast_candidate.name}.invalid.{ts}"
-                try:
-                    fast_candidate.rename(bad)
-                except Exception:
-                    pass
-                if verbose:
-                    print(f"Warning: failed fast-cache load ({type(exc).__name__}: {exc}); falling back to text cache.")
-
-        text_candidates = [mrio_cache_dir]
-        if system == "pxp":
-            text_candidates.extend([legacy_cache_dir, legacy_cache_dir_alt])
-
-        for text_candidate in text_candidates:
-            if mrio is not None:
-                break
-            if not text_candidate.exists() or not text_candidate.is_dir():
-                continue
-
-            cache_para = text_candidate / "file_parameters.json"
-            if not cache_para.exists():
-                ts = int(time.time())
-                try:
-                    text_candidate.rename(data_dir / f"{text_candidate.name}.invalid.{ts}")
-                except Exception:
-                    pass
-                continue
-
-            if mrio is None:
-                if verbose:
-                    print(f"Loading cached EXIOBASE IOSystem from {text_candidate} ...")
-                try:
-                    mrio = pymrio.load(text_candidate)
-                    # Seed/update binary fast cache for subsequent runs.
-                    _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
-                except FileNotFoundError:
-                    ts = int(time.time())
-                    try:
-                        text_candidate.rename(data_dir / f"{text_candidate.name}.invalid.{ts}")
-                    except Exception:
-                        pass
-                    mrio = None
+        mrio = _load_cached_exiobase(
+            data_dir=data_dir,
+            system=system,
+            mrio_cache_dir=mrio_cache_dir,
+            fast_cache_path=fast_cache_path,
+            legacy_cache_dir=legacy_cache_dir,
+            legacy_cache_dir_alt=legacy_cache_dir_alt,
+            legacy_fast_cache_path=legacy_fast_cache_path,
+            verbose=verbose,
+        )
 
         if mrio is None:
-             # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
-             zip_path = ensure_exiobase_year_zip(
-                 year=int(year),
-                 data_dir=paths["data_dir"],
-                 system=system,
-                 force_download=force_download,
-                 allow_download_missing=allow_download_missing,
-                 resume_downloads=resume_downloads,
-                 show_download_progress=show_download_progress,
-                 download_chunk_mb=download_chunk_mb,
-                 download_timeout_seconds=download_timeout_seconds,
-                 download_retries=download_retries,
-                 verbose=verbose,
-             )
+            lock_path = data_dir / f".exiobase_{int(year)}_{system}.lock"
+            with _exclusive_cache_lock(
+                lock_path,
+                label=f"EXIOBASE {int(year)} {system}",
+                verbose=verbose,
+            ):
+                mrio = _load_cached_exiobase(
+                    data_dir=data_dir,
+                    system=system,
+                    mrio_cache_dir=mrio_cache_dir,
+                    fast_cache_path=fast_cache_path,
+                    legacy_cache_dir=legacy_cache_dir,
+                    legacy_cache_dir_alt=legacy_cache_dir_alt,
+                    legacy_fast_cache_path=legacy_fast_cache_path,
+                    verbose=verbose,
+                )
 
-             if verbose:
-                 print(f"Parsing EXIOBASE zip {zip_path} (this can take a while)...")
-             mrio = pymrio.parse_exiobase3(zip_path)
+                if mrio is None:
+                    # Download if needed (MRIO wrapper around per-year EXIOBASE zip download)
+                    zip_path = ensure_exiobase_year_zip(
+                        year=int(year),
+                        data_dir=paths["data_dir"],
+                        system=system,
+                        force_download=force_download,
+                        allow_download_missing=allow_download_missing,
+                        resume_downloads=resume_downloads,
+                        show_download_progress=show_download_progress,
+                        download_chunk_mb=download_chunk_mb,
+                        download_timeout_seconds=download_timeout_seconds,
+                        download_retries=download_retries,
+                        verbose=verbose,
+                    )
 
-             # Optional text cache: disabled by default to avoid large on-disk caches.
-             if exio_save_text_cache:
-                 # If a previous partial run created a directory at this path, move it aside.
-                 if mrio_cache_dir.exists():
-                     ts = int(time.time())
-                     mrio_cache_dir.rename(data_dir / f"{mrio_cache_dir.name}.stale.{ts}")
-                 if verbose:
-                     print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
-                 mrio.save(mrio_cache_dir)
+                    if verbose:
+                        print(f"Parsing EXIOBASE zip {zip_path} (this can take a while)...")
+                    mrio = pymrio.parse_exiobase3(zip_path)
 
-             # Also persist fast cache so future runs bypass large text parsing.
-             _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
+                    # Optional text cache: disabled by default to avoid large on-disk caches.
+                    if exio_save_text_cache:
+                        # If a previous partial run created a directory at this path, move it aside.
+                        if mrio_cache_dir.exists():
+                            ts = int(time.time())
+                            mrio_cache_dir.rename(data_dir / f"{mrio_cache_dir.name}.stale.{ts}")
+                        if verbose:
+                            print(f"Saving parsed EXIOBASE IOSystem to {mrio_cache_dir} ...")
+                        mrio.save(mrio_cache_dir)
 
-             # Keep source zip by default; only delete when explicitly requested.
-             # If text cache is enabled, require complete parsed cache; otherwise
-             # allow delete once the fast cache exists.
-             can_delete_zip = (
-                 _is_complete_exio_parsed_cache(mrio_cache_dir)
-                 if exio_save_text_cache
-                 else fast_cache_path.exists()
-             )
-             if delete_source_zip_after_parse and can_delete_zip:
-                 try:
-                     zip_path.unlink(missing_ok=True)
-                     if verbose:
-                         print(f"Deleted EXIOBASE source zip after successful parse: {zip_path}")
-                 except Exception as exc:
-                     if verbose:
-                         print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
+                    # Also persist fast cache so future runs bypass large text parsing.
+                    _save_fast_pickle(fast_cache_path, mrio, verbose=verbose)
+
+                    # Keep source zip by default; only delete when explicitly requested.
+                    # If text cache is enabled, require complete parsed cache; otherwise
+                    # allow delete once the fast cache exists.
+                    can_delete_zip = (
+                        _is_complete_exio_parsed_cache(mrio_cache_dir)
+                        if exio_save_text_cache
+                        else fast_cache_path.exists()
+                    )
+                    if delete_source_zip_after_parse and can_delete_zip:
+                        try:
+                            zip_path.unlink(missing_ok=True)
+                            if verbose:
+                                print(f"Deleted EXIOBASE source zip after successful parse: {zip_path}")
+                        except Exception as exc:
+                            if verbose:
+                                print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
 
         _validate_exiobase_system(mrio, system)
 

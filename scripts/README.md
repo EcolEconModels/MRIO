@@ -8,10 +8,12 @@ This directory contains the reproducible workflow used to generate the PostGrowt
 | --- | --- |
 | `aggregate_iot_by_mapping.py` | Re-aggregate already split IO tables using a mapping CSV and optionally write Eurostat-shaped SFC workbooks. |
 | `build_energy_balances_65sectors_primary_sources.py` | Build the direct-mapped 65-sector Austrian energy-balance workbook on the model carrier basis. |
+| `generate_fuels_mapping_from_workbook.py` | Read a saved workbook copy, parse `Step2_Reaggregation`, and emit canonical split / identity / reaggregation mapping CSVs for the fuels workflow. |
 | `generate_mapping_csvs.py` | Regenerate the annotated EXIO-to-Eurostat and energy-sector mapping CSVs from the checked-in rules plus Eurostat output shares. |
 | `split_eurostat_energy_by_exiobase.py` | Split Eurostat IO energy sectors using EXIO profiles, run local/global balancing, and emit diagnostics. |
 | `pipelines/split_energy_balances_65CPAproducts_aggregate_energy_sources.sh` | Legacy-named end-to-end shell entrypoint for the direct-mapped energy-balance workbook export to the repo's 65-product CPA-based IO targets. |
 | `pipelines/at_2021_energy_green_brown.sh` | End-to-end shell entrypoint for split-and-reaggregate Eurostat IO workbooks; despite the filename it accepts `EUROSTAT_TIME` and works for 2020 and 2021. |
+| `pipelines/at_2021_fuels.sh` | Workbook-driven 2021 fuels entrypoint: generate mapping CSVs from `Step2_Reaggregation`, split the selected Eurostat CPA sectors with local balancing, then export both disaggregated and reaggregated TOTAL / DOM / IMP workbooks. |
 | `pipelines/export_postgrowth_inputs.sh` | One-command wrapper that exports the current PostGrowth input set into the sibling PostGrowth repo. |
 | `diagnostics/` | Targeted one-off diagnostics used to inspect mapping details, CO2 mappings, and outliers. |
 
@@ -103,6 +105,26 @@ By default this writes:
 | `eurostat_sector_co2_intensity.csv` | EXIO direct-emissions intensities reaggregated to Eurostat sectors using `exio_to_eurostat_cpa.csv`. |
 
 `mapped_output_consistency.csv` is diagnostic, not an additional balancing target. The hard gate checks total-scale consistency between mapped EXIO producer output and the Eurostat product-use reference; the per-sector comparison is preserved as an audit artifact because the EXIO-to-CPA bridge is approximate by construction.
+
+### 5. Export workbook-driven fuels IO workbooks
+
+Save the sheet-driven workbook to a normal file first, then run:
+
+```bash
+cd /home/agilra/EcolEconModels/MRIO
+WORKBOOK_XLSX=/absolute/path/to/IO_Exiobase_Sector_Disaggregation.xlsx \
+WORKBOOK_SHEET=Step2_Reaggregation \
+TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx \
+bash scripts/pipelines/at_2021_fuels.sh
+```
+
+This writes three families under `outputs/`:
+
+- generated workbook-driven mapping CSVs and audit files
+- split flow tables plus disaggregated TOTAL / DOM / IMP workbooks with `_fuels_split` in the filename
+- reaggregated TOTAL / DOM / IMP workbooks with `_fuels_reaggregated` in the filename
+
+The workbook selects which Eurostat CPA sectors are split from column 1 of `Step2_Reaggregation`, but the actual EXIO constituents are always taken from `exio_to_eurostat_cpa.csv`. Any sheet rows that do not resolve cleanly, or any split subsectors left uncovered by the sheet's reaggregation column, are written as audit CSVs alongside the generated mappings.
 
 ## Notes on Reproducibility
 

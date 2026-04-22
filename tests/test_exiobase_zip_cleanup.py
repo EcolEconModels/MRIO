@@ -10,6 +10,12 @@ from ecolecon_mrio.data import load_mrio
 
 class _FakeExioMrio:
     def __init__(self, complete_cache: bool) -> None:
+        sectors = [f"sector_{idx:03d}" for idx in range(200)]
+        z_index = pd.MultiIndex.from_arrays(
+            [["AT"] * len(sectors), sectors],
+            names=["region", "sector"],
+        )
+        self.Z = pd.DataFrame(0.0, index=z_index, columns=z_index)
         self.Y = pd.DataFrame({"FD": [1.0, 2.0]}, index=["a", "b"])
         self.G = None
         self._complete_cache = complete_cache
@@ -173,6 +179,54 @@ def test_load_mrio_exiobase_default_parse_writes_fast_only(monkeypatch, tmp_path
     assert fast_path.exists()
     assert not cache_dir.exists()
     assert zip_path.exists()
+
+
+def test_load_mrio_exiobase_rechecks_cache_inside_lock(monkeypatch, tmp_path):
+    year = 2093
+
+    import ecolecon_mrio.data as data_mod
+
+    fake_mrio = _FakeExioMrio(complete_cache=True)
+    load_calls: list[str] = []
+
+    def _fake_load_cached_exiobase(**_kwargs):
+        load_calls.append("load")
+        if len(load_calls) == 1:
+            return None
+        return fake_mrio
+
+    class _FakeLock:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(data_mod, "_load_cached_exiobase", _fake_load_cached_exiobase)
+    monkeypatch.setattr(data_mod, "_exclusive_cache_lock", lambda *args, **kwargs: _FakeLock())
+    monkeypatch.setattr(
+        data_mod,
+        "ensure_exiobase_year_zip",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("download should not run once cache appears")),
+    )
+    monkeypatch.setattr(
+        data_mod.pymrio,
+        "parse_exiobase3",
+        lambda _path: (_ for _ in ()).throw(AssertionError("parse should not run once cache appears")),
+    )
+
+    mrio, y = load_mrio(
+        "exiobase",
+        year,
+        data_root=tmp_path,
+        calc_all=False,
+        allow_download_missing=False,
+        verbose=False,
+    )
+
+    assert mrio is fake_mrio
+    assert list(y.index) == ["a", "b"]
+    assert load_calls == ["load", "load"]
 
 
 def test_resolve_exiobase3_url_falls_back_when_catalog_lookup_fails(monkeypatch):

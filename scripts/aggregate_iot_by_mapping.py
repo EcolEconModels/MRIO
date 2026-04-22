@@ -748,6 +748,43 @@ def _template_table_layout(ws) -> dict:
     }
 
 
+def _resolve_product_template_alignment(
+    *,
+    template_xlsx: Path | None,
+    base_product_codes: list[str],
+    output_product_codes: list[str],
+    verbose: bool,
+) -> tuple[Path | None, dict[str, str], list[str]]:
+    """Choose template alignment strategy for workbook export.
+
+    Returns an effective template path, a replacement map, and the ordered product codes.
+    If the output sectors no longer match the Eurostat template order and no explicit
+    replacement heuristic applies, template mode is disabled and the caller should
+    write a generic workbook instead.
+    """
+    have = set(map(str, output_product_codes))
+    missing = [c for c in base_product_codes if c not in have]
+    extra = [c for c in list(map(str, output_product_codes)) if c not in set(base_product_codes)]
+
+    replace_map: dict[str, str] = {}
+    if not missing and not extra:
+        return template_xlsx, replace_map, list(base_product_codes)
+
+    missing_set = set(missing)
+    extra_set = set(extra)
+    if missing_set == {"CPA_C19", "CPA_D"} and extra_set == {"ENERGY_GREEN", "ENERGY_BROWN"}:
+        replace_map = {"CPA_C19": "ENERGY_BROWN", "CPA_D": "ENERGY_GREEN"}
+        return template_xlsx, replace_map, [replace_map.get(c, c) for c in base_product_codes]
+
+    if template_xlsx is not None and verbose:
+        print(
+            "Template workbook alignment disabled for custom aggregated sectors. "
+            f"Missing base codes: {missing}; extra output codes: {extra}",
+            flush=True,
+        )
+    return None, {}, list(map(str, output_product_codes))
+
+
 def _write_sfc_workbook(
     *,
     out_path: Path,
@@ -814,29 +851,12 @@ def _write_sfc_workbook(
     if not base_product_codes:
         raise ValueError("Eurostat meta did not provide an industry/product code order.")
 
-    # Determine how to place new aggregates (e.g. ENERGY_GREEN/BROWN) into the Eurostat order.
-    # For generality, we infer missing/extra codes and use a small heuristic for the common
-    # CPA_C19/CPA_D -> ENERGY_* case.
-    have = set(map(str, Z_after.index))
-    missing = [c for c in base_product_codes if c not in have]
-    extra = [c for c in Z_after.index.astype(str).tolist() if c not in set(base_product_codes)]
-
-    replace_map: dict[str, str] = {}
-    if missing or extra:
-        missing_set = set(missing)
-        extra_set = set(extra)
-        if missing_set == {"CPA_C19", "CPA_D"} and extra_set == {"ENERGY_GREEN", "ENERGY_BROWN"}:
-            replace_map = {"CPA_C19": "ENERGY_BROWN", "CPA_D": "ENERGY_GREEN"}
-        else:
-            raise ValueError(
-                "Cannot align aggregated sector codes to Eurostat template order.\n"
-                f"Missing (in aggregated result, but present in Eurostat order): {missing}\n"
-                f"Extra (in aggregated result, but not present in Eurostat order): {extra}\n"
-                "Provide a template workbook and/or ensure your aggregation produces exactly the Eurostat sector codes, "
-                "or extend the script with an explicit replacement mapping for your use case."
-            )
-
-    product_codes_order = [replace_map.get(c, c) for c in base_product_codes]
+    template_xlsx, replace_map, product_codes_order = _resolve_product_template_alignment(
+        template_xlsx=template_xlsx,
+        base_product_codes=base_product_codes,
+        output_product_codes=Z_after.index.astype(str).tolist(),
+        verbose=verbose,
+    )
 
     # TOTAL column is moved to the left in the Eurostat XLSX export; the remaining final-demand columns
     # appear after the product columns.
