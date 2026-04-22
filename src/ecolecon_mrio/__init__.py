@@ -66,6 +66,20 @@ from .plotting import (
 )
 from .temporal import PanelDiagnostics, compute_viability_panel, load_mrio_panel
 from .transition import classify_transition_years, principal_direction_index
+from .transition_support import (
+    benchmark_step_for_emissions_cut,
+    coefficient_change_bounds,
+    emissions_cut_from_step,
+    emissions_direction_slope,
+    max_demand_nonnegative_emissions_cut,
+    max_demand_nonnegative_step,
+    max_output_nonnegative_emissions_cut,
+    max_output_nonnegative_step,
+    normalize_productive_certificate_vector,
+    productive_certificate_row_rhs,
+    productive_certificate_slack,
+    satisfies_productive_certificate,
+)
 
 from .download_utils import (
     DownloadProgressEvent,
@@ -128,6 +142,18 @@ __all__ = [
     "principal_growth_panel",
     "principal_direction_index",
     "classify_transition_years",
+    "benchmark_step_for_emissions_cut",
+    "coefficient_change_bounds",
+    "emissions_cut_from_step",
+    "emissions_direction_slope",
+    "max_demand_nonnegative_emissions_cut",
+    "max_demand_nonnegative_step",
+    "max_output_nonnegative_emissions_cut",
+    "max_output_nonnegative_step",
+    "normalize_productive_certificate_vector",
+    "productive_certificate_row_rhs",
+    "productive_certificate_slack",
+    "satisfies_productive_certificate",
     "read_coverage_manifest",
     "write_coverage_manifest",
     "select_contiguous_year_block",
