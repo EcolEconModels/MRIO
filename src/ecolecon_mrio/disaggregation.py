@@ -308,16 +308,23 @@ def disaggregate_and_balance(
 
         # Adjustable mask:
         # - Z block: adjust cells where row or column touches a split subsector
-        # - Y block: only adjust split subsector rows (keep unaffected Y rows fixed)
+        # - Y block: keep final-demand rows fixed. The clean expansion already
+        #   preserves the original sector-by-final-demand totals exactly. Once
+        #   those Y rows are fixed, the feasible row targets are the clean
+        #   expansion row sums implied by [Z0|Y0], not the generic output-share
+        #   targets used by the global balancer.
         mask_Z = row_is_split[:, None] | col_is_split_Z[None, :]
-        mask_Y = row_is_split[:, None].repeat(n_y, axis=1)
+        mask_Y = np.zeros((len(M0.index), n_y), dtype=bool)
         adjustable = np.concatenate([mask_Z, mask_Y], axis=1)
+        row_targets_local = M0.sum(axis=1).to_numpy(dtype="float64")
 
         M_bal, stats, method = balance_biproportional_masked(
             M0.to_numpy(),
-            row_targets=row_targets,
+            row_targets=row_targets_local,
             col_targets=col_targets,
             adjustable=adjustable,
+            row_labels=list(map(str, M0.index)),
+            col_labels=list(map(str, M0.columns)),
             max_iter=max_iter,
             tol=tol,
         )

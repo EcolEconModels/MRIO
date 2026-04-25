@@ -64,7 +64,7 @@ from .plotting import (
     plot_inverted_pyramid,
     plot_layered_pyramid,
 )
-from .temporal import PanelDiagnostics, compute_viability_panel, load_mrio_panel
+from .temporal import PanelDiagnostics, compute_output_change_decomposition, compute_viability_panel, load_mrio_panel
 from .transition import classify_transition_years, principal_direction_index
 from .transition_support import (
     benchmark_step_for_emissions_cut,
@@ -136,6 +136,7 @@ __all__ = [
     "load_mrio_panel",
     "PanelDiagnostics",
     "compute_viability_panel",
+    "compute_output_change_decomposition",
     "decompose_slack_change",
     "PrincipalDirectionResult",
     "principal_growth_direction",

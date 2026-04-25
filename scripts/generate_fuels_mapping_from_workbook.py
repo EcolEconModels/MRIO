@@ -163,12 +163,12 @@ def _build_target_key(
 
     if len(member_labels) == 1 and target_norm in member_norms:
         member = member_labels[0]
-        return f"{source_sector_code}::{member}", member
+        return f"{source_sector_code}::{member}", f"{source_sector_code}: {member}"
 
     if target_norm in {source_label_norm, source_code_norm, f"{source_label_norm} remaining", f"remaining {source_label_norm}"}:
-        return f"{source_sector_code}_REMAINING", f"{source_sector_label} - remaining"
+        return f"{source_sector_code}_remaining", f"{source_sector_code}: {source_sector_label}_remaining"
 
-    return f"{source_sector_code}_{_slugify(target_label)}", target_label
+    return f"{source_sector_code}_{_slugify(target_label)}", f"{source_sector_code}: {target_label}"
 
 
 def build_fuels_mappings(
@@ -177,10 +177,15 @@ def build_fuels_mappings(
     sheet_name: str,
     concordance_path: Path,
     outdir: Path,
-    split_mapping_name: str = "exio_fuels_split_from_workbook.csv",
-    identity_mapping_name: str = "fuels_identity_from_workbook.csv",
-    reaggregation_mapping_name: str = "fuels_reaggregation_from_workbook.csv",
+    output_prefix: str = "fuels",
+    split_mapping_name: str | None = None,
+    identity_mapping_name: str | None = None,
+    reaggregation_mapping_name: str | None = None,
 ) -> dict[str, Path]:
+    prefix = _slugify(output_prefix).lower()
+    split_mapping_name = split_mapping_name or f"exio_{prefix}_split_from_workbook.csv"
+    identity_mapping_name = identity_mapping_name or f"{prefix}_identity_from_workbook.csv"
+    reaggregation_mapping_name = reaggregation_mapping_name or f"{prefix}_reaggregation_from_workbook.csv"
     workbook_rows = _load_workbook_sheet(workbook_path, sheet_name=sheet_name)
     concordance = _ensure_mapping_columns(load_weighted_mapping_frame(concordance_path)).copy()
     concordance["enabled_bool"] = concordance["enabled"].map(_boolish_enabled)
@@ -340,7 +345,7 @@ def build_fuels_mappings(
                     "source_level": "product",
                     "target_dataset": "Eurostat_IO",
                     "target_system": "pxp",
-                    "target_version": "fuels_reaggregation",
+                    "target_version": prefix,
                     "target_level": "aggregate",
                     "source_key": str(row.from_sector),
                     "source_code": "",
@@ -424,7 +429,11 @@ def build_fuels_mappings(
     resolved_audit_path = outdir / "fuels_reaggregation_resolved_rows.csv"
     unresolved_audit_path = outdir / "fuels_reaggregation_unresolved_rows.csv"
     uncovered_path = outdir / "fuels_reaggregation_uncovered_subsectors.csv"
-    summary_path = outdir / "fuels_mapping_generation_summary.json"
+    selected_path = outdir / f"{prefix}_selected_source_sectors.csv"
+    resolved_audit_path = outdir / f"{prefix}_reaggregation_resolved_rows.csv"
+    unresolved_audit_path = outdir / f"{prefix}_reaggregation_unresolved_rows.csv"
+    uncovered_path = outdir / f"{prefix}_reaggregation_uncovered_subsectors.csv"
+    summary_path = outdir / f"{prefix}_mapping_generation_summary.json"
 
     _write_csv(normalized_path, workbook_rows)
     _write_csv(split_path, split_rows)
@@ -489,6 +498,11 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Folder where generated mapping CSVs and audit files will be written.",
     )
+    parser.add_argument(
+        "--output-prefix",
+        default="fuels",
+        help="Prefix used for generated mapping/audit filenames and target_version metadata.",
+    )
     args = parser.parse_args(argv)
 
     outputs = build_fuels_mappings(
@@ -496,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
         sheet_name=str(args.sheet_name),
         concordance_path=Path(args.concordance_csv),
         outdir=Path(args.outdir),
+        output_prefix=str(args.output_prefix),
     )
 
     print(json.dumps({key: str(value) for key, value in outputs.items()}, indent=2))

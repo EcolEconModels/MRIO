@@ -56,3 +56,31 @@ def test_aggregate_square_matrix_multiindex_sector_level():
     assert Z_agg.index.names == ["region", "sector"]
     assert ("AT", "S") in Z_agg.index
     assert ("AT", "s1") in Z_agg.index
+
+
+def test_aggregate_iot_preserves_final_demand_column_totals():
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+
+    sectors = ["A", "B", "C"]
+    Z = pd.DataFrame(
+        [[1.0, 2.0, 3.0], [0.5, 1.0, 0.0], [4.0, 0.0, 2.0]],
+        index=sectors,
+        columns=sectors,
+    )
+    Y = pd.DataFrame(
+        {
+            "P3": [1.0, 2.0, 3.0],
+            "P5": [0.5, 1.0, 1.5],
+            "P6": [2.0, 0.0, 1.0],
+        },
+        index=sectors,
+    )
+
+    mapping = {"B": "X", "C": "X"}
+    res = aggregate_iot(Z, Y, mapping, keep_unmapped=True, create_io_system=False)
+
+    pd.testing.assert_series_equal(res.Y.sum(axis=0).astype("float64"), Y.sum(axis=0).astype("float64"))
+    pd.testing.assert_series_equal(
+        res.x.astype("float64"),
+        (res.Z.sum(axis=1) + res.Y.sum(axis=1)).astype("float64"),
+    )

@@ -183,6 +183,8 @@ def balance_biproportional_masked(
     col_targets: np.ndarray,
     *,
     adjustable: np.ndarray,
+    row_labels: list[str] | tuple[str, ...] | None = None,
+    col_labels: list[str] | tuple[str, ...] | None = None,
     max_iter: int = 50_000,
     tol: float = 1e-10,
 ) -> tuple[np.ndarray, BalanceStats, str]:
@@ -225,14 +227,38 @@ def balance_biproportional_masked(
 
     row_resid = row_targets - fixed.sum(axis=1)
     col_resid = col_targets - fixed.sum(axis=0)
+    row_noise = np.maximum(eps, 1e-12 * np.maximum(1.0, np.abs(row_targets)))
+    col_noise = np.maximum(eps, 1e-12 * np.maximum(1.0, np.abs(col_targets)))
+
+    # Treat machine-noise residuals as exact zeros before feasibility checks.
+    row_resid = np.where(np.abs(row_resid) <= row_noise, 0.0, row_resid)
+    col_resid = np.where(np.abs(col_resid) <= col_noise, 0.0, col_resid)
 
     if abs(row_resid.sum() - col_resid.sum()) > 1e-8:
         raise ValueError("Row/column residual targets are inconsistent (different totals).")
 
     # If the adjustable block is nonnegative, residual targets must be nonnegative (within tolerance).
-    if (adj0 >= 0).all() and ((row_resid < -eps).any() or (col_resid < -eps).any()):
+    if (adj0 >= 0).all() and ((row_resid < -row_noise).any() or (col_resid < -col_noise).any()):
+        details: list[str] = []
+        if (row_resid < -row_noise).any():
+            row_idx = int(np.argmin(row_resid))
+            row_label = row_labels[row_idx] if row_labels is not None else str(row_idx)
+            details.append(
+                "row="
+                f"{row_label} target={float(row_targets[row_idx]):.10f} "
+                f"fixed={float(fixed.sum(axis=1)[row_idx]):.10f} resid={float(row_resid[row_idx]):.10f}"
+            )
+        if (col_resid < -col_noise).any():
+            col_idx = int(np.argmin(col_resid))
+            col_label = col_labels[col_idx] if col_labels is not None else str(col_idx)
+            details.append(
+                "col="
+                f"{col_label} target={float(col_targets[col_idx]):.10f} "
+                f"fixed={float(fixed.sum(axis=0)[col_idx]):.10f} resid={float(col_resid[col_idx]):.10f}"
+            )
         raise ValueError(
-            "Masked balancing infeasible: fixed cells exceed targets, producing negative residual targets."
+            "Masked balancing infeasible: fixed cells exceed targets, producing negative residual targets. "
+            + "; ".join(details)
         )
 
     M_adj_bal, stats, method = balance_biproportional(

@@ -212,7 +212,21 @@ def _pretty_sector_label(code_or_label: str) -> str:
     s = str(code_or_label)
     if s.startswith("ENERGY_"):
         return s.replace("_", " ").title()
+    if "::" in s:
+        left, right = s.split("::", 1)
+        return f"{left}: {right}"
     return s
+
+
+def _base_sector_from_code(code: str, base_product_codes: Sequence[str]) -> str | None:
+    code_s = str(code)
+    base_codes = [str(base) for base in base_product_codes]
+    if code_s in base_codes:
+        return code_s
+    for base in base_codes:
+        if code_s.startswith(f"{base}::") or code_s.startswith(f"{base}_"):
+            return base
+    return None
 
 
 def _write_excel_mapping_sheet(
@@ -748,41 +762,285 @@ def _template_table_layout(ws) -> dict:
     }
 
 
+def _reshape_template_table(ws, *, target_n_products: int) -> dict:
+    layout = _template_table_layout(ws)
+    current_n_products = int(layout["n_products"])
+    delta = int(target_n_products) - current_n_products
+    if delta > 0:
+        ws.insert_cols(int(layout["first_fd_col"]), amount=delta)
+        ws.insert_rows(int(layout["va_row"]), amount=delta)
+    elif delta < 0:
+        ws.delete_cols(int(layout["first_product_col"]) + target_n_products, amount=-delta)
+        ws.delete_rows(int(layout["first_product_row"]) + target_n_products, amount=-delta)
+    return _template_table_layout(ws)
+
+
+def _supplementary_fd_row_from_current_shares(
+    *,
+    template_fd_values: pd.Series,
+    current_fd_totals: pd.Series,
+    product_total: float,
+) -> pd.Series:
+    out = pd.Series(index=template_fd_values.index.astype(str), dtype="float64")
+    current = pd.to_numeric(current_fd_totals.reindex(out.index), errors="coerce")
+    template = pd.to_numeric(template_fd_values.reindex(out.index), errors="coerce")
+
+    split_groups = {
+        "P3": ["P3_S13", "P3_S14", "P3_S15"],
+        "P5": ["P51G", "P52", "P53"],
+        "P6": ["P6_B0", "P6_D0", "P6_U2", "P6_U3"],
+    }
+
+    for total_code, detail_codes in split_groups.items():
+        if total_code in out.index:
+            if pd.notna(template.get(total_code)):
+                out.loc[total_code] = float(template.loc[total_code])
+            elif pd.notna(current.get(total_code)):
+                out.loc[total_code] = float(current.loc[total_code])
+        available_details = [code for code in detail_codes if code in out.index]
+        if not available_details:
+            continue
+        detail_sum = float(current.reindex(available_details).fillna(0.0).sum())
+        total_value = out.get(total_code)
+        if pd.isna(total_value):
+            total_value = template.get(total_code)
+        if pd.isna(total_value):
+            total_value = current.get(total_code)
+        if pd.isna(total_value):
+            continue
+        if detail_sum > 0:
+            shares = current.reindex(available_details).fillna(0.0) / detail_sum
+            out.loc[available_details] = float(total_value) * shares
+        else:
+            out.loc[available_details] = 0.0
+
+    for code in out.index:
+        if code in {"P3", "P5", "P6", "TU", "TFU"}:
+            continue
+        if code == "P5M":
+            if pd.notna(current.get(code)):
+                out.loc[code] = float(current.loc[code])
+            elif pd.notna(template.get(code)):
+                out.loc[code] = float(template.loc[code])
+            continue
+        if pd.notna(template.get(code)) and pd.isna(out.get(code)):
+            out.loc[code] = float(template.loc[code])
+
+    tfu_value = 0.0
+    for code in ("P3", "P5", "P6"):
+        if code in out.index and pd.notna(out.get(code)):
+            tfu_value += float(out.loc[code])
+    if "TFU" in out.index:
+        out.loc["TFU"] = tfu_value
+    if "TU" in out.index:
+        out.loc["TU"] = float(product_total) + tfu_value
+    return out
+
+
+def _validate_template_reaggregation(
+    *,
+    product_codes_order: Sequence[str],
+    base_product_codes: Sequence[str],
+    parents_by_output: dict[str, tuple[str, ...]],
+    fd_codes_order_no_total: Sequence[str],
+    Y_before: pd.DataFrame,
+    tpl_ws,
+    tpl_layout: dict[str, int],
+    Z_ord: pd.DataFrame,
+    Y_ord: pd.DataFrame,
+    lower_row_vectors: dict[str, pd.Series],
+    lower_fd_vectors: dict[str, pd.Series],
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> None:
+    product_codes = [str(code) for code in product_codes_order]
+    base_codes = [str(code) for code in base_product_codes]
+    fd_codes = [str(code) for code in fd_codes_order_no_total]
+    tpl_product_cols = {
+        code: int(tpl_layout["first_product_col"]) + idx for idx, code in enumerate(base_codes)
+    }
+    tpl_fd_cols = {
+        code: int(tpl_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes)
+    }
+
+    children_by_parent: dict[str, list[str]] = {code: [] for code in base_codes}
+    has_multi_parent_outputs = any(len(tuple(parents)) > 1 for parents in parents_by_output.values())
+    for output_code in product_codes:
+        for parent_code in parents_by_output.get(output_code, ()): 
+            if parent_code in children_by_parent:
+                children_by_parent[parent_code].append(output_code)
+
+    before_parent_index = [_base_sector_from_code(str(code), base_codes) for code in Y_before.index]
+    valid_before_rows = [parent is not None for parent in before_parent_index]
+    Y_before_valid = Y_before.loc[valid_before_rows, :].copy()
+    Y_before_valid.index = [parent for parent in before_parent_index if parent is not None]
+    Y_before_base = Y_before_valid.groupby(level=0).sum().reindex(index=base_codes).fillna(0.0).astype("float64")
+
+    row_sum_Z = Z_ord.sum(axis=1).astype("float64")
+    col_sum_Z = Z_ord.sum(axis=0).astype("float64")
+    current_x = (row_sum_Z + Y_ord.sum(axis=1)).astype("float64")
+    current_tfu = pd.Series(0.0, index=product_codes, dtype="float64")
+    if {"P3", "P5", "P6"}.issubset(set(Y_ord.columns.astype(str))):
+        current_tfu = (Y_ord["P3"] + Y_ord["P5"] + Y_ord["P6"]).astype("float64")
+    elif "TFU" in Y_ord.columns:
+        current_tfu = Y_ord["TFU"].astype("float64")
+    current_tu = (row_sum_Z + current_tfu).astype("float64")
+    current_fd_totals = pd.Series(
+        {
+            code: (
+                float(current_tu.sum())
+                if code == "TU"
+                else float(current_tfu.sum())
+                if code == "TFU"
+                else float(Y_ord.get(code, pd.Series(0.0, index=product_codes)).sum())
+            )
+            for code in fd_codes
+        },
+        dtype="float64",
+    )
+
+    def _numeric_cell(row: int, col: int) -> float | None:
+        raw = tpl_ws.cell(row=row, column=col).value
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        return None
+
+    def _assert_close(label: str, actual: float, expected: float) -> None:
+        if not np.isclose(float(actual), float(expected), rtol=rtol, atol=atol):
+            raise ValueError(
+                f"Template reaggregation validation failed for {label}: "
+                f"actual={float(actual):.10f}, expected={float(expected):.10f}"
+            )
+
+    original_tfu = pd.Series(0.0, index=base_codes, dtype="float64")
+    if {"P3", "P5", "P6"}.issubset(set(Y_before_base.columns.astype(str))):
+        original_tfu = (Y_before_base["P3"] + Y_before_base["P5"] + Y_before_base["P6"]).astype("float64")
+    elif "TFU" in Y_before_base.columns:
+        original_tfu = Y_before_base["TFU"].astype("float64")
+
+    if not has_multi_parent_outputs:
+        for parent_code in base_codes:
+            child_codes = children_by_parent.get(parent_code, [])
+            if not child_codes:
+                continue
+            for fd_code in fd_codes:
+                if fd_code == "TU":
+                    continue
+                if fd_code == "TFU":
+                    actual = float(current_tfu.reindex(child_codes).fillna(0.0).sum())
+                    expected = float(original_tfu.loc[parent_code])
+                else:
+                    if fd_code not in Y_ord.columns or fd_code not in Y_before_base.columns:
+                        continue
+                    actual = float(Y_ord.reindex(index=child_codes, columns=[fd_code]).fillna(0.0)[fd_code].sum())
+                    expected = float(Y_before_base.reindex(columns=[fd_code]).fillna(0.0).loc[parent_code, fd_code])
+                _assert_close(f"product-row final-demand parent={parent_code} fd={fd_code}", actual, expected)
+
+    for r in range(int(tpl_layout["va_row"]), tpl_ws.max_row + 1):
+        label = tpl_ws.cell(row=r, column=1).value
+        if label is None or str(label).strip() == "":
+            continue
+        label_text = str(label).strip()
+        row_values = lower_row_vectors.get(label_text)
+        if row_values is not None:
+            if label_text == "Value added, gross":
+                expected_by_output = (current_x - col_sum_Z).astype("float64")
+            elif label_text == "Output":
+                expected_by_output = current_x.astype("float64")
+            elif label_text == "Total intermediate consumption /final use":
+                expected_by_output = col_sum_Z.astype("float64")
+            elif label_text == "Total supply at basic prices":
+                imports_values = lower_row_vectors.get("Imports of goods and services")
+                expected_by_output = None if imports_values is None else (current_x + imports_values).astype("float64")
+            else:
+                expected_by_output = None
+            if expected_by_output is not None:
+                for output_code in product_codes:
+                    _assert_close(
+                        f"lower-row product output={output_code} row={label_text}",
+                        float(row_values.reindex(product_codes).fillna(0.0).loc[output_code]),
+                        float(expected_by_output.loc[output_code]),
+                    )
+            else:
+                if has_multi_parent_outputs:
+                    continue
+                for parent_code in base_codes:
+                    expected = _numeric_cell(r, tpl_product_cols[parent_code])
+                    if expected is None:
+                        continue
+                    actual = float(row_values.reindex(children_by_parent.get(parent_code, [])).fillna(0.0).sum())
+                    _assert_close(f"lower-row product parent={parent_code} row={label_text}", actual, expected)
+
+        fd_values = lower_fd_vectors.get(label_text)
+        if fd_values is not None:
+            if label_text == "Total intermediate consumption /final use":
+                expected_fd_values = current_fd_totals
+            else:
+                template_fd_values = pd.Series(
+                    {code: _numeric_cell(r, tpl_fd_cols[code]) for code in fd_codes if code in tpl_fd_cols},
+                    dtype="float64",
+                )
+                product_total = float(row_values.sum()) if row_values is not None else 0.0
+                expected_fd_values = _supplementary_fd_row_from_current_shares(
+                    template_fd_values=template_fd_values,
+                    current_fd_totals=current_fd_totals,
+                    product_total=product_total,
+                )
+            for fd_code in fd_codes:
+                expected = expected_fd_values.get(fd_code)
+                actual = fd_values.get(fd_code)
+                if pd.isna(expected) or pd.isna(actual):
+                    continue
+                _assert_close(f"lower-row fd row={label_text} fd={fd_code}", float(actual), float(expected))
+
+
 def _resolve_product_template_alignment(
     *,
     template_xlsx: Path | None,
     base_product_codes: list[str],
     output_product_codes: list[str],
+    mapping_df: pd.DataFrame | None = None,
+    mapping_from_col: str = "from_sector",
+    mapping_to_col: str = "to_sector",
     verbose: bool,
-) -> tuple[Path | None, dict[str, str], list[str]]:
+) -> tuple[Path | None, list[str], dict[str, str], dict[str, tuple[str, ...]]]:
     """Choose template alignment strategy for workbook export.
 
-    Returns an effective template path, a replacement map, and the ordered product codes.
-    If the output sectors no longer match the Eurostat template order and no explicit
-    replacement heuristic applies, template mode is disabled and the caller should
-    write a generic workbook instead.
+    Returns an effective template path, the ordered product codes, and parent mappings.
     """
-    have = set(map(str, output_product_codes))
-    missing = [c for c in base_product_codes if c not in have]
-    extra = [c for c in list(map(str, output_product_codes)) if c not in set(base_product_codes)]
+    product_order = list(map(str, output_product_codes))
+    base_codes = [str(code) for code in base_product_codes]
+    parents_by_output: dict[str, tuple[str, ...]] = {}
 
-    replace_map: dict[str, str] = {}
-    if not missing and not extra:
-        return template_xlsx, replace_map, list(base_product_codes)
+    mapped_parents: dict[str, list[str]] = {}
+    if mapping_df is not None and mapping_from_col in mapping_df.columns and mapping_to_col in mapping_df.columns:
+        for _, row in mapping_df.iterrows():
+            output_code = str(row[mapping_to_col])
+            parent_code = _base_sector_from_code(str(row[mapping_from_col]), base_codes)
+            if parent_code is None:
+                continue
+            mapped_parents.setdefault(output_code, [])
+            if parent_code not in mapped_parents[output_code]:
+                mapped_parents[output_code].append(parent_code)
 
-    missing_set = set(missing)
-    extra_set = set(extra)
-    if missing_set == {"CPA_C19", "CPA_D"} and extra_set == {"ENERGY_GREEN", "ENERGY_BROWN"}:
-        replace_map = {"CPA_C19": "ENERGY_BROWN", "CPA_D": "ENERGY_GREEN"}
-        return template_xlsx, replace_map, [replace_map.get(c, c) for c in base_product_codes]
+    for output_code in product_order:
+        parent_candidates = mapped_parents.get(output_code)
+        if parent_candidates:
+            parents_by_output[output_code] = tuple(parent_candidates)
+            continue
+        inferred = _base_sector_from_code(output_code, base_codes)
+        if inferred is not None:
+            parents_by_output[output_code] = (inferred,)
 
-    if template_xlsx is not None and verbose:
+    primary_parent_by_output = {code: parents[0] for code, parents in parents_by_output.items() if parents}
+    if template_xlsx is not None and len(primary_parent_by_output) != len(product_order) and verbose:
         print(
             "Template workbook alignment disabled for custom aggregated sectors. "
-            f"Missing base codes: {missing}; extra output codes: {extra}",
+            f"Could not infer parents for output codes: {[code for code in product_order if code not in primary_parent_by_output]}",
             flush=True,
         )
-    return None, {}, list(map(str, output_product_codes))
+        return None, product_order, primary_parent_by_output, parents_by_output
+    return template_xlsx, product_order, primary_parent_by_output, parents_by_output
 
 
 def _write_sfc_workbook(
@@ -851,10 +1109,21 @@ def _write_sfc_workbook(
     if not base_product_codes:
         raise ValueError("Eurostat meta did not provide an industry/product code order.")
 
-    template_xlsx, replace_map, product_codes_order = _resolve_product_template_alignment(
+    target_label_by_output: dict[str, str] = {}
+    if "target_label" in mapping_df.columns and mapping_to_col in mapping_df.columns:
+        for _, row in mapping_df.iterrows():
+            output_code = str(row[mapping_to_col])
+            label = str(row.get("target_label", "")).strip()
+            if output_code and label and output_code not in target_label_by_output:
+                target_label_by_output[output_code] = label
+
+    template_xlsx, product_codes_order, primary_parent_by_output, parents_by_output = _resolve_product_template_alignment(
         template_xlsx=template_xlsx,
         base_product_codes=base_product_codes,
         output_product_codes=Z_after.index.astype(str).tolist(),
+        mapping_df=mapping_df,
+        mapping_from_col=mapping_from_col,
+        mapping_to_col=mapping_to_col,
         verbose=verbose,
     )
 
@@ -918,37 +1187,6 @@ def _write_sfc_workbook(
     Y_ord = Y_after.loc[product_codes_order, :].astype("float64")
     x_after = (Z_after.sum(axis=1) + Y_after.sum(axis=1)).astype("float64")
 
-    # Derive output-share-based allocation shares to split template account rows from old sectors
-    # (e.g. CPA_C19/CPA_D) into the new aggregates (e.g. ENERGY_*).
-    #
-    # Important: we need shares that partition each old sector across new ones, i.e. share(new|old),
-    # not share(old|new), otherwise old-sector totals get double-counted.
-    shares_new_given_old: dict[str, dict[str, float]] = {}
-    if replace_map and mapping_to_col in mapping_df.columns and mapping_from_col in mapping_df.columns:
-        x_before = (Z_before.sum(axis=1) + Y_before.sum(axis=1)).astype("float64")
-        old_codes = list(replace_map.keys())
-        new_codes = sorted(set(replace_map.values()))
-
-        contrib: dict[str, dict[str, float]] = {old: {new: 0.0 for new in new_codes} for old in old_codes}
-        for _, row in mapping_df.iterrows():
-            from_s = str(row[mapping_from_col])
-            to_s = str(row[mapping_to_col])
-            if to_s not in new_codes:
-                continue
-            for old in old_codes:
-                if from_s.startswith(f"{old}::"):
-                    if from_s in x_before.index:
-                        contrib[old][to_s] += float(x_before.loc[from_s])
-                    break
-
-        for old in old_codes:
-            total_old = float(sum(contrib[old].values()))
-            for new in new_codes:
-                if total_old > 0:
-                    shares_new_given_old.setdefault(new, {})[old] = float(contrib[old][new]) / total_old
-                else:
-                    shares_new_given_old.setdefault(new, {})[old] = 1.0 / max(1, len(new_codes))
-
     # Workbook creation/load
     if template_xlsx is not None:
         wb = openpyxl.load_workbook(template_xlsx, data_only=False)
@@ -956,6 +1194,8 @@ def _write_sfc_workbook(
             raise ValueError(f"Template workbook missing required sheet 'Sheet 1': {template_xlsx}")
         ws = wb["Sheet 1"]
         layout = _template_table_layout(ws)
+        if int(layout["n_products"]) != len(product_codes_order):
+            layout = _reshape_template_table(ws, target_n_products=len(product_codes_order))
     else:
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -983,13 +1223,6 @@ def _write_sfc_workbook(
         wb.create_sheet("Mapping")
         wb.create_sheet("Aggregation")
 
-    # Validate product count matches template layout in template mode.
-    if template_xlsx is not None and int(layout["n_products"]) != len(product_codes_order):
-        raise ValueError(
-            f"Template has {layout['n_products']} product rows, but aggregated result has {len(product_codes_order)} "
-            "sectors. This script currently expects these to match."
-        )
-
     hr = int(layout["header_row"])
     tr = int(layout["total_row"])
     r0 = int(layout["first_product_row"])
@@ -1003,23 +1236,16 @@ def _write_sfc_workbook(
     ws.cell(row=hr, column=1).value = ws.cell(row=hr, column=1).value or f"{str(eurostat_col_dim).upper()} (Labels)"
     ws.cell(row=hr, column=c_total).value = "Total"
 
-    if template_xlsx is None:
-        for j, code in enumerate(product_codes_order):
-            label = _pretty_sector_label(row_labels.get(code, str(code)))
-            ws.cell(row=hr, column=c_prod0 + j).value = label
+    for j, code in enumerate(product_codes_order):
+        label = target_label_by_output.get(code) or _pretty_sector_label(row_labels.get(code, str(code)))
+        ws.cell(row=hr, column=c_prod0 + j).value = label
 
-        for j, code in enumerate(fd_codes_order_no_total):
-            label = str(col_labels.get(code, code))
-            ws.cell(row=hr, column=c_fd0 + j).value = label
-    else:
-        # Template mode: preserve template header labels (only rename new aggregates).
-        for j, code in enumerate(product_codes_order):
-            if str(code).startswith("ENERGY_"):
-                label = _pretty_sector_label(code)
-                ws.cell(row=hr, column=c_prod0 + j).value = label
+    for j, code in enumerate(fd_codes_order_no_total):
+        label = str(col_labels.get(code, code))
+        ws.cell(row=hr, column=c_fd0 + j).value = label
 
     sector_label_map = {
-        str(code): _pretty_sector_label(row_labels.get(str(code), str(code)))
+        str(code): target_label_by_output.get(str(code), _pretty_sector_label(row_labels.get(str(code), str(code))))
         for code in product_codes_order
     }
 
@@ -1053,6 +1279,19 @@ def _write_sfc_workbook(
         _write_num(ws, row=tr, col=c_prod0 + j, value=float(col_sums_Z.loc[code]))
 
     col_sums_Y = Y_ord.sum(axis=0)
+    current_fd_totals = pd.Series(
+        {
+            code: (
+                tu_total
+                if code == "TU"
+                else tfu_total
+                if code == "TFU"
+                else float(col_sums_Y.get(code, 0.0))
+            )
+            for code in fd_codes_order_no_total
+        },
+        dtype="float64",
+    )
     for j, code in enumerate(fd_codes_order_no_total):
         if code == "TU":
             _write_num(ws, row=tr, col=c_fd0 + j, value=tu_total)
@@ -1064,11 +1303,7 @@ def _write_sfc_workbook(
     # Fill product rows (labels + numbers)
     for i, row_code in enumerate(product_codes_order):
         excel_r = r0 + i
-        if template_xlsx is None:
-            ws.cell(row=excel_r, column=1).value = _pretty_sector_label(row_labels.get(row_code, str(row_code)))
-        else:
-            if str(row_code).startswith("ENERGY_"):
-                ws.cell(row=excel_r, column=1).value = _pretty_sector_label(row_code)
+        ws.cell(row=excel_r, column=1).value = sector_label_map.get(str(row_code), _pretty_sector_label(row_code))
 
         _write_num(ws, row=excel_r, col=c_total, value=float(row_sum_Z.loc[row_code]))
 
@@ -1086,8 +1321,11 @@ def _write_sfc_workbook(
             else:
                 _write_num(ws, row=excel_r, col=c_fd0 + j, value=float(Y_ord.loc[row_code, col_code]))
 
-    # Template-only: update account rows for the new energy sectors and remove template-only sheets
-    # that would otherwise survive as blank tabs in the exported workbook.
+    lower_row_vectors: dict[str, pd.Series] = {}
+    lower_fd_vectors: dict[str, pd.Series] = {}
+
+    # Template-only: rebuild lower rows from identities and parent-sector shares, then remove
+    # template-only tabs that would otherwise survive as blank sheets.
     if template_xlsx is not None:
         # Drop template-only mapping sheets instead of blanking them, so downstream consumers
         # do not receive empty workbook tabs.
@@ -1107,57 +1345,121 @@ def _write_sfc_workbook(
                 human = {"TOTAL": "Total", "DOM": "Domestic", "IMP": "Imports"}.get(str(variant_value), str(variant_value))
                 ws_struct.cell(row=6, column=3).value = human
 
-        if replace_map:
-            # Use the original template (before overwrite) to read the old energy sector columns.
-            tpl_ws = openpyxl.load_workbook(template_xlsx, data_only=False)["Sheet 1"]
-            tpl_layout = _template_table_layout(tpl_ws)
-            tpl_hr = int(tpl_layout["header_row"])
-            tpl_c_prod0 = int(tpl_layout["first_product_col"])
-            tpl_n_prod = int(tpl_layout["n_products"])
+        tpl_wb = openpyxl.load_workbook(template_xlsx, data_only=False)
+        tpl_ws = tpl_wb["Sheet 1"]
+        tpl_layout = _template_table_layout(tpl_ws)
+        tpl_product_cols = {
+            code: int(tpl_layout["first_product_col"]) + idx for idx, code in enumerate(base_product_codes)
+        }
+        tpl_fd_cols = {
+            code: int(tpl_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes_order_no_total)
+        }
 
-            def _tpl_find_col_by_label(label: str) -> int | None:
-                for j in range(tpl_n_prod):
-                    if tpl_ws.cell(row=tpl_hr, column=tpl_c_prod0 + j).value == label:
-                        return tpl_c_prod0 + j
-                return None
-
-            old_cols = {
-                old_code: _tpl_find_col_by_label(str(row_labels.get(old_code, old_code)))
-                for old_code in replace_map.keys()
-            }
-
-            new_cols: dict[str, int] = {}
-            for new_code in set(replace_map.values()):
-                new_label = _pretty_sector_label(row_labels.get(new_code, new_code))
-                for j in range(n_prod):
-                    if ws.cell(row=hr, column=c_prod0 + j).value == new_label:
-                        new_cols[new_code] = c_prod0 + j
-                        break
-
-            for old_code, col in old_cols.items():
-                if col is None:
-                    raise ValueError(f"Could not locate template column for old sector {old_code!r}.")
-            for new_code, col in new_cols.items():
-                if col is None:
-                    raise ValueError(f"Could not locate output column for new sector {new_code!r}.")
-
-            # Update account rows by splitting old CPA_C19 and CPA_D columns into new ones using output shares.
-            for r in range(int(layout["va_row"]), ws.max_row + 1):
-                label = ws.cell(row=r, column=1).value
-                if label is None or str(label).strip() == "":
+        x_before = (Z_before.sum(axis=1) + Y_before.sum(axis=1)).astype("float64")
+        output_contrib_by_parent: dict[str, dict[str, float]] = {code: {} for code in product_codes_order}
+        if mapping_to_col in mapping_df.columns and mapping_from_col in mapping_df.columns:
+            for _, row in mapping_df.iterrows():
+                from_sector = str(row[mapping_from_col])
+                to_sector = str(row[mapping_to_col])
+                parent_code = _base_sector_from_code(from_sector, base_product_codes)
+                if parent_code is None or to_sector not in output_contrib_by_parent or from_sector not in x_before.index:
                     continue
+                output_contrib_by_parent[to_sector][parent_code] = output_contrib_by_parent[to_sector].get(parent_code, 0.0) + float(
+                    x_before.loc[from_sector]
+                )
 
-                v_c19 = tpl_ws.cell(row=r, column=old_cols["CPA_C19"]).value
-                v_d = tpl_ws.cell(row=r, column=old_cols["CPA_D"]).value
-                if not isinstance(v_c19, (int, float)) or not isinstance(v_d, (int, float)):
+        shares_new_given_old: dict[str, dict[str, float]] = {code: {} for code in product_codes_order}
+        for parent_code in base_product_codes:
+            parent_outputs = [code for code in product_codes_order if parent_code in parents_by_output.get(code, ())]
+            if not parent_outputs:
+                continue
+            total_parent = float(sum(output_contrib_by_parent.get(code, {}).get(parent_code, 0.0) for code in parent_outputs))
+            if total_parent <= 0:
+                total_parent = float(x_after.reindex(parent_outputs).fillna(0.0).sum())
+                for code in parent_outputs:
+                    value = float(x_after.get(code, 0.0))
+                    shares_new_given_old.setdefault(code, {})[parent_code] = 0.0 if total_parent <= 0 else value / total_parent
+            else:
+                for code in parent_outputs:
+                    value = float(output_contrib_by_parent.get(code, {}).get(parent_code, 0.0))
+                    shares_new_given_old.setdefault(code, {})[parent_code] = value / total_parent
+
+        source_lower_rows = list(range(int(tpl_layout["va_row"]), tpl_ws.max_row + 1))
+        for offset, source_r in enumerate(source_lower_rows):
+            target_r = int(layout["va_row"]) + offset
+            label = tpl_ws.cell(row=source_r, column=1).value
+            if label is None or str(label).strip() == "":
+                continue
+            label_text = str(label).strip()
+
+            if label_text == "Value added, gross":
+                product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
+            elif label_text == "Output":
+                product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
+            elif label_text == "Total intermediate consumption /final use":
+                product_vector = col_sums_Z.reindex(product_codes_order).fillna(0.0).astype("float64")
+            elif label_text == "Total supply at basic prices":
+                imports_vector = lower_row_vectors.get("Imports of goods and services")
+                if imports_vector is None:
+                    imports_vector = pd.Series(0.0, index=product_codes_order, dtype="float64")
+                product_vector = (x_after.reindex(product_codes_order).fillna(0.0) + imports_vector.reindex(product_codes_order).fillna(0.0)).astype("float64")
+            else:
+                product_values: dict[str, float] = {}
+                for output_code in product_codes_order:
+                    total_value = 0.0
+                    for parent_code in parents_by_output.get(output_code, ()): 
+                        cell_value = tpl_ws.cell(row=source_r, column=tpl_product_cols[parent_code]).value
+                        if not isinstance(cell_value, (int, float)):
+                            continue
+                        total_value += float(cell_value) * float(shares_new_given_old.get(output_code, {}).get(parent_code, 0.0))
+                    product_values[output_code] = total_value
+                product_vector = pd.Series(product_values, dtype="float64").reindex(product_codes_order).fillna(0.0)
+
+            for j, output_code in enumerate(product_codes_order):
+                _write_num(ws, row=target_r, col=c_prod0 + j, value=float(product_vector.loc[output_code]))
+            lower_row_vectors[label_text] = product_vector
+
+            template_fd_values = pd.Series(
+                {code: tpl_ws.cell(row=source_r, column=tpl_fd_cols[code]).value if code in tpl_fd_cols else None for code in fd_codes_order_no_total},
+                index=fd_codes_order_no_total,
+                dtype="object",
+            )
+            numeric_template_fd = pd.to_numeric(template_fd_values, errors="coerce")
+            if label_text == "Total intermediate consumption /final use":
+                fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
+            elif numeric_template_fd.notna().any():
+                fd_vector = _supplementary_fd_row_from_current_shares(
+                    template_fd_values=numeric_template_fd,
+                    current_fd_totals=current_fd_totals,
+                    product_total=float(product_vector.sum()),
+                ).reindex(fd_codes_order_no_total)
+            else:
+                fd_vector = pd.Series(index=fd_codes_order_no_total, dtype="float64")
+
+            for j, fd_code in enumerate(fd_codes_order_no_total):
+                value = fd_vector.get(fd_code)
+                if pd.isna(value):
                     continue
+                _write_num(ws, row=target_r, col=c_fd0 + j, value=float(value))
+            lower_fd_vectors[label_text] = fd_vector
 
-                for new_code, new_col in new_cols.items():
-                    share = shares_new_given_old.get(new_code, {})
-                    ws.cell(row=r, column=new_col).value = float(v_c19) * float(share.get("CPA_C19", 0.5)) + float(v_d) * float(
-                        share.get("CPA_D", 0.5)
-                    )
-
+        try:
+                _validate_template_reaggregation(
+                    product_codes_order=product_codes_order,
+                    base_product_codes=base_product_codes,
+                    parents_by_output=parents_by_output,
+                    fd_codes_order_no_total=fd_codes_order_no_total,
+                    Y_before=Y_before,
+                    tpl_ws=tpl_ws,
+                    tpl_layout=tpl_layout,
+                    Z_ord=Z_ord,
+                    Y_ord=Y_ord,
+                    lower_row_vectors=lower_row_vectors,
+                    lower_fd_vectors=lower_fd_vectors,
+                )
+        
+        except ValueError as e:
+            print(f"WARNING: Template reaggregation validation failed: {e}")
     _write_excel_mapping_sheet(
         wb,
         sheet_name="IO Aggregation Mapping",

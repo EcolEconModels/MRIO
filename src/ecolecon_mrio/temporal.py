@@ -31,6 +31,89 @@ class PanelDiagnostics:
     sector_universe_manifest: pd.DataFrame
 
 
+def _as_float_series(values: Any, *, index: pd.Index | None = None) -> pd.Series:
+    series = pd.to_numeric(pd.Series(values), errors="coerce").fillna(0.0).astype(float)
+    if index is not None:
+        series = pd.to_numeric(series.reindex(index), errors="coerce").fillna(0.0).astype(float)
+    return series
+
+
+def _as_float_frame(values: Any, *, index: pd.Index, columns: pd.Index) -> pd.DataFrame:
+    return pd.DataFrame(values).reindex(index=index, columns=columns).fillna(0.0).astype(float)
+
+
+def compute_output_change_decomposition(
+    A_by_year: Mapping[int, pd.DataFrame],
+    x_by_year: Mapping[int, pd.Series],
+    y_by_year: Mapping[int, pd.Series],
+) -> pd.DataFrame:
+    """Compute the exact adjacent-year output-change decomposition.
+
+    For adjacent years ``t-1`` and ``t`` this uses the current-year Leontief
+    inverse ``L_t = (I - A_t)^{-1}`` and returns
+
+    ``tech_component = L_t DeltaA_t x_{t-1}``
+    ``demand_component = L_t Delta y_t``
+
+    with ``total_change = x_t - x_{t-1}``. The residual should be numerical
+    zero when ``x``, ``A``, and ``y`` satisfy the open Leontief accounting
+    identity on a consistently aligned sector universe.
+    """
+    rows: list[dict[str, Any]] = []
+    years = sorted(
+        set(int(y) for y in A_by_year.keys())
+        & set(int(y) for y in x_by_year.keys())
+        & set(int(y) for y in y_by_year.keys())
+    )
+    for i, year_prev in enumerate(years[:-1]):
+        year = years[i + 1]
+        idx = pd.Index(x_by_year[year_prev].index)
+        A_prev = _as_float_frame(A_by_year[year_prev], index=idx, columns=idx)
+        A_t = _as_float_frame(A_by_year[year], index=idx, columns=idx)
+        x_prev = _as_float_series(x_by_year[year_prev], index=idx)
+        x_t = _as_float_series(x_by_year[year], index=idx)
+        y_prev = _as_float_series(y_by_year[year_prev], index=idx)
+        y_t = _as_float_series(y_by_year[year], index=idx)
+
+        I_minus_A_t = np.eye(len(idx), dtype=float) - A_t.to_numpy(dtype=float)
+        try:
+            L_t = np.linalg.inv(I_minus_A_t)
+        except np.linalg.LinAlgError:
+            continue
+
+        delta_A = A_t - A_prev
+        delta_y = y_t - y_prev
+        tech_component = pd.Series(
+            L_t.dot(delta_A.to_numpy(dtype=float).dot(x_prev.to_numpy(dtype=float))),
+            index=idx,
+            dtype=float,
+        )
+        demand_component = pd.Series(L_t.dot(delta_y.to_numpy(dtype=float)), index=idx, dtype=float)
+        total_change = (x_t - x_prev).astype(float)
+        residual = (total_change - tech_component - demand_component).astype(float)
+
+        for sector, tech_value, demand_value, total_value, residual_value in zip(
+            idx,
+            tech_component.to_numpy(dtype=float),
+            demand_component.to_numpy(dtype=float),
+            total_change.to_numpy(dtype=float),
+            residual.to_numpy(dtype=float),
+            strict=False,
+        ):
+            rows.append(
+                {
+                    "year_from": int(year_prev),
+                    "year_to": int(year),
+                    "sector": str(sector),
+                    "tech_component": float(tech_value),
+                    "demand_component": float(demand_value),
+                    "total_change": float(total_value),
+                    "residual": float(residual_value),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _series_from_any(obj: pd.Series | pd.DataFrame) -> pd.Series:
     if isinstance(obj, pd.Series):
         return obj.astype(float)

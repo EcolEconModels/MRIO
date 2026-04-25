@@ -229,6 +229,19 @@ def test_load_mrio_exiobase_rechecks_cache_inside_lock(monkeypatch, tmp_path):
     assert load_calls == ["load", "load"]
 
 
+def test_exclusive_cache_lock_releases_for_reuse(tmp_path):
+    import ecolecon_mrio.data as data_mod
+
+    lock_path = tmp_path / ".cache.lock"
+
+    with data_mod._exclusive_cache_lock(lock_path, label="test", timeout_seconds=1, poll_seconds=0.01):
+        assert lock_path.exists()
+
+    assert not lock_path.exists()
+    with data_mod._exclusive_cache_lock(lock_path, label="test", timeout_seconds=1, poll_seconds=0.01):
+        assert lock_path.exists()
+
+
 def test_resolve_exiobase3_url_falls_back_when_catalog_lookup_fails(monkeypatch):
     import ecolecon_mrio.data as data_mod
 

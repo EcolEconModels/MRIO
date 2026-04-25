@@ -5,7 +5,7 @@ from ecolecon_mrio.counterfactual import run_panel_scenarios
 from ecolecon_mrio.diagnostics import calc_tech_slack
 from ecolecon_mrio.decomposition import decompose_slack_change
 from ecolecon_mrio.growth_direction import principal_growth_direction, principal_growth_panel
-from ecolecon_mrio.temporal import compute_viability_panel, load_mrio_panel
+from ecolecon_mrio.temporal import compute_output_change_decomposition, compute_viability_panel, load_mrio_panel
 from ecolecon_mrio.transition import classify_transition_years, principal_direction_index
 
 
@@ -68,6 +68,31 @@ def test_decomposition_additive_identity():
     for _, row in decomp.iterrows():
         comp_sum = row["A_component"] + row["y_component"] + row["E_component"] + row["S_component"] + row["residual"]
         assert abs(comp_sum - row["total_change"]) < 1e-8
+
+
+def test_output_change_decomposition_uses_exact_current_year_identity():
+    idx = pd.Index(["a", "b"], dtype=object)
+    A0 = pd.DataFrame([[0.1, 0.05], [0.0, 0.2]], index=idx, columns=idx, dtype=float)
+    A1 = pd.DataFrame([[0.2, 0.02], [0.1, 0.15]], index=idx, columns=idx, dtype=float)
+    x0 = pd.Series([10.0, 6.0], index=idx, dtype=float)
+    y0 = pd.Series((np.eye(2) - A0.to_numpy(dtype=float)).dot(x0.to_numpy(dtype=float)), index=idx, dtype=float)
+    delta_y = pd.Series([0.7, -0.2], index=idx, dtype=float)
+    y1 = y0 + delta_y
+    L1 = np.linalg.inv(np.eye(2) - A1.to_numpy(dtype=float))
+    x1 = pd.Series(L1.dot(y1.to_numpy(dtype=float)), index=idx, dtype=float)
+
+    out = compute_output_change_decomposition(
+        A_by_year={2020: A0, 2021: A1},
+        x_by_year={2020: x0, 2021: x1},
+        y_by_year={2020: y0, 2021: y1},
+    )
+
+    assert not out.empty
+    expected_tech = L1.dot((A1 - A0).to_numpy(dtype=float).dot(x0.to_numpy(dtype=float)))
+    expected_demand = L1.dot(delta_y.to_numpy(dtype=float))
+    assert np.allclose(out["tech_component"].to_numpy(dtype=float), expected_tech)
+    assert np.allclose(out["demand_component"].to_numpy(dtype=float), expected_demand)
+    assert np.allclose(out["residual"].to_numpy(dtype=float), 0.0, atol=1e-12)
 
 
 def test_transition_index_and_classification_bounds():

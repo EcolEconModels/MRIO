@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
 
 import pandas as pd
 
@@ -33,24 +31,6 @@ from ecolecon_mrio.mapping_csv import load_category_mapping_frame, load_weighted
 def _write_csv(df: pd.DataFrame, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
-
-
-def _meta_dimension_labels(meta: Mapping[str, Any], dimension: str) -> dict[str, str]:
-    raw_dimensions = meta.get("dimensions")
-    if not isinstance(raw_dimensions, Mapping):
-        return {}
-    dimensions = cast(Mapping[str, object], raw_dimensions)
-
-    raw_labels = dimensions.get(dimension)
-    if not isinstance(raw_labels, Mapping):
-        return {}
-    labels = cast(Mapping[object, object], raw_labels)
-
-    return {str(key): str(value) for key, value in labels.items()}
-
-
-def _float_scalar(value: object) -> float:
-    return float(pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0])
 
 
 def _load_eurostat_outputs(*, geo: str, year: int, storage_folder: Path) -> pd.Series:
@@ -168,8 +148,8 @@ def _run_energy_diagnostics(
     parsed, eurostat_output = _load_eurostat_iot_bundle(geo=geo, year=year, storage_folder=data_root / "eurostat")
     energy_mapping = energy_mapping.copy()
     targets = energy_mapping["TargetSector"].drop_duplicates().astype(str).tolist()
-    row_labels = _meta_dimension_labels(parsed.meta, "prd_ava")
-    target_to_cpa, _missing_targets = _match_target_sectors_to_cpa_codes(targets, cpa_code_to_label=row_labels)
+    row_labels = {str(k): str(v) for k, v in ((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items()}
+    target_to_cpa, missing_targets = _match_target_sectors_to_cpa_codes(targets, cpa_code_to_label=row_labels)
     target_output = {target: float(eurostat_output.get(target_to_cpa.get(target, ""), 0.0)) for target in targets}
 
     mapping_w = compute_mapping_shares_from_outputs(energy_mapping, target_output_by_target=target_output)
@@ -177,15 +157,25 @@ def _run_energy_diagnostics(
         geo=geo,
         time=year,
         categories=energy_mapping["Category"].drop_duplicates().astype(str).tolist(),
+        composite_categories={
+            "metal and other minerals": [
+                "Final consumption - industry sector - iron and steel - energy use",
+                "Final consumption - industry sector - non-ferrous metals - energy use",
+                "Final consumption - industry sector - non-metallic minerals - energy use",
+            ],
+            "transport sector - land": [
+                "Final consumption - transport sector - road - energy use",
+                "Final consumption - transport sector - rail - energy use",
+            ],
+        },
         unit="GWH",
         storage_folder=data_root / "eurostat",
         force_download=False,
         force_reparse=False,
     )
-    unrolled_sources = eb.unrolled_sources.set_index("Category").loc[:, list(PRIMARY_SOURCES)].astype("float64")
 
     euro_detail = allocate_category_matrix_by_share(
-        unrolled_sources,
+        eb.unrolled_sources.set_index("Category")[list(PRIMARY_SOURCES)],
         mapping_w,
         share_col="Share_used",
     )
@@ -193,7 +183,7 @@ def _run_energy_diagnostics(
     euro_target["total_energy_gwh"] = euro_target[list(PRIMARY_SOURCES)].sum(axis=1)
     euro_target_by_cpa = pd.Series(
         {
-            target_to_cpa[target]: _float_scalar(euro_target.at[target, "total_energy_gwh"])
+            target_to_cpa[target]: float(euro_target.loc[target, "total_energy_gwh"])
             for target in targets
             if target in target_to_cpa
         },
@@ -234,7 +224,7 @@ def _run_energy_diagnostics(
 
     fuel_rows: list[pd.DataFrame] = []
     for fuel in PRIMARY_SOURCES:
-        source_by_category = unrolled_sources[fuel].astype("float64")
+        source_by_category = eb.unrolled_sources.set_index("Category")[fuel].astype("float64")
         reconstructed_by_category = euro_detail.category_reconstructed[fuel].astype("float64")
         closure = pd.DataFrame(
             {
@@ -245,23 +235,20 @@ def _run_energy_diagnostics(
             }
         )
         closure["abs_gap"] = (closure["source_total_gwh"] - closure["reconstructed_total_gwh"]).abs()
-        closure["pct_gap"] = 0.0
-        nonzero = closure["source_total_gwh"] != 0.0
-        closure.loc[nonzero, "pct_gap"] = (
-            closure.loc[nonzero, "abs_gap"] / closure.loc[nonzero, "source_total_gwh"].abs()
+        closure["pct_gap"] = closure.apply(
+            lambda row: (row["abs_gap"] / abs(row["source_total_gwh"])) if row["source_total_gwh"] else 0.0,
+            axis=1,
         )
         closure["comparison_type"] = "eurostat-disaggregation-reconstruction"
         fuel_rows.append(closure)
     _write_csv(pd.concat(fuel_rows, ignore_index=True), outdir / "energy_mismatches_by_fuel.csv")
 
-    closure_rows: list[dict[str, object]] = []
-    euro_reconstructed = euro_detail.category_reconstructed.reindex(unrolled_sources.index).fillna(0.0).astype("float64")
-    euro_source = unrolled_sources
+    closure_rows = []
+    euro_reconstructed = euro_detail.category_reconstructed.reindex(eb.unrolled_sources.set_index("Category").index).fillna(0.0)
+    euro_source = eb.unrolled_sources.set_index("Category")[list(PRIMARY_SOURCES)]
     for category in euro_source.index:
-        src_row = cast(pd.Series, euro_source.loc[category])
-        rec_row = cast(pd.Series, euro_reconstructed.loc[category])
-        src_total = float(src_row.sum())
-        rec_total = float(rec_row.sum())
+        src_total = float(euro_source.loc[category].sum())
+        rec_total = float(euro_reconstructed.loc[category].sum())
         closure_rows.append(
             {
                 "category": category,
@@ -288,7 +275,7 @@ def _run_co2_diagnostics(
     parsed, _eurostat_output = _load_eurostat_iot_bundle(geo=geo, year=year, storage_folder=data_root / "eurostat")
     energy_mapping = energy_mapping.copy()
     targets = energy_mapping["TargetSector"].drop_duplicates().astype(str).tolist()
-    row_labels = _meta_dimension_labels(parsed.meta, "prd_ava")
+    row_labels = {str(k): str(v) for k, v in ((parsed.meta.get("dimensions", {}) or {}).get("prd_ava", {}) or {}).items()}
     target_to_cpa, _missing_targets = _match_target_sectors_to_cpa_codes(targets, cpa_code_to_label=row_labels)
 
     eurostat_co2 = load_eurostat_air_emissions_by_nace(
@@ -356,8 +343,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--energy-mapping-csv",
-        default="scripts/mappings/energy_balance_to_cpa65_products_mapping.csv",
-        help="Canonical energy-balance mapping CSV for energy diagnostics; despite the legacy filename, it maps activity-defined Eurostat energy-balance rows into the repo's 65-product CPA-based IO targets.",
+        default="scripts/mappings/energy_balance_to_nace2_mapping.csv",
+        help="Canonical energy-balance mapping CSV for energy diagnostics.",
     )
     parser.add_argument(
         "--exio-nace-concordance-xlsx",

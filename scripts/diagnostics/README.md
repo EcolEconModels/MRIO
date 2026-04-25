@@ -9,14 +9,6 @@ Austria diagnostics files written to
 - `_flat_diagnostics_common.py`
   - Shared loaders and helpers for Eurostat IOT data, EXIOBASE slices,
     weighted concordance loading, energy-balance factors, and CSV writing.
-- `check_energy_workbook_scope.py`
-  - Generic workbook-scope check for grouped energy columns. Summarizes totals
-    for all sectors, industry-only rows, and household rows, with optional
-    deviation against a provided reference total.
-- `check_transition_closure_targets.py`
-  - Generic transition-target and closure check. Computes annualized renewable
-    and non-renewable endpoint growth rates and verifies closure consistency for
-    a weighted sector block split (`ren`, `nren`, `other`).
 - `generate_at2020_flow_mapping_details.py`
   - Regenerates the 2020 flow comparison files:
     - `at2020_dom_mapping_detail.csv`
@@ -25,11 +17,6 @@ Austria diagnostics files written to
 - `generate_at2021_co2_mapping_detail.py`
   - Regenerates the 2021 CO2 comparison file:
     - `at2021_co2_mapping_detail.csv`
-- `generate_at2020_strict_zij_outliers.py`
-  - Generates non-reviewer-facing debug outputs for strict one-to-one mapped
-    sectors only:
-    - `at2020_dom_strict_zij_outliers.csv`
-    - `at2020_dom_strict_row_outliers.csv`
 
 ## Output Location
 
@@ -39,11 +26,6 @@ By default, both scripts write to:
 
 This default is computed relative to the MRIO repo, so the commands do not need
 to be run from a specific working directory.
-
-The strict `z_ij` outlier generator is different. By default it writes debug
-outputs to:
-
-`/home/agilra/EcolEconModels/MRIO/data/diagnostics_debug`
 
 ## Inputs
 
@@ -74,17 +56,15 @@ The generators depend on four input groups.
 ### 3. Concordance and mapping inputs
 
 - `scripts/mappings/exio_to_eurostat_cpa.csv`
-- `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
+- `scripts/mappings/energy_balance_to_nace2_mapping.csv`
 - `data/exiobase_concordance_sources/table_correspondance_nace-gics-exiobase_20230816.xlsx`
 
 Important distinction:
 
 - Eurostat CPA and NACE classifications are official standards.
-- Eurostat NACE classifies economic activities, whereas Eurostat CPA classifies products by activity.
 - The repo's EXIOBASE-to-Eurostat bridge is not an official Eurostat or EXIOBASE
   standard. It is a weighted concordance assembled in this repo, using a mix of
   retained semi-official source material plus deterministic fallback rules.
-- The checked-in `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv` file keeps a legacy filename, but its operational targets are the repo's 65-product CPA-based IO rows plus households; NACE matters there only because many source-row definitions are activity-based.
 
 ### 4. Austria-side energy and emissions workbooks
 
@@ -100,21 +80,6 @@ Run from the MRIO repository root:
 ```bash
 python scripts/diagnostics/generate_at2020_flow_mapping_details.py
 python scripts/diagnostics/generate_at2021_co2_mapping_detail.py
-python scripts/diagnostics/generate_at2020_strict_zij_outliers.py
-python scripts/diagnostics/generate_at2020_strict_zij_outliers.py --flow all
-python scripts/diagnostics/check_energy_workbook_scope.py \
-  --workbook /path/to/workbook.xlsx \
-  --sheet Energy_1.0 \
-  --group-name nren \
-  --group-cols 'Solid fossil fuels,Fossil gas,Oil and petroleum products (excluding biofuel portion),Non-renewable waste'
-python scripts/diagnostics/check_transition_closure_targets.py \
-  --weights-csv /path/to/weights.csv \
-  --years 20 \
-  --ren-start 146.91 \
-  --ren-end 196.28 \
-  --nren-start 197.70 \
-  --nren-end 84.26 \
-  --aggregate-growth 0.0137
 ```
 
 Optional arguments:
@@ -133,42 +98,6 @@ python scripts/diagnostics/generate_at2021_co2_mapping_detail.py \
   --exio-year 2020 \
   --postgrowth-root /home/agilra/EcolEconModels/PostGrowth-SFC-Austria \
   --output-dir /custom/output/path
-
-python scripts/diagnostics/generate_at2020_strict_zij_outliers.py \
-  --geo AT \
-  --region AT \
-  --year 2020 \
-  --flow dom \
-  --material-threshold 10 \
-  --output-dir /custom/output/path
-
-python scripts/diagnostics/generate_at2020_strict_zij_outliers.py \
-  --geo AT \
-  --region AT \
-  --year 2020 \
-  --flow all \
-  --material-threshold 10
-
-python scripts/diagnostics/check_energy_workbook_scope.py \
-  --workbook /path/to/workbook.xlsx \
-  --sheet Energy_1.0 \
-  --group-name ren \
-  --group-cols '["Hydro", "Wind", "Solar"]' \
-  --reference-total 123.4
-
-python scripts/diagnostics/check_transition_closure_targets.py \
-  --weights-csv /path/to/weights.csv \
-  --weight-col weight \
-  --block-col block \
-  --renewable-label ren \
-  --nonrenewable-label nren \
-  --closure-option residual-others \
-  --years 20 \
-  --ren-start 115.17 \
-  --ren-end 196.88 \
-  --nren-start 197.70 \
-  --nren-end 120.19 \
-  --aggregate-growth 0.0129
 ```
 
 ## Method Notes
@@ -189,7 +118,7 @@ For these 2020 flow files, the Eurostat reference is built as product use
 within Austria from atomic final-demand columns only, with `P6` exports
 excluded. This matches the EXIO comparator more closely, because the EXIO slice
 used here is an Austria-destination use block, not Austrian total product
-output including exports, and the Eurostat symmetric product-by-product IOT column dimension `prd_use` also contains
+output including exports, and the Eurostat `prd_use` table also contains
 subtotal columns such as `P3`, `P5`, `TFU`, `TOTAL`, and `TU` that would
 otherwise double count final demand.
 
@@ -224,17 +153,6 @@ The comparison metric used for the MRIO-side emissions benchmark is:
 
 This uses mapped EXIO CO2 intensity on Eurostat domestic-demand-induced output,
 not on gross output.
-
-### Strict `z_ij` outlier debug files
-
-The strict `z_ij` generator is a debug aid, not a reviewer-facing output. It:
-
-- keeps only strict one-to-one sectors where one Eurostat target maps to one
-  EXIO source and vice versa
-- compares Austria intermediate-use cells `Z_ij` directly for the selected flow
-- filters the cell file to materially sized Eurostat cells using the configured
-  threshold
-- writes a second file with row-total mismatches for the same strict subset
 
 ## Interpretation Guardrails
 

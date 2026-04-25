@@ -37,6 +37,118 @@ class SplitResult:
     io_system: object | None = None  # pymrio.IOSystem when available
 
 
+def _aggregate_rows_to_original(
+    df: pd.DataFrame,
+    *,
+    split_profiles: Mapping[str, SplitProfiles],
+) -> pd.DataFrame:
+    mapping = {
+        str(subsector): str(aggregate_sector)
+        for aggregate_sector, prof in split_profiles.items()
+        for subsector in prof.subsectors
+    }
+    out = df.copy()
+    out.index = pd.Index([mapping.get(str(idx), str(idx)) for idx in out.index])
+    return out.groupby(level=0).sum()
+
+
+def _aggregate_square_to_original(
+    df: pd.DataFrame,
+    *,
+    split_profiles: Mapping[str, SplitProfiles],
+) -> pd.DataFrame:
+    mapping = {
+        str(subsector): str(aggregate_sector)
+        for aggregate_sector, prof in split_profiles.items()
+        for subsector in prof.subsectors
+    }
+    out = df.copy()
+    out.index = pd.Index([mapping.get(str(idx), str(idx)) for idx in out.index])
+    out.columns = pd.Index([mapping.get(str(col), str(col)) for col in out.columns])
+    out = out.groupby(level=0).sum()
+    return out.T.groupby(level=0).sum().T
+
+
+def _largest_abs_gap(diff: pd.DataFrame | pd.Series) -> tuple[str, float]:
+    if isinstance(diff, pd.Series):
+        if diff.empty:
+            return "", 0.0
+        label = str(diff.abs().idxmax())
+        return label, float(diff.abs().max())
+    if diff.empty:
+        return "", 0.0
+    stack = diff.abs().stack(dropna=False)
+    if stack.empty:
+        return "", 0.0
+    where = stack.idxmax()
+    return f"{where[0]} -> {where[1]}", float(stack.max())
+
+
+def _validate_split_reconstruction(
+    *,
+    eurostat_Z: pd.DataFrame,
+    eurostat_Y: pd.DataFrame,
+    split_profiles: Mapping[str, SplitProfiles],
+    Z_split: pd.DataFrame,
+    Y_split: pd.DataFrame,
+    x_split: pd.Series,
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> None:
+    """Fail fast if split sectors do not preserve original sector totals and final demand."""
+
+    Z_expected = eurostat_Z.copy().astype("float64")
+    Y_expected = eurostat_Y.copy().astype("float64")
+    Z_expected.index = Z_expected.index.astype(str)
+    Z_expected.columns = Z_expected.columns.astype(str)
+    Y_expected.index = Y_expected.index.astype(str)
+    Y_expected.columns = Y_expected.columns.astype(str)
+
+    Z_back = _aggregate_square_to_original(Z_split.astype("float64"), split_profiles=split_profiles)
+    Y_back = _aggregate_rows_to_original(Y_split.astype("float64"), split_profiles=split_profiles)
+    x_back = _aggregate_rows_to_original(x_split.astype("float64").to_frame("x"), split_profiles=split_profiles)["x"]
+
+    Z_back = Z_back.reindex(index=Z_expected.index, columns=Z_expected.columns).fillna(0.0)
+    Y_back = Y_back.reindex(index=Y_expected.index, columns=Y_expected.columns).fillna(0.0)
+    x_expected = (Z_expected.sum(axis=1) + Y_expected.sum(axis=1)).astype("float64")
+    x_back = x_back.reindex(index=x_expected.index).fillna(0.0)
+    z_row_expected = Z_expected.sum(axis=1).astype("float64")
+    z_col_expected = Z_expected.sum(axis=0).astype("float64")
+    z_row_back = Z_back.sum(axis=1).astype("float64")
+    z_col_back = Z_back.sum(axis=0).astype("float64")
+
+    checks = [
+        ("Y", Y_back, Y_expected),
+        ("Z row totals", z_row_back, z_row_expected),
+        ("Z column totals", z_col_back, z_col_expected),
+        ("x", x_back, x_expected),
+    ]
+    errors: list[str] = []
+    for label, actual, expected in checks:
+        if isinstance(actual, pd.DataFrame):
+            ok = np.allclose(actual.to_numpy(), expected.to_numpy(), rtol=rtol, atol=atol, equal_nan=True)
+            if not ok:
+                diff = actual - expected
+                where, gap = _largest_abs_gap(diff)
+                errors.append(
+                    f"{label} reconstruction failed: largest_abs_gap={gap:.10f} at {where}."
+                )
+        else:
+            ok = np.allclose(actual.to_numpy(), expected.to_numpy(), rtol=rtol, atol=atol, equal_nan=True)
+            if not ok:
+                diff = actual - expected
+                where, gap = _largest_abs_gap(diff)
+                errors.append(
+                    f"{label} reconstruction failed: largest_abs_gap={gap:.10f} at {where}."
+                )
+
+    if errors:
+        raise ValueError(
+            "Disaggregation validation failed: split result does not aggregate back to the original IOT.\n"
+            + "\n".join(errors)
+        )
+
+
 def _read_table(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix in {".csv", ".txt"}:
@@ -521,6 +633,15 @@ def split_iot_using_exiobase_split_profiles(
         max_iter=ras_max_iter,
         tol=ras_tol,
         create_io_system=create_io_system,
+    )
+
+    _validate_split_reconstruction(
+        eurostat_Z=eurostat_Z,
+        eurostat_Y=eurostat_Y,
+        split_profiles=profiles,
+        Z_split=res.Z,
+        Y_split=res.Y,
+        x_split=res.x,
     )
 
     exio_qp = None

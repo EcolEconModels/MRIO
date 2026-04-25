@@ -293,3 +293,96 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
     assert any(s.endswith("Electricity generation") for s in res.Z.index)
     assert not any("Electricity by coal" in s for s in res.Z.index)
     assert not any("Electricity by gas" in s for s in res.Z.index)
+
+
+def test_validate_split_reconstruction_preserves_original_final_demand_columns():
+    from ecolecon_mrio.disaggregation import SplitProfiles
+    from ecolecon_mrio.exio_share_split import _validate_split_reconstruction
+
+    euro_Z = pd.DataFrame(
+        [[1.0, 2.0], [3.0, 4.0]],
+        index=["A", "CPA_C19"],
+        columns=["A", "CPA_C19"],
+    )
+    euro_Y = pd.DataFrame(
+        [[5.0, 1.0, 0.5], [6.0, 2.0, 1.5]],
+        index=["A", "CPA_C19"],
+        columns=["P3", "P5", "P6"],
+    )
+    split_profiles = {
+        "CPA_C19": SplitProfiles(
+            aggregate_sector="CPA_C19",
+            subsectors=("CPA_C19::s1", "CPA_C19::s2"),
+            output_share=pd.Series([0.4, 0.6], index=["CPA_C19::s1", "CPA_C19::s2"]),
+            intermediate_sales_share=pd.Series([0.2, 0.8], index=["CPA_C19::s1", "CPA_C19::s2"]),
+            intermediate_input_share=pd.Series([0.7, 0.3], index=["CPA_C19::s1", "CPA_C19::s2"]),
+            final_demand_share=pd.Series([0.25, 0.75], index=["CPA_C19::s1", "CPA_C19::s2"]),
+        )
+    }
+    Z_split = pd.DataFrame(
+        [[1.0, 1.4, 0.6], [0.6, 0.24, 0.56], [2.4, 0.96, 2.24]],
+        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
+        columns=["A", "CPA_C19::s1", "CPA_C19::s2"],
+    )
+    Y_split = pd.DataFrame(
+        [[5.0, 1.0, 0.5], [1.5, 0.5, 0.375], [4.5, 1.5, 1.125]],
+        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
+        columns=["P3", "P5", "P6"],
+    )
+    x_split = (Z_split.sum(axis=1) + Y_split.sum(axis=1)).astype("float64")
+
+    _validate_split_reconstruction(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        split_profiles=split_profiles,
+        Z_split=Z_split,
+        Y_split=Y_split,
+        x_split=x_split,
+    )
+
+
+def test_validate_split_reconstruction_raises_on_final_demand_drift():
+    from ecolecon_mrio.disaggregation import SplitProfiles
+    from ecolecon_mrio.exio_share_split import _validate_split_reconstruction
+
+    euro_Z = pd.DataFrame(
+        [[1.0, 2.0], [3.0, 4.0]],
+        index=["A", "CPA_C19"],
+        columns=["A", "CPA_C19"],
+    )
+    euro_Y = pd.DataFrame(
+        [[5.0, 1.0, 0.5], [6.0, 2.0, 1.5]],
+        index=["A", "CPA_C19"],
+        columns=["P3", "P5", "P6"],
+    )
+    split_profiles = {
+        "CPA_C19": SplitProfiles(
+            aggregate_sector="CPA_C19",
+            subsectors=("CPA_C19::s1", "CPA_C19::s2"),
+            output_share=pd.Series([0.4, 0.6], index=["CPA_C19::s1", "CPA_C19::s2"]),
+            intermediate_sales_share=pd.Series([0.2, 0.8], index=["CPA_C19::s1", "CPA_C19::s2"]),
+            intermediate_input_share=pd.Series([0.7, 0.3], index=["CPA_C19::s1", "CPA_C19::s2"]),
+            final_demand_share=pd.Series([0.25, 0.75], index=["CPA_C19::s1", "CPA_C19::s2"]),
+        )
+    }
+    Z_split = pd.DataFrame(
+        [[1.0, 1.4, 0.6], [0.6, 0.24, 0.56], [2.4, 0.96, 2.24]],
+        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
+        columns=["A", "CPA_C19::s1", "CPA_C19::s2"],
+    )
+    Y_split = pd.DataFrame(
+        [[5.0, 1.0, 0.5], [1.5, 0.5, 0.375], [99.0, 1.5, 1.125]],
+        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
+        columns=["P3", "P5", "P6"],
+    )
+    x_split = (Z_split.sum(axis=1) + Y_split.sum(axis=1)).astype("float64")
+
+    with pytest.raises(ValueError, match="Disaggregation validation failed"):
+        _validate_split_reconstruction(
+            eurostat_Z=euro_Z,
+            eurostat_Y=euro_Y,
+            split_profiles=split_profiles,
+            Z_split=Z_split,
+            Y_split=Y_split,
+            x_split=x_split,
+        )

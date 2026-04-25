@@ -1,0 +1,271 @@
+Exporting PostGrowth energy workbook to: /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/Energy_Balances_2021_Eurostat_green_brown.xlsx
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/generate_mapping_csvs.py --geo AT --year 2021 --eurostat-storage-folder /home/agilra/EcolEconModels/MRIO/data/eurostat --outdir /home/agilra/EcolEconModels/MRIO/scripts/mappings
+Wrote canonical annotated mapping CSVs to /home/agilra/EcolEconModels/MRIO/scripts/mappings
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/build_energy_balances_65sectors_primary_sources.py --geo AT --year 2021 --mapping /home/agilra/EcolEconModels/MRIO/scripts/mappings/energy_balance_to_cpa65_products_mapping.csv --postgrowth-sheet-name Energy_1.0 --out /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/Energy_Balances_2021_Eurostat_green_brown.xlsx --storage-folder /home/agilra/EcolEconModels/MRIO/data/eurostat --split-energy-green-brown
+Wrote: /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/Energy_Balances_2021_Eurostat_green_brown.xlsx
+Exporting IOT TOTAL workbook for year 2020
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/generate_mapping_csvs.py --geo AT --year 2020 --eurostat-storage-folder /home/agilra/EcolEconModels/MRIO/data/eurostat --outdir /home/agilra/EcolEconModels/MRIO/scripts/mappings
+Wrote canonical annotated mapping CSVs to /home/agilra/EcolEconModels/MRIO/scripts/mappings
++ EXIO_TO_EUROSTAT_ARGS=()
++ [[ -f /home/agilra/EcolEconModels/MRIO/scripts/mappings/exio_to_eurostat_cpa.csv ]]
++ EXIO_TO_EUROSTAT_ARGS=(--exio-to-eurostat-mapping-csv "$EXIO_TO_EUROSTAT_MAP")
++ CONSISTENCY_ARGS=(--mapping-consistency-rtol "$MAPPING_CONSISTENCY_RTOL" --mapping-consistency-atol "$MAPPING_CONSISTENCY_ATOL")
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/split_eurostat_energy_by_exiobase.py --verbose --eurostat-dataset naio_10_cp1700 --eurostat-filters '{"geo":"AT","time":"2020","freq":"A","unit":"MIO_EUR"}' --eurostat-row-dim prd_ava --eurostat-col-dim prd_use --eurostat-stk-flow-dim stk_flow --eurostat-stk-flows '["DOM","IMP","TOTAL"]' --exio-year 2020 --exio-region AT --exio-mapping-csv /home/agilra/EcolEconModels/MRIO/scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv --require-mapping-coverage --coverage-tol 0 --balancing-scope local --mapping-consistency-rtol 0.5 --mapping-consistency-atol 1e-6 --exio-to-eurostat-mapping-csv /home/agilra/EcolEconModels/MRIO/scripts/mappings/exio_to_eurostat_cpa.csv --outdir /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source
+Using data root: /home/agilra/EcolEconModels/MRIO/data
+Calling: read_split_mapping(...)
+Returned: read_split_mapping (0.02s)
+Calling: load_eurostat_iot_variants(...)
+Returned: load_eurostat_iot_variants (0.00s)
+Calling: load_exiobase3_region_slice(..., flow=domestic)
+Loading cached EXIOBASE region slice from /home/agilra/EcolEconModels/MRIO/data/exiobase3_2020/slices/AT/pxp [flow=domestic] ...
+Returned: load_exiobase3_region_slice (0.01s)
+Calling: load_exiobase3_region_slice(..., flow=imports)
+Loading cached EXIOBASE region slice from /home/agilra/EcolEconModels/MRIO/data/exiobase3_2020/slices/AT/pxp [flow=imports] ...
+Returned: load_exiobase3_region_slice (0.00s)
+Calling: load_exiobase3_region_slice(..., flow=total)
+Loading cached EXIOBASE region slice from /home/agilra/EcolEconModels/MRIO/data/exiobase3_2020/slices/AT/pxp [flow=total] ...
+Returned: load_exiobase3_region_slice (0.00s)
+Calling: split_iot_using_exiobase_split_profiles(...) [DOM]
+Skipping output consistency check for stk_flow=DOM (flow != TOTAL or year mismatch: Eurostat=2020, EXIO=2020).
+Returned: split_iot_using_exiobase_shares (0.39s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/Z_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/Y_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/x_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/A_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/exio_selected_sectors.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/balance_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/exio_quantity_and_price.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/exio_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/eurostat_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/energy_split_report.xlsx
+Calling: split_iot_using_exiobase_split_profiles(...) [IMP]
+Skipping output consistency check for stk_flow=IMP (flow != TOTAL or year mismatch: Eurostat=2020, EXIO=2020).
+Returned: split_iot_using_exiobase_shares (0.18s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/Z_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/Y_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/x_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/A_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/exio_selected_sectors.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/balance_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/exio_quantity_and_price.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/exio_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/eurostat_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/energy_split_report.xlsx
+Calling: split_iot_using_exiobase_split_profiles(...) [TOTAL]
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/mapped_output_consistency.csv
+Returned: split_iot_using_exiobase_shares (0.17s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/Z_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/Y_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/x_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/A_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/exio_selected_sectors.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/balance_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/exio_quantity_and_price.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/exio_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/eurostat_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/energy_split_report.xlsx
++ [[ ! -f /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx ]]
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/aggregate_iot_by_mapping.py --verbose --indir /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source --outdir /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source --mapping-csv /home/agilra/EcolEconModels/MRIO/scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv --require-from-contains :: --write-sfc-workbook --sfc-template-xlsx /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx --sfc-outname 'IOT_AT_2020_{variant}_energy_green_brown.xlsx' --eurostat-dataset naio_10_cp1700 --eurostat-filters '{"geo":"AT","time":"2020","freq":"A","unit":"MIO_EUR"}' --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/Z_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/Y_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_value_per_physical_input.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/eurostat_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=DOM/exio_final_demand_co2_intensity.csv
+Calling: aggregate_iot(...)
+Returned: aggregate_iot (0.03s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/Z_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/Y_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/x_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/A_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/aggregation_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/aggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/aggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/aggregation_report.xlsx
+Calling: write SFC workbook ...
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=DOM/IOT_AT_2020_DOM_energy_green_brown.xlsx
+Returned: write SFC workbook (1.12s)
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/Z_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/Y_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_value_per_physical_input.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/eurostat_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=IMP/exio_final_demand_co2_intensity.csv
+Calling: aggregate_iot(...)
+Returned: aggregate_iot (0.04s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/Z_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/Y_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/x_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/A_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/aggregation_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/aggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/aggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/aggregation_report.xlsx
+Calling: write SFC workbook ...
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=IMP/IOT_AT_2020_IMP_energy_green_brown.xlsx
+Returned: write SFC workbook (0.90s)
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/Z_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/Y_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_value_per_physical_input.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/eurostat_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_split_flows_with_source/stk_flow=TOTAL/exio_final_demand_co2_intensity.csv
+Calling: aggregate_iot(...)
+Returned: aggregate_iot (0.03s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/Z_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/Y_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/x_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/A_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregation_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregation_report.xlsx
+Calling: write SFC workbook ...
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2020_energy_green_brown_flows_with_source/stk_flow=TOTAL/IOT_AT_2020_TOTAL_energy_green_brown.xlsx
+Returned: write SFC workbook (1.20s)
+Copied: /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_AT_2020_TOTAL_energy_green_brown.xlsx
+Exporting IOT TOTAL workbook for year 2021
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/generate_mapping_csvs.py --geo AT --year 2021 --eurostat-storage-folder /home/agilra/EcolEconModels/MRIO/data/eurostat --outdir /home/agilra/EcolEconModels/MRIO/scripts/mappings
+Wrote canonical annotated mapping CSVs to /home/agilra/EcolEconModels/MRIO/scripts/mappings
++ EXIO_TO_EUROSTAT_ARGS=()
++ [[ -f /home/agilra/EcolEconModels/MRIO/scripts/mappings/exio_to_eurostat_cpa.csv ]]
++ EXIO_TO_EUROSTAT_ARGS=(--exio-to-eurostat-mapping-csv "$EXIO_TO_EUROSTAT_MAP")
++ CONSISTENCY_ARGS=(--mapping-consistency-rtol "$MAPPING_CONSISTENCY_RTOL" --mapping-consistency-atol "$MAPPING_CONSISTENCY_ATOL")
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/split_eurostat_energy_by_exiobase.py --verbose --eurostat-dataset naio_10_cp1700 --eurostat-filters '{"geo":"AT","time":"2021","freq":"A","unit":"MIO_EUR"}' --eurostat-row-dim prd_ava --eurostat-col-dim prd_use --eurostat-stk-flow-dim stk_flow --eurostat-stk-flows '["DOM","IMP","TOTAL"]' --exio-year 2020 --exio-region AT --exio-mapping-csv /home/agilra/EcolEconModels/MRIO/scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv --require-mapping-coverage --coverage-tol 0 --balancing-scope local --mapping-consistency-rtol 0.5 --mapping-consistency-atol 1e-6 --exio-to-eurostat-mapping-csv /home/agilra/EcolEconModels/MRIO/scripts/mappings/exio_to_eurostat_cpa.csv --outdir /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source
+Using data root: /home/agilra/EcolEconModels/MRIO/data
+Calling: read_split_mapping(...)
+Returned: read_split_mapping (0.01s)
+Calling: load_eurostat_iot_variants(...)
+Returned: load_eurostat_iot_variants (0.00s)
+Calling: load_exiobase3_region_slice(..., flow=domestic)
+Loading cached EXIOBASE region slice from /home/agilra/EcolEconModels/MRIO/data/exiobase3_2020/slices/AT/pxp [flow=domestic] ...
+Returned: load_exiobase3_region_slice (0.00s)
+Calling: load_exiobase3_region_slice(..., flow=imports)
+Loading cached EXIOBASE region slice from /home/agilra/EcolEconModels/MRIO/data/exiobase3_2020/slices/AT/pxp [flow=imports] ...
+Returned: load_exiobase3_region_slice (0.01s)
+Calling: load_exiobase3_region_slice(..., flow=total)
+Loading cached EXIOBASE region slice from /home/agilra/EcolEconModels/MRIO/data/exiobase3_2020/slices/AT/pxp [flow=total] ...
+Returned: load_exiobase3_region_slice (0.00s)
+Calling: split_iot_using_exiobase_split_profiles(...) [DOM]
+Skipping output consistency check for stk_flow=DOM (flow != TOTAL or year mismatch: Eurostat=2021, EXIO=2020).
+Returned: split_iot_using_exiobase_shares (0.30s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/Z_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/Y_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/x_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/A_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/exio_selected_sectors.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/balance_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/exio_quantity_and_price.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/exio_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/eurostat_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/energy_split_report.xlsx
+Calling: split_iot_using_exiobase_split_profiles(...) [IMP]
+Skipping output consistency check for stk_flow=IMP (flow != TOTAL or year mismatch: Eurostat=2021, EXIO=2020).
+Returned: split_iot_using_exiobase_shares (0.16s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/Z_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/Y_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/x_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/A_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/exio_selected_sectors.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/balance_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/exio_quantity_and_price.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/exio_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/eurostat_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/energy_split_report.xlsx
+Calling: split_iot_using_exiobase_split_profiles(...) [TOTAL]
+Skipping output consistency check for stk_flow=TOTAL (flow != TOTAL or year mismatch: Eurostat=2021, EXIO=2020).
+Returned: split_iot_using_exiobase_shares (0.17s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/Z_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/Y_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/x_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/A_split_balanced.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/exio_selected_sectors.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/balance_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/exio_quantity_and_price.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/exio_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/eurostat_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/energy_split_report.xlsx
++ [[ ! -f /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx ]]
++ /home/agilra/EcolEconModels/MRIO/.venv/bin/python /home/agilra/EcolEconModels/MRIO/scripts/aggregate_iot_by_mapping.py --verbose --indir /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source --outdir /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source --mapping-csv /home/agilra/EcolEconModels/MRIO/scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv --require-from-contains :: --write-sfc-workbook --sfc-template-xlsx /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx --sfc-outname 'IOT_AT_2021_{variant}_energy_green_brown.xlsx' --eurostat-dataset naio_10_cp1700 --eurostat-filters '{"geo":"AT","time":"2021","freq":"A","unit":"MIO_EUR"}' --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/Z_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/Y_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_value_per_physical_input.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/disaggregated_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/eurostat_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=DOM/exio_final_demand_co2_intensity.csv
+Calling: aggregate_iot(...)
+Returned: aggregate_iot (0.03s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/Z_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/Y_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/x_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/A_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/aggregation_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/aggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/aggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/aggregation_report.xlsx
+Calling: write SFC workbook ...
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=DOM/IOT_AT_2021_DOM_energy_green_brown.xlsx
+Returned: write SFC workbook (1.02s)
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/Z_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/Y_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_value_per_physical_input.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/disaggregated_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/eurostat_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=IMP/exio_final_demand_co2_intensity.csv
+Calling: aggregate_iot(...)
+Returned: aggregate_iot (0.03s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/Z_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/Y_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/x_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/A_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/aggregation_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/aggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/aggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/aggregation_report.xlsx
+Calling: write SFC workbook ...
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=IMP/IOT_AT_2021_IMP_energy_green_brown.xlsx
+Returned: write SFC workbook (0.85s)
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/Z_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/Y_split_balanced.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_value_per_physical_input.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/disaggregated_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/eurostat_sector_co2_intensity.csv
+Reading: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_split_flows_with_source/stk_flow=TOTAL/exio_final_demand_co2_intensity.csv
+Calling: aggregate_iot(...)
+Returned: aggregate_iot (0.03s)
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/Z_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/Y_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/x_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/A_agg.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregation_info.json
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregated_sector_value_per_physical_input.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregated_sector_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/exio_final_demand_co2_intensity.csv
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/aggregation_report.xlsx
+Calling: write SFC workbook ...
+Wrote: /home/agilra/EcolEconModels/MRIO/outputs/AT_2021_energy_green_brown_flows_with_source/stk_flow=TOTAL/IOT_AT_2021_TOTAL_energy_green_brown.xlsx
+Returned: write SFC workbook (0.91s)
+Copied: /home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_AT_2021_TOTAL_energy_green_brown.xlsx

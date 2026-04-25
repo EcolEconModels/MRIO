@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from scripts.generate_fuels_mapping_from_workbook import build_fuels_mappings
 from scripts.aggregate_iot_by_mapping import _resolve_product_template_alignment
@@ -120,12 +121,12 @@ def test_build_fuels_mappings_uses_unique_source_sector_selection(tmp_path: Path
     # Real reaggregation uses workbook column 3; mapping back to the original aggregate becomes a derived remaining bucket.
     reagg_targets = dict(zip(reaggregation_mapping["source_key"], reaggregation_mapping["target_key"], strict=False))
     assert reagg_targets["CPA_C19::Motor Gasoline"] == "CPA_C19::Motor Gasoline"
-    assert reagg_targets["CPA_C19::Heavy Fuel Oil"] == "CPA_C19_REMAINING"
+    assert reagg_targets["CPA_C19::Heavy Fuel Oil"] == "CPA_C19_remaining"
     assert reagg_targets["CPA_D::Electricity by hydro"] == "CPA_D_HYDRO"
 
     reagg_labels = dict(zip(reaggregation_mapping["source_key"], reaggregation_mapping["target_label"], strict=False))
-    assert reagg_labels["CPA_C19::Heavy Fuel Oil"] == "Coke and refined petroleum products - remaining"
-    assert reagg_labels["CPA_D::Electricity by hydro"] == "Hydro"
+    assert reagg_labels["CPA_C19::Heavy Fuel Oil"] == "CPA_C19: Coke and refined petroleum products_remaining"
+    assert reagg_labels["CPA_D::Electricity by hydro"] == "CPA_D: Hydro"
 
     # Uncovered subsectors are written explicitly so the sheet can be completed before reaggregation runs.
     assert uncovered["from_sector"].tolist() == ["CPA_C19::Lubricants"]
@@ -138,29 +139,58 @@ def test_resolve_product_template_alignment_falls_back_for_custom_split_sectors(
     template = tmp_path / "template.xlsx"
     template.write_text("placeholder", encoding="utf-8")
 
-    effective_template, replace_map, product_order = _resolve_product_template_alignment(
+    effective_template, product_order, primary_parent_by_output, parents_by_output = _resolve_product_template_alignment(
         template_xlsx=template,
         base_product_codes=["CPA_C19", "CPA_D"],
         output_product_codes=["CPA_C19::Motor Gasoline", "CPA_D::Electricity by wind"],
+        mapping_df=pd.DataFrame(columns=["from_sector", "to_sector"]),
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
         verbose=False,
     )
 
-    assert effective_template is None
-    assert replace_map == {}
+    assert effective_template == template
     assert product_order == ["CPA_C19::Motor Gasoline", "CPA_D::Electricity by wind"]
+    assert primary_parent_by_output == {
+        "CPA_C19::Motor Gasoline": "CPA_C19",
+        "CPA_D::Electricity by wind": "CPA_D",
+    }
+    assert parents_by_output == {
+        "CPA_C19::Motor Gasoline": ("CPA_C19",),
+        "CPA_D::Electricity by wind": ("CPA_D",),
+    }
 
 
 def test_resolve_product_template_alignment_keeps_energy_replacement_template(tmp_path: Path) -> None:
     template = tmp_path / "template.xlsx"
     template.write_text("placeholder", encoding="utf-8")
 
-    effective_template, replace_map, product_order = _resolve_product_template_alignment(
+    mapping_df = pd.DataFrame(
+        {
+            "from_sector": ["CPA_C19::Brown fuel", "CPA_D::Green power", "CPA_A01"],
+            "to_sector": ["ENERGY_BROWN", "ENERGY_GREEN", "CPA_A01"],
+        }
+    )
+
+    effective_template, product_order, primary_parent_by_output, parents_by_output = _resolve_product_template_alignment(
         template_xlsx=template,
         base_product_codes=["CPA_C19", "CPA_D", "CPA_A01"],
         output_product_codes=["ENERGY_BROWN", "ENERGY_GREEN", "CPA_A01"],
+        mapping_df=mapping_df,
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
         verbose=False,
     )
 
     assert effective_template == template
-    assert replace_map == {"CPA_C19": "ENERGY_BROWN", "CPA_D": "ENERGY_GREEN"}
     assert product_order == ["ENERGY_BROWN", "ENERGY_GREEN", "CPA_A01"]
+    assert primary_parent_by_output == {
+        "ENERGY_BROWN": "CPA_C19",
+        "ENERGY_GREEN": "CPA_D",
+        "CPA_A01": "CPA_A01",
+    }
+    assert parents_by_output == {
+        "ENERGY_BROWN": ("CPA_C19",),
+        "ENERGY_GREEN": ("CPA_D",),
+        "CPA_A01": ("CPA_A01",),
+    }
