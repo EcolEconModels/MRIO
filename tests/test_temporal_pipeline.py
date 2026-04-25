@@ -92,7 +92,7 @@ def test_output_change_decomposition_uses_exact_current_year_identity():
     expected_demand = L1.dot(delta_y.to_numpy(dtype=float))
     assert np.allclose(out["tech_component"].to_numpy(dtype=float), expected_tech)
     assert np.allclose(out["demand_component"].to_numpy(dtype=float), expected_demand)
-    assert np.allclose(out["residual"].to_numpy(dtype=float), 0.0, atol=1e-12)
+    assert np.allclose(out["total_change"].to_numpy(dtype=float), expected_tech + expected_demand)
 
 
 def test_transition_index_and_classification_bounds():

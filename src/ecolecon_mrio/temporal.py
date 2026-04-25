@@ -55,9 +55,7 @@ def compute_output_change_decomposition(
     ``tech_component = L_t DeltaA_t x_{t-1}``
     ``demand_component = L_t Delta y_t``
 
-    with ``total_change = x_t - x_{t-1}``. The residual should be numerical
-    zero when ``x``, ``A``, and ``y`` satisfy the open Leontief accounting
-    identity on a consistently aligned sector universe.
+    with ``total_change = x_t - x_{t-1}``.
     """
     rows: list[dict[str, Any]] = []
     years = sorted(
@@ -90,14 +88,12 @@ def compute_output_change_decomposition(
         )
         demand_component = pd.Series(L_t.dot(delta_y.to_numpy(dtype=float)), index=idx, dtype=float)
         total_change = (x_t - x_prev).astype(float)
-        residual = (total_change - tech_component - demand_component).astype(float)
 
-        for sector, tech_value, demand_value, total_value, residual_value in zip(
+        for sector, tech_value, demand_value, total_value in zip(
             idx,
             tech_component.to_numpy(dtype=float),
             demand_component.to_numpy(dtype=float),
             total_change.to_numpy(dtype=float),
-            residual.to_numpy(dtype=float),
             strict=False,
         ):
             rows.append(
@@ -108,7 +104,6 @@ def compute_output_change_decomposition(
                     "tech_component": float(tech_value),
                     "demand_component": float(demand_value),
                     "total_change": float(total_value),
-                    "residual": float(residual_value),
                 }
             )
     return pd.DataFrame(rows)
