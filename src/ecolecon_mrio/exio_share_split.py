@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.balancing import BalanceStats
-from ecolecon_mrio.disaggregation import SplitProfiles, disaggregate_and_balance
+from ecolecon_mrio.disaggregation import SplitProfiles, calc_A, calc_x
 from ecolecon_mrio.exiobase3 import (
     ExioRegionSlice,
     build_split_profiles_from_exio_domestic_block,
@@ -147,6 +147,319 @@ def _validate_split_reconstruction(
             "Disaggregation validation failed: split result does not aggregate back to the original IOT.\n"
             + "\n".join(errors)
         )
+
+
+def _expanded_sector_order(
+    *,
+    sectors_old: Sequence[str],
+    split_profiles: Mapping[str, SplitProfiles],
+) -> list[str]:
+    sectors_new: list[str] = []
+    for sector in map(str, sectors_old):
+        if sector in split_profiles:
+            sectors_new.extend(list(map(str, split_profiles[sector].subsectors)))
+        else:
+            sectors_new.append(sector)
+    return sectors_new
+
+
+def _normalize_vector(values: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce").fillna(0.0).astype("float64")
+    total = float(numeric.sum())
+    if not np.isfinite(total) or total <= 0:
+        raise ValueError("Cannot normalize non-positive donor vector.")
+    return numeric / total
+
+
+def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
+    code = str(fd_code)
+    if code == "P3":
+        return [
+            "households",
+            "non-profit organisations serving households",
+            "npish",
+            "government",
+        ]
+    if code == "P3_S14":
+        return ["households"]
+    if code == "P3_S15":
+        return ["non-profit organisations serving households", "npish"]
+    if code == "P3_S13":
+        return ["government"]
+    if code == "P5":
+        return ["gross fixed capital formation", "inventories", "valuables"]
+    if code == "P51G":
+        return ["gross fixed capital formation"]
+    if code == "P52":
+        return ["inventories"]
+    if code == "P53":
+        return ["valuables"]
+    if code in {"P6", "P6_B0", "P6_D0", "P6_U2", "P6_U3"}:
+        return ["exports"]
+    return None
+
+
+def _weighted_block_total(
+    donor_block: pd.DataFrame,
+    *,
+    row_weights: Mapping[str, float],
+    col_weights: Mapping[str, float],
+) -> float:
+    row = pd.Series({str(k): float(v) for k, v in row_weights.items() if float(v) != 0.0}, dtype="float64")
+    col = pd.Series({str(k): float(v) for k, v in col_weights.items() if float(v) != 0.0}, dtype="float64")
+    if row.empty or col.empty:
+        return 0.0
+
+    sub = donor_block.reindex(index=row.index.astype(str), columns=col.index.astype(str)).fillna(0.0)
+    return float(row.to_numpy(dtype="float64") @ sub.to_numpy(dtype="float64") @ col.to_numpy(dtype="float64"))
+
+
+def _build_label_to_exio_weights(
+    *,
+    eurostat_sectors: Sequence[str],
+    exio_sectors: Sequence[str],
+    split_profiles: Mapping[str, SplitProfiles],
+    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+
+    if eurostat_sector_mapping is not None:
+        for sector, weights in eurostat_sector_mapping.items():
+            clean_weights = {
+                str(exio_sector): float(weight)
+                for exio_sector, weight in weights.items()
+                if float(weight) != 0.0
+            }
+            if clean_weights:
+                out[str(sector)] = clean_weights
+
+    available_exio = set(map(str, exio_sectors))
+    for sector in map(str, eurostat_sectors):
+        if sector not in out and sector in available_exio:
+            out[sector] = {sector: 1.0}
+
+    for agg_sector, prof in split_profiles.items():
+        subsector_map = _resolve_subsector_to_exio_sectors(
+            agg_sector=str(agg_sector),
+            prof=prof,
+            sector_to_exio_sectors=sector_to_exio_sectors,
+        )
+        if not subsector_map:
+            continue
+        for subsector, exio_members in subsector_map.items():
+            members = [str(member) for member in exio_members if str(member) in available_exio]
+            if members:
+                out[str(subsector)] = {member: 1.0 for member in members}
+
+    return out
+
+
+def _build_fd_category_donor_shares(
+    *,
+    exio_slice: ExioRegionSlice,
+    split_profiles: Mapping[str, SplitProfiles],
+    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    eurostat_fd_codes: Sequence[str],
+) -> dict[str, dict[str, pd.Series]]:
+    Y_region = exio_slice.Y_region.copy().astype("float64")
+    Y_region.index = Y_region.index.astype(str)
+    Y_region.columns = Y_region.columns.astype(str)
+    donor_shares: dict[str, dict[str, pd.Series]] = {}
+
+    for agg_sector, prof in split_profiles.items():
+        subsector_map = _resolve_subsector_to_exio_sectors(
+            agg_sector=str(agg_sector),
+            prof=prof,
+            sector_to_exio_sectors=sector_to_exio_sectors,
+        )
+        if not subsector_map:
+            continue
+
+        shares_by_code: dict[str, pd.Series] = {}
+        for fd_code in map(str, eurostat_fd_codes):
+            keys = _fd_category_keys_for_eurostat_code(fd_code)
+            if not keys:
+                continue
+            cols = [
+                col
+                for col in Y_region.columns
+                if any(key in str(col).lower() for key in keys)
+            ]
+            if not cols:
+                continue
+
+            donor_values = pd.Series(0.0, index=list(map(str, prof.subsectors)), dtype="float64")
+            for subsector, exio_members in subsector_map.items():
+                donor_values.loc[str(subsector)] = float(
+                    Y_region.reindex(index=list(map(str, exio_members)), columns=cols).fillna(0.0).to_numpy(dtype="float64").sum()
+                )
+
+            total = float(donor_values.sum())
+            if np.isfinite(total) and total > 0.0:
+                shares_by_code[fd_code] = donor_values / total
+
+        if shares_by_code:
+            donor_shares[str(agg_sector)] = shares_by_code
+
+    return donor_shares
+
+
+def _split_iot_using_donor_blocks(
+    *,
+    eurostat_Z: pd.DataFrame,
+    eurostat_Y: pd.DataFrame,
+    exio_slice: ExioRegionSlice,
+    split_profiles: Mapping[str, SplitProfiles],
+    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+    create_io_system: bool,
+) -> SplitResult:
+    Z = eurostat_Z.copy().astype("float64")
+    Y = eurostat_Y.copy().astype("float64")
+    Z.index = Z.index.astype(str)
+    Z.columns = Z.columns.astype(str)
+    Y.index = Y.index.astype(str)
+    Y.columns = Y.columns.astype(str)
+
+    sectors_old = list(map(str, Z.index))
+    sectors_new = _expanded_sector_order(sectors_old=sectors_old, split_profiles=split_profiles)
+    Z_split = pd.DataFrame(0.0, index=sectors_new, columns=sectors_new, dtype="float64")
+    Y_split = pd.DataFrame(0.0, index=sectors_new, columns=Y.columns.astype(str), dtype="float64")
+
+    label_to_exio_weights = _build_label_to_exio_weights(
+        eurostat_sectors=sectors_old,
+        exio_sectors=list(map(str, exio_slice.sectors)),
+        split_profiles=split_profiles,
+        sector_to_exio_sectors=sector_to_exio_sectors,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+    )
+    fd_donor_shares = _build_fd_category_donor_shares(
+        exio_slice=exio_slice,
+        split_profiles=split_profiles,
+        sector_to_exio_sectors=sector_to_exio_sectors,
+        eurostat_fd_codes=Y.columns.astype(str),
+    )
+
+    donor_Z = exio_slice.Z_domestic.copy().astype("float64")
+    donor_Z.index = donor_Z.index.astype(str)
+    donor_Z.columns = donor_Z.columns.astype(str)
+
+    donor_fallback_count = 0
+
+    for row_sector in sectors_old:
+        row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
+        for col_sector in sectors_old:
+            col_labels = list(split_profiles[col_sector].subsectors) if col_sector in split_profiles else [col_sector]
+            cell_total = float(Z.loc[row_sector, col_sector])
+            if cell_total == 0.0:
+                continue
+
+            if len(row_labels) == 1 and len(col_labels) == 1:
+                Z_split.loc[row_labels[0], col_labels[0]] = cell_total
+                continue
+
+            donor_values = pd.DataFrame(0.0, index=row_labels, columns=col_labels, dtype="float64")
+            for row_label in row_labels:
+                row_weights = label_to_exio_weights.get(str(row_label))
+                if not row_weights:
+                    continue
+                for col_label in col_labels:
+                    col_weights = label_to_exio_weights.get(str(col_label))
+                    if not col_weights:
+                        continue
+                    donor_values.loc[row_label, col_label] = _weighted_block_total(
+                        donor_Z,
+                        row_weights=row_weights,
+                        col_weights=col_weights,
+                    )
+
+            donor_total = float(donor_values.to_numpy(dtype="float64").sum())
+            if np.isfinite(donor_total) and donor_total > 0.0:
+                alloc = donor_values * (cell_total / donor_total)
+            else:
+                donor_fallback_count += 1
+                if row_sector in split_profiles and col_sector in split_profiles:
+                    row_share = _normalize_vector(
+                        split_profiles[row_sector].intermediate_sales_share.reindex(row_labels).fillna(0.0)
+                    )
+                    col_share = _normalize_vector(
+                        split_profiles[col_sector].intermediate_input_share.reindex(col_labels).fillna(0.0)
+                    )
+                    alloc = pd.DataFrame(
+                        np.outer(row_share.to_numpy(), col_share.to_numpy()) * cell_total,
+                        index=row_labels,
+                        columns=col_labels,
+                    )
+                elif row_sector in split_profiles:
+                    row_share = _normalize_vector(
+                        split_profiles[row_sector].intermediate_sales_share.reindex(row_labels).fillna(0.0)
+                    )
+                    alloc = pd.DataFrame(
+                        row_share.to_numpy().reshape(-1, 1) * cell_total,
+                        index=row_labels,
+                        columns=col_labels,
+                    )
+                elif col_sector in split_profiles:
+                    col_share = _normalize_vector(
+                        split_profiles[col_sector].intermediate_input_share.reindex(col_labels).fillna(0.0)
+                    )
+                    alloc = pd.DataFrame(
+                        col_share.to_numpy().reshape(1, -1) * cell_total,
+                        index=row_labels,
+                        columns=col_labels,
+                    )
+                else:
+                    alloc = pd.DataFrame([[cell_total]], index=row_labels, columns=col_labels)
+
+            Z_split.loc[row_labels, col_labels] = alloc.to_numpy(dtype="float64")
+
+    for row_sector in sectors_old:
+        row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
+        if len(row_labels) == 1:
+            Y_split.loc[row_labels[0], :] = Y.loc[row_sector, :].to_numpy(dtype="float64")
+            continue
+
+        donor_shares_by_code = fd_donor_shares.get(str(row_sector), {})
+        for fd_code in Y.columns.astype(str):
+            fd_total = float(Y.loc[row_sector, fd_code])
+            if fd_total == 0.0:
+                continue
+            donor_share = donor_shares_by_code.get(str(fd_code))
+            if donor_share is None:
+                donor_share = split_profiles[row_sector].final_demand_share.reindex(row_labels).fillna(0.0)
+                donor_share = _normalize_vector(donor_share)
+            Y_split.loc[row_labels, fd_code] = donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64") * fd_total
+
+    x_split = calc_x(Z_split, Y_split)
+    A_split = calc_A(Z_split, x_split)
+
+    io_system = None
+    if create_io_system:
+        try:
+            import pymrio
+
+            io_system = pymrio.IOSystem()
+            io_system.Z = Z_split
+            io_system.Y = Y_split
+            io_system.x = x_split
+            io_system.A = A_split
+        except ImportError:
+            pass
+
+    method = "DONOR_BLOCK" if donor_fallback_count == 0 else "DONOR_BLOCK_WITH_SHARE_FALLBACK"
+    return SplitResult(
+        Z=Z_split,
+        Y=Y_split,
+        x=x_split,
+        A=A_split,
+        split_profiles=dict(split_profiles),
+        balancing_method=method,
+        balancing_stats=BalanceStats(0, 0.0, 0.0),
+        exio_selected_sectors={},
+        exio_quantity_and_price=None,
+        io_system=io_system,
+    )
 
 
 def _read_table(path: Path) -> pd.DataFrame:
@@ -551,6 +864,7 @@ def split_iot_using_exiobase_split_profiles(
     ras_tol: float = 1e-10,
     balancing_scope: str = "local",
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_tol: float = 0.0,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
@@ -559,7 +873,10 @@ def split_iot_using_exiobase_split_profiles(
     create_io_system: bool = True,
 ) -> SplitResult:
     """
-    Split one or more aggregate sectors in (Z,Y) using EXIOBASE domestic-block shares and balance via RAS/GRAS.
+    Split one or more aggregate sectors in (Z,Y) using EXIOBASE donor structure where available.
+
+    The allocation uses full donor blocks for Z and donor final-demand-category shares for Y.
+    Where donor information is unavailable, it falls back to the existing marginal-share logic.
     """
     profiles, selected = build_split_profiles_from_exiobase_domestic_block(
         exio_slice,
@@ -625,13 +942,13 @@ def split_iot_using_exiobase_split_profiles(
         if errors:
             raise ValueError("\n\n".join(errors))
 
-    res = disaggregate_and_balance(
-        eurostat_Z,
-        eurostat_Y,
+    res = _split_iot_using_donor_blocks(
+        eurostat_Z=eurostat_Z,
+        eurostat_Y=eurostat_Y,
+        exio_slice=exio_slice,
         split_profiles=profiles,
-        balancing_scope=balancing_scope,
-        max_iter=ras_max_iter,
-        tol=ras_tol,
+        sector_to_exio_sectors=sector_to_exio_sectors,
+        eurostat_sector_mapping=eurostat_sector_mapping,
         create_io_system=create_io_system,
     )
 
@@ -702,6 +1019,7 @@ def split_iot_using_exiobase_shares(
     ras_max_iter: int = 50_000,
     ras_tol: float = 1e-10,
     balancing_scope: str = "local",
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     coverage_tol: float = 0.0,
     extract_quantity_and_price: bool = False,
@@ -730,6 +1048,7 @@ def split_iot_using_exiobase_shares(
         ras_max_iter=ras_max_iter,
         ras_tol=ras_tol,
         balancing_scope=balancing_scope,
+        eurostat_sector_mapping=eurostat_sector_mapping,
         coverage_expected_exio_sectors=coverage_expected_exio_sectors,
         coverage_tol=coverage_tol,
         extract_quantity_and_price=extract_quantity_and_price,

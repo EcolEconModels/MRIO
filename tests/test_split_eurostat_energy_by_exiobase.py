@@ -295,6 +295,147 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
     assert not any("Electricity by gas" in s for s in res.Z.index)
 
 
+def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["a1", "a2", "b1", "b2"]
+    Z_domestic = pd.DataFrame(
+        [
+            [1.0, 0.0, 90.0, 10.0],
+            [0.0, 1.0, 10.0, 90.0],
+            [5.0, 0.0, 1.0, 0.0],
+            [0.0, 5.0, 0.0, 1.0],
+        ],
+        index=exio_sectors,
+        columns=exio_sectors,
+    )
+    Y_region = pd.DataFrame({"Final consumption expenditure by households": [1.0, 1.0, 1.0, 1.0]}, index=exio_sectors)
+    x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
+
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+
+    euro_Z = pd.DataFrame([[0.0, 200.0], [0.0, 0.0]], index=["A", "B"], columns=["A", "B"])
+    euro_Y = pd.DataFrame({"P3": [2.0, 2.0]}, index=["A", "B"])
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"A": ["a1", "a2"], "B": ["b1", "b2"]},
+        create_io_system=False,
+    )
+
+    assert res.balancing_method == "DONOR_BLOCK"
+    assert res.Z.loc["A::a1", "B::b1"] == pytest.approx(90.0)
+    assert res.Z.loc["A::a1", "B::b2"] == pytest.approx(10.0)
+    assert res.Z.loc["A::a2", "B::b1"] == pytest.approx(10.0)
+    assert res.Z.loc["A::a2", "B::b2"] == pytest.approx(90.0)
+
+
+def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["u", "v", "a1", "a2"]
+    Z_domestic = pd.DataFrame(
+        [
+            [1.0, 0.0, 90.0, 10.0],
+            [0.0, 1.0, 10.0, 90.0],
+            [5.0, 5.0, 1.0, 0.0],
+            [5.0, 5.0, 0.0, 1.0],
+        ],
+        index=exio_sectors,
+        columns=exio_sectors,
+    )
+    Y_region = pd.DataFrame({"Final consumption expenditure by households": [1.0, 1.0, 1.0, 1.0]}, index=exio_sectors)
+    x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
+
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+
+    euro_Z = pd.DataFrame(
+        [[0.0, 0.0, 100.0], [0.0, 0.0, 100.0], [0.0, 0.0, 0.0]],
+        index=["U", "V", "A"],
+        columns=["U", "V", "A"],
+    )
+    euro_Y = pd.DataFrame({"P3": [1.0, 1.0, 2.0]}, index=["U", "V", "A"])
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"A": ["a1", "a2"]},
+        eurostat_sector_mapping={"U": {"u": 1.0}, "V": {"v": 1.0}},
+        create_io_system=False,
+    )
+
+    assert res.Z.loc["U", "A::a1"] == pytest.approx(90.0)
+    assert res.Z.loc["U", "A::a2"] == pytest.approx(10.0)
+    assert res.Z.loc["V", "A::a1"] == pytest.approx(10.0)
+    assert res.Z.loc["V", "A::a2"] == pytest.approx(90.0)
+
+
+def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["a1", "a2"]
+    Z_domestic = pd.DataFrame([[1.0, 0.0], [0.0, 1.0]], index=exio_sectors, columns=exio_sectors)
+    Y_region = pd.DataFrame(
+        {
+            "Final consumption expenditure by households": [90.0, 10.0],
+            "Exports: Total (fob)": [10.0, 90.0],
+        },
+        index=exio_sectors,
+    )
+    x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
+
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+
+    euro_Z = pd.DataFrame([[0.0]], index=["A"], columns=["A"])
+    euro_Y = pd.DataFrame({"P3": [100.0], "P6": [100.0]}, index=["A"])
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"A": ["a1", "a2"]},
+        create_io_system=False,
+    )
+
+    assert res.Y.loc["A::a1", "P3"] == pytest.approx(90.0)
+    assert res.Y.loc["A::a2", "P3"] == pytest.approx(10.0)
+    assert res.Y.loc["A::a1", "P6"] == pytest.approx(10.0)
+    assert res.Y.loc["A::a2", "P6"] == pytest.approx(90.0)
+
+
 def test_validate_split_reconstruction_preserves_original_final_demand_columns():
     from ecolecon_mrio.disaggregation import SplitProfiles
     from ecolecon_mrio.exio_share_split import _validate_split_reconstruction
