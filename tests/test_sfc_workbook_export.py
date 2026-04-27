@@ -56,6 +56,24 @@ def test_pretty_sector_label_formats_energy_codes() -> None:
     assert _pretty_sector_label("ENERGY_GREEN") == "Energy Green"
 
 
+def test_infer_variant_value_uses_source_dir_and_filters() -> None:
+    from scripts.aggregate_iot_by_mapping import _infer_variant_value
+
+    assert _infer_variant_value(
+        out_base=Path("/tmp/out"),
+        source_dir=Path("/tmp/stk_flow=IMP"),
+        variant_dim="stk_flow",
+        eurostat_filters={"stk_flow": "DOM"},
+    ) == "IMP"
+
+    assert _infer_variant_value(
+        out_base=Path("/tmp/out"),
+        source_dir=Path("/tmp/input"),
+        variant_dim="stk_flow",
+        eurostat_filters={"stk_flow": "DOM"},
+    ) == "DOM"
+
+
 def test_supplementary_fd_row_uses_current_final_demand_shares() -> None:
     from scripts.aggregate_iot_by_mapping import _supplementary_fd_row_from_current_shares
 
@@ -365,3 +383,277 @@ def test_validate_template_reaggregation_skips_parent_fd_check_for_multi_parent_
         lower_row_vectors={},
         lower_fd_vectors={},
     )
+
+
+def test_validate_template_reaggregation_skips_supplementary_parent_check_when_disabled(tmp_path: Path) -> None:
+    from openpyxl import load_workbook
+    from scripts.aggregate_iot_by_mapping import _template_table_layout, _validate_template_reaggregation
+
+    template_path = tmp_path / "template.xlsx"
+    _build_template(template_path)
+    tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
+    tpl_layout = _template_table_layout(tpl_ws)
+
+    Z_ord = pd.DataFrame(
+        [[0.0, 0.0], [0.0, 0.0]],
+        index=["CPA_C19::Motor Gasoline", "CPA_D::Hydro"],
+        columns=["CPA_C19::Motor Gasoline", "CPA_D::Hydro"],
+    )
+    Y_ord = pd.DataFrame(
+        {"P3": [0.0, 0.0], "P5": [0.0, 0.0], "P6": [0.0, 0.0]},
+        index=Z_ord.index,
+    )
+    Y_before = Y_ord.copy()
+
+    _validate_template_reaggregation(
+        product_codes_order=Z_ord.index.tolist(),
+        base_product_codes=["CPA_C19", "CPA_D"],
+        parents_by_output={
+            "CPA_C19::Motor Gasoline": ("CPA_C19",),
+            "CPA_D::Hydro": ("CPA_D",),
+        },
+        fd_codes_order_no_total=["P3", "P5", "P6", "TU", "TFU"],
+        Y_before=Y_before,
+        tpl_ws=tpl_ws,
+        tpl_layout=tpl_layout,
+        Z_ord=Z_ord,
+        Y_ord=Y_ord,
+        lower_row_vectors={
+            "Taxes less subsidies on products": pd.Series(0.0, index=Z_ord.index, dtype="float64"),
+        },
+        lower_fd_vectors={},
+        validate_template_parent_totals=False,
+    )
+
+
+def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeypatch) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template_path = tmp_path / "template.xlsx"
+    out_path = tmp_path / "out.xlsx"
+    _build_template(template_path)
+
+    parsed = ParsedEurostatIOT(
+        Z=pd.DataFrame(
+            [[0.0, 0.0], [0.0, 0.0]],
+            index=["CPA_C19", "CPA_D"],
+            columns=["CPA_C19", "CPA_D"],
+        ),
+        Y=pd.DataFrame(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            index=["CPA_C19", "CPA_D"],
+            columns=["P3", "P5", "P6"],
+        ),
+        meta={
+            "dimensions": {
+                "prd_ava": {
+                    "CPA_C19": "Coke and refined petroleum products",
+                    "CPA_D": "Electricity, gas, steam and air conditioning",
+                },
+                "prd_use": {
+                    "P3": "Final consumption expediture",
+                    "P5": "Gross capital formation",
+                    "P6": "Exports of goods and services",
+                    "TU": "Total use",
+                    "TFU": "Total final use",
+                },
+            },
+            "identified_industry_columns": ["CPA_C19", "CPA_D"],
+            "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
+        },
+    )
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        mod,
+        "_validate_template_reaggregation",
+        lambda **_: (_ for _ in ()).throw(ValueError("Template reaggregation validation failed for total-row fd=P3")),
+    )
+
+    z_before = pd.DataFrame(
+        [[2.0, 1.0], [1.0, 3.0]],
+        index=["CPA_C19::Motor Gasoline", "CPA_D::Electricity by hydro"],
+        columns=["CPA_C19::Motor Gasoline", "CPA_D::Electricity by hydro"],
+    )
+    y_before = pd.DataFrame(
+        {"P3": [8.0, 6.0], "P5": [4.0, 3.0], "P6": [2.0, 1.0]},
+        index=z_before.index,
+    )
+
+    mapping_df = pd.DataFrame(
+        {
+            "from_sector": ["CPA_C19::Motor Gasoline", "CPA_D::Electricity by hydro"],
+            "to_sector": ["CPA_C19::Motor Gasoline", "CPA_D::Hydro"],
+            "target_label": ["CPA_C19: Motor Gasoline", "CPA_D: Hydro"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Template reaggregation validation failed"):
+        mod._write_sfc_workbook(
+            out_path=out_path,
+            template_xlsx=template_path,
+            eurostat_dataset="naio_10_cp1700",
+            eurostat_filters={"geo": "AT", "time": "2021"},
+            eurostat_row_dim="prd_ava",
+            eurostat_col_dim="prd_use",
+            eurostat_storage_folder=tmp_path,
+            variant_dim="stk_flow",
+            variant_value="TOTAL",
+            Z_before=z_before,
+            Y_before=y_before,
+            Z_after=z_before,
+            Y_after=y_before,
+            mapping_df=mapping_df,
+            mapping_from_col="from_sector",
+            mapping_to_col="to_sector",
+            verbose=False,
+        )
+
+
+def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_path: Path, monkeypatch) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template_path = tmp_path / "template.xlsx"
+    out_path = tmp_path / "out.xlsx"
+    _build_template(template_path)
+
+    parsed = ParsedEurostatIOT(
+        Z=pd.DataFrame(
+            [[0.0, 0.0], [0.0, 0.0]],
+            index=["CPA_C19", "CPA_D"],
+            columns=["CPA_C19", "CPA_D"],
+        ),
+        Y=pd.DataFrame(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            index=["CPA_C19", "CPA_D"],
+            columns=["P3", "P5", "P6"],
+        ),
+        meta={
+            "dimensions": {
+                "prd_ava": {
+                    "CPA_C19": "Coke and refined petroleum products",
+                    "CPA_D": "Electricity, gas, steam and air conditioning",
+                },
+                "prd_use": {
+                    "P3": "Final consumption expediture",
+                    "P5": "Gross capital formation",
+                    "P6": "Exports of goods and services",
+                    "TU": "Total use",
+                    "TFU": "Total final use",
+                },
+            },
+            "identified_industry_columns": ["CPA_C19", "CPA_D"],
+            "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
+        },
+    )
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+
+    z_before = pd.DataFrame(
+        [
+            [2.0, 1.0, 0.0],
+            [1.0, 3.0, 1.0],
+            [0.0, 2.0, 4.0],
+        ],
+        index=["CPA_C19::Motor Gasoline", "CPA_C19::Heavy Fuel Oil", "CPA_D::Electricity by hydro"],
+        columns=["CPA_C19::Motor Gasoline", "CPA_C19::Heavy Fuel Oil", "CPA_D::Electricity by hydro"],
+    )
+    y_before = pd.DataFrame(
+        {
+            "P3": [8.0, 12.0, 6.0],
+            "P5": [4.0, 6.0, 3.0],
+            "P6": [2.0, 3.0, 1.0],
+        },
+        index=z_before.index,
+    )
+
+    z_after = pd.DataFrame(
+        [
+            [4.0, 1.0, 2.0],
+            [3.0, 2.0, 1.0],
+            [5.0, 2.0, 3.0],
+        ],
+        index=["CPA_C19::Motor Gasoline", "CPA_C19_remaining", "CPA_D::Hydro"],
+        columns=["CPA_C19::Motor Gasoline", "CPA_C19_remaining", "CPA_D::Hydro"],
+    )
+    y_after = pd.DataFrame(
+        {
+            "P3": [8.0, 12.0, 6.0],
+            "P5": [4.0, 6.0, 3.0],
+            "P6": [2.0, 3.0, 1.0],
+        },
+        index=z_after.index,
+    )
+
+    mapping_df = pd.DataFrame(
+        {
+            "from_sector": [
+                "CPA_C19::Motor Gasoline",
+                "CPA_C19::Heavy Fuel Oil",
+                "CPA_D::Electricity by hydro",
+            ],
+            "to_sector": [
+                "CPA_C19::Motor Gasoline",
+                "CPA_C19_remaining",
+                "CPA_D::Hydro",
+            ],
+            "target_label": [
+                "CPA_C19: Motor Gasoline",
+                "CPA_C19: Coke and refined petroleum products_remaining",
+                "CPA_D: Hydro",
+            ],
+        }
+    )
+
+    mod._write_sfc_workbook(
+        out_path=out_path,
+        template_xlsx=template_path,
+        eurostat_dataset="naio_10_cp1700",
+        eurostat_filters={"geo": "AT", "time": "2021"},
+        eurostat_row_dim="prd_ava",
+        eurostat_col_dim="prd_use",
+        eurostat_storage_folder=tmp_path,
+        variant_dim="stk_flow",
+        variant_value="TOTAL",
+        Z_before=z_before,
+        Y_before=y_before,
+        Z_after=z_after,
+        Y_after=y_after,
+        mapping_df=mapping_df,
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
+        verbose=False,
+    )
+
+    tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
+    workbook = load_workbook(out_path)
+    workbook_ws = workbook["Sheet 1"]
+    workbook_layout = mod._template_table_layout(workbook_ws)
+    workbook_ws.cell(row=int(workbook_layout["total_row"]), column=int(workbook_layout["first_fd_col"])).value = 999.0
+    workbook.save(out_path)
+    workbook_ws = load_workbook(out_path, data_only=True)["Sheet 1"]
+
+    with pytest.raises(ValueError, match=r"Template reaggregation validation failed for total-row fd=P3"):
+        mod._validate_template_reaggregation(
+            product_codes_order=z_after.index.tolist(),
+            base_product_codes=["CPA_C19", "CPA_D"],
+            parents_by_output={
+                "CPA_C19::Motor Gasoline": ("CPA_C19",),
+                "CPA_C19_remaining": ("CPA_C19",),
+                "CPA_D::Hydro": ("CPA_D",),
+            },
+            fd_codes_order_no_total=["P3", "P5", "P6", "TU", "TFU"],
+            Y_before=y_before,
+            tpl_ws=tpl_ws,
+            tpl_layout=mod._template_table_layout(tpl_ws),
+            workbook_ws=workbook_ws,
+            workbook_layout=mod._template_table_layout(workbook_ws),
+            Z_ord=z_after,
+            Y_ord=y_after,
+            lower_row_vectors={},
+            lower_fd_vectors={},
+        )

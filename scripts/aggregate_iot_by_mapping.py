@@ -60,6 +60,27 @@ def _write_text(path: Path, content: str, *, verbose: bool) -> None:
     _vprint(verbose, f"Wrote: {path.resolve()}")
 
 
+def _infer_variant_value(
+    *,
+    out_base: Path,
+    source_dir: Path,
+    variant_dim: str,
+    eurostat_filters: dict[str, object] | None,
+) -> str | None:
+    prefix = f"{variant_dim}="
+    for candidate in (out_base.name, source_dir.name):
+        if candidate.startswith(prefix):
+            return candidate.split("=", 1)[1] or None
+
+    if eurostat_filters is None:
+        return None
+    value = eurostat_filters.get(variant_dim)
+    if value is None:
+        return None
+    value_text = str(value).strip()
+    return value_text or None
+
+
 def write_aggregation_report_xlsx(
     out_path: str | Path,
     *,
@@ -846,10 +867,13 @@ def _validate_template_reaggregation(
     Y_before: pd.DataFrame,
     tpl_ws,
     tpl_layout: dict[str, int],
+    workbook_ws=None,
+    workbook_layout: dict[str, int] | None = None,
     Z_ord: pd.DataFrame,
     Y_ord: pd.DataFrame,
     lower_row_vectors: dict[str, pd.Series],
     lower_fd_vectors: dict[str, pd.Series],
+    validate_template_parent_totals: bool = True,
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> None:
@@ -861,6 +885,11 @@ def _validate_template_reaggregation(
     }
     tpl_fd_cols = {
         code: int(tpl_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes)
+    }
+    workbook_ws = tpl_ws if workbook_ws is None else workbook_ws
+    workbook_layout = tpl_layout if workbook_layout is None else workbook_layout
+    workbook_fd_cols = {
+        code: int(workbook_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes)
     }
 
     children_by_parent: dict[str, list[str]] = {code: [] for code in base_codes}
@@ -912,6 +941,49 @@ def _validate_template_reaggregation(
                 f"actual={float(actual):.10f}, expected={float(expected):.10f}"
             )
 
+    for output_idx, output_code in enumerate(product_codes, start=int(workbook_layout["first_product_row"])):
+        expected_intermediate = float(row_sum_Z.loc[output_code])
+        raw_intermediate = workbook_ws.cell(row=output_idx, column=int(workbook_layout["total_col"])).value
+        actual_intermediate = float(raw_intermediate) if isinstance(raw_intermediate, (int, float)) else None
+        if actual_intermediate is not None:
+            _assert_close(
+                f"product-row intermediate-total output={output_code}",
+                actual_intermediate,
+                expected_intermediate,
+            )
+
+        for fd_code, fd_col in workbook_fd_cols.items():
+            raw_fd = workbook_ws.cell(row=output_idx, column=fd_col).value
+            actual_fd = float(raw_fd) if isinstance(raw_fd, (int, float)) else None
+            if actual_fd is None:
+                continue
+            if fd_code == "TU":
+                expected_fd = float(current_tu.loc[output_code])
+            elif fd_code == "TFU":
+                expected_fd = float(current_tfu.loc[output_code])
+            else:
+                if fd_code not in Y_ord.columns:
+                    continue
+                expected_fd = float(Y_ord.loc[output_code, fd_code])
+            _assert_close(
+                f"product-row workbook fd output={output_code} fd={fd_code}",
+                actual_fd,
+                expected_fd,
+            )
+
+    total_row = int(workbook_layout["total_row"])
+    raw_total_col = workbook_ws.cell(row=total_row, column=int(workbook_layout["total_col"])).value
+    total_col_value = float(raw_total_col) if isinstance(raw_total_col, (int, float)) else None
+    if total_col_value is not None:
+        _assert_close("total-row intermediate-total", total_col_value, float(col_sum_Z.sum()))
+    for fd_code, fd_col in workbook_fd_cols.items():
+        raw_total = workbook_ws.cell(row=total_row, column=fd_col).value
+        actual_total = float(raw_total) if isinstance(raw_total, (int, float)) else None
+        if actual_total is None:
+            continue
+        expected_total = float(current_fd_totals.get(fd_code, 0.0))
+        _assert_close(f"total-row fd={fd_code}", actual_total, expected_total)
+
     original_tfu = pd.Series(0.0, index=base_codes, dtype="float64")
     if {"P3", "P5", "P6"}.issubset(set(Y_before_base.columns.astype(str))):
         original_tfu = (Y_before_base["P3"] + Y_before_base["P5"] + Y_before_base["P6"]).astype("float64")
@@ -962,7 +1034,7 @@ def _validate_template_reaggregation(
                         float(expected_by_output.loc[output_code]),
                     )
             else:
-                if has_multi_parent_outputs:
+                if has_multi_parent_outputs or not validate_template_parent_totals:
                     continue
                 for parent_code in base_codes:
                     expected = _numeric_cell(r, tpl_product_cols[parent_code])
@@ -1443,23 +1515,22 @@ def _write_sfc_workbook(
                 _write_num(ws, row=target_r, col=c_fd0 + j, value=float(value))
             lower_fd_vectors[label_text] = fd_vector
 
-        try:
-                _validate_template_reaggregation(
-                    product_codes_order=product_codes_order,
-                    base_product_codes=base_product_codes,
-                    parents_by_output=parents_by_output,
-                    fd_codes_order_no_total=fd_codes_order_no_total,
-                    Y_before=Y_before,
-                    tpl_ws=tpl_ws,
-                    tpl_layout=tpl_layout,
-                    Z_ord=Z_ord,
-                    Y_ord=Y_ord,
-                    lower_row_vectors=lower_row_vectors,
-                    lower_fd_vectors=lower_fd_vectors,
-                )
-        
-        except ValueError as e:
-            print(f"WARNING: Template reaggregation validation failed: {e}")
+        _validate_template_reaggregation(
+            product_codes_order=product_codes_order,
+            base_product_codes=base_product_codes,
+            parents_by_output=parents_by_output,
+            fd_codes_order_no_total=fd_codes_order_no_total,
+            Y_before=Y_before,
+            tpl_ws=tpl_ws,
+            tpl_layout=tpl_layout,
+            workbook_ws=ws,
+            workbook_layout=layout,
+            Z_ord=Z_ord,
+            Y_ord=Y_ord,
+            lower_row_vectors=lower_row_vectors,
+            lower_fd_vectors=lower_fd_vectors,
+            validate_template_parent_totals=(variant_value is None or str(variant_value).upper() == "TOTAL"),
+        )
     _write_excel_mapping_sheet(
         wb,
         sheet_name="IO Aggregation Mapping",
@@ -1768,10 +1839,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             template = Path(args.sfc_template_xlsx) if args.sfc_template_xlsx else None
 
-            # Variant name: derived from output folder name when batch-processing (e.g. stk_flow=DOM).
-            variant = None
-            if out_base.name.startswith(f"{args.variant_dim}="):
-                variant = out_base.name.split("=", 1)[1]
+            eurostat_filters = _parse_json_arg(str(args.eurostat_filters))
+            variant = _infer_variant_value(
+                out_base=out_base,
+                source_dir=z_dir,
+                variant_dim=str(args.variant_dim),
+                eurostat_filters=eurostat_filters,
+            )
             out_name = str(args.sfc_outname).format(variant=(variant or "single"))
             out_path = out_base / out_name
 
@@ -1781,7 +1855,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 out_path=out_path,
                 template_xlsx=template,
                 eurostat_dataset=str(args.eurostat_dataset),
-                eurostat_filters=_parse_json_arg(str(args.eurostat_filters)),
+                eurostat_filters=eurostat_filters,
                 eurostat_row_dim=str(args.eurostat_row_dim),
                 eurostat_col_dim=str(args.eurostat_col_dim),
                 eurostat_storage_folder=Path(args.eurostat_storage_folder),
