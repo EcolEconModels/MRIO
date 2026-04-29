@@ -134,6 +134,7 @@ def principal_growth_panel(
     B_by_year: Mapping[int, pd.DataFrame] | None = None,
     *,
     require_generalized: bool = False,
+    year_result_callback: Any | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[int, PrincipalDirectionResult]]:
     """Compute annual principal directions and explicit pair-indexed diagnostics.
 
@@ -160,6 +161,8 @@ def principal_growth_panel(
             require_generalized=require_generalized,
             year=year,
         )
+        if year_result_callback is not None:
+            year_result_callback(int(year), res)
         results[year] = res
 
     year_rows: list[dict[str, float | int | str | bool]] = []

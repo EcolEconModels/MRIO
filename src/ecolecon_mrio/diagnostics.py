@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import gc
 import warnings
+import time
 
 import numpy as np
 import pandas as pd
 from scipy import linalg
+from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigs
 from scipy.optimize import linprog
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, eye, hstack, vstack, issparse
 from scipy.sparse.csgraph import connected_components
 
 
@@ -28,14 +31,94 @@ class SafeJustResult:
     message: str | None = None
 
 
+def _rss_mb() -> float:
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - non-POSIX fallback
+        return float("nan")
+    rss = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    import sys
+
+    if sys.platform == "darwin":
+        rss /= 1024.0 * 1024.0
+    else:
+        rss /= 1024.0
+    return float(rss)
+
+
+def _diag_print(message: str) -> None:
+    print(f"[MRIO] {message}", flush=True)
+
+
+def _matrix_nonzero_stats(values: np.ndarray) -> tuple[int, float]:
+    nnz = int(np.count_nonzero(values))
+    density = float(nnz / values.size) if values.size else float("nan")
+    return nnz, density
+
+
+def _spectral_radius_method_hint(values: np.ndarray) -> str:
+    n = int(values.shape[0])
+    nnz, density = _matrix_nonzero_stats(values)
+    if n >= 256:
+        return f"sparse_eigs nnz={nnz} density={density:.4f}"
+    return f"dense_eigvals nnz={nnz} density={density:.4f}"
+
+
+def _spectral_radius_from_values(values: np.ndarray, *, tol: float = 1e-10) -> tuple[float, str]:
+    n = int(values.shape[0])
+    if n == 0:
+        return float("nan"), "empty"
+    nnz, density = _matrix_nonzero_stats(values)
+    sparse_threshold = 256
+    if n >= sparse_threshold:
+        try:
+            vals = eigs(
+                csr_matrix(values),
+                k=1,
+                which="LM",
+                tol=1e-6,
+                maxiter=max(4000, 10 * n),
+                return_eigenvectors=False,
+            )
+            rho = float(np.max(np.abs(vals)))
+            return rho, f"sparse_eigs nnz={nnz} density={density:.4f}"
+        except ArpackNoConvergence as exc:
+            vals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
+            if vals.size:
+                rho = float(np.max(np.abs(vals)))
+                return rho, f"sparse_eigs_partial nnz={nnz} density={density:.4f}"
+        except Exception:
+            pass
+    vals = linalg.eigvals(values)
+    rho = float(np.max(np.abs(vals))) if vals.size else float("nan")
+    return rho, f"dense_eigvals nnz={nnz} density={density:.4f}"
+
+
 def calc_spectral_radius(matrix: pd.DataFrame) -> float:
-    eigvals = linalg.eigvals(matrix.values)
-    return float(np.max(np.abs(eigvals)))
+    values = matrix.to_numpy(dtype=float)
+    method = _spectral_radius_method_hint(values)
+    _diag_print(
+        f"spectral radius start shape={matrix.shape} method={method} rss={_rss_mb():.1f}MB"
+    )
+    t0 = time.time()
+    rho, method = _spectral_radius_from_values(values)
+    _diag_print(
+        f"spectral radius done shape={matrix.shape} rho={rho:.6g} method={method} "
+        f"elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
+    )
+    return rho
 
 
 def calc_tech_slack(matrix: pd.DataFrame) -> tuple[float, float]:
+    _diag_print(f"tech slack start shape={matrix.shape} rss={_rss_mb():.1f}MB")
+    t0 = time.time()
     rho = calc_spectral_radius(matrix)
-    return rho, max(0.0, 1.0 - rho)
+    slack = max(0.0, 1.0 - rho)
+    _diag_print(
+        f"tech slack done shape={matrix.shape} rho={rho:.6g} slack={slack:.6g} "
+        f"elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
+    )
+    return rho, slack
 
 
 def calc_coefficient_diagnostics(
@@ -84,9 +167,128 @@ def _orient_nonnegative(vec: np.ndarray, tol: float) -> tuple[np.ndarray, bool]:
     return np.abs(out), True
 
 
-def _dominant_block_indices(values: np.ndarray, tol: float) -> tuple[np.ndarray, dict[str, Any]]:
-    adjacency = (values > tol).astype(int)
-    n_comp, labels = connected_components(csr_matrix(adjacency), directed=True, connection="strong")
+def _allocate_role_quotas(working_set_n: int, role_mix: Mapping[str, float]) -> dict[str, int]:
+    roles = ["expand", "contract", "neutral"]
+    weights = {role: float(role_mix.get(role, 0.0)) for role in roles}
+    total = float(sum(max(0.0, w) for w in weights.values()))
+    if total <= 0:
+        weights = {"expand": 0.3, "contract": 0.3, "neutral": 0.4}
+        total = 1.0
+    raw = {role: max(0.0, weights[role]) / total * float(working_set_n) for role in roles}
+    quotas = {role: int(np.floor(raw[role])) for role in roles}
+    remainder = int(working_set_n - sum(quotas.values()))
+    if remainder > 0:
+        order = sorted(roles, key=lambda role: (raw[role] - quotas[role], weights[role]), reverse=True)
+        for role in order:
+            if remainder <= 0:
+                break
+            quotas[role] += 1
+            remainder -= 1
+    return quotas
+
+
+def _select_lp_working_set_index(
+    x: pd.Series,
+    *,
+    working_set_n: int | None,
+    mode: str,
+    role_masks: Mapping[str, pd.Series] | None = None,
+    role_mix: Mapping[str, float] | None = None,
+) -> pd.Index:
+    index = pd.Index(x.index)
+    if working_set_n is None:
+        return index
+    n_work = int(working_set_n)
+    if n_work <= 0 or n_work >= len(index):
+        return index
+    mode_norm = str(mode or "output_weighted").strip().lower()
+    x_vals = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).astype(float).reindex(index).fillna(0.0)
+    if mode_norm in {"stratified_transition_roles", "transition_role_mix", "stratified_roles"} and role_masks:
+        mix = role_mix or {"expand": 0.3, "contract": 0.3, "neutral": 0.4}
+        quotas = _allocate_role_quotas(n_work, mix)
+        used = pd.Series(False, index=index, dtype=bool)
+        selected_parts: list[pd.Index] = []
+        role_priority = ["expand", "contract", "neutral"]
+        score = x_vals.abs()
+        for role in role_priority:
+            mask = pd.Series(role_masks.get(role, pd.Series(False, index=index)), index=index).fillna(False).astype(bool)
+            mask = mask & (~used)
+            if not mask.any():
+                continue
+            take_n = min(int(quotas.get(role, 0)), int(mask.sum()))
+            if take_n <= 0:
+                continue
+            chosen = score.loc[mask].sort_values(ascending=False, kind="mergesort").head(take_n).index
+            selected_parts.append(pd.Index(chosen, dtype=object))
+            used.loc[chosen] = True
+        selected = pd.Index([], dtype=object)
+        if selected_parts:
+            selected = pd.Index(np.concatenate([part.to_numpy(dtype=object) for part in selected_parts]), dtype=object)
+        if len(selected) < n_work:
+            leftover = score.loc[~used].sort_values(ascending=False, kind="mergesort").head(n_work - len(selected)).index
+            selected = pd.Index(np.concatenate([selected.to_numpy(dtype=object), leftover.to_numpy(dtype=object)]), dtype=object)
+        if len(selected) > n_work:
+            selected = selected[:n_work]
+        return pd.Index(index[index.isin(selected)], dtype=object)
+    if mode_norm in {"output_weighted", "output_share", "output"}:
+        scores = x_vals.abs()
+    elif mode_norm in {"positive_output", "output_positive"}:
+        scores = x_vals.clip(lower=0.0)
+    elif mode_norm in {"absolute_output", "abs_output"}:
+        scores = x_vals.abs()
+    else:
+        scores = pd.Series(np.arange(len(index), 0, -1, dtype=float), index=index)
+    selected = scores.sort_values(ascending=False, kind="mergesort").head(n_work).index
+    return pd.Index(selected, dtype=object)
+
+
+def _spectral_radius_from_sparse(values: csr_matrix, *, tol: float = 1e-10) -> float:
+    n = int(values.shape[0])
+    if n == 0:
+        return float("nan")
+    nnz = int(values.nnz)
+    density = float(nnz / (n * n)) if n else float("nan")
+    sparse_threshold = 256
+    if n >= sparse_threshold:
+        try:
+            vals = eigs(
+                values,
+                k=1,
+                which="LM",
+                tol=1e-6,
+                maxiter=max(4000, 10 * n),
+                return_eigenvectors=False,
+            )
+            rho = float(np.max(np.abs(vals)))
+            return rho
+        except ArpackNoConvergence as exc:
+            vals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
+            if vals.size:
+                rho = float(np.max(np.abs(vals)))
+                return rho
+        except Exception:
+            pass
+    vals = linalg.eigvals(values.toarray())
+    rho = float(np.max(np.abs(vals))) if vals.size else float("nan")
+    return rho
+
+
+def _linear_operator_from_sparse(values: csr_matrix) -> LinearOperator:
+    n = int(values.shape[0])
+    return LinearOperator(
+        shape=(n, n),
+        matvec=lambda x: values.dot(x),
+        rmatvec=lambda x: values.T.dot(x),
+        dtype=values.dtype,
+    )
+
+
+def _dominant_block_indices(values: csr_matrix, tol: float) -> tuple[np.ndarray, dict[str, Any]]:
+    adjacency = values.copy().tocsr()
+    if adjacency.nnz:
+        adjacency.data = (adjacency.data > tol).astype(np.int8, copy=False)
+        adjacency.eliminate_zeros()
+    n_comp, labels = connected_components(adjacency, directed=True, connection="strong")
     meta: dict[str, Any] = {
         "reducible": bool(n_comp > 1),
         "n_strong_components": int(n_comp),
@@ -100,8 +302,8 @@ def _dominant_block_indices(values: np.ndarray, tol: float) -> tuple[np.ndarray,
     comp_rhos: list[tuple[int, float, int]] = []
     for comp in comp_ids:
         idx = np.where(labels == comp)[0]
-        block = values[np.ix_(idx, idx)]
-        rho = float(np.max(np.abs(linalg.eigvals(block))))
+        block = values[idx][:, idx]
+        rho = _spectral_radius_from_sparse(block)
         comp_rhos.append((int(comp), rho, int(len(idx))))
 
     max_rho = max(r for _, r, _ in comp_rhos)
@@ -122,13 +324,58 @@ def calc_pf_eigenvectors(
     return_metadata: bool = False,
     tol: float = 1e-10,
 ) -> tuple[pd.Series, pd.Series, float] | tuple[pd.Series, pd.Series, float, dict[str, Any]]:
-    values = np.asarray(matrix.values, dtype=float)
-    if np.any(values < -tol):
+    values = csr_matrix(matrix.to_numpy(dtype=float, copy=False))
+    if values.nnz and np.min(values.data) < -tol:
         raise ValueError("PF diagnostics require a nonnegative matrix.")
 
     block_idx, metadata = _dominant_block_indices(values, tol=tol)
-    block = values[np.ix_(block_idx, block_idx)]
-    eigvals, left_vecs, right_vecs = linalg.eig(block, left=True, right=True)
+    block = values[block_idx][:, block_idx]
+    n_block = int(block.shape[0])
+    if n_block >= 256:
+        try:
+            _diag_print(
+                f"PF eigensolve start shape={block.shape} method=sparse_eigs_matrix_free rss={_rss_mb():.1f}MB"
+            )
+            t0 = time.time()
+            op = _linear_operator_from_sparse(block)
+            op_t = _linear_operator_from_sparse(block.T.tocsr())
+            eigvals_r, right_vecs = eigs(
+                op,
+                k=1,
+                which="LM",
+                tol=1e-6,
+                maxiter=max(4000, 10 * n_block),
+            )
+            eigvals_l, left_vecs = eigs(
+                op_t,
+                k=1,
+                which="LM",
+                tol=1e-6,
+                maxiter=max(4000, 10 * n_block),
+            )
+            eigvals = np.asarray(eigvals_r)
+            _diag_print(
+                f"PF eigensolve done shape={block.shape} method=sparse_eigs_matrix_free "
+                f"elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
+            )
+        except ArpackNoConvergence as exc:
+            _diag_print(
+                f"PF eigensolve partial convergence shape={block.shape} method=sparse_eigs_matrix_free "
+                f"rss={_rss_mb():.1f}MB"
+            )
+            eigvals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
+            right_vecs = (
+                np.asarray(exc.eigenvectors)
+                if exc.eigenvectors is not None
+                else np.empty((n_block, 0))
+            )
+            left_vecs = np.empty((n_block, 0))
+            if eigvals.size == 0 or right_vecs.size == 0:
+                eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
+        except Exception:
+            eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
+    else:
+        eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
 
     absvals = np.abs(eigvals)
     dom_abs = float(np.max(absvals))
@@ -176,12 +423,45 @@ def calc_pf_eigenvectors(
 
 
 def calc_pf_sensitivities(matrix: pd.DataFrame, *, strict: bool = True) -> pd.DataFrame:
+    _diag_print(f"pf sensitivities start shape={matrix.shape} rss={_rss_mb():.1f}MB")
+    t0 = time.time()
     u, v, rho, meta = calc_pf_eigenvectors(matrix, return_metadata=True)
     if strict and (meta["degenerate_dominant_eigenvalue"] or meta["complex_dominant"]):
         raise ValueError(f"PF sensitivities ill-defined for degenerate/complex dominant eigenvalue: {meta}")
     outer = np.outer(u.values, v.values)
     sensitivities = pd.DataFrame(outer, index=matrix.index, columns=matrix.columns)
+    _diag_print(
+        f"pf sensitivities done shape={matrix.shape} rho={rho:.6g} "
+        f"elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
+    )
     return sensitivities
+
+
+def aggregate_diagnostics_from_pf_vectors(
+    pf_left: pd.Series,
+    pf_right: pd.Series,
+    E: pd.DataFrame,
+    S: pd.DataFrame,
+    eco_slack: pd.Series,
+    soc_slack: pd.Series,
+    epsilon: float = 1e-6,
+) -> pd.Series:
+    """Compute the composite diagnostic score without materializing the PF outer product."""
+    right = pd.to_numeric(pf_right.reindex(pf_right.index), errors="coerce").fillna(0.0).astype(float)
+    left_sum = float(pd.to_numeric(pf_left.reindex(pf_left.index), errors="coerce").fillna(0.0).sum())
+    column_sensitivity = pd.Series(right.to_numpy(dtype=float) * left_sum, index=right.index, dtype=float)
+    pressure = pd.Series(0.0, index=column_sensitivity.index)
+    if not eco_slack.empty:
+        eco_denom = eco_slack.copy().astype(float)
+        eco_denom = eco_denom.where(eco_denom > epsilon, np.nan)
+        eco_contrib = E.div(eco_denom, axis=0).replace([np.inf, -np.inf], np.nan).fillna(0.0).sum(axis=0)
+        pressure = pressure.add(eco_contrib, fill_value=0.0)
+    if not soc_slack.empty:
+        soc_denom = soc_slack.copy().astype(float)
+        soc_denom = soc_denom.where(soc_denom > epsilon, np.nan)
+        soc_contrib = S.div(soc_denom, axis=0).replace([np.inf, -np.inf], np.nan).fillna(0.0).sum(axis=0)
+        pressure = pressure.add(soc_contrib, fill_value=0.0)
+    return column_sensitivity.add(pressure, fill_value=0.0)
 
 
 def partial_sum_convergence(matrix: pd.DataFrame, max_iter: int = 12) -> pd.DataFrame:
@@ -217,74 +497,214 @@ def solve_safe_just_lp(
     weight_delta_minus: float = 1.0,
     allow_violation: bool = False,
     violation_penalty: float = 1e6,
+    working_set_n: int | None = None,
+    working_set_mode: str = "output_weighted",
+    working_set_role_masks: Mapping[str, pd.Series] | None = None,
+    working_set_role_mix: Mapping[str, float] | None = None,
 ) -> SafeJustResult:
     n = len(x)
     if not (A.shape[0] == A.shape[1] == n):
         raise ValueError("Technical coefficient matrix must be square and match x.")
     if not all(index == x.index[i] for i, index in enumerate(A.index)):
         A = A.reindex(index=x.index, columns=x.index)
-    I = np.eye(n)
-    A_matrix = A.values
-    me = int(E.shape[0])
-    ms = int(S.shape[0])
-    base_objective = np.concatenate(
-        [np.zeros(n), np.full(n, float(weight_delta_plus)), np.full(n, float(weight_delta_minus))]
+    x_base = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).astype(float).reindex(x.index).fillna(0.0)
+    active_index = _select_lp_working_set_index(
+        x_base,
+        working_set_n=working_set_n,
+        mode=working_set_mode,
+        role_masks=working_set_role_masks,
+        role_mix=working_set_role_mix,
     )
-    if allow_violation:
-        objective = np.concatenate(
-            [base_objective, np.full(me, float(violation_penalty)), np.full(ms, float(violation_penalty))]
+    active_pos = np.asarray(x.index.get_indexer(active_index), dtype=int)
+    use_working_set = len(active_index) < n
+    _diag_print(
+        f"safe-just LP start n={n} me={int(E.shape[0])} ms={int(S.shape[0])} "
+        f"allow_violation={bool(allow_violation)} working_set={len(active_index) if use_working_set else n} "
+        f"mode={str(working_set_mode)} rss={_rss_mb():.1f}MB"
+    )
+    t0 = time.time()
+    if not use_working_set:
+        A_sparse = csr_matrix(A.values)
+        me = int(E.shape[0])
+        ms = int(S.shape[0])
+        base_objective = np.concatenate(
+            [np.zeros(n), np.full(n, float(weight_delta_plus)), np.full(n, float(weight_delta_minus))]
         )
-        n_vars = 3 * n + me + ms
+        if allow_violation:
+            objective = np.concatenate(
+                [base_objective, np.full(me, float(violation_penalty)), np.full(ms, float(violation_penalty))]
+            )
+            n_vars = 3 * n + me + ms
+        else:
+            objective = base_objective
+            n_vars = 3 * n
+        _diag_print(f"safe-just LP building sparse matrices n_vars={n_vars} rss={_rss_mb():.1f}MB")
+        # Inequality constraints
+        # 1) x_new - A x_new >= y  <=>  (A - I) x_new <= -y
+        ineq1 = hstack([A_sparse - eye(n, format="csr"), csr_matrix((n, n_vars - n))], format="csr")
+        b1 = -y.reindex(x.index).values
+        # 2) Ecological ceilings: E x_new <= e_bar
+        eco_block = csr_matrix(E.reindex(columns=x.index).values)
+        if allow_violation:
+            eco_slack = -eye(me, format="csr")
+            eco_tail = csr_matrix((me, ms))
+            ineq2 = hstack([eco_block, csr_matrix((me, 2 * n)), eco_slack, eco_tail], format="csr")
+        else:
+            ineq2 = hstack([eco_block, csr_matrix((me, n_vars - n))], format="csr")
+        b2 = e_bar.reindex(E.index).values
+        # 3) Social floors: -S x_new <= -s_floor
+        soc_block = csr_matrix(-S.reindex(columns=x.index).values)
+        if allow_violation:
+            soc_tail = -eye(ms, format="csr")
+            ineq3 = hstack([soc_block, csr_matrix((ms, 2 * n + me)), soc_tail], format="csr")
+        else:
+            ineq3 = hstack([soc_block, csr_matrix((ms, n_vars - n))], format="csr")
+        b3 = -s_floor.reindex(S.index).values
+        A_ub = vstack([ineq1, ineq2, ineq3], format="csr")
+        b_ub = np.concatenate([b1, b2, b3])
+        # Equality constraints to link delta vars
+        A_eq = hstack(
+            [eye(n, format="csr"), -eye(n, format="csr"), eye(n, format="csr"), csr_matrix((n, n_vars - 3 * n))],
+            format="csr",
+        )
+        b_eq = x.values
+        bounds = [(0, None)] * n_vars
+        # Release construction intermediates before the solve.
+        del A_sparse, eco_block, soc_block, ineq1, ineq2, ineq3
+        gc.collect()
+        t_lp = time.time()
+        _diag_print(
+            f"safe-just LP calling linprog A_ub={A_ub.shape} A_eq={A_eq.shape} "
+            f"nnz_ub={int(A_ub.nnz)} nnz_eq={int(A_eq.nnz)} rss={_rss_mb():.1f}MB"
+        )
+        res = linprog(
+            objective,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            A_eq=A_eq,
+            b_eq=b_eq,
+            bounds=bounds,
+            method="highs",
+        )
+        _diag_print(
+            f"safe-just LP linprog returned status={res.status} success={bool(res.success)} "
+            f"elapsed={time.time()-t_lp:.1f}s total_elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
+        )
+        if res.status != 0 or not res.success:
+            raise RuntimeError(f"Safe-and-just LP failed: {res.message}")
+        x_new = res.x[:n]
+        delta_plus = res.x[n:2 * n]
+        delta_minus = res.x[2 * n : 3 * n]
+        eco_violation = None
+        soc_violation = None
+        if allow_violation:
+            eco_violation = pd.Series(res.x[3 * n : 3 * n + me], index=E.index, dtype=float)
+            soc_violation = pd.Series(res.x[3 * n + me : 3 * n + me + ms], index=S.index, dtype=float)
     else:
-        objective = base_objective
-        n_vars = 3 * n
-    # Inequality constraints
-    # 1) x_new - A x_new >= y  <=>  (A - I) x_new <= -y
-    ineq1 = np.hstack([A_matrix - I, np.zeros((n, n_vars - n))])
-    b1 = -y.reindex(x.index).values
-    # 2) Ecological ceilings: E x_new <= e_bar
-    eco_block = E.reindex(columns=x.index).values
-    if allow_violation:
-        eco_slack = -np.eye(me)
-        eco_tail = np.zeros((me, ms))
-        ineq2 = np.hstack([eco_block, np.zeros((me, 2 * n)), eco_slack, eco_tail])
-    else:
-        ineq2 = np.hstack([eco_block, np.zeros((me, n_vars - n))])
-    b2 = e_bar.reindex(E.index).values
-    # 3) Social floors: -S x_new <= -s_floor
-    soc_block = -S.reindex(columns=x.index).values
-    if allow_violation:
-        soc_tail = -np.eye(ms)
-        ineq3 = np.hstack([soc_block, np.zeros((ms, 2 * n + me)), soc_tail])
-    else:
-        ineq3 = np.hstack([soc_block, np.zeros((ms, n_vars - n))])
-    b3 = -s_floor.reindex(S.index).values
-    A_ub = np.vstack([ineq1, ineq2, ineq3])
-    b_ub = np.concatenate([b1, b2, b3])
-    # Equality constraints to link delta vars
-    eq = np.hstack([np.eye(n), -np.eye(n), np.eye(n), np.zeros((n, n_vars - 3 * n))])
-    A_eq = eq
-    b_eq = x.values
-    bounds = [(0, None)] * n_vars
-    res = linprog(
-        objective,
-        A_ub=A_ub,
-        b_ub=b_ub,
-        A_eq=A_eq,
-        b_eq=b_eq,
-        bounds=bounds,
-        method="highs",
-    )
-    if res.status != 0 or not res.success:
-        raise RuntimeError(f"Safe-and-just LP failed: {res.message}")
-    x_new = res.x[:n]
-    delta_plus = res.x[n:2 * n]
-    delta_minus = res.x[2 * n : 3 * n]
-    eco_violation = None
-    soc_violation = None
-    if allow_violation:
-        eco_violation = pd.Series(res.x[3 * n : 3 * n + me], index=E.index, dtype=float)
-        soc_violation = pd.Series(res.x[3 * n + me : 3 * n + me + ms], index=S.index, dtype=float)
+        # Working-set approximation: keep the full basis fixed, but let only a screened subset
+        # of sectors move. This preserves full id order while shrinking the LP substantially.
+        active_pos = np.asarray(active_pos, dtype=int)
+        k = int(len(active_pos))
+        if k <= 0:
+            raise ValueError("Working-set LP requires at least one active sector.")
+        A_sparse = csr_matrix(A.values)
+        E_sparse = csr_matrix(E.reindex(columns=x.index).values)
+        S_sparse = csr_matrix(S.reindex(columns=x.index).values)
+        base_prod_rhs = -y.reindex(x.index).fillna(0.0).to_numpy(dtype=float) - (
+            A_sparse - eye(n, format="csr")
+        ).dot(x_base.to_numpy(dtype=float))
+        base_eco_rhs = e_bar.reindex(E.index).fillna(0.0).to_numpy(dtype=float) - E_sparse.dot(
+            x_base.to_numpy(dtype=float)
+        )
+        base_soc_rhs = -s_floor.reindex(S.index).fillna(0.0).to_numpy(dtype=float) + S_sparse.dot(
+            x_base.to_numpy(dtype=float)
+        )
+        active_A = A_sparse[:, active_pos] - eye(n, format="csr")[:, active_pos]
+        active_E = E_sparse[:, active_pos]
+        active_S = S_sparse[:, active_pos]
+        base_objective = np.concatenate(
+            [np.full(k, float(weight_delta_plus)), np.full(k, float(weight_delta_minus))]
+        )
+        if allow_violation:
+            objective = np.concatenate(
+                [base_objective, np.full(int(E.shape[0]), float(violation_penalty)), np.full(int(S.shape[0]), float(violation_penalty))]
+            )
+            n_vars = 2 * k + int(E.shape[0]) + int(S.shape[0])
+        else:
+            objective = base_objective
+            n_vars = 2 * k
+        _diag_print(
+            f"safe-just LP working-set build k={k} n_vars={n_vars} "
+            f"mode={str(working_set_mode)} rss={_rss_mb():.1f}MB"
+        )
+        prod_block = hstack([active_A, -active_A], format="csr")
+        if allow_violation:
+            prod = hstack([prod_block, csr_matrix((n, n_vars - 2 * k))], format="csr")
+            eco = hstack(
+                [
+                    active_E,
+                    -active_E,
+                    -eye(int(E.shape[0]), format="csr"),
+                    csr_matrix((int(E.shape[0]), int(S.shape[0]))),
+                ],
+                format="csr",
+            )
+            soc = hstack(
+                [
+                    -active_S,
+                    active_S,
+                    csr_matrix((int(S.shape[0]), int(E.shape[0]))),
+                    -eye(int(S.shape[0]), format="csr"),
+                ],
+                format="csr",
+            )
+            A_ub = vstack([prod, eco, soc], format="csr")
+        else:
+            prod = prod_block
+            eco = hstack([active_E, -active_E], format="csr")
+            soc = hstack([-active_S, active_S], format="csr")
+            A_ub = vstack([prod, eco, soc], format="csr")
+        b_ub = np.concatenate([base_prod_rhs, base_eco_rhs, base_soc_rhs])
+        bounds = [(0, None)] * n_vars
+        del A_sparse, E_sparse, S_sparse, active_A, active_E, active_S, prod_block, prod, eco, soc
+        gc.collect()
+        t_lp = time.time()
+        _diag_print(
+            f"safe-just LP calling linprog working-set A_ub={A_ub.shape} nnz_ub={int(A_ub.nnz)} "
+            f"rss={_rss_mb():.1f}MB"
+        )
+        res = linprog(
+            objective,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            bounds=bounds,
+            method="highs",
+        )
+        _diag_print(
+            f"safe-just LP working-set returned status={res.status} success={bool(res.success)} "
+            f"elapsed={time.time()-t_lp:.1f}s total_elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
+        )
+        if res.status != 0 or not res.success:
+            raise RuntimeError(f"Safe-and-just LP failed: {res.message}")
+        delta_plus = np.zeros(n, dtype=float)
+        delta_minus = np.zeros(n, dtype=float)
+        adj_plus = res.x[:k]
+        adj_minus = res.x[k:2 * k]
+        delta_plus[active_pos] = adj_plus
+        delta_minus[active_pos] = adj_minus
+        x_new = x_base.to_numpy(dtype=float).copy()
+        x_new[active_pos] += adj_plus - adj_minus
+        eco_violation = None
+        soc_violation = None
+        if allow_violation:
+            eco_violation = pd.Series(
+                res.x[2 * k : 2 * k + int(E.shape[0])], index=E.index, dtype=float
+            )
+            soc_violation = pd.Series(
+                res.x[2 * k + int(E.shape[0]) : 2 * k + int(E.shape[0]) + int(S.shape[0])],
+                index=S.index,
+                dtype=float,
+            )
     return SafeJustResult(
         x_opt=pd.Series(x_new, index=x.index),
         delta_plus=pd.Series(delta_plus, index=x.index),
