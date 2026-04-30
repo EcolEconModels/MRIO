@@ -9,6 +9,8 @@ import time
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix, eye as sparse_eye, issparse
+from scipy.sparse.linalg import spsolve
 
 from .constraints import build_constraints_with_context
 from .data import load_mrio
@@ -81,27 +83,32 @@ def compute_output_change_decomposition(
     for i, year_prev in enumerate(years[:-1]):
         year = years[i + 1]
         idx = pd.Index(x_by_year[year_prev].index)
-        A_prev = _as_float_frame(A_by_year[year_prev], index=idx, columns=idx)
-        A_t = _as_float_frame(A_by_year[year], index=idx, columns=idx)
         x_prev = _as_float_series(x_by_year[year_prev], index=idx)
         x_t = _as_float_series(x_by_year[year], index=idx)
         y_prev = _as_float_series(y_by_year[year_prev], index=idx)
         y_t = _as_float_series(y_by_year[year], index=idx)
 
-        I_minus_A_t = np.eye(len(idx), dtype=float) - A_t.to_numpy(dtype=float)
+        A_prev_src = A_by_year[year_prev]
+        A_t_src = A_by_year[year]
+        if issparse(A_prev_src):
+            A_prev = A_prev_src.tocsr().astype(float)
+        else:
+            A_prev = csr_matrix(_as_float_frame(A_prev_src, index=idx, columns=idx).to_numpy(dtype=float))
+        if issparse(A_t_src):
+            A_t = A_t_src.tocsr().astype(float)
+        else:
+            A_t = csr_matrix(_as_float_frame(A_t_src, index=idx, columns=idx).to_numpy(dtype=float))
+        delta_y = y_t - y_prev
+        I_minus_A_t = sparse_eye(len(idx), format="csr", dtype=float) - A_t
         try:
-            L_t = np.linalg.inv(I_minus_A_t)
-        except np.linalg.LinAlgError:
+            rhs_tech = (A_t - A_prev).dot(x_prev.to_numpy(dtype=float))
+            tech_solution = spsolve(I_minus_A_t, rhs_tech)
+            demand_solution = spsolve(I_minus_A_t, delta_y.to_numpy(dtype=float))
+        except Exception:
             continue
 
-        delta_A = A_t - A_prev
-        delta_y = y_t - y_prev
-        tech_component = pd.Series(
-            L_t.dot(delta_A.to_numpy(dtype=float).dot(x_prev.to_numpy(dtype=float))),
-            index=idx,
-            dtype=float,
-        )
-        demand_component = pd.Series(L_t.dot(delta_y.to_numpy(dtype=float)), index=idx, dtype=float)
+        tech_component = pd.Series(tech_solution, index=idx, dtype=float)
+        demand_component = pd.Series(demand_solution, index=idx, dtype=float)
         total_change = (x_t - x_prev).astype(float)
 
         for sector, tech_value, demand_value, total_value in zip(
