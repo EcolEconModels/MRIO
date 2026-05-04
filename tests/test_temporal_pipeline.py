@@ -95,6 +95,43 @@ def test_output_change_decomposition_uses_exact_current_year_identity():
     assert np.allclose(out["total_change"].to_numpy(dtype=float), expected_tech + expected_demand)
 
 
+def test_output_change_decomposition_averages_forward_and_backward_identities():
+    idx = pd.Index(["a", "b"], dtype=object)
+    A0 = pd.DataFrame([[0.1, 0.05], [0.0, 0.2]], index=idx, columns=idx, dtype=float)
+    A1 = pd.DataFrame([[0.2, 0.02], [0.1, 0.15]], index=idx, columns=idx, dtype=float)
+    x0 = pd.Series([10.0, 6.0], index=idx, dtype=float)
+    y0 = pd.Series((np.eye(2) - A0.to_numpy(dtype=float)).dot(x0.to_numpy(dtype=float)), index=idx, dtype=float)
+    delta_y = pd.Series([0.7, -0.2], index=idx, dtype=float)
+    y1 = y0 + delta_y
+    L0 = np.linalg.inv(np.eye(2) - A0.to_numpy(dtype=float))
+    L1 = np.linalg.inv(np.eye(2) - A1.to_numpy(dtype=float))
+    x1 = pd.Series(L1.dot(y1.to_numpy(dtype=float)), index=idx, dtype=float)
+
+    forward = compute_output_change_decomposition(
+        A_by_year={2020: A0, 2021: A1},
+        x_by_year={2020: x0, 2021: x1},
+        y_by_year={2020: y0, 2021: y1},
+        average_identities=False,
+    )
+    averaged = compute_output_change_decomposition(
+        A_by_year={2020: A0, 2021: A1},
+        x_by_year={2020: x0, 2021: x1},
+        y_by_year={2020: y0, 2021: y1},
+    )
+
+    backward_tech = L0.dot((A1 - A0).to_numpy(dtype=float).dot(x1.to_numpy(dtype=float)))
+    backward_demand = L0.dot(delta_y.to_numpy(dtype=float))
+    expected_tech = 0.5 * (forward["tech_component"].to_numpy(dtype=float) + backward_tech)
+    expected_demand = 0.5 * (forward["demand_component"].to_numpy(dtype=float) + backward_demand)
+
+    assert np.allclose(averaged["tech_component"].to_numpy(dtype=float), expected_tech)
+    assert np.allclose(averaged["demand_component"].to_numpy(dtype=float), expected_demand)
+    assert np.allclose(
+        averaged["total_change"].to_numpy(dtype=float),
+        forward["total_change"].to_numpy(dtype=float),
+    )
+
+
 def test_transition_index_and_classification_bounds():
     panel = load_mrio_panel(dataset="test", years=[2020, 2021, 2022], calc_all=True, include_ghosh=True)
     out = compute_viability_panel(panel, CONSTRAINTS_CFG, max_sectors=20, allow_relaxation=True)

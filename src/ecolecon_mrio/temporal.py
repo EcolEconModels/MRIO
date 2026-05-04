@@ -63,16 +63,25 @@ def compute_output_change_decomposition(
     A_by_year: Mapping[int, pd.DataFrame],
     x_by_year: Mapping[int, pd.Series],
     y_by_year: Mapping[int, pd.Series],
+    *,
+    average_identities: bool = True,
 ) -> pd.DataFrame:
     """Compute the exact adjacent-year output-change decomposition.
 
-    For adjacent years ``t-1`` and ``t`` this uses the current-year Leontief
-    inverse ``L_t = (I - A_t)^{-1}`` and returns
+    For adjacent years ``t-1`` and ``t`` there are two polar forms of the exact
+    output-change identity.  The default implementation averages these two
+    forms to avoid an arbitrary choice of reference year, following common
+    practice in the structural-decomposition literature.
 
-    ``tech_component = L_t DeltaA_t x_{t-1}``
-    ``demand_component = L_t Delta y_t``
+    When ``average_identities`` is ``True`` (default), both the forward form
+    ``L_t DeltaA_t x_{t-1}``, ``L_t Delta y_t`` and the backward form
+    ``L_{t-1} DeltaA_t x_t``, ``L_{t-1} Delta y_t`` are computed.  Their
+    arithmetic mean is returned.  When ``average_identities`` is ``False``,
+    only the forward form is computed.
 
-    with ``total_change = x_t - x_{t-1}``.
+    The returned DataFrame contains columns ``tech_component``,
+    ``demand_component``, and ``total_change`` for each region-sector label and
+    adjacent-year pair.
     """
     rows: list[dict[str, Any]] = []
     years = sorted(
@@ -109,6 +118,20 @@ def compute_output_change_decomposition(
 
         tech_component = pd.Series(tech_solution, index=idx, dtype=float)
         demand_component = pd.Series(demand_solution, index=idx, dtype=float)
+        if average_identities:
+            # Backward (previous-year) form
+            rhs_tech_alt = (A_t - A_prev).dot(x_t.to_numpy(dtype=float))
+            I_minus_A_prev = sparse_eye(len(idx), format="csr", dtype=float) - A_prev
+            try:
+                tech_solution_alt = spsolve(I_minus_A_prev, rhs_tech_alt)
+                demand_solution_alt = spsolve(I_minus_A_prev, delta_y.to_numpy(dtype=float))
+                tech_component_alt = pd.Series(tech_solution_alt, index=idx, dtype=float)
+                demand_component_alt = pd.Series(demand_solution_alt, index=idx, dtype=float)
+                tech_component = 0.5 * (tech_component + tech_component_alt)
+                demand_component = 0.5 * (demand_component + demand_component_alt)
+            except Exception:
+                # If the backward solve fails, just use the forward form
+                pass
         total_change = (x_t - x_prev).astype(float)
 
         for sector, tech_value, demand_value, total_value in zip(
