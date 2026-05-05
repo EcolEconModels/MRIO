@@ -80,6 +80,12 @@ from .transition_support import (
     productive_certificate_slack,
     satisfies_productive_certificate,
 )
+from .emissions_stabilization import (
+    threshold_intensity,
+    winsorize_intensity,
+    shrink_intensity_to_group_mean,
+    smooth_intensity_across_years,
+)
 
 from .download_utils import (
     DownloadProgressEvent,
@@ -155,6 +161,10 @@ __all__ = [
     "productive_certificate_row_rhs",
     "productive_certificate_slack",
     "satisfies_productive_certificate",
+    "threshold_intensity",
+    "winsorize_intensity",
+    "shrink_intensity_to_group_mean",
+    "smooth_intensity_across_years",
     "read_coverage_manifest",
     "write_coverage_manifest",
     "select_contiguous_year_block",
