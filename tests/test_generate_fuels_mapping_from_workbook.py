@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from pathlib import Path
 
 import pandas as pd
@@ -77,6 +75,7 @@ def test_build_fuels_mappings_uses_unique_source_sector_selection(tmp_path: Path
             ["Eurostat sector", "Disaggregated sector", "Reaggregation target"],
             ["CPA_C19", "Motor Gasoline", "Motor Gasoline"],
             ["", "Heavy Fuel Oil", "Coke and refined petroleum products"],
+            ["", "Lubricants", "Coke and refined petroleum products"],
             ["CPA_D", "Electricity by hydro", "Hydro"],
         ]
     )
@@ -92,14 +91,11 @@ def test_build_fuels_mappings_uses_unique_source_sector_selection(tmp_path: Path
         outdir=outdir,
     )
 
+    assert set(outputs) == {"split_mapping", "identity_mapping", "reaggregation_mapping"}
+
     split_mapping = pd.read_csv(outputs["split_mapping"], dtype=str).fillna("")
     identity_mapping = pd.read_csv(outputs["identity_mapping"], dtype=str).fillna("")
     reaggregation_mapping = pd.read_csv(outputs["reaggregation_mapping"], dtype=str).fillna("")
-    selected_sectors = pd.read_csv(outputs["selected_sectors"], dtype=str).fillna("")
-    uncovered = pd.read_csv(outputs["uncovered_subsectors"], dtype=str).fillna("")
-    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
-
-    assert set(selected_sectors["source_sector_code"]) == {"CPA_C19", "CPA_D"}
 
     # The split mapping is driven by unique column-1 source sectors, not only by the sheet-listed column-2 rows.
     assert set(split_mapping["target_key"]) == {"CPA_C19", "CPA_D"}
@@ -129,10 +125,39 @@ def test_build_fuels_mappings_uses_unique_source_sector_selection(tmp_path: Path
     assert reagg_labels["CPA_D::Electricity by hydro"] == "CPA_D: Hydro"
 
     # Uncovered subsectors are written explicitly so the sheet can be completed before reaggregation runs.
-    assert uncovered["from_sector"].tolist() == ["CPA_C19::Lubricants"]
-    assert summary["uncovered_split_subsector_count"] == 1
-    assert summary["resolved_sheet_row_count"] == 3
-    assert summary["unresolved_sheet_row_count"] == 0
+    assert set(reaggregation_mapping["source_key"]) == {
+        "CPA_C19::Motor Gasoline",
+        "CPA_C19::Heavy Fuel Oil",
+        "CPA_C19::Lubricants",
+        "CPA_D::Electricity by hydro",
+    }
+
+
+def test_build_fuels_mappings_fails_on_uncovered_subsectors(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "fuels.xlsx"
+    concordance_path = tmp_path / "concordance.csv"
+    outdir = tmp_path / "out"
+
+    sheet = pd.DataFrame(
+        [
+            ["Eurostat sector", "Disaggregated sector", "Reaggregation target"],
+            ["CPA_C19", "Motor Gasoline", "Motor Gasoline"],
+            ["", "Heavy Fuel Oil", "Coke and refined petroleum products"],
+            ["CPA_D", "Electricity by hydro", "Hydro"],
+        ]
+    )
+    with pd.ExcelWriter(workbook_path) as writer:
+        sheet.to_excel(writer, sheet_name="Step2_Reaggregation", header=False, index=False)
+
+    _write_concordance(concordance_path)
+
+    with pytest.raises(ValueError, match="uncovered split subsector"):
+        build_fuels_mappings(
+            workbook_path=workbook_path,
+            sheet_name="Step2_Reaggregation",
+            concordance_path=concordance_path,
+            outdir=outdir,
+        )
 
 
 def test_resolve_product_template_alignment_falls_back_for_custom_split_sectors(tmp_path: Path) -> None:

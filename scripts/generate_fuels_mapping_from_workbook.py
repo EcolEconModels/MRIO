@@ -203,7 +203,6 @@ def build_fuels_mappings(
     )
     selected_concordance = concordance[concordance["target_key"].astype(str).isin(selected_sector_codes)].copy()
     selected_concordance["split_subsector_label"] = selected_concordance["source_label"].astype(str).str.strip()
-    missing_source_rows = workbook_rows[workbook_rows["resolved_source_sector_code"] == ""].copy()
 
     split_rows = selected_concordance.copy()
     split_rows["kind"] = "split"
@@ -278,6 +277,17 @@ def build_fuels_mappings(
     }
     mapped_from_sectors = set(resolved_sheet_frame.get("from_sector", pd.Series(dtype=str)).astype(str))
     uncovered_from_sectors = sorted(enabled_from_sectors - mapped_from_sectors)
+
+    if len(unresolved_sheet_frame) > 0 or len(uncovered_from_sectors) > 0:
+        unresolved_examples = unresolved_sheet_frame.head(10).to_dict(orient="records")
+        uncovered_examples = uncovered_from_sectors[:10]
+        raise ValueError(
+            "Workbook-driven fuels mapping validation failed: "
+            f"{len(unresolved_sheet_frame)} unresolved workbook row(s), "
+            f"{len(uncovered_from_sectors)} uncovered split subsector(s). "
+            f"Unresolved examples: {unresolved_examples}. "
+            f"Uncovered examples: {uncovered_examples}."
+        )
 
     identity_rows: list[dict[str, object]] = []
     for row in enabled_split_rows.itertuples(index=False):
@@ -374,107 +384,19 @@ def build_fuels_mappings(
         pd.DataFrame(reaggregation_rows).drop_duplicates(subset=["source_key", "target_key"], keep="first")
     )
 
-    audit_columns = [
-        "workbook_row_one_based",
-        "sheet_source_sector",
-        "resolved_source_sector_code",
-        "resolved_source_sector_label",
-        "sheet_disaggregated_sector",
-        "resolved_subsector_label",
-        "from_sector",
-        "sheet_reaggregation_target",
-        "status",
-    ]
-    resolved_audit = resolved_sheet_frame.reindex(columns=audit_columns)
-    unresolved_audit = unresolved_sheet_frame.reindex(columns=[
-        "workbook_row_one_based",
-        "sheet_source_sector",
-        "resolved_source_sector_code",
-        "sheet_disaggregated_sector",
-        "sheet_reaggregation_target",
-        "status",
-    ])
-
-    selected_sector_frame = pd.DataFrame(
-        {
-            "source_sector_code": selected_sector_codes,
-            "source_sector_label": [cpa_labels.get(code, code) for code in selected_sector_codes],
-        }
-    )
-    if not selected_concordance.empty:
-        constituent_counts = (
-            selected_concordance[selected_concordance["enabled_bool"]]
-            .groupby("target_key")
-            .size()
-            .rename("enabled_constituent_count")
-        )
-        selected_sector_frame = selected_sector_frame.merge(
-            constituent_counts,
-            left_on="source_sector_code",
-            right_index=True,
-            how="left",
-        )
-        selected_sector_frame["enabled_constituent_count"] = (
-            selected_sector_frame["enabled_constituent_count"].fillna(0).astype(int)
-        )
-    else:
-        selected_sector_frame["enabled_constituent_count"] = 0
-
     outdir.mkdir(parents=True, exist_ok=True)
-    normalized_path = outdir / "fuels_workbook_normalized_rows.csv"
     split_path = outdir / split_mapping_name
     identity_path = outdir / identity_mapping_name
     reaggregation_path = outdir / reaggregation_mapping_name
-    selected_path = outdir / "fuels_selected_source_sectors.csv"
-    resolved_audit_path = outdir / "fuels_reaggregation_resolved_rows.csv"
-    unresolved_audit_path = outdir / "fuels_reaggregation_unresolved_rows.csv"
-    uncovered_path = outdir / "fuels_reaggregation_uncovered_subsectors.csv"
-    selected_path = outdir / f"{prefix}_selected_source_sectors.csv"
-    resolved_audit_path = outdir / f"{prefix}_reaggregation_resolved_rows.csv"
-    unresolved_audit_path = outdir / f"{prefix}_reaggregation_unresolved_rows.csv"
-    uncovered_path = outdir / f"{prefix}_reaggregation_uncovered_subsectors.csv"
-    summary_path = outdir / f"{prefix}_mapping_generation_summary.json"
 
-    _write_csv(normalized_path, workbook_rows)
     _write_csv(split_path, split_rows)
     _write_csv(identity_path, identity_frame)
     _write_csv(reaggregation_path, reaggregation_frame)
-    _write_csv(selected_path, selected_sector_frame)
-    _write_csv(resolved_audit_path, resolved_audit)
-    _write_csv(unresolved_audit_path, unresolved_audit)
-    _write_csv(
-        uncovered_path,
-        pd.DataFrame({"from_sector": uncovered_from_sectors}),
-    )
-    summary_path.write_text(
-        json.dumps(
-            {
-                "workbook_path": str(workbook_path),
-                "sheet_name": sheet_name,
-                "selected_source_sector_count": len(selected_sector_codes),
-                "split_row_count": int(len(split_rows)),
-                "identity_row_count": int(len(identity_frame)),
-                "reaggregation_row_count": int(len(reaggregation_frame)),
-                "resolved_sheet_row_count": int(len(resolved_audit)),
-                "unresolved_sheet_row_count": int(len(unresolved_audit)),
-                "uncovered_split_subsector_count": int(len(uncovered_from_sectors)),
-                "missing_source_sector_row_count": int(len(missing_source_rows)),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
     return {
-        "normalized_rows": normalized_path,
         "split_mapping": split_path,
         "identity_mapping": identity_path,
         "reaggregation_mapping": reaggregation_path,
-        "selected_sectors": selected_path,
-        "resolved_audit": resolved_audit_path,
-        "unresolved_audit": unresolved_audit_path,
-        "uncovered_subsectors": uncovered_path,
-        "summary": summary_path,
     }
 
 
@@ -496,12 +418,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--outdir",
         required=True,
-        help="Folder where generated mapping CSVs and audit files will be written.",
+        help="Folder where the generated mapping CSVs will be written.",
     )
     parser.add_argument(
         "--output-prefix",
         default="fuels",
-        help="Prefix used for generated mapping/audit filenames and target_version metadata.",
+        help="Prefix used for generated mapping filenames and target_version metadata.",
     )
     args = parser.parse_args(argv)
 

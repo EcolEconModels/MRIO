@@ -120,11 +120,11 @@ bash scripts/pipelines/at_2021_fuels.sh
 
 This writes three families under `outputs/`:
 
-- generated workbook-driven mapping CSVs and audit files
+- the generated workbook-driven mapping CSVs: split, identity, and reaggregation
 - split flow tables plus disaggregated TOTAL / DOM / IMP workbooks with `_fuels_split` in the filename
 - reaggregated TOTAL / DOM / IMP workbooks with `_fuels_reaggregated` in the filename
 
-The workbook selects which Eurostat CPA sectors are split from column 1 of `Step2_Reaggregation`, but the actual EXIO constituents are always taken from `exio_to_eurostat_cpa.csv`. Any sheet rows that do not resolve cleanly, or any split subsectors left uncovered by the sheet's reaggregation column, are written as audit CSVs alongside the generated mappings.
+The workbook selects which Eurostat CPA sectors are split from column 1 of `Step2_Reaggregation`, but the actual EXIO constituents are always taken from `exio_to_eurostat_cpa.csv`. The generator is fail-fast: if any sheet row does not resolve cleanly, or any enabled split subsector is not explicitly covered by the workbook sheet, generation stops with an error instead of writing partial outputs.
 
 ## Notes on Reproducibility
 
