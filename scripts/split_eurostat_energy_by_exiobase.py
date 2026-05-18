@@ -25,6 +25,7 @@ from ecolecon_mrio.exiobase3_extensions import (
     extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
 )
 from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot, load_eurostat_iot_variants
+from ecolecon_mrio.canonical_mapping_csv import read_canonical_split_mapping
 from ecolecon_mrio.mapping_csv import (
     flatten_exio_sectors_from_mapping,
     load_split_mapping_frame,
@@ -60,6 +61,19 @@ class _Timer:
 
     def elapsed_s(self) -> float:
         return time.perf_counter() - self._t0
+
+
+def _is_canonical_mapping_csv(path: str | Path) -> bool:
+    try:
+        header = pd.read_csv(path, nrows=0)
+    except Exception:
+        return False
+    required = {"mapping_set", "source_code", "target_code", "enabled"}
+    return required.issubset(set(header.columns))
+
+
+def _canonical_dictionary_path(mapping_csv: str | Path) -> Path:
+    return Path(mapping_csv).resolve().parent / "sector_dictionary.csv"
 
 
 def _write_text(path: Path, content: str, *, verbose: bool) -> None:
@@ -534,29 +548,52 @@ def main(argv: Sequence[str] | None = None) -> int:
     sector_to_exio_sectors = None
     coverage_expected_exio = None
     if args.exio_mapping_csv is not None:
-        _vprint(args.verbose, "Calling: read_split_mapping(...)")
-        t = _Timer()
-        sector_to_exio_sectors = read_split_mapping(args.exio_mapping_csv)
-        _vprint(args.verbose, f"Returned: read_split_mapping ({t.elapsed_s():.2f}s)")
+        if _is_canonical_mapping_csv(args.exio_mapping_csv):
+            _vprint(args.verbose, "Calling: read_canonical_split_mapping(...)")
+            t = _Timer()
+            sector_to_exio_sectors = read_canonical_split_mapping(
+                args.exio_mapping_csv,
+                _canonical_dictionary_path(args.exio_mapping_csv),
+            )
+            _vprint(args.verbose, f"Returned: read_canonical_split_mapping ({t.elapsed_s():.2f}s)")
+        else:
+            _vprint(args.verbose, "Calling: read_split_mapping(...)")
+            t = _Timer()
+            sector_to_exio_sectors = read_split_mapping(args.exio_mapping_csv)
+            _vprint(args.verbose, f"Returned: read_split_mapping ({t.elapsed_s():.2f}s)")
         if args.verbose and (args.patterns_19 is not None or args.patterns_35 is not None or args.electricity_by_source):
             _vprint(args.verbose, "NOTE: --exio-mapping-csv provided; ignoring pattern selection flags.")
         if args.require_mapping_coverage:
-            df_all = load_split_mapping_frame(args.exio_mapping_csv)
-            df_all = df_all[(df_all["aggregate_sector"] != "") & (df_all["exio_sector"] != "")]
-            if "constituent" in df_all.columns:
-                def _boolish(v: object) -> bool:
-                    s = str(v).strip().lower()
-                    if s == "" or s in {"1", "true", "t", "yes", "y", "on"}:
-                        return True
-                    if s in {"0", "false", "f", "no", "n", "off"}:
-                        return False
-                    raise SystemExit(f"Could not parse boolean-ish mapping CSV constituent value: {v!r}")
+            if _is_canonical_mapping_csv(args.exio_mapping_csv):
+                def _flatten(values: object) -> list[str]:
+                    if isinstance(values, dict):
+                        out: list[str] = []
+                        for inner in values.values():
+                            out.extend(list(map(str, inner)))
+                        return list(dict.fromkeys(out))
+                    return list(map(str, values))
 
-                df_all = df_all[df_all["constituent"].map(_boolish)].copy()
-            coverage_expected_exio = {
-                str(agg): list(map(str, g["exio_sector"].tolist()))
-                for agg, g in df_all.groupby("aggregate_sector", sort=False)
-            }
+                coverage_expected_exio = {
+                    str(aggregate): _flatten(members)
+                    for aggregate, members in (sector_to_exio_sectors or {}).items()
+                }
+            else:
+                df_all = load_split_mapping_frame(args.exio_mapping_csv)
+                df_all = df_all[(df_all["aggregate_sector"] != "") & (df_all["exio_sector"] != "")]
+                if "constituent" in df_all.columns:
+                    def _boolish(v: object) -> bool:
+                        s = str(v).strip().lower()
+                        if s == "" or s in {"1", "true", "t", "yes", "y", "on"}:
+                            return True
+                        if s in {"0", "false", "f", "no", "n", "off"}:
+                            return False
+                        raise SystemExit(f"Could not parse boolean-ish mapping CSV constituent value: {v!r}")
+
+                    df_all = df_all[df_all["constituent"].map(_boolish)].copy()
+                coverage_expected_exio = {
+                    str(agg): list(map(str, g["exio_sector"].tolist()))
+                    for agg, g in df_all.groupby("aggregate_sector", sort=False)
+                }
     report_aggregates = (
         tuple(sector_to_exio_sectors.keys())
         if sector_to_exio_sectors is not None

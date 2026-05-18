@@ -1,0 +1,562 @@
+code,label,parent_code,can_be_source,can_be_target,can_be_split,active
+Additives/Blending Components,Additives/Blending Components,,True,True,True,True
+Aluminium and aluminium products,Aluminium and aluminium products,,True,True,True,True
+Animal products nec,Animal products nec,,True,True,True,True
+Anthracite,Anthracite,,True,True,True,True
+Aviation Gasoline,Aviation Gasoline,,True,True,True,True
+BKB/Peat Briquettes,BKB/Peat Briquettes,,True,True,True,True
+Basic iron and steel and of ferro-alloys and first products thereof,Basic iron and steel and of ferro-alloys and first products thereof,,True,True,True,True
+Beverages,Beverages,,True,True,True,True
+Biodiesels,Biodiesels,,True,True,True,True
+Biogas,Biogas,,True,True,True,True
+Biogasoline,Biogasoline,,True,True,True,True
+Bitumen,Bitumen,,True,True,True,True
+Blast Furnace Gas,Blast Furnace Gas,,True,True,True,True
+"Bottles for treatment, Recycling of bottles by direct reuse","Bottles for treatment, Recycling of bottles by direct reuse",,True,True,True,True
+CPA_A01,"Products of agriculture, hunting and related services",,True,True,True,True
+CPA_A01::Animal products nec,CPA_A01::Animal products nec,,True,True,True,True
+CPA_A01::Cattle,CPA_A01::Cattle,,True,True,True,True
+CPA_A01::Cereal grains nec,CPA_A01::Cereal grains nec,,True,True,True,True
+CPA_A01::Crops nec,CPA_A01::Crops nec,,True,True,True,True
+CPA_A01::Manure (biogas treatment),CPA_A01::Manure (biogas treatment),,True,True,True,True
+CPA_A01::Manure (conventional treatment),CPA_A01::Manure (conventional treatment),,True,True,True,True
+CPA_A01::Meat animals nec,CPA_A01::Meat animals nec,,True,True,True,True
+CPA_A01::Oil seeds,CPA_A01::Oil seeds,,True,True,True,True
+CPA_A01::Paddy rice,CPA_A01::Paddy rice,,True,True,True,True
+CPA_A01::Pigs,CPA_A01::Pigs,,True,True,True,True
+CPA_A01::Plant-based fibers,CPA_A01::Plant-based fibers,,True,True,True,True
+CPA_A01::Poultry,CPA_A01::Poultry,,True,True,True,True
+CPA_A01::Raw milk,CPA_A01::Raw milk,,True,True,True,True
+"CPA_A01::Sugar cane, sugar beet","CPA_A01::Sugar cane, sugar beet",,True,True,True,True
+"CPA_A01::Vegetables, fruit, nuts","CPA_A01::Vegetables, fruit, nuts",,True,True,True,True
+CPA_A01::Wheat,CPA_A01::Wheat,,True,True,True,True
+"CPA_A01::Wool, silk-worm cocoons","CPA_A01::Wool, silk-worm cocoons",,True,True,True,True
+CPA_A01_remaining,"CPA_A01: Products of agriculture, hunting and related services_remaining",,True,True,True,True
+CPA_A02,"Products of forestry, logging and related services",,True,True,True,True
+"CPA_A02::Products of forestry, logging and related services (02)","CPA_A02::Products of forestry, logging and related services (02)",,True,True,True,True
+CPA_A03,Fish and other fishing products; aquaculture products; support services to fishing,,True,True,True,True
+CPA_B,Mining and quarrying,,True,True,True,True
+CPA_C10-12,"Food, beverages and tobacco products",,True,True,True,True
+CPA_C10-12::Beverages,CPA_C10-12::Beverages,,True,True,True,True
+CPA_C10-12::Dairy products,CPA_C10-12::Dairy products,,True,True,True,True
+CPA_C10-12::Fish products,CPA_C10-12::Fish products,,True,True,True,True
+CPA_C10-12::Food products nec,CPA_C10-12::Food products nec,,True,True,True,True
+CPA_C10-12::Meat products nec,CPA_C10-12::Meat products nec,,True,True,True,True
+CPA_C10-12::Processed rice,CPA_C10-12::Processed rice,,True,True,True,True
+CPA_C10-12::Products of meat cattle,CPA_C10-12::Products of meat cattle,,True,True,True,True
+CPA_C10-12::Products of meat pigs,CPA_C10-12::Products of meat pigs,,True,True,True,True
+CPA_C10-12::Products of meat poultry,CPA_C10-12::Products of meat poultry,,True,True,True,True
+CPA_C10-12::Sugar,CPA_C10-12::Sugar,,True,True,True,True
+CPA_C10-12::Tobacco products (16),CPA_C10-12::Tobacco products (16),,True,True,True,True
+CPA_C10-12::products of Vegetable oils and fats,CPA_C10-12::products of Vegetable oils and fats,,True,True,True,True
+CPA_C10-12_FOOD_AND_BEVERAGES,CPA_C10-12: Food and beverages,,True,True,True,True
+CPA_C10-12_TOBACCO_PRODUCTS,CPA_C10-12: Tobacco products,,True,True,True,True
+CPA_C13-15,"Textiles, wearing apparel, leather and related products",,True,True,True,True
+CPA_C16,"Wood and of products of wood and cork, except furniture; articles of straw and plaiting materials",,True,True,True,True
+CPA_C16::Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),CPA_C16::Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),,True,True,True,True
+"CPA_C16::Wood material for treatment, Re-processing of secondary wood material into new wood material","CPA_C16::Wood material for treatment, Re-processing of secondary wood material into new wood material",,True,True,True,True
+CPA_C17,Paper and paper products,,True,True,True,True
+CPA_C18,Printing and recording services,,True,True,True,True
+CPA_C19,Coke and refined petroleum products,,True,True,True,True
+CPA_C19::Aviation Gasoline,CPA_C19::Aviation Gasoline,,True,True,True,True
+CPA_C19::Biodiesels,CPA_C19::Biodiesels,,True,True,True,True
+CPA_C19::Biogasoline,CPA_C19::Biogasoline,,True,True,True,True
+CPA_C19::Bitumen,CPA_C19::Bitumen,,True,True,True,True
+CPA_C19::Coal Tar,CPA_C19::Coal Tar,,True,True,True,True
+CPA_C19::Coke Oven Coke,CPA_C19::Coke Oven Coke,,True,True,True,True
+CPA_C19::Coke oven gas,CPA_C19::Coke oven gas,,True,True,True,True
+CPA_C19::Ethane,CPA_C19::Ethane,,True,True,True,True
+CPA_C19::Gas Coke,CPA_C19::Gas Coke,,True,True,True,True
+CPA_C19::Gas/Diesel Oil,CPA_C19::Gas/Diesel Oil,,True,True,True,True
+CPA_C19::Gasoline Type Jet Fuel,CPA_C19::Gasoline Type Jet Fuel,,True,True,True,True
+CPA_C19::Heavy Fuel Oil,CPA_C19::Heavy Fuel Oil,,True,True,True,True
+CPA_C19::Kerosene,CPA_C19::Kerosene,,True,True,True,True
+CPA_C19::Kerosene Type Jet Fuel,CPA_C19::Kerosene Type Jet Fuel,,True,True,True,True
+CPA_C19::Liquefied Petroleum Gases (LPG),CPA_C19::Liquefied Petroleum Gases (LPG),,True,True,True,True
+CPA_C19::Lubricants,CPA_C19::Lubricants,,True,True,True,True
+CPA_C19::Motor Gasoline,CPA_C19::Motor Gasoline,,True,True,True,True
+CPA_C19::Naphtha,CPA_C19::Naphtha,,True,True,True,True
+CPA_C19::Non-specified Petroleum Products,CPA_C19::Non-specified Petroleum Products,,True,True,True,True
+CPA_C19::Other Liquid Biofuels,CPA_C19::Other Liquid Biofuels,,True,True,True,True
+CPA_C19::Paraffin Waxes,CPA_C19::Paraffin Waxes,,True,True,True,True
+CPA_C19::Patent Fuel,CPA_C19::Patent Fuel,,True,True,True,True
+CPA_C19::Petroleum Coke,CPA_C19::Petroleum Coke,,True,True,True,True
+CPA_C19::Refinery Feedstocks,CPA_C19::Refinery Feedstocks,,True,True,True,True
+CPA_C19::Refinery Gas,CPA_C19::Refinery Gas,,True,True,True,True
+CPA_C19::White Spirit & SBP,CPA_C19::White Spirit & SBP,,True,True,True,True
+CPA_C19_COAL,CPA_C19: Coal,,True,True,True,True
+CPA_C19_GAS,CPA_C19: Gas,,True,True,True,True
+CPA_C19_OIL,CPA_C19: Oil,,True,True,True,True
+CPA_C19_remaining,CPA_C19: Coke and refined petroleum products_remaining,,True,True,True,True
+CPA_C20,Chemicals and chemical products,,True,True,True,True
+CPA_C20::Additives/Blending Components,CPA_C20::Additives/Blending Components,,True,True,True,True
+CPA_C20::Biodiesels,CPA_C20::Biodiesels,,True,True,True,True
+CPA_C20::Biogasoline,CPA_C20::Biogasoline,,True,True,True,True
+CPA_C20::Charcoal,CPA_C20::Charcoal,,True,True,True,True
+CPA_C20::Chemicals nec,CPA_C20::Chemicals nec,,True,True,True,True
+CPA_C20::N-fertiliser,CPA_C20::N-fertiliser,,True,True,True,True
+CPA_C20::Other Liquid Biofuels,CPA_C20::Other Liquid Biofuels,,True,True,True,True
+CPA_C20::P- and other fertiliser,CPA_C20::P- and other fertiliser,,True,True,True,True
+"CPA_C20::Plastics, basic","CPA_C20::Plastics, basic",,True,True,True,True
+"CPA_C20::Secondary plastic for treatment, Re-processing of secondary plastic into new plastic","CPA_C20::Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",,True,True,True,True
+CPA_C20_COAL,CPA_C20: Coal,,True,True,True,True
+CPA_C20_remaining,CPA_C20: Chemicals and chemical products_remaining,,True,True,True,True
+CPA_C21,Basic pharmaceutical products and pharmaceutical preparations,,True,True,True,True
+CPA_C22,Rubber and plastic products,,True,True,True,True
+CPA_C23,Other non-metallic mineral products,,True,True,True,True
+CPA_C24,Basic metals,,True,True,True,True
+CPA_C24::Aluminium and aluminium products,CPA_C24::Aluminium and aluminium products,,True,True,True,True
+CPA_C24::Basic iron and steel and of ferro-alloys and first products thereof,CPA_C24::Basic iron and steel and of ferro-alloys and first products thereof,,True,True,True,True
+CPA_C24::Copper products,CPA_C24::Copper products,,True,True,True,True
+CPA_C24::Foundry work services,CPA_C24::Foundry work services,,True,True,True,True
+"CPA_C24::Lead, zinc and tin and products thereof","CPA_C24::Lead, zinc and tin and products thereof",,True,True,True,True
+CPA_C24::Nuclear fuel,CPA_C24::Nuclear fuel,,True,True,True,True
+CPA_C24::Other non-ferrous metal products,CPA_C24::Other non-ferrous metal products,,True,True,True,True
+CPA_C24::Precious metals,CPA_C24::Precious metals,,True,True,True,True
+"CPA_C24::Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium","CPA_C24::Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium",,True,True,True,True
+"CPA_C24::Secondary copper for treatment, Re-processing of secondary copper into new copper","CPA_C24::Secondary copper for treatment, Re-processing of secondary copper into new copper",,True,True,True,True
+"CPA_C24::Secondary lead for treatment, Re-processing of secondary lead into new lead","CPA_C24::Secondary lead for treatment, Re-processing of secondary lead into new lead",,True,True,True,True
+"CPA_C24::Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals","CPA_C24::Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals",,True,True,True,True
+"CPA_C24::Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals","CPA_C24::Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals",,True,True,True,True
+"CPA_C24::Secondary steel for treatment, Re-processing of secondary steel into new steel","CPA_C24::Secondary steel for treatment, Re-processing of secondary steel into new steel",,True,True,True,True
+CPA_C24_remaining,CPA_C24: Basic metals_remaining,,True,True,True,True
+CPA_C25,"Fabricated metal products, except machinery and equipment",,True,True,True,True
+CPA_C26,"Computer, electronic and optical products",,True,True,True,True
+CPA_C27,Electrical equipment,,True,True,True,True
+CPA_C28,Machinery and equipment n.e.c.,,True,True,True,True
+CPA_C29,"Motor vehicles, trailers and semi-trailers",,True,True,True,True
+CPA_C30,Other transport equipment,,True,True,True,True
+CPA_C31_32,Furniture and other manufactured goods,,True,True,True,True
+CPA_C33,Repair and installation services of machinery and equipment,,True,True,True,True
+CPA_D,"Electricity, gas, steam and air conditioning",,True,True,True,True
+CPA_D::Biogas,CPA_D::Biogas,,True,True,True,True
+CPA_D::Blast Furnace Gas,CPA_D::Blast Furnace Gas,,True,True,True,True
+CPA_D::Coke oven gas,CPA_D::Coke oven gas,,True,True,True,True
+CPA_D::Distribution and trade services of electricity,CPA_D::Distribution and trade services of electricity,,True,True,True,True
+CPA_D::Distribution services of gaseous fuels through mains,CPA_D::Distribution services of gaseous fuels through mains,,True,True,True,True
+CPA_D::Electricity by Geothermal,CPA_D::Electricity by Geothermal,,True,True,True,True
+CPA_D::Electricity by biomass and waste,CPA_D::Electricity by biomass and waste,,True,True,True,True
+CPA_D::Electricity by coal,CPA_D::Electricity by coal,,True,True,True,True
+CPA_D::Electricity by gas,CPA_D::Electricity by gas,,True,True,True,True
+CPA_D::Electricity by hydro,CPA_D::Electricity by hydro,,True,True,True,True
+CPA_D::Electricity by nuclear,CPA_D::Electricity by nuclear,,True,True,True,True
+CPA_D::Electricity by petroleum and other oil derivatives,CPA_D::Electricity by petroleum and other oil derivatives,,True,True,True,True
+CPA_D::Electricity by solar photovoltaic,CPA_D::Electricity by solar photovoltaic,,True,True,True,True
+CPA_D::Electricity by solar thermal,CPA_D::Electricity by solar thermal,,True,True,True,True
+"CPA_D::Electricity by tide, wave, ocean","CPA_D::Electricity by tide, wave, ocean",,True,True,True,True
+CPA_D::Electricity by wind,CPA_D::Electricity by wind,,True,True,True,True
+CPA_D::Electricity nec,CPA_D::Electricity nec,,True,True,True,True
+CPA_D::Gas Works Gas,CPA_D::Gas Works Gas,,True,True,True,True
+CPA_D::Gas distribution,CPA_D::Gas distribution,,True,True,True,True
+CPA_D::Manufactured gas,CPA_D::Manufactured gas,,True,True,True,True
+CPA_D::Oxygen Steel Furnace Gas,CPA_D::Oxygen Steel Furnace Gas,,True,True,True,True
+CPA_D::Steam and hot water supply services,CPA_D::Steam and hot water supply services,,True,True,True,True
+CPA_D::Transmission services of electricity,CPA_D::Transmission services of electricity,,True,True,True,True
+CPA_D_GAS,CPA_D: Gas,,True,True,True,True
+CPA_D_remaining,"CPA_D: Electricity, gas, steam and air conditioning_remaining",,True,True,True,True
+CPA_E36,Natural water; water treatment and supply services,,True,True,True,True
+CPA_E37-39,"Sewerage services; sewage sludge; waste collection, treatment and disposal services; materials recovery services; remediation services and other waste management services",,True,True,True,True
+"CPA_E37-39::Bottles for treatment, Recycling of bottles by direct reuse","CPA_E37-39::Bottles for treatment, Recycling of bottles by direct reuse",,True,True,True,True
+CPA_E37-39::Food waste for treatment: biogasification and land application,CPA_E37-39::Food waste for treatment: biogasification and land application,,True,True,True,True
+CPA_E37-39::Food waste for treatment: composting and land application,CPA_E37-39::Food waste for treatment: composting and land application,,True,True,True,True
+CPA_E37-39::Food waste for treatment: incineration,CPA_E37-39::Food waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Food waste for treatment: landfill,CPA_E37-39::Food waste for treatment: landfill,,True,True,True,True
+CPA_E37-39::Food waste for treatment: waste water treatment,CPA_E37-39::Food waste for treatment: waste water treatment,,True,True,True,True
+CPA_E37-39::Inert/metal/hazardous waste for treatment: landfill,CPA_E37-39::Inert/metal/hazardous waste for treatment: landfill,,True,True,True,True
+CPA_E37-39::Intert/metal waste for treatment: incineration,CPA_E37-39::Intert/metal waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Oil/hazardous waste for treatment: incineration,CPA_E37-39::Oil/hazardous waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Other waste for treatment: waste water treatment,CPA_E37-39::Other waste for treatment: waste water treatment,,True,True,True,True
+CPA_E37-39::Paper and wood waste for treatment: composting and land application,CPA_E37-39::Paper and wood waste for treatment: composting and land application,,True,True,True,True
+CPA_E37-39::Paper for treatment: landfill,CPA_E37-39::Paper for treatment: landfill,,True,True,True,True
+CPA_E37-39::Paper waste for treatment: biogasification and land application,CPA_E37-39::Paper waste for treatment: biogasification and land application,,True,True,True,True
+CPA_E37-39::Paper waste for treatment: incineration,CPA_E37-39::Paper waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Plastic waste for treatment: incineration,CPA_E37-39::Plastic waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Plastic waste for treatment: landfill,CPA_E37-39::Plastic waste for treatment: landfill,,True,True,True,True
+CPA_E37-39::Secondary raw materials,CPA_E37-39::Secondary raw materials,,True,True,True,True
+CPA_E37-39::Sewage sludge for treatment: biogasification and land application,CPA_E37-39::Sewage sludge for treatment: biogasification and land application,,True,True,True,True
+CPA_E37-39::Textiles waste for treatment: incineration,CPA_E37-39::Textiles waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Textiles waste for treatment: landfill,CPA_E37-39::Textiles waste for treatment: landfill,,True,True,True,True
+CPA_E37-39::Wood waste for treatment: incineration,CPA_E37-39::Wood waste for treatment: incineration,,True,True,True,True
+CPA_E37-39::Wood waste for treatment: landfill,CPA_E37-39::Wood waste for treatment: landfill,,True,True,True,True
+CPA_E37-39_remaining,"CPA_E37-39: Sewerage services; sewage sludge; waste collection, treatment and disposal services; materials recovery services; remediation services and other waste management services_remaining",,True,True,True,True
+CPA_F,Constructions and construction works,,True,True,True,True
+CPA_G45,Wholesale and retail trade and repair services of motor vehicles and motorcycles,,True,True,True,True
+CPA_G46,"Wholesale trade services, except of motor vehicles and motorcycles",,True,True,True,True
+CPA_G47,"Retail trade services, except of motor vehicles and motorcycles",,True,True,True,True
+CPA_H49,Land transport services and transport services via pipelines,,True,True,True,True
+CPA_H49::Other land transportation services,CPA_H49::Other land transportation services,,True,True,True,True
+CPA_H49::Railway transportation services,CPA_H49::Railway transportation services,,True,True,True,True
+CPA_H49::Transportation services via pipelines,CPA_H49::Transportation services via pipelines,,True,True,True,True
+CPA_H50,Water transport services,,True,True,True,True
+CPA_H51,Air transport services,,True,True,True,True
+CPA_H52,Warehousing and support services for transportation,,True,True,True,True
+CPA_H53,Postal and courier services,,True,True,True,True
+CPA_I,Accommodation and food services,,True,True,True,True
+CPA_J58,Publishing services,,True,True,True,True
+CPA_J59_60,"Motion picture, video and television programme production services, sound recording and music publishing; programming and broadcasting services",,True,True,True,True
+CPA_J61,Telecommunications services,,True,True,True,True
+CPA_J62_63,"Computer programming, consultancy and related services; Information services",,True,True,True,True
+CPA_K64,"Financial services, except insurance and pension funding",,True,True,True,True
+CPA_K65,"Insurance, reinsurance and pension funding services, except compulsory social security",,True,True,True,True
+CPA_K66,Services auxiliary to financial services and insurance services,,True,True,True,True
+CPA_L68A,Imputed rents of owner-occupied dwellings,,True,True,True,True
+CPA_L68B,Real estate services excluding imputed rents,,True,True,True,True
+CPA_M69_70,Legal and accounting services; services of head offices; management consultancy services,,True,True,True,True
+CPA_M71,Architectural and engineering services; technical testing and analysis services,,True,True,True,True
+CPA_M72,Scientific research and development services,,True,True,True,True
+CPA_M73,Advertising and market research services,,True,True,True,True
+CPA_M74_75,"Other professional, scientific and technical services and veterinary services",,True,True,True,True
+CPA_N77,Rental and leasing services,,True,True,True,True
+CPA_N78,Employment services,,True,True,True,True
+CPA_N79,"Travel agency, tour operator and other reservation services and related services",,True,True,True,True
+CPA_N80-82,"Security and investigation services; services to buildings and landscape; office administrative, office support and other business support services",,True,True,True,True
+CPA_O,Public administration and defence services; compulsory social security services,,True,True,True,True
+CPA_P,Education services,,True,True,True,True
+CPA_Q86,Human health services,,True,True,True,True
+CPA_Q87_88,Residential care services; social work services without accommodation,,True,True,True,True
+CPA_R90-92,"Creative, arts, entertainment, library, archive, museum, other cultural services; gambling and betting services",,True,True,True,True
+CPA_R93,Sporting services and amusement and recreation services,,True,True,True,True
+CPA_S94,Services furnished by membership organisations,,True,True,True,True
+CPA_S95,Repair services of computers and personal and household goods,,True,True,True,True
+CPA_S96,Other personal services,,True,True,True,True
+CPA_T,Services of households as employers; undifferentiated goods and services produced by households for own use,,True,True,True,True
+CPA_U,Services provided by extraterritorial organisations and bodies,,True,True,True,True
+Cattle,Cattle,,True,True,True,True
+Cereal grains nec,Cereal grains nec,,True,True,True,True
+Charcoal,Charcoal,,True,True,True,True
+Chemicals nec,Chemicals nec,,True,True,True,True
+Coal Tar,Coal Tar,,True,True,True,True
+Coke Oven Coke,Coke Oven Coke,,True,True,True,True
+Coke oven gas,Coke oven gas,,True,True,True,True
+Coking Coal,Coking Coal,,True,True,True,True
+Copper products,Copper products,,True,True,True,True
+Crops nec,Crops nec,,True,True,True,True
+Dairy products,Dairy products,,True,True,True,True
+Distribution and trade services of electricity,Distribution and trade services of electricity,,True,True,True,True
+Distribution services of gaseous fuels through mains,Distribution services of gaseous fuels through mains,,True,True,True,True
+ENERGY_BROWN,Energy Brown,,True,True,True,True
+ENERGY_GREEN,Energy Green,,True,True,True,True
+Electricity by Geothermal,Electricity by Geothermal,,True,True,True,True
+Electricity by biomass and waste,Electricity by biomass and waste,,True,True,True,True
+Electricity by coal,Electricity by coal,,True,True,True,True
+Electricity by gas,Electricity by gas,,True,True,True,True
+Electricity by hydro,Electricity by hydro,,True,True,True,True
+Electricity by nuclear,Electricity by nuclear,,True,True,True,True
+Electricity by petroleum and other oil derivatives,Electricity by petroleum and other oil derivatives,,True,True,True,True
+Electricity by solar photovoltaic,Electricity by solar photovoltaic,,True,True,True,True
+Electricity by solar thermal,Electricity by solar thermal,,True,True,True,True
+"Electricity by tide, wave, ocean","Electricity by tide, wave, ocean",,True,True,True,True
+Electricity by wind,Electricity by wind,,True,True,True,True
+Electricity generation,Electricity generation,,True,True,True,True
+Electricity nec,Electricity nec,,True,True,True,True
+Ethane,Ethane,,True,True,True,True
+Final consumption - industry sector - chemical and petrochemical - energy use,Final consumption - industry sector - chemical and petrochemical - energy use,,True,True,False,True
+Final consumption - industry sector - construction - energy use,Final consumption - industry sector - construction - energy use,,True,True,False,True
+"Final consumption - industry sector - food, beverages and tobacco - energy use","Final consumption - industry sector - food, beverages and tobacco - energy use",,True,True,False,True
+Final consumption - industry sector - iron and steel - energy use,Final consumption - industry sector - iron and steel - energy use,,True,True,False,True
+Final consumption - industry sector - machinery - energy use,Final consumption - industry sector - machinery - energy use,,True,True,False,True
+Final consumption - industry sector - mining and quarrying - energy use,Final consumption - industry sector - mining and quarrying - energy use,,True,True,False,True
+Final consumption - industry sector - non-ferrous metals - energy use,Final consumption - industry sector - non-ferrous metals - energy use,,True,True,False,True
+Final consumption - industry sector - non-metallic minerals - energy use,Final consumption - industry sector - non-metallic minerals - energy use,,True,True,False,True
+Final consumption - industry sector - not elsewhere specified - energy use,Final consumption - industry sector - not elsewhere specified - energy use,,True,True,False,True
+"Final consumption - industry sector - paper, pulp and printing - energy use","Final consumption - industry sector - paper, pulp and printing - energy use",,True,True,False,True
+Final consumption - industry sector - textile and leather - energy use,Final consumption - industry sector - textile and leather - energy use,,True,True,False,True
+Final consumption - industry sector - transport equipment - energy use,Final consumption - industry sector - transport equipment - energy use,,True,True,False,True
+Final consumption - industry sector - wood and wood products - energy use,Final consumption - industry sector - wood and wood products - energy use,,True,True,False,True
+Final consumption - other sectors - agriculture and forestry - energy use,Final consumption - other sectors - agriculture and forestry - energy use,,True,True,False,True
+Final consumption - other sectors - commercial and public services - energy use,Final consumption - other sectors - commercial and public services - energy use,,True,True,False,True
+Final consumption - other sectors - fishing - energy use,Final consumption - other sectors - fishing - energy use,,True,True,False,True
+Final consumption - other sectors - households - energy use,Final consumption - other sectors - households - energy use,,True,True,False,True
+Final consumption - transport sector - domestic aviation - energy use,Final consumption - transport sector - domestic aviation - energy use,,True,True,False,True
+Final consumption - transport sector - domestic navigation - energy use,Final consumption - transport sector - domestic navigation - energy use,,True,True,False,True
+Final consumption - transport sector - rail - energy use,Final consumption - transport sector - rail - energy use,,True,True,False,True
+Final consumption - transport sector - road - energy use,Final consumption - transport sector - road - energy use,,True,True,False,True
+Fish products,Fish products,,True,True,True,True
+Food products nec,Food products nec,,True,True,True,True
+Food waste for treatment: biogasification and land application,Food waste for treatment: biogasification and land application,,True,True,True,True
+Food waste for treatment: composting and land application,Food waste for treatment: composting and land application,,True,True,True,True
+Food waste for treatment: incineration,Food waste for treatment: incineration,,True,True,True,True
+Food waste for treatment: landfill,Food waste for treatment: landfill,,True,True,True,True
+Food waste for treatment: waste water treatment,Food waste for treatment: waste water treatment,,True,True,True,True
+Foundry work services,Foundry work services,,True,True,True,True
+Gas Coke,Gas Coke,,True,True,True,True
+Gas Works Gas,Gas Works Gas,,True,True,True,True
+Gas distribution,Gas distribution,,True,True,True,True
+Gas/Diesel Oil,Gas/Diesel Oil,,True,True,True,True
+Gasoline Type Jet Fuel,Gasoline Type Jet Fuel,,True,True,True,True
+Heavy Fuel Oil,Heavy Fuel Oil,,True,True,True,True
+Households,Households,,True,True,False,True
+Inert/metal/hazardous waste for treatment: landfill,Inert/metal/hazardous waste for treatment: landfill,,True,True,True,True
+Intert/metal waste for treatment: incineration,Intert/metal waste for treatment: incineration,,True,True,True,True
+Kerosene,Kerosene,,True,True,True,True
+Kerosene Type Jet Fuel,Kerosene Type Jet Fuel,,True,True,True,True
+"Lead, zinc and tin and products thereof","Lead, zinc and tin and products thereof",,True,True,True,True
+Lignite/Brown Coal,Lignite/Brown Coal,,True,True,True,True
+Liquefied Petroleum Gases (LPG),Liquefied Petroleum Gases (LPG),,True,True,True,True
+Lubricants,Lubricants,,True,True,True,True
+Manufactured gas,Manufactured gas,,True,True,True,True
+Manure (biogas treatment),Manure (biogas treatment),,True,True,True,True
+Manure (conventional treatment),Manure (conventional treatment),,True,True,True,True
+Meat animals nec,Meat animals nec,,True,True,True,True
+Meat products nec,Meat products nec,,True,True,True,True
+Motor Gasoline,Motor Gasoline,,True,True,True,True
+N-fertiliser,N-fertiliser,,True,True,True,True
+NRG_EHG_E,Energy sector - electricity and heat generation - energy use,,True,True,False,True
+NRG_PR_E,Energy sector - petroleum refineries (oil refineries) - energy use,,True,True,False,True
+Naphtha,Naphtha,,True,True,True,True
+Natural Gas Liquids,Natural Gas Liquids,,True,True,True,True
+"Natural gas and services related to natural gas extraction, excluding surveying","Natural gas and services related to natural gas extraction, excluding surveying",,True,True,True,True
+Non-specified Petroleum Products,Non-specified Petroleum Products,,True,True,True,True
+Nuclear fuel,Nuclear fuel,,True,True,True,True
+Oil seeds,Oil seeds,,True,True,True,True
+Oil/hazardous waste for treatment: incineration,Oil/hazardous waste for treatment: incineration,,True,True,True,True
+Other Bituminous Coal,Other Bituminous Coal,,True,True,True,True
+Other Liquid Biofuels,Other Liquid Biofuels,,True,True,True,True
+Other land transportation services,Other land transportation services,,True,True,True,True
+Other non-ferrous metal products,Other non-ferrous metal products,,True,True,True,True
+Other waste for treatment: waste water treatment,Other waste for treatment: waste water treatment,,True,True,True,True
+Oxygen Steel Furnace Gas,Oxygen Steel Furnace Gas,,True,True,True,True
+P- and other fertiliser,P- and other fertiliser,,True,True,True,True
+Paddy rice,Paddy rice,,True,True,True,True
+Paper and wood waste for treatment: composting and land application,Paper and wood waste for treatment: composting and land application,,True,True,True,True
+Paper for treatment: landfill,Paper for treatment: landfill,,True,True,True,True
+Paper waste for treatment: biogasification and land application,Paper waste for treatment: biogasification and land application,,True,True,True,True
+Paper waste for treatment: incineration,Paper waste for treatment: incineration,,True,True,True,True
+Paraffin Waxes,Paraffin Waxes,,True,True,True,True
+Patent Fuel,Patent Fuel,,True,True,True,True
+Peat,Peat,,True,True,True,True
+Petroleum Coke,Petroleum Coke,,True,True,True,True
+Pigs,Pigs,,True,True,True,True
+Plant-based fibers,Plant-based fibers,,True,True,True,True
+Plastic waste for treatment: incineration,Plastic waste for treatment: incineration,,True,True,True,True
+Plastic waste for treatment: landfill,Plastic waste for treatment: landfill,,True,True,True,True
+"Plastics, basic","Plastics, basic",,True,True,True,True
+Poultry,Poultry,,True,True,True,True
+Precious metals,Precious metals,,True,True,True,True
+Processed rice,Processed rice,,True,True,True,True
+"Products of forestry, logging and related services (02)","Products of forestry, logging and related services (02)",,True,True,True,True
+Products of meat cattle,Products of meat cattle,,True,True,True,True
+Products of meat pigs,Products of meat pigs,,True,True,True,True
+Products of meat poultry,Products of meat poultry,,True,True,True,True
+Railway transportation services,Railway transportation services,,True,True,True,True
+Raw milk,Raw milk,,True,True,True,True
+Refinery Feedstocks,Refinery Feedstocks,,True,True,True,True
+Refinery Gas,Refinery Gas,,True,True,True,True
+"Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium","Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium",,True,True,True,True
+"Secondary copper for treatment, Re-processing of secondary copper into new copper","Secondary copper for treatment, Re-processing of secondary copper into new copper",,True,True,True,True
+"Secondary lead for treatment, Re-processing of secondary lead into new lead","Secondary lead for treatment, Re-processing of secondary lead into new lead",,True,True,True,True
+"Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals","Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals",,True,True,True,True
+"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic","Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",,True,True,True,True
+"Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals","Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals",,True,True,True,True
+Secondary raw materials,Secondary raw materials,,True,True,True,True
+"Secondary steel for treatment, Re-processing of secondary steel into new steel","Secondary steel for treatment, Re-processing of secondary steel into new steel",,True,True,True,True
+Sewage sludge for treatment: biogasification and land application,Sewage sludge for treatment: biogasification and land application,,True,True,True,True
+Steam and hot water supply services,Steam and hot water supply services,,True,True,True,True
+Sub-Bituminous Coal,Sub-Bituminous Coal,,True,True,True,True
+Sugar,Sugar,,True,True,True,True
+"Sugar cane, sugar beet","Sugar cane, sugar beet",,True,True,True,True
+TI_EHG_MAPCHP_E,Transformation input - electricity and heat generation - main activity producer combined heat and power - energy use,,True,True,False,True
+TI_EHG_MAPE_E,Transformation input - electricity and heat generation - main activity producer electricity only - energy use,,True,True,False,True
+TI_EHG_MAPH_E,Transformation input - electricity and heat generation - main activity producer heat only - energy use,,True,True,False,True
+TI_RPI_DU_E,Transformation input - refineries and petrochemical industry - direct use - energy use,,True,True,False,True
+Textiles waste for treatment: incineration,Textiles waste for treatment: incineration,,True,True,True,True
+Textiles waste for treatment: landfill,Textiles waste for treatment: landfill,,True,True,True,True
+Tobacco products (16),Tobacco products (16),,True,True,True,True
+Transmission services of electricity,Transmission services of electricity,,True,True,True,True
+Transportation services via pipelines,Transportation services via pipelines,,True,True,True,True
+"Vegetables, fruit, nuts","Vegetables, fruit, nuts",,True,True,True,True
+Wheat,Wheat,,True,True,True,True
+White Spirit & SBP,White Spirit & SBP,,True,True,True,True
+Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),,True,True,True,True
+"Wood material for treatment, Re-processing of secondary wood material into new wood material","Wood material for treatment, Re-processing of secondary wood material into new wood material",,True,True,True,True
+Wood waste for treatment: incineration,Wood waste for treatment: incineration,,True,True,True,True
+Wood waste for treatment: landfill,Wood waste for treatment: landfill,,True,True,True,True
+"Wool, silk-worm cocoons","Wool, silk-worm cocoons",,True,True,True,True
+p01.a,Paddy rice,,True,True,True,True
+p01.b,Wheat,,True,True,True,True
+p01.c,Cereal grains nec,,True,True,True,True
+p01.d,"Vegetables, fruit, nuts",,True,True,True,True
+p01.e,Oil seeds,,True,True,True,True
+p01.f,"Sugar cane, sugar beet",,True,True,True,True
+p01.g,Plant-based fibers,,True,True,True,True
+p01.h,Crops nec,,True,True,True,True
+p01.i,Cattle,,True,True,True,True
+p01.j,Pigs,,True,True,True,True
+p01.k,Poultry,,True,True,True,True
+p01.l,Meat animals nec,,True,True,True,True
+p01.m,Animal products nec,,True,True,True,True
+p01.n,Raw milk,,True,True,True,True
+p01.o,"Wool, silk-worm cocoons",,True,True,True,True
+p01.w.1,Manure (conventional treatment),,True,True,True,True
+p01.w.2,Manure (biogas treatment),,True,True,True,True
+p02,"Products of forestry, logging and related services (02)",,True,True,True,True
+p05,Fish and other fishing products; services incidental of fishing (05),,True,True,True,True
+p10.e,Patent Fuel,,True,True,True,True
+p11.a,"Crude petroleum and services related to crude oil extraction, excluding surveying",,True,True,True,True
+p11.c,Other Hydrocarbons,,True,True,True,True
+p12,Uranium and thorium ores (12),,True,True,True,True
+p13.1,Iron ores,,True,True,True,True
+p13.20.11,Copper ores and concentrates,,True,True,True,True
+p13.20.12,Nickel ores and concentrates,,True,True,True,True
+p13.20.13,Aluminium ores and concentrates,,True,True,True,True
+p13.20.14,Precious metal ores and concentrates,,True,True,True,True
+p13.20.15,"Lead, zinc and tin ores and concentrates",,True,True,True,True
+p13.20.16,Other non-ferrous metal ores and concentrates,,True,True,True,True
+p14.1,Stone,,True,True,True,True
+p14.2,Sand and clay,,True,True,True,True
+p14.3,"Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.",,True,True,True,True
+p15.a,Products of meat cattle,,True,True,True,True
+p15.b,Products of meat pigs,,True,True,True,True
+p15.c,Products of meat poultry,,True,True,True,True
+p15.d,Meat products nec,,True,True,True,True
+p15.e,products of Vegetable oils and fats,,True,True,True,True
+p15.f,Dairy products,,True,True,True,True
+p15.g,Processed rice,,True,True,True,True
+p15.h,Sugar,,True,True,True,True
+p15.i,Food products nec,,True,True,True,True
+p15.j,Beverages,,True,True,True,True
+p15.k,Fish products,,True,True,True,True
+p16,Tobacco products (16),,True,True,True,True
+p17,Textiles (17),,True,True,True,True
+p18,Wearing apparel; furs (18),,True,True,True,True
+p19,Leather and leather products (19),,True,True,True,True
+p20,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),,True,True,True,True
+p20.w,"Wood material for treatment, Re-processing of secondary wood material into new wood material",,True,True,True,True
+p21.1,Pulp,,True,True,True,True
+p21.2,Paper and paper products,,True,True,True,True
+p21.w.1,"Secondary paper for treatment, Re-processing of secondary paper into new pulp",,True,True,True,True
+p22,Printed matter and recorded media (22),,True,True,True,True
+p23.1.a,Coke Oven Coke,,True,True,True,True
+p23.1.b,Gas Coke,,True,True,True,True
+p23.1.c,Coal Tar,,True,True,True,True
+p23.20.a,Motor Gasoline,,True,True,True,True
+p23.20.b,Aviation Gasoline,,True,True,True,True
+p23.20.c,Gasoline Type Jet Fuel,,True,True,True,True
+p23.20.d,Kerosene Type Jet Fuel,,True,True,True,True
+p23.20.e,Kerosene,,True,True,True,True
+p23.20.f,Gas/Diesel Oil,,True,True,True,True
+p23.20.g,Heavy Fuel Oil,,True,True,True,True
+p23.20.h,Refinery Gas,,True,True,True,True
+p23.20.i,Liquefied Petroleum Gases (LPG),,True,True,True,True
+p23.20.j,Refinery Feedstocks,,True,True,True,True
+p23.20.k,Ethane,,True,True,True,True
+p23.20.l,Naphtha,,True,True,True,True
+p23.20.m,White Spirit & SBP,,True,True,True,True
+p23.20.n,Lubricants,,True,True,True,True
+p23.20.o,Bitumen,,True,True,True,True
+p23.20.p,Paraffin Waxes,,True,True,True,True
+p23.20.q,Petroleum Coke,,True,True,True,True
+p23.20.r,Non-specified Petroleum Products,,True,True,True,True
+p23.3,Nuclear fuel,,True,True,True,True
+p24.a,"Plastics, basic",,True,True,True,True
+p24.a.w,"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",,True,True,True,True
+p24.b,N-fertiliser,,True,True,True,True
+p24.c,P- and other fertiliser,,True,True,True,True
+p24.g,Biogasoline,,True,True,True,True
+p24.h,Biodiesels,,True,True,True,True
+p24.i,Other Liquid Biofuels,,True,True,True,True
+p25,Rubber and plastic products (25),,True,True,True,True
+p26.a,Glass and glass products,,True,True,True,True
+p26.b,Ceramic goods,,True,True,True,True
+p26.c,"Bricks, tiles and construction products, in baked clay",,True,True,True,True
+p26.d,"Cement, lime and plaster",,True,True,True,True
+p26.d.w,"Ash for treatment, Re-processing of ash into clinker",,True,True,True,True
+p26.e,Other non-metallic mineral products,,True,True,True,True
+p26.w.1,"Secondary glass for treatment, Re-processing of secondary glass into new glass",,True,True,True,True
+p27.41,Precious metals,,True,True,True,True
+p27.41.w,"Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals",,True,True,True,True
+p27.42,Aluminium and aluminium products,,True,True,True,True
+p27.42.w,"Secondary aluminium for treatment, Re-processing of secondary aluminium into new aluminium",,True,True,True,True
+p27.43,"Lead, zinc and tin and products thereof",,True,True,True,True
+p27.43.w,"Secondary lead for treatment, Re-processing of secondary lead into new lead",,True,True,True,True
+p27.44,Copper products,,True,True,True,True
+p27.44.w,"Secondary copper for treatment, Re-processing of secondary copper into new copper",,True,True,True,True
+p27.45,Other non-ferrous metal products,,True,True,True,True
+p27.45.w,"Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals",,True,True,True,True
+p27.5,Foundry work services,,True,True,True,True
+p27.a,Basic iron and steel and of ferro-alloys and first products thereof,,True,True,True,True
+p27.a.w,"Secondary steel for treatment, Re-processing of secondary steel into new steel",,True,True,True,True
+p28,"Fabricated metal products, except machinery and equipment (28)",,True,True,True,True
+p29,Machinery and equipment n.e.c. (29),,True,True,True,True
+p30,Office machinery and computers (30),,True,True,True,True
+p31,Electrical machinery and apparatus n.e.c. (31),,True,True,True,True
+p32,"Radio, television and communication equipment and apparatus (32)",,True,True,True,True
+p33,"Medical, precision and optical instruments, watches and clocks (33)",,True,True,True,True
+p34,"Motor vehicles, trailers and semi-trailers (34)",,True,True,True,True
+p35,Other transport equipment (35),,True,True,True,True
+p36,Furniture; other manufactured goods n.e.c. (36),,True,True,True,True
+p37,Secondary raw materials,,True,True,True,True
+p37.w.1,"Bottles for treatment, Recycling of bottles by direct reuse",,True,True,True,True
+p40.11.a,Electricity by coal,,True,True,True,True
+p40.11.b,Electricity by gas,,True,True,True,True
+p40.11.c,Electricity by nuclear,,True,True,True,True
+p40.11.d,Electricity by hydro,,True,True,True,True
+p40.11.e,Electricity by wind,,True,True,True,True
+p40.11.f,Electricity by petroleum and other oil derivatives,,True,True,True,True
+p40.11.g,Electricity by biomass and waste,,True,True,True,True
+p40.11.h,Electricity by solar photovoltaic,,True,True,True,True
+p40.11.i,Electricity by solar thermal,,True,True,True,True
+p40.11.j,"Electricity by tide, wave, ocean",,True,True,True,True
+p40.11.k,Electricity by Geothermal,,True,True,True,True
+p40.11.l,Electricity nec,,True,True,True,True
+p40.12,Transmission services of electricity,,True,True,True,True
+p40.13,Distribution and trade services of electricity,,True,True,True,True
+p40.2.1,Distribution services of gaseous fuels through mains,,True,True,True,True
+p40.2.2,Distribution services of gaseous fuels through mains,,True,True,True,True
+p40.2.a,Coke oven gas,,True,True,True,True
+p40.2.d,Gas Works Gas,,True,True,True,True
+p40.2.e,Biogas,,True,True,True,True
+p40.3,Steam and hot water supply services,,True,True,True,True
+p41,"Collected and purified water, distribution services of water (41)",,True,True,True,True
+p45,Construction work (45),,True,True,True,True
+p45.w,"Secondary construction material for treatment, Re-processing of secondary construction material into aggregates",,True,True,True,True
+p50.a,"Sale, maintenance, repair of motor vehicles, motor vehicles parts, motorcycles, motor cycles parts and accessoiries",,True,True,True,True
+p50.b,Retail trade services of motor fuel,,True,True,True,True
+p51,"Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51)",,True,True,True,True
+p52,"Retail trade services, except of motor vehicles and motorcycles; repair services of personal and household goods (52)",,True,True,True,True
+p55,Hotel and restaurant services (55),,True,True,True,True
+p60.1,Railway transportation services,,True,True,True,True
+p60.2,Other land transportation services,,True,True,True,True
+p60.3,Transportation services via pipelines,,True,True,True,True
+p61.1,Sea and coastal water transportation services,,True,True,True,True
+p61.2,Inland water transportation services,,True,True,True,True
+p62,Air transport services (62),,True,True,True,True
+p63,Supporting and auxiliary transport services; travel agency services (63),,True,True,True,True
+p64,Post and telecommunication services (64),,True,True,True,True
+p65,"Financial intermediation services, except insurance and pension funding services (65)",,True,True,True,True
+p66,"Insurance and pension funding services, except compulsory social security services (66)",,True,True,True,True
+p67,Services auxiliary to financial intermediation (67),,True,True,True,True
+p70,Real estate services (70),,True,True,True,True
+p71,Renting services of machinery and equipment without operator and of personal and household goods (71),,True,True,True,True
+p72,Computer and related services (72),,True,True,True,True
+p73,Research and development services (73),,True,True,True,True
+p74,Other business services (74),,True,True,True,True
+p75,Public administration and defence services; compulsory social security services (75),,True,True,True,True
+p80,Education services (80),,True,True,True,True
+p85,Health and social work services (85),,True,True,True,True
+p90.1.a,Food waste for treatment: incineration,,True,True,True,True
+p90.1.b,Paper waste for treatment: incineration,,True,True,True,True
+p90.1.c,Plastic waste for treatment: incineration,,True,True,True,True
+p90.1.d,Intert/metal waste for treatment: incineration,,True,True,True,True
+p90.1.e,Textiles waste for treatment: incineration,,True,True,True,True
+p90.1.f,Wood waste for treatment: incineration,,True,True,True,True
+p90.1.g,Oil/hazardous waste for treatment: incineration,,True,True,True,True
+p90.2.a,Food waste for treatment: biogasification and land application,,True,True,True,True
+p90.2.b,Paper waste for treatment: biogasification and land application,,True,True,True,True
+p90.2.c,Sewage sludge for treatment: biogasification and land application,,True,True,True,True
+p90.3.a,Food waste for treatment: composting and land application,,True,True,True,True
+p90.3.b,Paper and wood waste for treatment: composting and land application,,True,True,True,True
+p90.4.a,Food waste for treatment: waste water treatment,,True,True,True,True
+p90.4.b,Other waste for treatment: waste water treatment,,True,True,True,True
+p90.5.a,Food waste for treatment: landfill,,True,True,True,True
+p90.5.b,Paper for treatment: landfill,,True,True,True,True
+p90.5.c,Plastic waste for treatment: landfill,,True,True,True,True
+p90.5.d,Inert/metal/hazardous waste for treatment: landfill,,True,True,True,True
+p90.5.e,Textiles waste for treatment: landfill,,True,True,True,True
+p90.5.f,Wood waste for treatment: landfill,,True,True,True,True
+p91,Membership organisation services n.e.c. (91),,True,True,True,True
+p92,"Recreational, cultural and sporting services (92)",,True,True,True,True
+p93,Other services (93),,True,True,True,True
+p95,Private households with employed persons (95),,True,True,True,True
+p99,Extra-territorial organizations and bodies,,True,True,True,True
+products of Vegetable oils and fats,products of Vegetable oils and fats,,True,True,True,True

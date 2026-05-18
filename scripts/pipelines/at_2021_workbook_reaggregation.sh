@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generic pipeline: workbook-driven 2021 split -> workbook-driven reaggregation.
+# Generic pipeline: canonical 2021 split -> canonical reaggregation.
 #
 # Required / important env vars:
-#   WORKBOOK_XLSX=tmp/IO_Exiobase_Sector_Disaggregation.xlsx
-#   WORKBOOK_SHEET=Step2_Reaggregation|Step3_Reaggregation
 #   OUTPUT_SUFFIX=fuels_more|fuels|...
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,13 +14,6 @@ if [[ ! -x "$PY" ]]; then
   exit 1
 fi
 
-WORKBOOK_XLSX="${WORKBOOK_XLSX:-$ROOT_DIR/tmp/IO_Exiobase_Sector_Disaggregation.xlsx}"
-if [[ ! -f "$WORKBOOK_XLSX" ]]; then
-  echo "ERROR: Workbook not found: $WORKBOOK_XLSX" >&2
-  exit 1
-fi
-
-WORKBOOK_SHEET="${WORKBOOK_SHEET:-Step2_Reaggregation}"
 OUTPUT_SUFFIX="${OUTPUT_SUFFIX:-fuels}"
 EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
@@ -36,9 +27,9 @@ OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUT
 OUT_DISAGG="${OUT_DISAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_disaggregated_flows}"
 OUT_REAGG="${OUT_REAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_reaggregated_flows}"
 
-SPLIT_MAPPING_CSV="$GENERATED_MAPPINGS_OUT/exio_${OUTPUT_SUFFIX}_split_from_workbook.csv"
-IDENTITY_MAPPING_CSV="$GENERATED_MAPPINGS_OUT/${OUTPUT_SUFFIX}_identity_from_workbook.csv"
-REAGG_MAPPING_CSV="$GENERATED_MAPPINGS_OUT/${OUTPUT_SUFFIX}_reaggregation_from_workbook.csv"
+SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/mappings/${OUTPUT_SUFFIX}_split_canonical.csv}"
+IDENTITY_MAPPING_CSV="${IDENTITY_MAPPING_CSV:-$ROOT_DIR/scripts/mappings/${OUTPUT_SUFFIX}_identity_canonical.csv}"
+REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/mappings/${OUTPUT_SUFFIX}_reaggregation_canonical.csv}"
 CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa.csv}"
 
 TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_2021_Eurostat.xlsx}"
@@ -46,6 +37,14 @@ if [[ ! -f "$TEMPLATE_XLSX" ]]; then
   echo "ERROR: Template workbook not found: $TEMPLATE_XLSX" >&2
   exit 1
 fi
+
+for mapping_csv in "$SPLIT_MAPPING_CSV" "$IDENTITY_MAPPING_CSV" "$REAGG_MAPPING_CSV"; do
+  if [[ ! -f "$mapping_csv" ]]; then
+    echo "ERROR: Canonical mapping CSV not found: $mapping_csv" >&2
+    echo "Use the committed canonical fuels CSVs under scripts/mappings/." >&2
+    exit 1
+  fi
+done
 
 EUROSTAT_FILTERS_JSON=$(cat <<JSON
 {"geo":"$EUROSTAT_GEO","time":"$EUROSTAT_TIME","freq":"A","unit":"MIO_EUR"}
@@ -60,13 +59,6 @@ CONSISTENCY_ARGS=(
 )
 
 set -x
-
-"$PY" "$ROOT_DIR/scripts/generate_fuels_mapping_from_workbook.py" \
-  --workbook "$WORKBOOK_XLSX" \
-  --sheet-name "$WORKBOOK_SHEET" \
-  --output-prefix "$OUTPUT_SUFFIX" \
-  --concordance-csv "$CONCORDANCE_CSV" \
-  --outdir "$GENERATED_MAPPINGS_OUT"
 
 "$PY" "$ROOT_DIR/scripts/split_eurostat_energy_by_exiobase.py" --verbose \
   --eurostat-dataset naio_10_cp1700 \

@@ -13,6 +13,7 @@ import pandas as pd
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
 )
+from ecolecon_mrio.canonical_mapping_csv import read_canonical_aggregation_mapping
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
 
@@ -40,6 +41,19 @@ def _read_table(path: Path) -> pd.DataFrame:
     if suffix in {".xlsx", ".xls"}:
         return pd.read_excel(path, index_col=0)
     raise ValueError(f"Unsupported table format: {path}")
+
+
+def _is_canonical_mapping_csv(path: str | Path) -> bool:
+    try:
+        header = pd.read_csv(path, nrows=0)
+    except Exception:
+        return False
+    required = {"mapping_set", "source_code", "target_code", "enabled"}
+    return required.issubset(set(header.columns))
+
+
+def _canonical_dictionary_path(mapping_csv: str | Path) -> Path:
+    return Path(mapping_csv).resolve().parent / "sector_dictionary.csv"
 
 
 def _write_df_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
@@ -1613,7 +1627,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = p.parse_args(argv)
 
-    mapping, mapping_df = read_aggregation_mapping(args.mapping_csv)
+    if _is_canonical_mapping_csv(args.mapping_csv):
+        mapping, mapping_df = read_canonical_aggregation_mapping(args.mapping_csv, _canonical_dictionary_path(args.mapping_csv))
+    else:
+        mapping, mapping_df = read_aggregation_mapping(args.mapping_csv)
 
     if args.require_from_contains is not None:
         bad = [k for k in mapping.keys() if args.require_from_contains not in str(k)]

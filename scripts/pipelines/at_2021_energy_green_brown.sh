@@ -35,8 +35,8 @@ EXIO_REGION="${EXIO_REGION:-AT}"
 EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
 
-MAP_EXIO_TO_EUROSTAT="$ROOT_DIR/scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv"
-MAP_GREEN_BROWN="$ROOT_DIR/scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv"
+MAP_EXIO_TO_EUROSTAT="$ROOT_DIR/scripts/mappings/energy_green_brown_split_canonical.csv"
+MAP_GREEN_BROWN="$ROOT_DIR/scripts/mappings/energy_green_brown_canonical.csv"
 EXIO_TO_EUROSTAT_MAP="${EXIO_TO_EUROSTAT_MAP:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa.csv}"
 
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/AT_2021_energy_split_flows_with_source}"
@@ -58,14 +58,7 @@ STK_FLOWS_JSON='["DOM","IMP","TOTAL"]'
 
 set -x
 
-# 1) Generate the canonical mapping CSVs.
-"$PY" "$ROOT_DIR/scripts/generate_mapping_csvs.py" \
-  --geo "$EUROSTAT_GEO" \
-  --year "$EUROSTAT_TIME" \
-  --eurostat-storage-folder "$ROOT_DIR/data/eurostat" \
-  --outdir "$ROOT_DIR/scripts/mappings"
-
-# 2) Split Eurostat IOT (batch over stk_flow)
+# 1) Split Eurostat IOT (batch over stk_flow)
 EXIO_TO_EUROSTAT_ARGS=()
 if [[ -f "$EXIO_TO_EUROSTAT_MAP" ]]; then
   EXIO_TO_EUROSTAT_ARGS=(--exio-to-eurostat-mapping-csv "$EXIO_TO_EUROSTAT_MAP")
@@ -90,7 +83,7 @@ CONSISTENCY_ARGS=(
   "${EXIO_TO_EUROSTAT_ARGS[@]}" \
   --outdir "$OUT_SPLIT"
 
-# 3) Aggregate to ENERGY_GREEN/BROWN + write Eurostat-shaped workbooks
+# 2) Aggregate to ENERGY_GREEN/BROWN + write Eurostat-shaped workbooks
 if [[ ! -f "$TEMPLATE_XLSX" ]]; then
   echo "ERROR: Template workbook not found: $TEMPLATE_XLSX" >&2
   echo "Provide TEMPLATE_XLSX=... or create tmp/IOT_Austria_2021_Eurostat.xlsx" >&2
