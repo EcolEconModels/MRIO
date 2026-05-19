@@ -20,7 +20,6 @@ from ecolecon_mrio.exio_to_eurostat_mapping import (
 from ecolecon_mrio.mapping_csv import MAPPING_CSV_COLUMNS, read_mapping_csv
 
 
-EXIO_CLASSIFICATIONS_XLSX = Path("data/exiobase_classifications/Classifications_v_3_3_18.xlsx")
 WEIGHTED_OFFICIAL_SOURCE = (
     "https://acpr.banque-france.fr/system/files/2025-03/"
     "table_correspondance_nace-gics-exiobase_20230816.xlsx"
@@ -34,6 +33,15 @@ FALLBACK_OFFICIAL_SOURCE = (
 ENERGY_METADATA_SOURCE = "https://ec.europa.eu/eurostat/cache/metadata/en/nrg_bal_esms.htm"
 DEFAULT_ENERGY_PRODUCT_CPA_CODES = ("CPA_C19", "CPA_D")
 CHECKED_IN_MAPPINGS_DIR = Path(__file__).resolve().parent / "mappings"
+
+
+def _write_dictionary_csv(path: Path, frame: pd.DataFrame) -> None:
+    required = ["code", "label", "description"]
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(f"Dictionary frame for {path} missing required columns: {missing}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.loc[:, required].to_csv(path, index=False)
 
 
 def _find_any_eurostat_meta() -> dict[str, str]:
@@ -50,15 +58,13 @@ def _find_any_eurostat_meta() -> dict[str, str]:
 
 
 def _load_exio_lookup() -> dict[str, dict[str, str]]:
-    df = pd.read_excel(EXIO_CLASSIFICATIONS_XLSX, sheet_name="Products_HIOT")
-    df = df.rename(columns={"Product name": "name", "Product code 1": "code", "Product code 2": "label"})
-    df = df[["name", "code", "label"]].dropna()
-    df["name"] = df["name"].astype(str).str.strip()
-    df["code"] = df["code"].astype(str).str.strip()
-    df["label"] = df["label"].astype(str).str.strip()
-    df = df[df["name"] != ""].drop_duplicates(subset=["name"], keep="first")
+    df = _build_exio_products_dictionary()
     return {
-        str(row.name): {"source_code": str(row.code), "source_label": str(row.name), "source_classification": str(row.label)}
+        str(row.label): {
+            "source_code": str(row.code),
+            "source_label": str(row.label),
+            "source_classification": str(row.description),
+        }
         for row in df.itertuples(index=False)
     }
 
@@ -70,6 +76,23 @@ def _normalized_lookup(labels: dict[str, str]) -> dict[str, str]:
 def _match_target_code(target_label: str, cpa_labels: dict[str, str]) -> str:
     normalized = _normalized_lookup(cpa_labels)
     return normalized.get(" ".join(str(target_label).strip().casefold().split()), "")
+
+
+def _build_exio_products_dictionary() -> pd.DataFrame:
+    concordance = load_pymrio_exio3_sectors("pxp").sectors.copy()
+    concordance["ExioCode"] = concordance["ExioCode"].astype(str).str.strip()
+    concordance["ExioName"] = concordance["ExioName"].astype(str).str.strip()
+    concordance["ExioLabel"] = concordance["ExioLabel"].astype(str).str.strip()
+
+    out = pd.DataFrame(
+        {
+            "code": concordance["ExioCode"],
+            "label": concordance["ExioName"],
+            "description": concordance["ExioName"],
+        }
+    )
+    out = out[(out["code"] != "") & (out["label"] != "")].drop_duplicates(subset=["code"], keep="first")
+    return out.reset_index(drop=True)
 
 
 def _write_mapping_csv(path: Path, frame: pd.DataFrame) -> None:
@@ -399,6 +422,8 @@ def main() -> int:
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    exio_dictionary = _build_exio_products_dictionary()
+    _write_dictionary_csv(CHECKED_IN_MAPPINGS_DIR / "exiobase_products_dictionary.csv", exio_dictionary)
     exio_lookup = _load_exio_lookup()
     cached_cpa_labels = _find_any_eurostat_meta()
 
@@ -421,7 +446,7 @@ def main() -> int:
     category = _canonicalize_category_mapping(category_source_path, cpa_labels=cached_cpa_labels)
     _write_mapping_csv(outdir / category_source_path.name, category)
 
-    aggregate_source_path = _checked_in_mapping_path("energy_green_brown_2sector_from_split_subsectors.csv")
+    aggregate_source_path = _checked_in_mapping_path("energy_green_brown_reaggregation.csv")
     aggregate = _canonicalize_aggregation_mapping(aggregate_source_path)
     _write_mapping_csv(outdir / aggregate_source_path.name, aggregate)
 

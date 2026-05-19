@@ -18,9 +18,17 @@ p01.w.1,Manure (conventional treatment),Manure (conventional treatment)
 p01.w.2,Manure (biogas treatment),Manure (biogas treatment)
 p02,"Products of forestry, logging and related services (02)","Products of forestry, logging and related services (02)"
 p05,Fish and other fishing products; services incidental of fishing (05),Fish and other fishing products; services incidental of fishing (05)
-p10,"Coal, lignite and peat","Coal, lignite and peat"
-p11.2,"Natural gas and services related to natural gas extraction, excluding surveying; inclulding liquid gas","Natural gas and services related to natural gas extraction, excluding surveying; inclulding liquid gas"
+p10.a,Anthracite,Anthracite
+p10.b,Coking Coal,Coking Coal
+p10.c,Other Bituminous Coal,Other Bituminous Coal
+p10.d,Sub-Bituminous Coal,Sub-Bituminous Coal
+p10.e,Patent Fuel,Patent Fuel
+p10.f,Lignite/Brown Coal,Lignite/Brown Coal
+p10.g,BKB/Peat Briquettes,BKB/Peat Briquettes
+p10.h,Peat,Peat
 p11.a,"Crude petroleum and services related to crude oil extraction, excluding surveying","Crude petroleum and services related to crude oil extraction, excluding surveying"
+p11.b,"Natural gas and services related to natural gas extraction, excluding surveying","Natural gas and services related to natural gas extraction, excluding surveying"
+p11.b.1,Natural Gas Liquids,Natural Gas Liquids
 p11.c,Other Hydrocarbons,Other Hydrocarbons
 p12,Uranium and thorium ores (12),Uranium and thorium ores (12)
 p13.1,Iron ores,Iron ores
@@ -51,25 +59,51 @@ p19,Leather and leather products (19),Leather and leather products (19)
 p20,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20)
 p20.w,"Wood material for treatment, Re-processing of secondary wood material into new wood material","Wood material for treatment, Re-processing of secondary wood material into new wood material"
 p21.1,Pulp,Pulp
-p21.2,Paper and paper products,Paper and paper products
 p21.w.1,"Secondary paper for treatment, Re-processing of secondary paper into new pulp","Secondary paper for treatment, Re-processing of secondary paper into new pulp"
+p21.2,Paper and paper products,Paper and paper products
 p22,Printed matter and recorded media (22),Printed matter and recorded media (22)
-p23.1,Coke oven products,Coke oven products
-p23.2, Refined Petroleum,Refined Petroleum
+p23.1.a,Coke Oven Coke,Coke Oven Coke
+p23.1.b,Gas Coke,Gas Coke
+p23.1.c,Coal Tar,Coal Tar
+p23.20.a,Motor Gasoline,Motor Gasoline
+p23.20.b,Aviation Gasoline,Aviation Gasoline
+p23.20.c,Gasoline Type Jet Fuel,Gasoline Type Jet Fuel
+p23.20.d,Kerosene Type Jet Fuel,Kerosene Type Jet Fuel
+p23.20.e,Kerosene,Kerosene
+p23.20.f,Gas/Diesel Oil,Gas/Diesel Oil
+p23.20.g,Heavy Fuel Oil,Heavy Fuel Oil
+p23.20.h,Refinery Gas,Refinery Gas
+p23.20.i,Liquefied Petroleum Gases (LPG),Liquefied Petroleum Gases (LPG)
+p23.20.j,Refinery Feedstocks,Refinery Feedstocks
+p23.20.k,Ethane,Ethane
+p23.20.l,Naphtha,Naphtha
+p23.20.m,White Spirit & SBP,White Spirit & SBP
+p23.20.n,Lubricants,Lubricants
+p23.20.o,Bitumen,Bitumen
+p23.20.p,Paraffin Waxes,Paraffin Waxes
+p23.20.q,Petroleum Coke,Petroleum Coke
+p23.20.r,Non-specified Petroleum Products,Non-specified Petroleum Products
 p23.3,Nuclear fuel,Nuclear fuel
-p24.4,Chemicals nec; additives and biofuels,Chemicals nec; additives and biofuels
 p24.a,"Plastics, basic","Plastics, basic"
 p24.a.w,"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic","Secondary plastic for treatment, Re-processing of secondary plastic into new plastic"
 p24.b,N-fertiliser,N-fertiliser
 p24.c,P- and other fertiliser,P- and other fertiliser
+p24.d,Chemicals nec,Chemicals nec
+p24.e,Charcoal,Charcoal
+p24.f,Additives/Blending Components,Additives/Blending Components
+p24.g,Biogasoline,Biogasoline
+p24.h,Biodiesels,Biodiesels
+p24.i,Other Liquid Biofuels,Other Liquid Biofuels
 p25,Rubber and plastic products (25),Rubber and plastic products (25)
 p26.a,Glass and glass products,Glass and glass products
+p26.a.w,"Secondary glass for treatment, Re-processing of secondary glass into new glass","Secondary glass for treatment, Re-processing of secondary glass into new glass"
 p26.b,Ceramic goods,Ceramic goods
 p26.c,"Bricks, tiles and construction products, in baked clay","Bricks, tiles and construction products, in baked clay"
 p26.d,"Cement, lime and plaster","Cement, lime and plaster"
 p26.d.w,"Ash for treatment, Re-processing of ash into clinker","Ash for treatment, Re-processing of ash into clinker"
 p26.e,Other non-metallic mineral products,Other non-metallic mineral products
-p26.w.1,"Secondary glass for treatment, Re-processing of secondary glass into new glass","Secondary glass for treatment, Re-processing of secondary glass into new glass"
+p27.a,Basic iron and steel and of ferro-alloys and first products thereof,Basic iron and steel and of ferro-alloys and first products thereof
+p27.a.w,"Secondary steel for treatment, Re-processing of secondary steel into new steel","Secondary steel for treatment, Re-processing of secondary steel into new steel"
 p27.41,Precious metals,Precious metals
 p27.41.w,"Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals","Secondary preciuos metals for treatment, Re-processing of secondary preciuos metals into new preciuos metals"
 p27.42,Aluminium and aluminium products,Aluminium and aluminium products
@@ -81,8 +115,6 @@ p27.44.w,"Secondary copper for treatment, Re-processing of secondary copper into
 p27.45,Other non-ferrous metal products,Other non-ferrous metal products
 p27.45.w,"Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals","Secondary other non-ferrous metals for treatment, Re-processing of secondary other non-ferrous metals into new other non-ferrous metals"
 p27.5,Foundry work services,Foundry work services
-p27.a,Basic iron and steel and of ferro-alloys and first products thereof,Basic iron and steel and of ferro-alloys and first products thereof
-p27.a.w,"Secondary steel for treatment, Re-processing of secondary steel into new steel","Secondary steel for treatment, Re-processing of secondary steel into new steel"
 p28,"Fabricated metal products, except machinery and equipment (28)","Fabricated metal products, except machinery and equipment (28)"
 p29,Machinery and equipment n.e.c. (29),Machinery and equipment n.e.c. (29)
 p30,Office machinery and computers (30),Office machinery and computers (30)
@@ -108,8 +140,12 @@ p40.11.k,Electricity by Geothermal,Electricity by Geothermal
 p40.11.l,Electricity nec,Electricity nec
 p40.12,Transmission services of electricity,Transmission services of electricity
 p40.13,Distribution and trade services of electricity,Distribution and trade services of electricity
-p40.2.1,Biogas an other gases nec.,Biogas an other gases nec.
-p40.2.2,Distribution services of gaseous fuels through mains,Distribution services of gaseous fuels through mains
+p40.2.a,Coke oven gas,Coke oven gas
+p40.2.b,Blast Furnace Gas,Blast Furnace Gas
+p40.2.c,Oxygen Steel Furnace Gas,Oxygen Steel Furnace Gas
+p40.2.d,Gas Works Gas,Gas Works Gas
+p40.2.e,Biogas,Biogas
+p40.2.1,Distribution services of gaseous fuels through mains,Distribution services of gaseous fuels through mains
 p40.3,Steam and hot water supply services,Steam and hot water supply services
 p41,"Collected and purified water, distribution services of water (41)","Collected and purified water, distribution services of water (41)"
 p45,Construction work (45),Construction work (45)

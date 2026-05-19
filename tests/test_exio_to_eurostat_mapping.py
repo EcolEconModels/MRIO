@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pandas as pd
+
 
 def test_build_exio_to_eurostat_mapping_uses_validated_official_override():
     from ecolecon_mrio.exio_to_eurostat_mapping import build_exio_to_eurostat_mapping
@@ -37,3 +41,29 @@ def test_candidate_cpa_codes_for_exio_keeps_required_fallback_splits():
     assert candidate_cpa_codes_for_exio("p64", division_index=division_index) == ["CPA_H53", "CPA_J61"]
     assert candidate_cpa_codes_for_exio("p92", division_index=division_index) == ["CPA_J59_60", "CPA_R90-92", "CPA_R93"]
     assert candidate_cpa_codes_for_exio("p93", division_index=division_index) == ["CPA_S95", "CPA_S96"]
+
+
+def test_exiobase_dictionary_covers_official_sector_list():
+    from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
+
+    repo_root = Path(__file__).resolve().parents[1]
+    dictionary = pd.read_csv(repo_root / "scripts" / "mappings" / "exiobase_products_dictionary.csv", dtype=str).fillna("")
+    official = load_pymrio_exio3_sectors("pxp").sectors
+
+    dict_codes = set(dictionary["code"].astype(str).str.strip())
+    missing = official[~official["ExioCode"].astype(str).str.strip().isin(dict_codes)]
+
+    assert missing.empty
+
+
+def test_exio_to_eurostat_mapping_has_no_blank_source_codes():
+    repo_root = Path(__file__).resolve().parents[1]
+    mapping = pd.read_csv(repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv", dtype=str).fillna("")
+
+    blank = mapping[mapping["source_code"].astype(str).str.strip() == ""]
+    assert blank.empty
+
+    source_codes = set(mapping["source_code"].astype(str).str.strip())
+    assert "p10.a" in source_codes
+    assert "p23.1.a" in source_codes
+    assert "p40.2.a" in source_codes
