@@ -113,10 +113,18 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
 def _read_exio_to_eurostat_mapping_with_notes(
     path: str | Path,
     notes_col: str = "notes",
-) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
+    *,
+    target_output_by_code: object | None = None,
+) -> tuple[dict[str, dict[str, float]], dict[str, str], dict[str, str]]:
     df = load_weighted_mapping_frame(path)
-    mapping = read_weighted_mapping(path)
+    mapping = read_weighted_mapping(path, target_output_by_code=target_output_by_code)
     validate_mapping_weights(mapping)
+
+    code_to_label = {
+        str(row.source_code): str(row.source_label)
+        for row in df.itertuples(index=False)
+        if str(row.source_code).strip() != ""
+    }
 
     notes_by_sector: dict[str, list[str]] = {}
     if notes_col in df.columns:
@@ -136,7 +144,7 @@ def _read_exio_to_eurostat_mapping_with_notes(
                 seen.add(n)
         condensed_notes[agg] = " | ".join(uniq)
 
-    return mapping, condensed_notes
+    return mapping, condensed_notes, code_to_label
 
 
 def _assert_mapping_integrity(
@@ -509,10 +517,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     co2_keywords = tuple(json.loads(args.co2_stressor_keywords))
     full_sector_mapping = None
     full_sector_notes = None
-    if args.exio_to_eurostat_mapping_csv:
-        full_sector_mapping, full_sector_notes = _read_exio_to_eurostat_mapping_with_notes(
-            args.exio_to_eurostat_mapping_csv
-        )
+    full_sector_code_to_label: dict[str, str] | None = None
+    full_sector_mapping_csv = args.exio_to_eurostat_mapping_csv
     qp_cache_dir = (
         data_root / f"exiobase3_{args.exio_year}" / "slices" / args.exio_region / "pxp" / "extensions"
     )
@@ -635,6 +641,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 force_reparse=args.eurostat_force_reparse,
             )
             _vprint(args.verbose, f"Returned: load_eurostat_iot_variants ({t.elapsed_s():.2f}s)")
+
+            if full_sector_mapping_csv and full_sector_mapping is None:
+                total_variant = variants.get("TOTAL")
+                if total_variant is None:
+                    total_variant = next(iter(variants.values()))
+                total_reference = build_eurostat_product_use_reference(total_variant)
+                full_sector_mapping, full_sector_notes, full_sector_code_to_label = _read_exio_to_eurostat_mapping_with_notes(
+                    full_sector_mapping_csv,
+                    target_output_by_code=total_reference,
+                )
+
+            if full_sector_code_to_label is not None and sector_to_exio_sectors is not None:
+                sector_to_exio_sectors = {
+                    str(aggregate): [full_sector_code_to_label.get(str(member), str(member)) for member in members]
+                    for aggregate, members in sector_to_exio_sectors.items()
+                }
+                if coverage_expected_exio is not None:
+                    coverage_expected_exio = {
+                        str(aggregate): list(map(str, members))
+                        for aggregate, members in sector_to_exio_sectors.items()
+                    }
 
             exio_slices: dict[str, object] = {}
             for flow in flows:

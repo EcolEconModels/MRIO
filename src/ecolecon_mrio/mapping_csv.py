@@ -23,7 +23,6 @@ MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "source_label",
     "target_code",
     "target_label",
-    "subtarget_code",
     "enabled",
     "provenance",
     "certainty",
@@ -268,10 +267,10 @@ def read_weighted_mapping(
 def load_split_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="split").copy()
     frame["aggregate_sector"] = frame["target_code"].astype(str).str.strip()
-    frame["subsector"] = frame["subtarget_code"].astype(str).str.strip()
+    frame["subsector"] = frame["source_label"].astype(str).str.strip()
+    blank_subsectors = frame["subsector"] == ""
+    frame.loc[blank_subsectors, "subsector"] = frame.loc[blank_subsectors, "source_code"].astype(str).str.strip()
     frame["exio_sector"] = frame["source_code"].astype(str).str.strip()
-    mask = frame["subsector"] == ""
-    frame.loc[mask, "subsector"] = frame.loc[mask, "exio_sector"]
     return frame
 
 
@@ -326,6 +325,33 @@ def read_split_mapping(
     source_dictionary_path: str | Path | None = None,
     target_dictionary_path: str | Path | None = None,
 ) -> dict[str, list[str]] | dict[str, dict[str, list[str]]]:
+    raw_frame = pd.read_csv(path, dtype=str).fillna("")
+    if "target_code" not in raw_frame.columns:
+        if exio_to_eurostat_mapping_csv is None:
+            raise ValueError(
+                f"Split manifest CSV {Path(path)} requires exio_to_eurostat_mapping_csv to expand subsectors."
+            )
+        missing = [column for column in SPLIT_SECTOR_MANIFEST_COLUMNS if column not in raw_frame.columns]
+        if missing:
+            raise ValueError(f"Split manifest CSV {Path(path)} missing required columns: {missing}")
+
+        concordance = load_weighted_mapping_frame(exio_to_eurostat_mapping_csv)
+        concordance = concordance[concordance["enabled"].map(_parse_boolish)].copy()
+        concordance = concordance[(concordance["aggregate_sector"] != "") & (concordance["exio_sector"] != "")]
+
+        out: dict[str, list[str]] = {}
+        for row in raw_frame.itertuples(index=False):
+            aggregate_sector = _normalize_text(getattr(row, "source_code", ""))
+            if aggregate_sector == "":
+                continue
+            members = concordance.loc[concordance["aggregate_sector"] == aggregate_sector, "exio_sector"].tolist()
+            if not members:
+                raise ValueError(
+                    f"Split manifest CSV {Path(path)} references aggregate sector {aggregate_sector!r} not present in {Path(exio_to_eurostat_mapping_csv)}."
+                )
+            out[aggregate_sector] = list(dict.fromkeys(map(str, members)))
+        return out
+
     frame = load_split_mapping_frame(path)
     frame = frame[frame["enabled"].map(_parse_boolish)].copy()
     frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
@@ -349,7 +375,14 @@ def read_split_mapping(
 
 
 def load_aggregation_mapping_frame(path: str | Path) -> pd.DataFrame:
-    frame = read_mapping_csv(path, expected_kind="aggregate").copy()
+    raw = pd.read_csv(path, dtype=str).fillna("")
+    if "kind" in raw.columns:
+        frame = read_mapping_csv(path, expected_kind="aggregate").copy()
+    else:
+        missing = [column for column in ("source_code", "target_code") if column not in raw.columns]
+        if missing:
+            raise ValueError(f"Aggregation manifest CSV {Path(path)} missing required columns: {missing}")
+        frame = raw.copy()
     frame["from_sector"] = frame["source_code"].astype(str).str.strip()
     frame["to_sector"] = frame["target_code"].astype(str).str.strip()
     return frame

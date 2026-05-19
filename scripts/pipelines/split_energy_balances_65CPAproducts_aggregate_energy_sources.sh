@@ -3,11 +3,6 @@ set -euo pipefail
 
 # Pipeline: AT 2021 Eurostat Energy Balances -> primary sources -> 65-product CPA-based IO targets (+ CO2 intensities)
 #
-# This pipeline reuses the repo's Eurostat SDMX download+cache scaffold:
-#   - `ecolecon_mrio.eurostat_iot.download_eurostat_dataset`
-# and writes caches under:
-#   `data/eurostat/<dataset>/<hash>/...`
-#
 # Usage:
 #   bash scripts/pipelines/split_energy_balances_65CPAproducts_aggregate_energy_sources.sh
 # The script name is legacy compatibility naming; the operative target classification is the repo's 65-product CPA-based IO target set.
@@ -42,12 +37,6 @@ if [[ "$SPLIT_ENERGY_GREEN_BROWN" == "1" ]]; then
 fi
 
 set -x
-"$PY" "$ROOT_DIR/scripts/generate_mapping_csvs.py" \
-  --geo "$EUROSTAT_GEO" \
-  --year "$EUROSTAT_TIME" \
-  --eurostat-storage-folder "$ROOT_DIR/data/eurostat" \
-  --outdir "$ROOT_DIR/scripts/mappings"
-
 "$PY" "$ROOT_DIR/scripts/build_energy_balances_65sectors_primary_sources.py" \
   --geo "$EUROSTAT_GEO" \
   --year "$EUROSTAT_TIME" \

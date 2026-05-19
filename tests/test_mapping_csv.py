@@ -21,7 +21,6 @@ def _canonical_base(kind: str) -> dict[str, str]:
         "source_label": "",
         "target_code": "",
         "target_label": "",
-        "subtarget_code": "",
         "order": "",
         "enabled": "1",
         "provenance": "methodological",
@@ -115,13 +114,12 @@ def test_read_split_mapping(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_split_mapping_frame, read_split_mapping
 
     rows = []
-    for source, subtarget in [("Electricity by coal", "Electricity generation"), ("Electricity by gas", "Electricity generation")]:
+    for source in ["Electricity by coal", "Electricity by gas"]:
         row = _canonical_base("split")
         row["target_code"] = "CPA_D"
         row["target_label"] = "CPA_D"
         row["source_code"] = source
         row["source_label"] = source
-        row["subtarget_code"] = subtarget
         rows.append(row)
     csv_path = tmp_path / "split.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
@@ -129,20 +127,20 @@ def test_read_split_mapping(tmp_path: Path) -> None:
     frame = load_split_mapping_frame(csv_path)
     mapping = read_split_mapping(csv_path)
     assert set(frame["aggregate_sector"]) == {"CPA_D"}
-    assert mapping["CPA_D"]["Electricity generation"] == ["Electricity by coal", "Electricity by gas"]
+    assert mapping["CPA_D"]["Electricity by coal"] == ["Electricity by coal"]
+    assert mapping["CPA_D"]["Electricity by gas"] == ["Electricity by gas"]
 
 
 def test_read_split_mapping_uses_code_columns(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_split_mapping_frame, read_split_mapping
 
     rows = []
-    for source, subtarget in [("p40.11.a", "Electricity generation"), ("p40.11.b", "Electricity generation")]:
+    for source, label in [("p40.11.a", "Electricity by coal"), ("p40.11.b", "Electricity by gas")]:
         row = _canonical_base("split")
         row["source_code"] = source
-        row["source_label"] = source
+        row["source_label"] = label
         row["target_code"] = "CPA_D"
         row["target_label"] = "Electricity, gas, steam and air conditioning"
-        row["subtarget_code"] = subtarget
         rows.append(row)
     csv_path = tmp_path / "split.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
@@ -150,7 +148,43 @@ def test_read_split_mapping_uses_code_columns(tmp_path: Path) -> None:
     frame = load_split_mapping_frame(csv_path)
     mapping = read_split_mapping(csv_path)
     assert set(frame["aggregate_sector"]) == {"CPA_D"}
-    assert mapping == {"CPA_D": {"Electricity generation": ["p40.11.a", "p40.11.b"]}}
+    assert mapping == {"CPA_D": {"Electricity by coal": ["p40.11.a"], "Electricity by gas": ["p40.11.b"]}}
+
+
+def test_read_split_manifest_uses_exio_to_eurostat_concordance(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import read_split_mapping
+
+    concordance_path = tmp_path / "exio_to_eurostat_cpa_products.csv"
+    concordance_rows = []
+    for source_code, target_code in [
+        ("p40.11.a", "CPA_D"),
+        ("p40.11.b", "CPA_D"),
+        ("p23.1.a", "CPA_C19"),
+    ]:
+        row = _canonical_base("weighted")
+        row["source_code"] = source_code
+        row["source_label"] = source_code
+        row["target_code"] = target_code
+        row["target_label"] = target_code
+        row["weight"] = "1"
+        row["enabled"] = "1"
+        row["notes"] = ""
+        concordance_rows.append(row)
+    pd.DataFrame(concordance_rows).to_csv(concordance_path, index=False)
+
+    manifest_path = tmp_path / "energy_green_brown_split.csv"
+    pd.DataFrame(
+        [
+            {"source_code": "CPA_D", "source_label": "Electricity, gas, steam and air conditioning"},
+            {"source_code": "CPA_C19", "source_label": "Coke and refined petroleum products"},
+        ]
+    ).to_csv(manifest_path, index=False)
+
+    mapping = read_split_mapping(manifest_path, exio_to_eurostat_mapping_csv=concordance_path)
+    assert mapping == {
+        "CPA_D": ["p40.11.a", "p40.11.b"],
+        "CPA_C19": ["p23.1.a"],
+    }
 
 
 def test_read_aggregation_mapping(tmp_path: Path) -> None:
@@ -171,6 +205,24 @@ def test_read_aggregation_mapping(tmp_path: Path) -> None:
     mapping, returned_frame = read_aggregation_mapping(csv_path)
     assert set(frame["from_sector"]) == {"A", "B"}
     assert mapping == {"A": "X", "B": "X"}
+    assert len(returned_frame) == 2
+
+
+def test_read_aggregation_manifest(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import load_aggregation_mapping_frame, read_aggregation_mapping
+
+    csv_path = tmp_path / "energy_green_brown_reaggregation.csv"
+    pd.DataFrame(
+        [
+            {"source_code": "p40.11.d", "source_label": "Electricity by hydro", "target_code": "ENERGY_GREEN", "target_label": "Energy Green", "enabled": "True", "notes": ""},
+            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "ENERGY_BROWN", "target_label": "Energy Brown", "enabled": "True", "notes": ""},
+        ]
+    ).to_csv(csv_path, index=False)
+
+    frame = load_aggregation_mapping_frame(csv_path)
+    mapping, returned_frame = read_aggregation_mapping(csv_path)
+    assert set(frame["from_sector"]) == {"p40.11.d", "p40.11.a"}
+    assert mapping == {"p40.11.d": "ENERGY_GREEN", "p40.11.a": "ENERGY_BROWN"}
     assert len(returned_frame) == 2
 
 

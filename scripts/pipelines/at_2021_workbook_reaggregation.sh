@@ -141,7 +141,6 @@ PY
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_DISAGG" \
   --mapping-csv "$IDENTITY_MAPPING_CSV" \
-  --require-from-contains '::' \
   --write-sfc-workbook \
   --sfc-template-xlsx "$TEMPLATE_XLSX" \
   --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_split.xlsx" \
@@ -153,7 +152,6 @@ PY
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_REAGG" \
   --mapping-csv "$REAGG_MAPPING_CSV" \
-  --require-from-contains '::' \
   --write-sfc-workbook \
   --sfc-template-xlsx "$TEMPLATE_XLSX" \
   --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_reaggregated.xlsx" \
