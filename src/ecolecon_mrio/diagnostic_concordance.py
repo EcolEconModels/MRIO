@@ -18,7 +18,7 @@ CANONICAL_WEIGHTED_COLUMNS: tuple[str, ...] = (
     "notes",
     "source_name",
     "provenance",
-    "transformation_rule",
+    "allocation_rule",
 )
 
 CANONICAL_SPLIT_COLUMNS: tuple[str, ...] = (
@@ -29,7 +29,7 @@ CANONICAL_SPLIT_COLUMNS: tuple[str, ...] = (
     "notes",
     "source_name",
     "provenance",
-    "transformation_rule",
+    "allocation_rule",
 )
 
 CANONICAL_CATEGORY_COLUMNS: tuple[str, ...] = (
@@ -38,7 +38,7 @@ CANONICAL_CATEGORY_COLUMNS: tuple[str, ...] = (
     "notes",
     "source_name",
     "provenance",
-    "transformation_rule",
+    "allocation_rule",
 )
 
 CANONICAL_AGGREGATION_COLUMNS: tuple[str, ...] = (
@@ -48,7 +48,7 @@ CANONICAL_AGGREGATION_COLUMNS: tuple[str, ...] = (
     "notes",
     "source_name",
     "provenance",
-    "transformation_rule",
+    "allocation_rule",
 )
 
 
@@ -108,7 +108,7 @@ def normalize_weighted_mapping_frame(
     notes_col: str | None = None,
     source_name: str,
     provenance: str,
-    transformation_rule: str,
+    allocation_rule: str,
 ) -> pd.DataFrame:
     df = raw_df.copy().fillna("")
     missing = [c for c in (aggregate_col, exio_col) if c not in df.columns]
@@ -126,7 +126,7 @@ def normalize_weighted_mapping_frame(
             "notes": "" if notes_col is None else df[notes_col].astype(str).str.strip(),
             "source_name": str(source_name).strip(),
             "provenance": _validate_provenance(provenance),
-            "transformation_rule": str(transformation_rule).strip(),
+            "allocation_rule": str(allocation_rule).strip(),
         }
     )
     _ensure_non_empty(out, ("aggregate_sector", "exio_sector"), label="Weighted mapping")
@@ -138,7 +138,7 @@ def normalize_weighted_mapping_frame(
             "notes": _combine_notes,
             "source_name": "first",
             "provenance": "first",
-            "transformation_rule": "first",
+            "allocation_rule": "first",
         }
     )
     validate_weighted_mapping(
@@ -197,7 +197,7 @@ def normalize_split_mapping_frame(
     notes_col: str | None = None,
     source_name: str,
     provenance: str,
-    transformation_rule: str,
+    allocation_rule: str,
 ) -> pd.DataFrame:
     df = raw_df.copy().fillna("")
     missing = [c for c in (aggregate_col, exio_col) if c not in df.columns]
@@ -215,7 +215,7 @@ def normalize_split_mapping_frame(
             "notes": "" if notes_col is None else df[notes_col].astype(str).str.strip(),
             "source_name": str(source_name).strip(),
             "provenance": _validate_provenance(provenance),
-            "transformation_rule": str(transformation_rule).strip(),
+            "allocation_rule": str(allocation_rule).strip(),
         }
     )
     mask_no_sub = out["subsector"] == ""
@@ -233,7 +233,7 @@ def normalize_category_target_mapping_frame(
     notes_col: str | None = None,
     source_name: str,
     provenance: str,
-    transformation_rule: str,
+    allocation_rule: str,
 ) -> pd.DataFrame:
     df = raw_df.copy().fillna("")
     missing = [c for c in (category_col, target_col) if c not in df.columns]
@@ -247,7 +247,7 @@ def normalize_category_target_mapping_frame(
             "notes": "" if notes_col is None else df[notes_col].astype(str).str.strip(),
             "source_name": str(source_name).strip(),
             "provenance": _validate_provenance(provenance),
-            "transformation_rule": str(transformation_rule).strip(),
+            "allocation_rule": str(allocation_rule).strip(),
         }
     )
     _ensure_non_empty(out, ("Category", "TargetSector"), label="Category mapping")
@@ -263,7 +263,7 @@ def normalize_aggregation_mapping_frame(
     notes_col: str | None = None,
     source_name: str,
     provenance: str,
-    transformation_rule: str,
+    allocation_rule: str,
 ) -> pd.DataFrame:
     df = raw_df.copy().fillna("")
     missing = [c for c in (from_col, to_col) if c not in df.columns]
@@ -280,7 +280,7 @@ def normalize_aggregation_mapping_frame(
             "notes": "" if notes_col is None else df[notes_col].astype(str).str.strip(),
             "source_name": str(source_name).strip(),
             "provenance": _validate_provenance(provenance),
-            "transformation_rule": str(transformation_rule).strip(),
+            "allocation_rule": str(allocation_rule).strip(),
         }
     )
     _ensure_non_empty(out, ("from_sector", "to_sector"), label="Aggregation mapping")
@@ -489,7 +489,7 @@ def load_exiobase_nace_concordance(
     nace_col: str = "NACE",
     source_name: str | None = None,
     provenance: str = "semi-official",
-    transformation_rule: str = "vendored-exiobase-nace-concordance",
+    allocation_rule: str = "vendored-exiobase-nace-concordance",
 ) -> pd.DataFrame:
     source_path = Path(path)
     df = pd.read_excel(source_path, sheet_name=0).fillna("")
@@ -503,7 +503,7 @@ def load_exiobase_nace_concordance(
             "nace_code": df[nace_col].astype(str).str.strip(),
             "source_name": source_name or source_path.name,
             "provenance": _validate_provenance(provenance),
-            "transformation_rule": str(transformation_rule).strip(),
+            "allocation_rule": str(allocation_rule).strip(),
         }
     )
     out = out[(out["exio_sector"] != "") & (out["nace_code"] != "")].copy()
@@ -513,7 +513,7 @@ def load_exiobase_nace_concordance(
 
 def build_exio_nace_audit(concordance_df: pd.DataFrame) -> pd.DataFrame:
     df = concordance_df.copy()
-    required = {"exio_sector", "nace_code", "source_name", "provenance", "transformation_rule"}
+    required = {"exio_sector", "nace_code", "source_name", "provenance", "allocation_rule"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"EXIO-NACE concordance frame missing required columns: {sorted(missing)}")

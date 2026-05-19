@@ -8,8 +8,8 @@ def test_build_weighted_value_comparison_scales_to_reference():
 
     mapping = pd.DataFrame(
         [
-            {"aggregate_sector": "CPA_A", "exio_sector": "S1", "weight": 1.0, "enabled": "1", "notes": "", "source_name": "m.csv", "provenance": "official", "transformation_rule": "identity"},
-            {"aggregate_sector": "CPA_B", "exio_sector": "S2", "weight": 1.0, "enabled": "1", "notes": "", "source_name": "m.csv", "provenance": "official", "transformation_rule": "identity"},
+            {"aggregate_sector": "CPA_A", "exio_sector": "S1", "weight": 1.0, "enabled": "1", "notes": "", "source_name": "m.csv", "provenance": "official", "allocation_rule": "identity"},
+            {"aggregate_sector": "CPA_B", "exio_sector": "S2", "weight": 1.0, "enabled": "1", "notes": "", "source_name": "m.csv", "provenance": "official", "allocation_rule": "identity"},
         ]
     )
     source = pd.Series({"S1": 20.0, "S2": 30.0})
@@ -29,8 +29,8 @@ def test_build_mapping_audit_reports_weight_sums():
 
     mapping = pd.DataFrame(
         [
-            {"aggregate_sector": "CPA_A", "exio_sector": "S1", "weight": 0.5, "enabled": "1", "notes": "", "source_name": "m.csv", "provenance": "official", "transformation_rule": "identity"},
-            {"aggregate_sector": "CPA_B", "exio_sector": "S1", "weight": 0.5, "enabled": "1", "notes": "x", "source_name": "m.csv", "provenance": "official", "transformation_rule": "identity"},
+            {"aggregate_sector": "CPA_A", "exio_sector": "S1", "weight": 0.5, "enabled": "1", "notes": "", "source_name": "m.csv", "provenance": "official", "allocation_rule": "identity"},
+            {"aggregate_sector": "CPA_B", "exio_sector": "S1", "weight": 0.5, "enabled": "1", "notes": "x", "source_name": "m.csv", "provenance": "official", "allocation_rule": "identity"},
         ]
     )
 

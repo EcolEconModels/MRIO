@@ -27,7 +27,7 @@ MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "enabled",
     "provenance",
     "certainty",
-    "transformation_rule",
+    "allocation_rule",
     "source_name",
     "official_source",
     "notes",
@@ -205,7 +205,7 @@ def _resolve_split_weights_for_source_group(
         return pd.Series([1.0], index=group.index, dtype="float64")
 
     rule_values: set[str] = set()
-    for column in ("rule", "transformation_rule", "certainty"):
+    for column in ("rule", "allocation_rule", "certainty"):
         if column in group.columns:
             rule_values.update(
                 value
@@ -380,7 +380,7 @@ def load_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame["TargetSector"] = frame["target_label"].astype(str).str.strip()
     blank_target_sector = frame["TargetSector"] == ""
     frame.loc[blank_target_sector, "TargetSector"] = frame.loc[blank_target_sector, "target_code"].astype(str).str.strip()
-    frame["AllocationRule"] = frame["transformation_rule"].astype(str).str.strip()
+    frame["AllocationRule"] = frame["allocation_rule"].astype(str).str.strip()
     frame["SourceBalanceRole"] = _normalize_role_column(
         frame,
         column="source_balance_role",

@@ -26,7 +26,7 @@ def _canonical_base(kind: str) -> dict[str, str]:
         "enabled": "1",
         "provenance": "methodological",
         "certainty": "derived",
-        "transformation_rule": "test",
+        "allocation_rule": "test",
         "source_name": "sample.csv",
         "official_source": "",
         "notes": "",
@@ -89,7 +89,7 @@ def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(tmp_pa
         row["source_label"] = "S1"
         row["order"] = weight
         row["certainty"] = "derived-output-share-split"
-        row["transformation_rule"] = "split-by-output-share"
+        row["allocation_rule"] = "split-by-output-share"
         rows.append(row)
 
     single = _canonical_base("weighted")
@@ -222,7 +222,7 @@ def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
     row["target_code"] = "CPA_C19"
     row["target_label"] = "Coke and refined petroleum products"
     row["order"] = "1"
-    row["transformation_rule"] = "fixed-share"
+    row["allocation_rule"] = "fixed-share"
     row["source_balance_role"] = "transformation_input"
     row["target_sector_role"] = "transformation_sector"
     row["include_in_direct_energy"] = "1"

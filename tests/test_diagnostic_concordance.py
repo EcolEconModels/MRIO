@@ -24,7 +24,7 @@ def test_normalize_weighted_mapping_frame_validates_and_groups_duplicates():
         notes_col="note",
         source_name="official.csv",
         provenance="official",
-        transformation_rule="identity",
+        allocation_rule="identity",
     )
 
     assert list(got.columns) == [
@@ -35,7 +35,7 @@ def test_normalize_weighted_mapping_frame_validates_and_groups_duplicates():
         "notes",
         "source_name",
         "provenance",
-        "transformation_rule",
+        "allocation_rule",
     ]
     row = got[(got["aggregate_sector"] == "CPA_A") & (got["exio_sector"] == "Sector 1")].iloc[0]
     assert abs(float(row["weight"]) - 0.5) < 1e-12
@@ -61,7 +61,7 @@ def test_normalize_weighted_mapping_frame_rejects_bad_weight_sums():
             weight_col="w",
             source_name="official.csv",
             provenance="official",
-            transformation_rule="identity",
+            allocation_rule="identity",
         )
 
 
@@ -110,9 +110,9 @@ def test_build_exio_nace_audit_flags_one_to_many_mappings():
 
     df = pd.DataFrame(
         [
-            {"exio_sector": "Electricity by coal", "nace_code": "D.35.11", "source_name": "c.xlsx", "provenance": "semi-official", "transformation_rule": "raw"},
-            {"exio_sector": "Electricity by coal", "nace_code": "D.35.13", "source_name": "c.xlsx", "provenance": "semi-official", "transformation_rule": "raw"},
-            {"exio_sector": "refined petroleum products", "nace_code": "C.19.2", "source_name": "c.xlsx", "provenance": "semi-official", "transformation_rule": "raw"},
+            {"exio_sector": "Electricity by coal", "nace_code": "D.35.11", "source_name": "c.xlsx", "provenance": "semi-official", "allocation_rule": "raw"},
+            {"exio_sector": "Electricity by coal", "nace_code": "D.35.13", "source_name": "c.xlsx", "provenance": "semi-official", "allocation_rule": "raw"},
+            {"exio_sector": "refined petroleum products", "nace_code": "C.19.2", "source_name": "c.xlsx", "provenance": "semi-official", "allocation_rule": "raw"},
         ]
     )
 

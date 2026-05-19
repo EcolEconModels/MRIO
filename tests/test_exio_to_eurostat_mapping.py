@@ -88,9 +88,13 @@ def test_exio_to_eurostat_mapping_has_no_blank_source_codes():
 def test_exio_to_eurostat_mapping_has_nonblank_source_codes():
     repo_root = Path(__file__).resolve().parents[1]
     source_codes: list[str] = []
+    allocation_rules: list[str] = []
     with (repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv").open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             source_codes.append(str(row.get("source_code", "")).strip())
+            allocation_rules.append(str(row.get("allocation_rule", "")).strip())
 
     assert all(source_codes)
+    assert all(allocation_rules)
+    assert "split-by-output-share" in allocation_rules
