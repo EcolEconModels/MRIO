@@ -122,6 +122,8 @@ def read_mapping_csv(
     required_columns: tuple[str, ...] = MAPPING_CSV_COLUMNS,
 ) -> pd.DataFrame:
     frame = pd.read_csv(path, dtype=str).fillna("")
+    if expected_kind in {"split", "aggregate"}:
+        required_columns = tuple(column for column in required_columns if column != "order")
     missing = [column for column in required_columns if column not in frame.columns]
     if missing:
         raise ValueError(f"Mapping CSV {Path(path)} missing required columns: {missing}")

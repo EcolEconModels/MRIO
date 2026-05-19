@@ -1,22 +1,22 @@
-order,source_code,source_label,target_code,target_label,enabled,notes
-1,p40.11.d,Electricity by hydro,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by hydro' is assigned to aggregate 'ENERGY_GREEN'.
-2,p40.11.e,Electricity by wind,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by wind' is assigned to aggregate 'ENERGY_GREEN'.
-3,p40.11.h,Electricity by solar photovoltaic,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by solar photovoltaic' is assigned to aggregate 'ENERGY_GREEN'.
-4,p40.11.i,Electricity by solar thermal,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by solar thermal' is assigned to aggregate 'ENERGY_GREEN'.
-5,p40.11.k,Electricity by Geothermal,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by Geothermal' is assigned to aggregate 'ENERGY_GREEN'.
-6,p40.11.j,"Electricity by tide, wave, ocean",ENERGY_GREEN,Energy Green,True,"Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by tide, wave, ocean' is assigned to aggregate 'ENERGY_GREEN'."
-7,p40.11.c,Electricity by nuclear,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by nuclear' is assigned to aggregate 'ENERGY_GREEN'.
-8,p40.11.g,Electricity by biomass and waste,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by biomass and waste' is assigned to aggregate 'ENERGY_GREEN'. Existing note: Revisit biomass classification later
-9,p40.12,Transmission services of electricity,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Transmission services of electricity' is assigned to aggregate 'ENERGY_GREEN'.
-10,p40.13,Distribution and trade services of electricity,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Distribution and trade services of electricity' is assigned to aggregate 'ENERGY_GREEN'.
-11,p40.11.a,Electricity by coal,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by coal' is assigned to aggregate 'ENERGY_BROWN'.
-12,p40.11.b,Electricity by gas,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by gas' is assigned to aggregate 'ENERGY_BROWN'.
-13,p40.11.f,Electricity by petroleum and other oil derivatives,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by petroleum and other oil derivatives' is assigned to aggregate 'ENERGY_BROWN'.
-14,p40.11.l,Electricity nec,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity nec' is assigned to aggregate 'ENERGY_BROWN'. Existing note: Residual default brown
-15,p40.2.2,Distribution services of gaseous fuels through mains,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Gas distribution' is assigned to aggregate 'ENERGY_BROWN'.
-16,p40.2.1,Biogas an other gases nec.,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Manufactured gas' is assigned to aggregate 'ENERGY_BROWN'.
-17,p40.3,Steam and hot water supply services,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Steam and hot water supply services' is assigned to aggregate 'ENERGY_BROWN'.
-18,p23.1,Coke oven products,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Coke Oven Coke' is assigned to aggregate 'ENERGY_BROWN'.
-19,p23.2,Refined Petroleum,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Motor Gasoline' is assigned to aggregate 'ENERGY_BROWN'.
-20,p10,"Coal, lignite and peat",ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Patent Fuel' is assigned to aggregate 'ENERGY_BROWN'.
-21,p24.4,Chemicals nec; additives and biofuels,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Biogasoline' is assigned to aggregate 'ENERGY_GREEN'. Existing note: Biofuels treated as green
+source_code,source_label,target_code,target_label,enabled,notes
+p40.11.d,Electricity by hydro,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by hydro' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.e,Electricity by wind,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by wind' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.h,Electricity by solar photovoltaic,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by solar photovoltaic' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.i,Electricity by solar thermal,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by solar thermal' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.k,Electricity by Geothermal,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by Geothermal' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.j,"Electricity by tide, wave, ocean",ENERGY_GREEN,Energy Green,True,"Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by tide, wave, ocean' is assigned to aggregate 'ENERGY_GREEN'."
+p40.11.c,Electricity by nuclear,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by nuclear' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.g,Electricity by biomass and waste,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by biomass and waste' is assigned to aggregate 'ENERGY_GREEN'. Existing note: Revisit biomass classification later
+p40.12,Transmission services of electricity,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Transmission services of electricity' is assigned to aggregate 'ENERGY_GREEN'.
+p40.13,Distribution and trade services of electricity,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_D::Distribution and trade services of electricity' is assigned to aggregate 'ENERGY_GREEN'.
+p40.11.a,Electricity by coal,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by coal' is assigned to aggregate 'ENERGY_BROWN'.
+p40.11.b,Electricity by gas,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by gas' is assigned to aggregate 'ENERGY_BROWN'.
+p40.11.f,Electricity by petroleum and other oil derivatives,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity by petroleum and other oil derivatives' is assigned to aggregate 'ENERGY_BROWN'.
+p40.11.l,Electricity nec,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Electricity nec' is assigned to aggregate 'ENERGY_BROWN'. Existing note: Residual default brown
+p40.2.2,Distribution services of gaseous fuels through mains,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Gas distribution' is assigned to aggregate 'ENERGY_BROWN'.
+p40.2.1,Biogas an other gases nec.,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Manufactured gas' is assigned to aggregate 'ENERGY_BROWN'.
+p40.3,Steam and hot water supply services,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_D::Steam and hot water supply services' is assigned to aggregate 'ENERGY_BROWN'.
+p23.1,Coke oven products,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Coke Oven Coke' is assigned to aggregate 'ENERGY_BROWN'.
+p23.2,Refined Petroleum,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Motor Gasoline' is assigned to aggregate 'ENERGY_BROWN'.
+p10,"Coal, lignite and peat",ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Patent Fuel' is assigned to aggregate 'ENERGY_BROWN'.
+p24.4,Chemicals nec; additives and biofuels,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'CPA_C19::Biogasoline' is assigned to aggregate 'ENERGY_GREEN'. Existing note: Biofuels treated as green
