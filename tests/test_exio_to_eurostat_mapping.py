@@ -74,12 +74,9 @@ def test_exio_to_eurostat_mapping_has_no_blank_source_codes():
     repo_root = Path(__file__).resolve().parents[1]
     source_codes: set[str] = set()
     with (repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.reader(handle, skipinitialspace=True)
-        next(reader)
+        reader = csv.DictReader(handle)
         for row in reader:
-            if not row:
-                continue
-            source_code = str(row[10]).strip() if len(row) > 10 else ""
+            source_code = str(row.get("source_code", "")).strip()
             assert source_code != ""
             source_codes.add(source_code)
 
@@ -92,11 +89,8 @@ def test_exio_to_eurostat_mapping_has_nonblank_source_codes():
     repo_root = Path(__file__).resolve().parents[1]
     source_codes: list[str] = []
     with (repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.reader(handle, skipinitialspace=True)
-        next(reader)
+        reader = csv.DictReader(handle)
         for row in reader:
-            if not row:
-                continue
-            source_codes.append(str(row[10]).strip() if len(row) > 10 else "")
+            source_codes.append(str(row.get("source_code", "")).strip())
 
     assert all(source_codes)
