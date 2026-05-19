@@ -17,13 +17,11 @@ def _canonical_base(kind: str) -> dict[str, str]:
         "target_system": "pxp",
         "target_version": "1",
         "target_level": "product",
-        "source_key": "",
         "source_code": "",
         "source_label": "",
-        "target_key": "",
         "target_code": "",
         "target_label": "",
-        "subtarget_key": "",
+        "subtarget_code": "",
         "weight": "",
         "share": "",
         "enabled": "1",
@@ -64,8 +62,10 @@ def test_read_weighted_mapping(tmp_path: Path) -> None:
     rows = []
     for target, source, weight in [("CPA_A", "S1", "0.4"), ("CPA_B", "S1", "0.6"), ("CPA_A", "S2", "0.6"), ("CPA_B", "S2", "0.4")]:
         row = _canonical_base("weighted")
-        row["target_key"] = target
-        row["source_key"] = source
+        row["target_code"] = target
+        row["target_label"] = target
+        row["source_code"] = source
+        row["source_label"] = source
         row["weight"] = weight
         rows.append(row)
     csv_path = tmp_path / "weighted.csv"
@@ -78,15 +78,51 @@ def test_read_weighted_mapping(tmp_path: Path) -> None:
     assert mapping["CPA_B"]["S2"] == 0.4
 
 
+def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import read_weighted_mapping
+
+    rows = []
+    for target, weight in [("CPA_A", "0.9"), ("CPA_B", "0.1")]:
+        row = _canonical_base("weighted")
+        row["target_code"] = target
+        row["target_label"] = target
+        row["source_code"] = "S1"
+        row["source_label"] = "S1"
+        row["weight"] = ""
+        row["certainty"] = "derived-output-share-split"
+        row["transformation_rule"] = "split-by-output-share"
+        rows.append(row)
+
+    single = _canonical_base("weighted")
+    single["target_code"] = "CPA_C"
+    single["target_label"] = "CPA_C"
+    single["source_code"] = "S2"
+    single["source_label"] = "S2"
+    single["weight"] = ""
+    single["certainty"] = "derived-single-target"
+    rows.append(single)
+
+    csv_path = tmp_path / "weighted_split.csv"
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+    mapping = read_weighted_mapping(csv_path, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0})
+
+    assert mapping["CPA_A"]["S1"] == pytest.approx(0.25)
+    assert mapping["CPA_B"]["S1"] == pytest.approx(0.75)
+    assert mapping["CPA_C"]["S2"] == pytest.approx(1.0)
+
+
 def test_read_split_mapping(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_split_mapping_frame, read_split_mapping
 
     rows = []
     for source, subtarget in [("Electricity by coal", "Electricity generation"), ("Electricity by gas", "Electricity generation")]:
         row = _canonical_base("split")
-        row["target_key"] = "CPA_D"
-        row["source_key"] = source
-        row["subtarget_key"] = subtarget
+        row["target_code"] = "CPA_D"
+        row["target_label"] = "CPA_D"
+        row["source_code"] = source
+        row["source_label"] = source
+        row["subtarget_code"] = subtarget
         rows.append(row)
     csv_path = tmp_path / "split.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
@@ -97,68 +133,25 @@ def test_read_split_mapping(tmp_path: Path) -> None:
     assert mapping["CPA_D"]["Electricity generation"] == ["Electricity by coal", "Electricity by gas"]
 
 
-def test_read_split_mapping_expands_manifest_with_exio_mapping(tmp_path: Path) -> None:
-    from ecolecon_mrio.mapping_csv import load_split_manifest_frame, read_split_mapping
+def test_read_split_mapping_uses_code_columns(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import load_split_mapping_frame, read_split_mapping
 
-    eurostat_dictionary = tmp_path / "eurostat_cpa65_products_dictionary.csv"
-    pd.DataFrame(
-        [
-            {"code": "CPA_C19", "label": "Coke and refined petroleum products", "description": "Eurostat"},
-            {"code": "CPA_D", "label": "Electricity, gas, steam and air conditioning", "description": "Eurostat"},
-        ]
-    ).to_csv(eurostat_dictionary, index=False)
-
-    exio_dictionary = tmp_path / "exiobase_products_dictionary.csv"
-    pd.DataFrame(
-        [
-            {"code": "p23.1", "label": "Coke oven products", "description": "EXIO"},
-            {"code": "p23.2", "label": "Refined Petroleum", "description": "EXIO"},
-            {"code": "p40.11.a", "label": "Electricity by coal", "description": "EXIO"},
-            {"code": "p40.11.b", "label": "Electricity by gas", "description": "EXIO"},
-        ]
-    ).to_csv(exio_dictionary, index=False)
-
-    manifest = tmp_path / "split_manifest.csv"
-    pd.DataFrame(
-        [
-            {"source_code": "CPA_C19", "source_label": "Coke and refined petroleum products"},
-            {"source_code": "CPA_D", "source_label": "Electricity, gas, steam and air conditioning"},
-        ]
-    ).to_csv(manifest, index=False)
-
-    exio_mapping = tmp_path / "exio_to_eurostat_cpa_products.csv"
     rows = []
-    for source_code, source_label, target_code, target_label in [
-        ("p23.1", "Coke oven products", "CPA_C19", "Coke and refined petroleum products"),
-        ("p23.2", "Refined Petroleum", "CPA_C19", "Coke and refined petroleum products"),
-        ("p40.11.a", "Electricity by coal", "CPA_D", "Electricity, gas, steam and air conditioning"),
-        ("p40.11.b", "Electricity by gas", "CPA_D", "Electricity, gas, steam and air conditioning"),
-    ]:
-        row = _canonical_base("weighted")
-        row.update(
-            {
-                "source_key": source_label,
-                "source_code": source_code,
-                "source_label": source_label,
-                "target_key": target_code,
-                "target_code": target_code,
-                "target_label": target_label,
-                "weight": "1.0",
-            }
-        )
+    for source, subtarget in [("p40.11.a", "Electricity generation"), ("p40.11.b", "Electricity generation")]:
+        row = _canonical_base("split")
+        row["source_code"] = source
+        row["source_label"] = source
+        row["target_code"] = "CPA_D"
+        row["target_label"] = "Electricity, gas, steam and air conditioning"
+        row["subtarget_code"] = subtarget
         rows.append(row)
-    pd.DataFrame(rows).to_csv(exio_mapping, index=False)
+    csv_path = tmp_path / "split.csv"
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
 
-    frame = load_split_manifest_frame(manifest, eurostat_dictionary)
-    mapping = read_split_mapping(
-        manifest,
-        exio_to_eurostat_mapping_csv=exio_mapping,
-        source_dictionary_path=eurostat_dictionary,
-        target_dictionary_path=eurostat_dictionary,
-    )
-
-    assert list(frame["source_code"]) == ["CPA_C19", "CPA_D"]
-    assert mapping == {"CPA_C19": ["p23.1", "p23.2"], "CPA_D": ["p40.11.a", "p40.11.b"]}
+    frame = load_split_mapping_frame(csv_path)
+    mapping = read_split_mapping(csv_path)
+    assert set(frame["aggregate_sector"]) == {"CPA_D"}
+    assert mapping == {"CPA_D": {"Electricity generation": ["p40.11.a", "p40.11.b"]}}
 
 
 def test_read_aggregation_mapping(tmp_path: Path) -> None:
@@ -167,8 +160,10 @@ def test_read_aggregation_mapping(tmp_path: Path) -> None:
     rows = []
     for source, target in [("A", "X"), ("B", "X")]:
         row = _canonical_base("aggregate")
-        row["source_key"] = source
-        row["target_key"] = target
+        row["source_code"] = source
+        row["source_label"] = source
+        row["target_code"] = target
+        row["target_label"] = target
         rows.append(row)
     csv_path = tmp_path / "aggregate.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
@@ -184,9 +179,9 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_category_mapping_frame
 
     row = _canonical_base("category-target")
-    row["source_key"] = "Industry"
+    row["source_code"] = "Industry"
     row["source_label"] = "Industry"
-    row["target_key"] = "Chemicals"
+    row["target_code"] = "Chemicals"
     row["target_label"] = "Chemicals"
     row["share"] = "0.75"
     row["source_balance_role"] = "final_use"
@@ -198,7 +193,7 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     frame = load_category_mapping_frame(csv_path)
     assert frame.loc[0, "Category"] == "Industry"
     assert frame.loc[0, "TargetSector"] == "Chemicals"
-    assert frame.loc[0, "TargetCode"] == ""
+    assert frame.loc[0, "TargetCode"] == "Chemicals"
     assert frame.loc[0, "DeclaredShare"] == 0.75
     assert frame.loc[0, "AllocationRule"] == "test"
     assert frame.loc[0, "SourceBalanceRole"] == "final_use"
@@ -210,9 +205,9 @@ def test_read_category_mapping_requires_explicit_semantic_roles(tmp_path: Path) 
     from ecolecon_mrio.mapping_csv import load_category_mapping_frame
 
     row = _canonical_base("category-target")
-    row["source_key"] = "Industry"
+    row["source_code"] = "Industry"
     row["source_label"] = "Industry"
-    row["target_key"] = "Chemicals"
+    row["target_code"] = "Chemicals"
     row["target_label"] = "Chemicals"
     row["share"] = "0.75"
     csv_path = tmp_path / "category_missing_semantics.csv"
@@ -226,9 +221,9 @@ def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_category_mapping_frame
 
     row = _canonical_base("category-target")
-    row["source_key"] = "Transformation input - refineries and petrochemical industry - direct use - energy use"
     row["source_code"] = "TI_RPI_DU_E"
-    row["target_key"] = "Coke and refined petroleum products"
+    row["source_label"] = "Transformation input - refineries and petrochemical industry - direct use - energy use"
+    row["target_code"] = "CPA_C19"
     row["target_code"] = "CPA_C19"
     row["target_label"] = "Coke and refined petroleum products"
     row["share"] = "1"

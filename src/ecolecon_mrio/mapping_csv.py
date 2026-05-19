@@ -18,13 +18,11 @@ MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "target_system",
     "target_version",
     "target_level",
-    "source_key",
     "source_code",
     "source_label",
-    "target_key",
     "target_code",
     "target_label",
-    "subtarget_key",
+    "subtarget_code",
     "weight",
     "share",
     "enabled",
@@ -60,6 +58,14 @@ TARGET_SECTOR_ROLES: frozenset[str] = frozenset(
 SPLIT_SECTOR_MANIFEST_COLUMNS: tuple[str, ...] = (
     "source_code",
     "source_label",
+)
+
+SPLIT_OUTPUT_SHARE_RULES: frozenset[str] = frozenset(
+    {
+        "derived-output-share-split",
+        "split-by-output-share",
+        "split-by-output-share-year-specific",
+    }
 )
 
 
@@ -110,9 +116,14 @@ def _normalize_role_column(
     return values
 
 
-def read_mapping_csv(path: str | Path, *, expected_kind: str | None = None) -> pd.DataFrame:
+def read_mapping_csv(
+    path: str | Path,
+    *,
+    expected_kind: str | None = None,
+    required_columns: tuple[str, ...] = MAPPING_CSV_COLUMNS,
+) -> pd.DataFrame:
     frame = pd.read_csv(path, dtype=str).fillna("")
-    missing = [column for column in MAPPING_CSV_COLUMNS if column not in frame.columns]
+    missing = [column for column in required_columns if column not in frame.columns]
     if missing:
         raise ValueError(f"Mapping CSV {Path(path)} missing required columns: {missing}")
     if expected_kind is not None:
@@ -162,32 +173,113 @@ def validate_mapping_weights(
 
 def load_weighted_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="weighted").copy()
-    frame["aggregate_sector"] = frame["target_key"].astype(str).str.strip()
-    frame["exio_sector"] = frame["source_key"].astype(str).str.strip()
-    frame["weight"] = pd.to_numeric(frame["weight"], errors="raise")
+    frame["aggregate_sector"] = frame["target_code"].astype(str).str.strip()
+    frame["exio_sector"] = frame["source_code"].astype(str).str.strip()
+    frame["weight"] = pd.to_numeric(frame["weight"], errors="coerce")
     return frame
 
 
-def read_weighted_mapping(path: str | Path) -> dict[str, dict[str, float]]:
+def _normalize_numeric_reference(reference: object) -> dict[str, float]:
+    if reference is None:
+        return {}
+    if hasattr(reference, "to_dict") and not isinstance(reference, dict):
+        reference = reference.to_dict()
+    if not isinstance(reference, dict):
+        raise TypeError("Output reference must be a mapping or pandas Series-like object.")
+    return {
+        _normalize_text(key): float(value)
+        for key, value in reference.items()
+        if _normalize_text(key) != ""
+    }
+
+
+def _resolve_split_weights_for_source_group(
+    group: pd.DataFrame,
+    *,
+    target_output_by_code: dict[str, float],
+    target_output_by_target: dict[str, float],
+) -> pd.Series:
+    if group.empty:
+        return pd.Series(dtype="float64")
+
+    if len(group) == 1:
+        weight_value = group.iloc[0]["weight"]
+        if pd.isna(weight_value):
+            return pd.Series([1.0], index=group.index, dtype="float64")
+        return group["weight"].astype("float64")
+
+    rule_values: set[str] = set()
+    for column in ("rule", "transformation_rule", "certainty"):
+        if column in group.columns:
+            rule_values.update(
+                value
+                for value in group[column].astype(str).str.strip().tolist()
+                if value
+            )
+
+    uses_split_rule = any(value in SPLIT_OUTPUT_SHARE_RULES for value in rule_values)
+    has_missing_weight = group["weight"].isna().any()
+    if not uses_split_rule and not has_missing_weight:
+        return group["weight"].astype("float64")
+
+    if target_output_by_code and group["target_code"].astype(str).str.strip().ne("").all():
+        keys = group["target_code"].astype(str).tolist()
+        reference = target_output_by_code
+    elif target_output_by_target:
+        keys = group["target_label"].astype(str).tolist()
+        reference = target_output_by_target
+    else:
+        if uses_split_rule or has_missing_weight:
+            raise ValueError(
+                "Split mapping rows require a year-specific output reference when weights are omitted."
+            )
+        return group["weight"].astype("float64")
+
+    weights = np.array([max(0.0, float(reference.get(_normalize_text(key), 0.0))) for key in keys], dtype="float64")
+    total = float(weights.sum())
+    if total <= 0:
+        sample = ", ".join(map(str, keys[:8]))
+        raise ValueError(
+            "Cannot resolve split weights from the supplied output reference. "
+            f"Affected targets: {sample}"
+        )
+    return pd.Series(weights / total, index=group.index, dtype="float64")
+
+
+def read_weighted_mapping(
+    path: str | Path,
+    *,
+    target_output_by_code: object | None = None,
+    target_output_by_target: object | None = None,
+) -> dict[str, dict[str, float]]:
     frame = load_weighted_mapping_frame(path)
     frame = frame[frame["enabled"].map(_parse_boolish)].copy()
     frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
 
+    output_by_code = _normalize_numeric_reference(target_output_by_code)
+    output_by_target = _normalize_numeric_reference(target_output_by_target)
+
     mapping: dict[str, dict[str, float]] = {}
-    for row in frame.itertuples(index=False):
-        mapping.setdefault(str(row.aggregate_sector), {})
-        mapping[str(row.aggregate_sector)][str(row.exio_sector)] = (
-            mapping[str(row.aggregate_sector)].get(str(row.exio_sector), 0.0) + float(row.weight)
+    for _, group in frame.groupby("exio_sector", sort=False):
+        resolved_weights = _resolve_split_weights_for_source_group(
+            group,
+            target_output_by_code=output_by_code,
+            target_output_by_target=output_by_target,
         )
+        for row, weight in zip(group.itertuples(index=False), resolved_weights.tolist(), strict=False):
+            mapping.setdefault(str(row.aggregate_sector), {})
+            mapping[str(row.aggregate_sector)][str(row.exio_sector)] = (
+                mapping[str(row.aggregate_sector)].get(str(row.exio_sector), 0.0) + float(weight)
+            )
     validate_mapping_weights(mapping)
     return mapping
 
 
 def load_split_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="split").copy()
-    frame["aggregate_sector"] = frame["target_key"].astype(str).str.strip()
-    frame["subsector"] = frame["subtarget_key"].astype(str).str.strip()
-    frame["exio_sector"] = frame["source_key"].astype(str).str.strip()
+    frame["aggregate_sector"] = frame["target_code"].astype(str).str.strip()
+    frame["subsector"] = frame["subtarget_code"].astype(str).str.strip()
+    frame["exio_sector"] = frame["source_code"].astype(str).str.strip()
     mask = frame["subsector"] == ""
     frame.loc[mask, "subsector"] = frame.loc[mask, "exio_sector"]
     return frame
@@ -244,125 +336,32 @@ def read_split_mapping(
     source_dictionary_path: str | Path | None = None,
     target_dictionary_path: str | Path | None = None,
 ) -> dict[str, list[str]] | dict[str, dict[str, list[str]]]:
-    path = Path(path)
-    header = pd.read_csv(path, nrows=0)
-    columns = set(header.columns)
+    frame = load_split_mapping_frame(path)
+    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+    frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
 
-    if {"target_key", "source_key"}.issubset(columns):
-        frame = load_split_mapping_frame(path)
-        frame = frame[frame["enabled"].map(_parse_boolish)].copy()
-        frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
+    out_simple: dict[str, list[str]] = {}
+    out_grouped: dict[str, dict[str, list[str]]] = {}
+    has_subsectors = False
+    for aggregate_sector, aggregate_group in frame.groupby("aggregate_sector", sort=False):
+        subsector_map: dict[str, list[str]] = {}
+        for subsector, subsector_group in aggregate_group.groupby("subsector", sort=False):
+            sector_codes = list(map(str, subsector_group["exio_sector"].tolist()))
+            subsector_map[str(subsector)] = sector_codes
+            if str(subsector) != "" and str(subsector) != str(aggregate_sector):
+                has_subsectors = True
+        out_simple[str(aggregate_sector)] = list(map(str, aggregate_group["exio_sector"].tolist()))
+        out_grouped[str(aggregate_sector)] = subsector_map
 
-        if "subtarget_key" not in frame.columns:
-            out_simple: dict[str, list[str]] = {}
-            for aggregate_sector, group in frame.groupby("aggregate_sector", sort=False):
-                out_simple[str(aggregate_sector)] = list(map(str, group["exio_sector"].tolist()))
-            return out_simple
-
-        out_grouped: dict[str, dict[str, list[str]]] = {}
-        for aggregate_sector, aggregate_group in frame.groupby("aggregate_sector", sort=False):
-            sub_dict: dict[str, list[str]] = {}
-            for subsector, subsector_group in aggregate_group.groupby("subsector", sort=False):
-                sub_dict[str(subsector)] = list(map(str, subsector_group["exio_sector"].tolist()))
-            out_grouped[str(aggregate_sector)] = sub_dict
+    if has_subsectors:
         return out_grouped
-
-    if "source_code" not in columns:
-        raise ValueError(f"Split mapping CSV {path} must include either 'source_key' or 'source_code' columns.")
-    if exio_to_eurostat_mapping_csv is None:
-        raise ValueError(
-            f"Split mapping CSV {path} contains only sector codes; provide exio_to_eurostat_mapping_csv to expand it."
-        )
-
-    source_dictionary = source_dictionary_path or (path.parent / "eurostat_cpa65_products_dictionary.csv")
-    target_dictionary = target_dictionary_path or source_dictionary
-    manifest = load_split_manifest_frame(path, source_dictionary)
-    exio_dictionary = load_sector_dictionary(path.parent / "exiobase_products_dictionary.csv")
-    exio_lookup = _dictionary_lookup(exio_dictionary)
-    target_lookup = _dictionary_lookup(load_sector_dictionary(target_dictionary))
-
-    weighted_frame = pd.read_csv(exio_to_eurostat_mapping_csv, dtype=str).fillna("")
-    required = {"source_code", "source_label", "target_code", "target_label"}
-    missing = required - set(weighted_frame.columns)
-    if missing:
-        raise ValueError(
-            f"EXIO-to-Eurostat mapping CSV {exio_to_eurostat_mapping_csv} missing required columns: {sorted(missing)!r}"
-        )
-
-    weighted_frame["source_code"] = weighted_frame["source_code"].map(_normalize_text)
-    weighted_frame["source_label"] = weighted_frame["source_label"].map(_normalize_text)
-    weighted_frame["target_code"] = weighted_frame["target_code"].map(_normalize_text)
-    weighted_frame["target_label"] = weighted_frame["target_label"].map(_normalize_text)
-    if "enabled" in weighted_frame.columns:
-        weighted_frame = weighted_frame[weighted_frame["enabled"].map(_parse_boolish)].copy()
-
-    requested_targets = set(manifest["source_code"].tolist())
-    selected = weighted_frame[weighted_frame["target_code"].isin(requested_targets)].copy()
-    if selected.empty:
-        raise ValueError(
-            f"Split manifest {path} refers to sectors missing from {exio_to_eurostat_mapping_csv}: {sorted(requested_targets)!r}"
-        )
-
-    selected_missing = sorted(requested_targets - set(selected["target_code"].tolist()))
-    if selected_missing:
-        raise ValueError(
-            f"Split manifest {path} refers to sectors missing from {exio_to_eurostat_mapping_csv}: {selected_missing[:8]!r}"
-        )
-
-    out: dict[str, list[str]] = {}
-    for target_code, group in selected.groupby("target_code", sort=False):
-        target_row = target_lookup.get(str(target_code))
-        if target_row is None:
-            raise ValueError(
-                f"{exio_to_eurostat_mapping_csv}: unknown target code {target_code!r} for split expansion."
-            )
-        expected_target_label = _normalize_text(target_row.label)
-        observed_target_label = _normalize_text(group.iloc[0]["target_label"])
-        if observed_target_label != expected_target_label:
-            raise ValueError(
-                f"{exio_to_eurostat_mapping_csv}: target label mismatch for {target_code!r}, "
-                f"expected {expected_target_label!r}, got {observed_target_label!r}."
-            )
-
-        members: list[str] = []
-        seen: set[str] = set()
-        for row_number, row in enumerate(group.itertuples(index=False), start=2):
-            source_label = _normalize_text(row.source_label)
-            source_code = _normalize_text(row.source_code)
-            if source_code:
-                source_row = exio_lookup.get(source_code)
-                if source_row is None:
-                    raise ValueError(
-                        f"{exio_to_eurostat_mapping_csv} row {row_number}: unknown source code {source_code!r}."
-                    )
-                expected_source_label = _normalize_text(source_row.label)
-                if source_label and source_label != expected_source_label:
-                    raise ValueError(
-                        f"{exio_to_eurostat_mapping_csv} row {row_number}: source label mismatch for {source_code!r}, "
-                        f"expected {expected_source_label!r}, got {source_label!r}."
-                    )
-                sector_label = expected_source_label
-            else:
-                source_row = exio_lookup.get(source_label)
-                if source_row is None:
-                    raise ValueError(
-                        f"{exio_to_eurostat_mapping_csv} row {row_number}: unknown EXIO sector label {source_label!r}."
-                    )
-                sector_label = _normalize_text(source_row.label)
-
-            if sector_label not in seen:
-                seen.add(sector_label)
-                members.append(sector_label)
-
-        out[str(target_code)] = members
-
-    return out
+    return out_simple
 
 
 def load_aggregation_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="aggregate").copy()
-    frame["from_sector"] = frame["source_key"].astype(str).str.strip()
-    frame["to_sector"] = frame["target_key"].astype(str).str.strip()
+    frame["from_sector"] = frame["source_code"].astype(str).str.strip()
+    frame["to_sector"] = frame["target_code"].astype(str).str.strip()
     return frame
 
 
@@ -386,11 +385,13 @@ def read_aggregation_mapping(path: str | Path) -> tuple[dict[str, str], pd.DataF
 
 def load_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="category-target").copy()
-    frame["Category"] = frame["source_key"].astype(str).str.strip()
+    frame["Category"] = frame["source_label"].astype(str).str.strip()
+    missing_category = frame["Category"] == ""
+    frame.loc[missing_category, "Category"] = frame.loc[missing_category, "source_code"].astype(str).str.strip()
     frame["TargetCode"] = frame["target_code"].astype(str).str.strip()
     frame["TargetSector"] = frame["target_label"].astype(str).str.strip()
     blank_target_sector = frame["TargetSector"] == ""
-    frame.loc[blank_target_sector, "TargetSector"] = frame.loc[blank_target_sector, "target_key"].astype(str).str.strip()
+    frame.loc[blank_target_sector, "TargetSector"] = frame.loc[blank_target_sector, "target_code"].astype(str).str.strip()
     declared_share = frame["share"].astype(str).str.strip()
     frame["DeclaredShare"] = pd.to_numeric(declared_share.mask(declared_share == ""), errors="raise")
     frame["AllocationRule"] = frame["transformation_rule"].astype(str).str.strip()
@@ -430,8 +431,8 @@ def read_category_mapping_frame(path: str | Path) -> pd.DataFrame:
 
 def load_source_bucket_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="source-bucket").copy()
-    frame["SourceBucket"] = frame["source_key"].astype(str).str.strip()
-    frame["BucketGroup"] = frame["target_key"].astype(str).str.strip()
+    frame["SourceBucket"] = frame["source_code"].astype(str).str.strip()
+    frame["BucketGroup"] = frame["target_code"].astype(str).str.strip()
     frame["BucketOrder"] = pd.to_numeric(frame["weight"], errors="raise")
     return frame
 
@@ -453,8 +454,8 @@ def read_source_bucket_groups(path: str | Path) -> dict[str, str]:
 
 def load_product_source_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="product-source").copy()
-    frame["ProductCode"] = frame["source_key"].astype(str).str.strip()
-    frame["SourceBucket"] = frame["target_key"].astype(str).str.strip()
+    frame["ProductCode"] = frame["source_code"].astype(str).str.strip()
+    frame["SourceBucket"] = frame["target_code"].astype(str).str.strip()
     return frame
 
 

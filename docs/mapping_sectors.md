@@ -17,7 +17,7 @@ This document intentionally does not repeat row tables. The detailed explanation
 
 These are the only mapping CSVs that should be used by code and by humans:
 
-- `scripts/mappings/exio_to_eurostat_cpa.csv`
+- `scripts/mappings/exio_to_eurostat_cpa_products.csv`
   - weighted EXIOBASE 3 `pxp` product to Eurostat CPA product mapping
 - `scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv`
   - EXIO sector split template for `CPA_C19` and `CPA_D`, preserving electricity by source
@@ -25,23 +25,72 @@ These are the only mapping CSVs that should be used by code and by humans:
   - same split template, but electricity rows are grouped
 - `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
   - legacy filename retained for compatibility; the bridge itself maps Eurostat energy-balance rows, whose official row definitions are often activity-based, to the repo's 65-product CPA-based IO targets plus `Households`, including explicit direct-combustion transformation rows for `CPA_C19` and `CPA_D`
-- `scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv`
-  - analytical aggregation from split sectors to the repo’s 2-sector energy view
+- `scripts/mappings/fuels_split.csv`
+  - split manifest for the fuels pipeline
+- `scripts/mappings/fuels_more_split.csv`
+  - expanded split manifest for the fuels-more pipeline
+- `scripts/mappings/fuels_reaggregation.csv`
+  - fuels reaggregation table
+- `scripts/mappings/fuels_more_reaggregation.csv`
+  - expanded fuels reaggregation table
+- `scripts/mappings/energy_green_brown_split.csv`
+  - split manifest for the analytical green/brown energy view
+- `scripts/mappings/energy_green_brown_reaggregation.csv`
+  - reaggregation table for the analytical green/brown energy view
 
 There should be no parallel `.mapping.csv` duplicates and no separate mapping tables in the markdown documentation.
 
 Terminology note: under Eurostat's statistical classifications, NACE classifies economic activities, while CPA classifies products by activity. In this repo, the direct energy-balance bridge uses NACE only on the source-definition side of some correspondence logic; operationally it is a mapping into the repo's 65-product CPA-based IO targets. The retained `nace2` filename reflects legacy naming only, not the bridge's target classification.
 
-## CSV Schema
+## CSV Schemas
 
-All canonical mapping CSVs use the same base schema defined in `src/ecolecon_mrio/mapping_csv.py`:
+The checked-in CSVs fall into a small number of schema families.
+
+### 1. Reduced Weighted Concordance Rows
+
+These files keep the weighted concordance shape but intentionally omit the old key/share columns that were removed from the EXIO bridge:
+
+- `scripts/mappings/exio_to_eurostat_cpa_products.csv`
+
+Columns:
 
 - `kind`
 - `source_dataset`, `source_system`, `source_version`, `source_level`
 - `target_dataset`, `target_system`, `target_version`, `target_level`
-- `source_key`, `source_code`, `source_label`
-- `target_key`, `target_code`, `target_label`
-- `subtarget_key`
+- `source_code`, `source_label`
+- `target_code`, `target_label`
+- `weight`
+- `enabled`
+- `provenance`
+- `certainty`
+- `transformation_rule`
+- `source_name`
+- `official_source`
+- `notes`
+- `source_balance_role`
+- `target_sector_role`
+- `include_in_direct_energy`
+
+For the EXIO concordance, split rows are rule-driven: the CSV carries the split rule in `transformation_rule`, while the loader derives the actual shares from the year-specific output reference at runtime.
+
+### 2. Full Canonical Mapping Rows
+
+These files use the canonical mapping schema implemented in `src/ecolecon_mrio/mapping_csv.py`:
+
+- `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
+- `scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv`
+- `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
+- `scripts/mappings/energy_primary_source_buckets.csv`
+- `scripts/mappings/siec_to_primary_energy_sources.csv`
+
+Canonical columns:
+
+- `kind`
+- `source_dataset`, `source_system`, `source_version`, `source_level`
+- `target_dataset`, `target_system`, `target_version`, `target_level`
+- `source_code`, `source_label`
+- `target_code`, `target_label`
+- `subtarget_code`
 - `weight`
 - `share`
 - `enabled`
@@ -51,35 +100,72 @@ All canonical mapping CSVs use the same base schema defined in `src/ecolecon_mri
 - `source_name`
 - `official_source`
 - `notes`
-
-The canonical schema now always includes these accounting-semantics columns:
-
 - `source_balance_role`
 - `target_sector_role`
 - `include_in_direct_energy`
 
-Outside `category-target` mappings these fields are usually blank, but the columns themselves are part of the required checked-in schema.
+File-specific extras:
 
-Some mapping families may also carry extra columns needed by a downstream script. For example, the split templates keep `constituent` so the split pipeline can run coverage checks.
+- `scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv`
+- `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
+  - adds `constituent` so the split pipeline can trace the source subsector that was retained
 
-## Meaning of the Main Fields
+### 3. Lightweight Split / Reaggregation Tables
+
+These files are narrower helper tables used by the split/reaggregation pipelines:
+
+- `scripts/mappings/fuels_split.csv`
+- `scripts/mappings/fuels_more_split.csv`
+- `scripts/mappings/energy_green_brown_split.csv`
+  - columns: `source_code`, `source_label`
+
+- `scripts/mappings/fuels_reaggregation.csv`
+- `scripts/mappings/fuels_more_reaggregation.csv`
+- `scripts/mappings/energy_green_brown_reaggregation.csv`
+  - columns: `source_code`, `source_label`, `target_code`, `target_label`, `weight`, `enabled`, `notes`
+
+These tables are intentionally small; they are not the same schema as the full canonical mapping files.
+
+### 4. Dictionary Files
+
+These are pure lookup tables for labels and descriptions:
+
+- `scripts/mappings/exiobase_products_dictionary.csv`
+- `scripts/mappings/exiobase_industries_dictionary.csv`
+- `scripts/mappings/eurostat_products_dictionary.csv`
+- `scripts/mappings/eurostat_industries_dictionary.csv`
+- `scripts/mappings/eurostat_cpa65_products_dictionary.csv`
+
+Columns:
+
+- `code`
+- `label`
+- `description`
+
+## Main Field Meanings
+
+The meanings below apply to the full-schema family. The reduced EXIO concordance intentionally omits `share`.
 
 - `kind`
-  - one of `weighted`, `split`, `category-target`, `aggregate`
-- `source_key`
-  - the runtime source sector/category key used by code
-- `target_key`
-  - the runtime target sector/category key used by code
-- `subtarget_key`
-  - used by `split` mappings to name the emitted subsector
+  - identifies the mapping family, for example `weighted`, `split`, `category-target`, `aggregate`, or `source-bucket`
+- `source_code`
+  - the stable sector code used as the primary key in the dictionary-backed files
+- `target_code`
+  - the stable target code used as the primary key in the dictionary-backed files
+- `subtarget_code`
+  - used by split mappings to name the emitted subsector
 - `weight`
-  - used by `weighted` mappings
+  - used by weighted mappings and some helper ordering tables
 - `share`
-  - used by `category-target` mappings
+  - used by category-target mappings
+- `enabled`
+  - marks whether the row is active
 - `provenance`
-  - broad classification such as `semi-official` or `methodological`
+  - broad classification such as `semi-official`, `methodological`, or `repo-authored`
 - `certainty`
   - row-level confidence / construction mode such as `semi-official-retained`, `derived-single-target`, `derived-output-share-split`, `methodological-template`
+- `transformation_rule`
+  - the operational rule used by the loader; for the weighted EXIO concordance this now marks split rows, for example `split-by-output-share`
 - `official_source`
   - the relevant upstream source URL or metadata page when one exists
 - `notes`
@@ -91,33 +177,14 @@ Some mapping families may also carry extra columns needed by a downstream script
 - `include_in_direct_energy`
   - marks whether the row belongs in the repo's direct-combustion energy accounting object
 
+For the weighted EXIO concordance, split rows are rule-driven: the CSV now carries the split rule in `transformation_rule`, while the loader derives the actual shares from the year-specific output reference at runtime.
+
 ## Generation
 
-There is one supported generation path.
+The canonical mapping CSVs are curated and checked in under `scripts/mappings/`.
+They are not regenerated as part of normal repo use.
 
-From the repo root:
-
-```bash
-make mappings
-```
-
-This uses the MRIO virtual environment and runs:
-
-```bash
-./.venv/bin/python scripts/generate_mapping_csvs.py --geo AT --year 2020
-```
-
-You can override the benchmark year and geo used for the generated weighted mapping:
-
-```bash
-make mappings MAP_GEO=AT MAP_YEAR=2021
-```
-
-The generator script is:
-
-- `scripts/generate_mapping_csvs.py`
-
-It is the only supported creation path for the canonical mapping CSVs. When writing to a custom output directory, it canonicalizes the checked-in rule files from `scripts/mappings/` and writes the resulting CSVs there; it does not expect seed mapping files to already exist in the target directory.
+If you need to inspect or edit the canonical rows, work directly with the checked-in CSVs.
 
 ## Validation
 
@@ -142,6 +209,7 @@ All runtime loading of canonical mapping CSVs now goes through:
 - `src/ecolecon_mrio/mapping_csv.py`
 
 That module is the only supported loader surface for mapping CSVs.
+For weighted concordances, the loader can also resolve split rows from year-specific output references when a row is marked with the split rule; that lets the same rule file adapt to the year being analyzed instead of baking one year's split shares into the CSV.
 
 ### Split pipeline
 
@@ -151,7 +219,7 @@ Relevant CSVs:
 
 - `scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv`
 - `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
-- optional CO2 re-mapping input: `scripts/mappings/exio_to_eurostat_cpa.csv`
+- optional CO2 re-mapping input: `scripts/mappings/exio_to_eurostat_cpa_products.csv`
 
 ### Aggregation pipeline
 
@@ -159,7 +227,7 @@ Relevant CSVs:
 
 Relevant CSV:
 
-- `scripts/mappings/energy_green_brown_2sector_from_split_subsectors.csv`
+- `scripts/mappings/energy_green_brown_reaggregation.csv`
 
 ### Diagnostics
 
@@ -167,7 +235,7 @@ Relevant CSV:
 
 Relevant CSVs:
 
-- `scripts/mappings/exio_to_eurostat_cpa.csv`
+- `scripts/mappings/exio_to_eurostat_cpa_products.csv`
 - `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
 
 For the energy-balance bridge specifically, the runtime contract is now broader than a final-use concordance. It includes final-use rows, refinery direct-use and refinery own-use rows for `CPA_C19`, main-activity electricity and heat transformation-input rows for `CPA_D`, and the `Households` analytical row. The CSV remains the single source of truth for which Eurostat energy-balance rows enter direct-combustion accounting. Despite the legacy filename, the operative targets in that CSV are the repo's 65-product CPA-based IO rows rather than NACE activity classes.
