@@ -17,7 +17,7 @@ CANONICAL_MAPPING_COLUMNS: tuple[str, ...] = (
     "source_label",
     "target_code",
     "target_label",
-    "weight",
+    "order",
     "enabled",
     "notes",
 )
@@ -130,11 +130,11 @@ def load_canonical_mapping_frame(
     *,
     target_dictionary_path: str | Path | None = None,
     validate_target_codes: bool = True,
-    require_weight: bool = True,
+    require_order: bool = True,
 ) -> pd.DataFrame:
     mapping_path = Path(path)
     frame = _read_frame(mapping_path)
-    _require_columns(frame, CANONICAL_MAPPING_COLUMNS, path=mapping_path)
+    _require_columns(frame, tuple(column for column in CANONICAL_MAPPING_COLUMNS if column != "order"), path=mapping_path)
 
     source_dictionary = load_sector_dictionary(source_dictionary_path)
     target_dictionary = load_sector_dictionary(target_dictionary_path or source_dictionary_path)
@@ -148,10 +148,10 @@ def load_canonical_mapping_frame(
     frame["notes"] = frame["notes"].map(_normalized_text)
     frame["enabled"] = frame["enabled"].map(lambda value: _parse_bool(value, column="enabled", required=True))
 
-    if require_weight:
-        frame["weight"] = pd.to_numeric(frame["weight"], errors="raise")
-    elif (frame["weight"].astype(str).str.strip() != "").any():
-        frame["weight"] = pd.to_numeric(frame["weight"], errors="raise")
+    if require_order:
+        frame["order"] = pd.to_numeric(frame["order"], errors="raise")
+    elif "order" in frame.columns:
+        frame["order"] = pd.to_numeric(frame["order"], errors="raise")
 
     if (frame["source_code"] == "").any() or (frame["target_code"] == "").any():
         raise ValueError(f"Canonical mapping CSV {mapping_path} contains blank source or target codes.")
@@ -191,14 +191,6 @@ def load_canonical_mapping_frame(
     if not duplicates.empty:
         sample = duplicates.loc[:, ["source_code", "target_code"]].head(8).to_dict(orient="records")
         raise ValueError(f"Canonical mapping CSV {mapping_path} contains duplicate edges: {sample!r}")
-
-    if require_weight:
-        active = frame[frame["enabled"]].copy()
-        grouped = active.groupby(["source_code"], sort=False)["weight"].sum()
-        bad = grouped[(grouped - 1.0).abs() > 1e-9]
-        if not bad.empty:
-            sample = ", ".join(f"{source_code}={float(total):.6g}" for source_code, total in bad.head(8).items())
-            raise ValueError(f"Canonical mapping CSV {mapping_path} has weight-sum drift: {sample}")
 
     return frame.loc[:, [column for column in CANONICAL_MAPPING_COLUMNS if column in frame.columns]].copy()
 

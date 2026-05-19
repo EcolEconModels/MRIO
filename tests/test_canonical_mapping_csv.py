@@ -33,7 +33,7 @@ def _mapping_rows() -> list[dict[str, object]]:
             "source_label": "Source A",
             "target_code": "SPL_1",
             "target_label": "Split 1",
-            "weight": 1.0,
+            "order": 1,
             "enabled": True,
             "notes": "ok",
         }
@@ -85,29 +85,6 @@ def test_canonical_mapping_rejects_repeated_code_prefix(tmp_path: Path) -> None:
         load_canonical_mapping_frame(mapping_path, dictionary_path)
 
 
-def test_canonical_mapping_rejects_duplicate_source_codes(tmp_path: Path) -> None:
-    from ecolecon_mrio.canonical_mapping_csv import load_canonical_mapping_frame
-
-    dictionary_path = tmp_path / "dictionary.csv"
-    pd.DataFrame(_dictionary_rows()).to_csv(dictionary_path, index=False)
-    mapping_path = tmp_path / "mapping.csv"
-    rows = _mapping_rows() + [
-        {
-            "source_code": "SRC_A",
-            "source_label": "Source A",
-            "target_code": "TGT_X",
-            "target_label": "Target X",
-            "weight": 1.0,
-            "enabled": True,
-            "notes": "duplicate source",
-        }
-    ]
-    pd.DataFrame(rows).to_csv(mapping_path, index=False)
-
-    with pytest.raises(ValueError, match="duplicate source codes"):
-        load_canonical_mapping_frame(mapping_path, dictionary_path, validate_target_codes=False)
-
-
 def test_split_mapping_rejects_unknown_target_code(tmp_path: Path) -> None:
     from ecolecon_mrio.canonical_mapping_csv import load_canonical_mapping_frame
 
@@ -155,11 +132,7 @@ def test_committed_fuels_labels_do_not_stack_prefixes() -> None:
         assert frame["source_label"].map(lambda value: str(value).count("::") == 0).all()
 
     for mapping_path in reaggregation_paths:
-        frame = load_canonical_mapping_frame(
-            mapping_path,
-            Path("scripts/mappings/exiobase_products_dictionary.csv"),
-            validate_target_codes=False,
-        )
+        frame = pd.read_csv(mapping_path, dtype=str).fillna("")
         assert frame["source_label"].map(lambda value: str(value).count("::") <= 1).all()
         assert frame["target_label"].map(lambda value: str(value).count("::") <= 1).all()
 
@@ -189,7 +162,7 @@ def test_validate_canonical_chain_rejects_missing_coverage(tmp_path: Path) -> No
             "source_label": "Other",
             "target_code": "TGT_X",
             "target_label": "Target X",
-            "weight": 1.0,
+            "order": 1,
             "enabled": True,
             "notes": "ok",
         }

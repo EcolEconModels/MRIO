@@ -22,8 +22,7 @@ def _canonical_base(kind: str) -> dict[str, str]:
         "target_code": "",
         "target_label": "",
         "subtarget_code": "",
-        "weight": "",
-        "share": "",
+        "order": "",
         "enabled": "1",
         "provenance": "methodological",
         "certainty": "derived",
@@ -60,35 +59,35 @@ def test_read_weighted_mapping(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_weighted_mapping_frame, read_weighted_mapping
 
     rows = []
-    for target, source, weight in [("CPA_A", "S1", "0.4"), ("CPA_B", "S1", "0.6"), ("CPA_A", "S2", "0.6"), ("CPA_B", "S2", "0.4")]:
+    for target, source, order in [("CPA_A", "S1", "1"), ("CPA_B", "S1", "2"), ("CPA_A", "S2", "3"), ("CPA_B", "S2", "4")]:
         row = _canonical_base("weighted")
         row["target_code"] = target
         row["target_label"] = target
         row["source_code"] = source
         row["source_label"] = source
-        row["weight"] = weight
+        row["order"] = order
         rows.append(row)
     csv_path = tmp_path / "weighted.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
 
     frame = load_weighted_mapping_frame(csv_path)
-    mapping = read_weighted_mapping(csv_path)
+    mapping = read_weighted_mapping(csv_path, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0})
     assert set(frame["aggregate_sector"]) == {"CPA_A", "CPA_B"}
-    assert mapping["CPA_A"]["S1"] == 0.4
-    assert mapping["CPA_B"]["S2"] == 0.4
+    assert mapping["CPA_A"]["S1"] == pytest.approx(0.25)
+    assert mapping["CPA_B"]["S2"] == pytest.approx(0.75)
 
 
 def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import read_weighted_mapping
 
     rows = []
-    for target, weight in [("CPA_A", "0.9"), ("CPA_B", "0.1")]:
+    for target, weight in [("CPA_A", "1"), ("CPA_B", "2")]:
         row = _canonical_base("weighted")
         row["target_code"] = target
         row["target_label"] = target
         row["source_code"] = "S1"
         row["source_label"] = "S1"
-        row["weight"] = ""
+        row["order"] = weight
         row["certainty"] = "derived-output-share-split"
         row["transformation_rule"] = "split-by-output-share"
         rows.append(row)
@@ -98,7 +97,7 @@ def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(tmp_pa
     single["target_label"] = "CPA_C"
     single["source_code"] = "S2"
     single["source_label"] = "S2"
-    single["weight"] = ""
+    single["order"] = ""
     single["certainty"] = "derived-single-target"
     rows.append(single)
 
@@ -183,7 +182,6 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     row["source_label"] = "Industry"
     row["target_code"] = "Chemicals"
     row["target_label"] = "Chemicals"
-    row["share"] = "0.75"
     row["source_balance_role"] = "final_use"
     row["target_sector_role"] = "end_use_sector"
     row["include_in_direct_energy"] = "1"
@@ -194,7 +192,6 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     assert frame.loc[0, "Category"] == "Industry"
     assert frame.loc[0, "TargetSector"] == "Chemicals"
     assert frame.loc[0, "TargetCode"] == "Chemicals"
-    assert frame.loc[0, "DeclaredShare"] == 0.75
     assert frame.loc[0, "AllocationRule"] == "test"
     assert frame.loc[0, "SourceBalanceRole"] == "final_use"
     assert frame.loc[0, "TargetSectorRole"] == "end_use_sector"
@@ -209,7 +206,6 @@ def test_read_category_mapping_requires_explicit_semantic_roles(tmp_path: Path) 
     row["source_label"] = "Industry"
     row["target_code"] = "Chemicals"
     row["target_label"] = "Chemicals"
-    row["share"] = "0.75"
     csv_path = tmp_path / "category_missing_semantics.csv"
     pd.DataFrame([row]).to_csv(csv_path, index=False)
 
@@ -224,9 +220,8 @@ def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
     row["source_code"] = "TI_RPI_DU_E"
     row["source_label"] = "Transformation input - refineries and petrochemical industry - direct use - energy use"
     row["target_code"] = "CPA_C19"
-    row["target_code"] = "CPA_C19"
     row["target_label"] = "Coke and refined petroleum products"
-    row["share"] = "1"
+    row["order"] = "1"
     row["transformation_rule"] = "fixed-share"
     row["source_balance_role"] = "transformation_input"
     row["target_sector_role"] = "transformation_sector"
@@ -238,3 +233,27 @@ def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
     assert frame.loc[0, "SourceBalanceRole"] == "transformation_input"
     assert frame.loc[0, "TargetSectorRole"] == "transformation_sector"
     assert frame.loc[0, "IncludeInDirectEnergy"] == True
+
+
+
+def test_static_mappings_reject_duplicate_source_codes(tmp_path: Path) -> None:
+    from ecolecon_mrio.canonical_mapping_csv import load_canonical_mapping_frame
+
+    dictionary_path = tmp_path / "dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "A", "label": "A", "description": "A"},
+            {"code": "B", "label": "B", "description": "B"},
+        ]
+    ).to_csv(dictionary_path, index=False)
+
+    mapping_path = tmp_path / "mapping.csv"
+    pd.DataFrame(
+        [
+            {"source_code": "A", "source_label": "A", "target_code": "B", "target_label": "B", "order": 1, "enabled": True, "notes": "ok"},
+            {"source_code": "A", "source_label": "A", "target_code": "A", "target_label": "A", "order": 2, "enabled": True, "notes": "dup"},
+        ]
+    ).to_csv(mapping_path, index=False)
+
+    with pytest.raises(ValueError, match="duplicate source codes"):
+        load_canonical_mapping_frame(mapping_path, dictionary_path, validate_target_codes=False)

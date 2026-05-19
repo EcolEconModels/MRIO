@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import pandas as pd
@@ -56,14 +57,46 @@ def test_exiobase_dictionary_covers_official_sector_list():
     assert missing.empty
 
 
+def test_exiobase_industries_dictionary_covers_official_sector_list():
+    from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
+
+    repo_root = Path(__file__).resolve().parents[1]
+    dictionary = pd.read_csv(repo_root / "scripts" / "mappings" / "exiobase_industries_dictionary.csv", dtype=str).fillna("")
+    official = load_pymrio_exio3_sectors("ixi").sectors
+
+    dict_codes = set(dictionary["code"].astype(str).str.strip())
+    missing = official[~official["ExioCode"].astype(str).str.strip().isin(dict_codes)]
+
+    assert missing.empty
+
+
 def test_exio_to_eurostat_mapping_has_no_blank_source_codes():
     repo_root = Path(__file__).resolve().parents[1]
-    mapping = pd.read_csv(repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv", dtype=str).fillna("")
+    source_codes: set[str] = set()
+    with (repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv").open("r", encoding="utf-8") as handle:
+        reader = csv.reader(handle, skipinitialspace=True)
+        next(reader)
+        for row in reader:
+            if not row:
+                continue
+            source_code = str(row[10]).strip() if len(row) > 10 else ""
+            assert source_code != ""
+            source_codes.add(source_code)
 
-    blank = mapping[mapping["source_code"].astype(str).str.strip() == ""]
-    assert blank.empty
-
-    source_codes = set(mapping["source_code"].astype(str).str.strip())
     assert "p10.a" in source_codes
     assert "p23.1.a" in source_codes
     assert "p40.2.a" in source_codes
+
+
+def test_exio_to_eurostat_mapping_has_nonblank_source_codes():
+    repo_root = Path(__file__).resolve().parents[1]
+    source_codes: list[str] = []
+    with (repo_root / "scripts" / "mappings" / "exio_to_eurostat_cpa_products.csv").open("r", encoding="utf-8") as handle:
+        reader = csv.reader(handle, skipinitialspace=True)
+        next(reader)
+        for row in reader:
+            if not row:
+                continue
+            source_codes.append(str(row[10]).strip() if len(row) > 10 else "")
+
+    assert all(source_codes)

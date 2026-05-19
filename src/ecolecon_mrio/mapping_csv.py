@@ -23,8 +23,7 @@ MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "target_code",
     "target_label",
     "subtarget_code",
-    "weight",
-    "share",
+    "order",
     "enabled",
     "provenance",
     "certainty",
@@ -175,7 +174,7 @@ def load_weighted_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="weighted").copy()
     frame["aggregate_sector"] = frame["target_code"].astype(str).str.strip()
     frame["exio_sector"] = frame["source_code"].astype(str).str.strip()
-    frame["weight"] = pd.to_numeric(frame["weight"], errors="coerce")
+    frame["order"] = pd.to_numeric(frame["order"], errors="raise")
     return frame
 
 
@@ -203,10 +202,7 @@ def _resolve_split_weights_for_source_group(
         return pd.Series(dtype="float64")
 
     if len(group) == 1:
-        weight_value = group.iloc[0]["weight"]
-        if pd.isna(weight_value):
-            return pd.Series([1.0], index=group.index, dtype="float64")
-        return group["weight"].astype("float64")
+        return pd.Series([1.0], index=group.index, dtype="float64")
 
     rule_values: set[str] = set()
     for column in ("rule", "transformation_rule", "certainty"):
@@ -218,10 +214,6 @@ def _resolve_split_weights_for_source_group(
             )
 
     uses_split_rule = any(value in SPLIT_OUTPUT_SHARE_RULES for value in rule_values)
-    has_missing_weight = group["weight"].isna().any()
-    if not uses_split_rule and not has_missing_weight:
-        return group["weight"].astype("float64")
-
     if target_output_by_code and group["target_code"].astype(str).str.strip().ne("").all():
         keys = group["target_code"].astype(str).tolist()
         reference = target_output_by_code
@@ -229,11 +221,7 @@ def _resolve_split_weights_for_source_group(
         keys = group["target_label"].astype(str).tolist()
         reference = target_output_by_target
     else:
-        if uses_split_rule or has_missing_weight:
-            raise ValueError(
-                "Split mapping rows require a year-specific output reference when weights are omitted."
-            )
-        return group["weight"].astype("float64")
+        raise ValueError("Split mapping rows require a year-specific output reference when weights are omitted.")
 
     weights = np.array([max(0.0, float(reference.get(_normalize_text(key), 0.0))) for key in keys], dtype="float64")
     total = float(weights.sum())
@@ -392,8 +380,6 @@ def load_category_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame["TargetSector"] = frame["target_label"].astype(str).str.strip()
     blank_target_sector = frame["TargetSector"] == ""
     frame.loc[blank_target_sector, "TargetSector"] = frame.loc[blank_target_sector, "target_code"].astype(str).str.strip()
-    declared_share = frame["share"].astype(str).str.strip()
-    frame["DeclaredShare"] = pd.to_numeric(declared_share.mask(declared_share == ""), errors="raise")
     frame["AllocationRule"] = frame["transformation_rule"].astype(str).str.strip()
     frame["SourceBalanceRole"] = _normalize_role_column(
         frame,
@@ -433,7 +419,7 @@ def load_source_bucket_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="source-bucket").copy()
     frame["SourceBucket"] = frame["source_code"].astype(str).str.strip()
     frame["BucketGroup"] = frame["target_code"].astype(str).str.strip()
-    frame["BucketOrder"] = pd.to_numeric(frame["weight"], errors="raise")
+    frame["BucketOrder"] = pd.to_numeric(frame["order"], errors="raise")
     return frame
 
 

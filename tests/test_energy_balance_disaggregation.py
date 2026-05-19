@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 
 
@@ -73,8 +75,7 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
                 "target_code": "CPA_C24",
                 "target_label": "Basic metals",
                 "subtarget_code": "",
-                "weight": "",
-                "share": "1",
+                "order": "1",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-concordance",
@@ -101,8 +102,7 @@ def test_read_category_target_mapping_csv_accepts_canonical_schema(tmp_path):
                 "target_code": "CPA_C23",
                 "target_label": "Other non-metallic mineral products",
                 "subtarget_code": "",
-                "weight": "",
-                "share": "1",
+                "order": "2",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-concordance",
@@ -147,8 +147,7 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
                 "target_code": "CPA_C24",
                 "target_label": "Basic metals",
                 "subtarget_code": "",
-                "weight": "",
-                "share": "1",
+                "order": "1",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-concordance",
@@ -175,8 +174,7 @@ def test_read_category_mapping_frame_exposes_target_codes_and_rules(tmp_path):
                 "target_code": "CPA_C23",
                 "target_label": "Other non-metallic mineral products",
                 "subtarget_code": "",
-                "weight": "",
-                "share": "1",
+                "order": "2",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-concordance",
@@ -222,8 +220,7 @@ def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
                 "target_code": "Group",
                 "target_label": "Group",
                 "subtarget_code": "",
-                "weight": "2",
-                "share": "",
+                "order": "2",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-taxonomy",
@@ -250,8 +247,7 @@ def test_read_source_bucket_mapping_preserves_declared_order(tmp_path):
                 "target_code": "Group",
                 "target_label": "Group",
                 "subtarget_code": "",
-                "weight": "1",
-                "share": "",
+                "order": "1",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-taxonomy",
@@ -342,8 +338,7 @@ def test_read_product_source_mapping_groups_codes_by_bucket(tmp_path):
                 "target_code": "Source A",
                 "target_label": "Source A",
                 "subtarget_code": "",
-                "weight": "",
-                "share": "",
+                "order": "1",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-classification",
@@ -370,8 +365,7 @@ def test_read_product_source_mapping_groups_codes_by_bucket(tmp_path):
                 "target_code": "Source A",
                 "target_label": "Source A",
                 "subtarget_code": "",
-                "weight": "",
-                "share": "",
+                "order": "2",
                 "enabled": "1",
                 "provenance": "methodological",
                 "certainty": "repo-authored-classification",
@@ -645,3 +639,21 @@ def test_build_postgrowth_energy_balance_can_split_single_electricity_row():
     assert green["Renewable waste and mixed waste"] == 9.0
     assert green["Other Renewables"] == 10.0
     assert green["Total_energy_GWh"] == 41.0
+
+
+def test_energy_balance_mapping_covers_cached_nrg_bal_codes():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    mapping_path = repo_root / "scripts" / "mappings" / "energy_balance_to_cpa65_products_mapping.csv"
+    metadata_path = next((repo_root / "data" / "eurostat" / "nrg_bal_c").glob("*/raw.json"))
+
+    mapping = pd.read_csv(mapping_path, dtype=str).fillna("")
+    with metadata_path.open("r", encoding="utf-8") as handle:
+        metadata = json.load(handle)
+
+    nrg_bal_dim = metadata["dimension"]["nrg_bal"]["category"]["label"]
+    official_codes = set(map(str, nrg_bal_dim.keys()))
+    mapped_codes = set(mapping["source_code"].astype(str).str.strip())
+
+    assert official_codes.issubset(mapped_codes)
