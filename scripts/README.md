@@ -12,7 +12,7 @@ This directory contains the reproducible workflow used to generate the PostGrowt
 | `split_eurostat_energy_by_exiobase.py` | Split Eurostat IO energy sectors using EXIO profiles, run local/global balancing, and emit diagnostics. |
 | `pipelines/split_energy_balances_65CPAproducts_aggregate_energy_sources.sh` | Legacy-named end-to-end shell entrypoint for the direct-mapped energy-balance workbook export to the repo's 65-product CPA-based IO targets. |
 | `pipelines/at_2021_energy_green_brown.sh` | End-to-end shell entrypoint for split-and-reaggregate Eurostat IO workbooks; despite the filename it accepts `EUROSTAT_TIME` and works for 2020 and 2021. |
-| `pipelines/at_2021_fuels.sh` | Canonical 2021 fuels entrypoint: split the selected Eurostat CPA sectors with local balancing, then export both disaggregated and reaggregated TOTAL / DOM / IMP workbooks. |
+| `pipelines/at_2021_fuels.sh` | Canonical 2021 fuels entrypoint: split the selected Eurostat CPA sectors with local balancing, generate the identity pass at runtime, then export both disaggregated and reaggregated TOTAL / DOM / IMP workbooks. |
 | `pipelines/export_postgrowth_inputs.sh` | One-command wrapper that exports the current PostGrowth input set into the sibling PostGrowth repo. |
 | `diagnostics/` | Targeted one-off diagnostics used to inspect mapping details, CO2 mappings, and outliers. |
 
@@ -105,25 +105,23 @@ By default this writes:
 
 `mapped_output_consistency.csv` is diagnostic, not an additional balancing target. The hard gate checks total-scale consistency between mapped EXIO producer output and the Eurostat product-use reference; the per-sector comparison is preserved as an audit artifact because the EXIO-to-CPA bridge is approximate by construction.
 
-### 5. Export workbook-driven fuels IO workbooks
+### 5. Export canonical fuels IO workbooks
 
-Save the sheet-driven workbook to a normal file first, then run:
+No workbook input is needed to generate the mapping files for the fuels workflows. The identity pass is synthesized from the split-stage artifacts at runtime, and the workbook template is only used for the exported SFC workbook itself.
 
 ```bash
 cd /home/agilra/EcolEconModels/MRIO
-WORKBOOK_XLSX=/absolute/path/to/IO_Exiobase_Sector_Disaggregation.xlsx \
-WORKBOOK_SHEET=Step2_Reaggregation \
 TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx \
 bash scripts/pipelines/at_2021_fuels.sh
 ```
 
 This writes three families under `outputs/`:
 
-- the generated workbook-driven mapping CSVs: split, identity, and reaggregation
 - split flow tables plus disaggregated TOTAL / DOM / IMP workbooks with `_fuels_split` in the filename
 - reaggregated TOTAL / DOM / IMP workbooks with `_fuels_reaggregated` in the filename
+- a temporary identity CSV that is generated from the split-stage `exio_selected_sectors.json` files and deleted automatically when the wrapper exits
 
-The workbook selects which Eurostat CPA sectors are split from column 1 of `Step2_Reaggregation`, but the actual EXIO constituents are always taken from `exio_to_eurostat_cpa.csv`. The generator is fail-fast: if any sheet row does not resolve cleanly, or any enabled split subsector is not explicitly covered by the workbook sheet, generation stops with an error instead of writing partial outputs.
+The fuels pipeline no longer needs a workbook to author mapping CSVs. The split pass is driven by the committed split CSV, and the identity mapping is synthesized from split-stage artifacts at runtime so the workbook export stays reproducible without checking in an extra identity CSV.
 
 ## Notes on Reproducibility
 

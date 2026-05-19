@@ -4,27 +4,19 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import re
 
 
 CANONICAL_DICTIONARY_COLUMNS: tuple[str, ...] = (
     "code",
     "label",
-    "parent_code",
-    "can_be_source",
-    "can_be_target",
-    "can_be_split",
-    "active",
+    "description",
 )
 
 CANONICAL_MAPPING_COLUMNS: tuple[str, ...] = (
-    "mapping_set",
     "source_code",
     "source_label",
     "target_code",
     "target_label",
-    "subtarget_code",
-    "subtarget_label",
     "weight",
     "enabled",
     "notes",
@@ -62,10 +54,6 @@ def _normalized_text(value: object) -> str:
     return " ".join(str(value).strip().split())
 
 
-def _label_key(value: object) -> str:
-    return re.sub(r"[^a-z0-9]+", "", _normalized_text(value).casefold())
-
-
 def _split_code_prefixed_label(value: object) -> tuple[str, str]:
     text = _normalized_text(value)
     if not text:
@@ -84,13 +72,8 @@ def load_sector_dictionary(path: str | Path) -> pd.DataFrame:
     frame = _read_frame(dictionary_path)
     _require_columns(frame, CANONICAL_DICTIONARY_COLUMNS, path=dictionary_path)
 
-    for column in ("code", "label"):
+    for column in ("code", "label", "description"):
         frame[column] = frame[column].map(_normalized_text)
-    frame["parent_code"] = frame["parent_code"].map(_normalized_text)
-    frame["can_be_source"] = frame["can_be_source"].map(lambda value: _parse_bool(value, column="can_be_source", required=True))
-    frame["can_be_target"] = frame["can_be_target"].map(lambda value: _parse_bool(value, column="can_be_target", required=True))
-    frame["can_be_split"] = frame["can_be_split"].map(lambda value: _parse_bool(value, column="can_be_split", required=True))
-    frame["active"] = frame["active"].map(lambda value: _parse_bool(value, column="active", required=True))
 
     if (frame["code"] == "").any():
         raise ValueError(f"Canonical dictionary {dictionary_path} contains blank codes.")
@@ -101,11 +84,6 @@ def load_sector_dictionary(path: str | Path) -> pd.DataFrame:
     if duplicated_codes:
         sample = sorted(dict.fromkeys(duplicated_codes))[:8]
         raise ValueError(f"Canonical dictionary {dictionary_path} contains duplicate codes: {sample!r}")
-
-    if not (frame[["can_be_source", "can_be_target", "can_be_split"]].any(axis=1)).all():
-        raise ValueError(
-            f"Canonical dictionary {dictionary_path} contains rows that are disabled for every mapping role."
-        )
 
     return frame.loc[:, CANONICAL_DICTIONARY_COLUMNS].copy()
 
@@ -148,23 +126,25 @@ def _validate_code_and_label(
 
 def load_canonical_mapping_frame(
     path: str | Path,
-    dictionary_path: str | Path,
+    source_dictionary_path: str | Path,
     *,
+    target_dictionary_path: str | Path | None = None,
+    validate_target_codes: bool = True,
     require_weight: bool = True,
 ) -> pd.DataFrame:
     mapping_path = Path(path)
     frame = _read_frame(mapping_path)
     _require_columns(frame, CANONICAL_MAPPING_COLUMNS, path=mapping_path)
 
-    dictionary = load_sector_dictionary(dictionary_path)
-    lookup = _dictionary_lookup(dictionary)
-    frame["mapping_set"] = frame["mapping_set"].map(_normalized_text)
+    source_dictionary = load_sector_dictionary(source_dictionary_path)
+    target_dictionary = load_sector_dictionary(target_dictionary_path or source_dictionary_path)
+    source_lookup = _dictionary_lookup(source_dictionary)
+    target_lookup = _dictionary_lookup(target_dictionary)
+
     frame["source_code"] = frame["source_code"].map(_normalized_text)
     frame["source_label"] = frame["source_label"].map(_normalized_text)
     frame["target_code"] = frame["target_code"].map(_normalized_text)
     frame["target_label"] = frame["target_label"].map(_normalized_text)
-    frame["subtarget_code"] = frame["subtarget_code"].map(_normalized_text)
-    frame["subtarget_label"] = frame["subtarget_label"].map(_normalized_text)
     frame["notes"] = frame["notes"].map(_normalized_text)
     frame["enabled"] = frame["enabled"].map(lambda value: _parse_bool(value, column="enabled", required=True))
 
@@ -173,26 +153,18 @@ def load_canonical_mapping_frame(
     elif (frame["weight"].astype(str).str.strip() != "").any():
         frame["weight"] = pd.to_numeric(frame["weight"], errors="raise")
 
-    if (frame["mapping_set"] == "").any():
-        raise ValueError(f"Canonical mapping CSV {mapping_path} contains blank mapping_set values.")
     if (frame["source_code"] == "").any() or (frame["target_code"] == "").any():
         raise ValueError(f"Canonical mapping CSV {mapping_path} contains blank source or target codes.")
 
+    duplicated_sources = frame[frame.duplicated(subset=["source_code"], keep=False)]["source_code"].tolist()
+    if duplicated_sources:
+        sample = sorted(dict.fromkeys(duplicated_sources))[:8]
+        raise ValueError(f"Canonical mapping CSV {mapping_path} contains duplicate source codes: {sample!r}")
+
     for row_number, row in enumerate(frame.itertuples(index=False), start=2):
-        source_row = lookup.get(str(row.source_code))
-        target_row = lookup.get(str(row.target_code))
+        source_row = source_lookup.get(str(row.source_code))
         if source_row is None:
             raise ValueError(f"{mapping_path} row {row_number}: unknown source code {row.source_code!r}.")
-        if target_row is None:
-            raise ValueError(f"{mapping_path} row {row_number}: unknown target code {row.target_code!r}.")
-        if not bool(source_row.active):
-            raise ValueError(f"{mapping_path} row {row_number}: inactive source code {row.source_code!r}.")
-        if not bool(target_row.active):
-            raise ValueError(f"{mapping_path} row {row_number}: inactive target code {row.target_code!r}.")
-        if not bool(source_row.can_be_source):
-            raise ValueError(f"{mapping_path} row {row_number}: source code {row.source_code!r} is not allowed as a source.")
-        if not bool(target_row.can_be_target):
-            raise ValueError(f"{mapping_path} row {row_number}: target code {row.target_code!r} is not allowed as a target.")
         _validate_code_and_label(
             dictionary_row=source_row,
             code=row.source_code,
@@ -201,44 +173,31 @@ def load_canonical_mapping_frame(
             row_number=row_number,
             field="source",
         )
-        _validate_code_and_label(
-            dictionary_row=target_row,
-            code=row.target_code,
-            label=row.target_label,
-            path=mapping_path,
-            row_number=row_number,
-            field="target",
-        )
-        if row.subtarget_code:
-            subtarget_row = lookup.get(str(row.subtarget_code))
-            if subtarget_row is None:
-                raise ValueError(f"{mapping_path} row {row_number}: unknown subtarget code {row.subtarget_code!r}.")
-            if not bool(subtarget_row.active):
-                raise ValueError(f"{mapping_path} row {row_number}: inactive subtarget code {row.subtarget_code!r}.")
-            if not bool(subtarget_row.can_be_split):
-                raise ValueError(
-                    f"{mapping_path} row {row_number}: subtarget code {row.subtarget_code!r} is not allowed as a split code."
-                )
+
+        if validate_target_codes:
+            target_row = target_lookup.get(str(row.target_code))
+            if target_row is None:
+                raise ValueError(f"{mapping_path} row {row_number}: unknown target code {row.target_code!r}.")
             _validate_code_and_label(
-                dictionary_row=subtarget_row,
-                code=row.subtarget_code,
-                label=row.subtarget_label,
+                dictionary_row=target_row,
+                code=row.target_code,
+                label=row.target_label,
                 path=mapping_path,
                 row_number=row_number,
-                field="subtarget",
+                field="target",
             )
 
-    duplicates = frame[frame.duplicated(subset=["mapping_set", "source_code", "target_code", "subtarget_code"], keep=False)]
+    duplicates = frame[frame.duplicated(subset=["source_code", "target_code"], keep=False)]
     if not duplicates.empty:
-        sample = duplicates.loc[:, ["mapping_set", "source_code", "target_code", "subtarget_code"]].head(8).to_dict(orient="records")
+        sample = duplicates.loc[:, ["source_code", "target_code"]].head(8).to_dict(orient="records")
         raise ValueError(f"Canonical mapping CSV {mapping_path} contains duplicate edges: {sample!r}")
 
     if require_weight:
         active = frame[frame["enabled"]].copy()
-        grouped = active.groupby(["mapping_set", "source_code"], sort=False)["weight"].sum()
+        grouped = active.groupby(["source_code"], sort=False)["weight"].sum()
         bad = grouped[(grouped - 1.0).abs() > 1e-9]
         if not bad.empty:
-            sample = ", ".join(f"{mapping_set}/{source_code}={float(total):.6g}" for (mapping_set, source_code), total in bad.head(8).items())
+            sample = ", ".join(f"{source_code}={float(total):.6g}" for source_code, total in bad.head(8).items())
             raise ValueError(f"Canonical mapping CSV {mapping_path} has weight-sum drift: {sample}")
 
     return frame.loc[:, [column for column in CANONICAL_MAPPING_COLUMNS if column in frame.columns]].copy()
@@ -255,9 +214,7 @@ def validate_canonical_chain(
     split_active = split_frame[split_frame["enabled"]].copy()
     reaggregation_active = reaggregation_frame[reaggregation_frame["enabled"]].copy()
 
-    split_codes = set(code for code in split_active["subtarget_code"].tolist() if str(code).strip())
-    if not split_codes:
-        split_codes = set(split_active["target_code"].tolist())
+    split_codes = set(split_active["target_code"].tolist())
     reaggregation_sources = set(reaggregation_active["source_code"].tolist())
     missing = sorted(split_codes - reaggregation_sources)
     if missing:
@@ -269,37 +226,40 @@ def validate_canonical_chain(
 
 def read_canonical_split_mapping(
     path: str | Path,
-    dictionary_path: str | Path,
+    source_dictionary_path: str | Path,
+    target_dictionary_path: str | Path | None = None,
 ) -> dict[str, list[str]] | dict[str, dict[str, list[str]]]:
-    frame = load_canonical_mapping_frame(path, dictionary_path)
+    frame = load_canonical_mapping_frame(
+        path,
+        source_dictionary_path,
+        target_dictionary_path=target_dictionary_path,
+        validate_target_codes=True,
+    )
     active = frame[frame["enabled"]].copy()
     active = active[(active["target_code"] != "") & (active["source_code"] != "")]
-    dictionary = load_sector_dictionary(dictionary_path)
-    lookup = _dictionary_lookup(dictionary)
+    source_dictionary = load_sector_dictionary(source_dictionary_path)
+    source_lookup = _dictionary_lookup(source_dictionary)
 
-    if active["subtarget_code"].astype(str).str.strip().eq("").all():
-        out_simple: dict[str, list[str]] = {}
-        for target_code, group in active.groupby("target_code", sort=False):
-            out_simple[str(target_code)] = [
-                str(lookup[str(source_code)].label) for source_code in group["source_code"].tolist()
-            ]
-        return out_simple
-
-    out_grouped: dict[str, dict[str, list[str]]] = {}
-    for target_code, target_group in active.groupby("target_code", sort=False):
-        sub_dict: dict[str, list[str]] = {}
-        for subsector_code, subsector_group in target_group.groupby("subtarget_code", sort=False):
-            key = str(lookup[str(subsector_code)].label).strip() if str(subsector_code).strip() else str(lookup[str(target_code)].label)
-            sub_dict[key] = [str(lookup[str(source_code)].label) for source_code in subsector_group["source_code"].tolist()]
-        out_grouped[str(target_code)] = sub_dict
-    return out_grouped
+    out_simple: dict[str, list[str]] = {}
+    for target_code, group in active.groupby("target_code", sort=False):
+        target_name = _normalized_text(group.iloc[0]["target_label"])
+        out_simple[target_name] = [
+            str(source_lookup[str(source_code)].label) for source_code in group["source_code"].tolist()
+        ]
+    return out_simple
 
 
 def read_canonical_aggregation_mapping(
     path: str | Path,
-    dictionary_path: str | Path,
+    source_dictionary_path: str | Path,
+    target_dictionary_path: str | Path | None = None,
 ) -> tuple[dict[str, str], pd.DataFrame]:
-    frame = load_canonical_mapping_frame(path, dictionary_path)
+    frame = load_canonical_mapping_frame(
+        path,
+        source_dictionary_path,
+        target_dictionary_path=target_dictionary_path,
+        validate_target_codes=False,
+    )
     active = frame[frame["enabled"]].copy()
     active = active[(active["source_code"] != "") & (active["target_code"] != "")]
     dictionary = load_sector_dictionary(dictionary_path)
@@ -308,7 +268,7 @@ def read_canonical_aggregation_mapping(
     mapping: dict[str, str] = {}
     for row in active.itertuples(index=False):
         source_code = str(lookup[str(row.source_code)].label)
-        target_code = str(lookup[str(row.target_code)].label)
+        target_code = _normalized_text(row.target_label)
         if source_code in mapping and mapping[source_code] != target_code:
             raise ValueError(
                 f"Canonical aggregation mapping maps {source_code!r} to multiple targets: "
@@ -318,5 +278,5 @@ def read_canonical_aggregation_mapping(
 
     returned = active.copy()
     returned["from_sector"] = returned["source_code"].map(lambda code: str(lookup[str(code)].label))
-    returned["to_sector"] = returned["target_code"].map(lambda code: str(lookup[str(code)].label))
+    returned["to_sector"] = returned["target_label"].map(_normalized_text)
     return mapping, returned

@@ -48,12 +48,22 @@ def _is_canonical_mapping_csv(path: str | Path) -> bool:
         header = pd.read_csv(path, nrows=0)
     except Exception:
         return False
-    required = {"mapping_set", "source_code", "target_code", "enabled"}
+    required = {"source_code", "source_label", "target_code", "target_label", "weight", "enabled", "notes"}
     return required.issubset(set(header.columns))
 
 
-def _canonical_dictionary_path(mapping_csv: str | Path) -> Path:
-    return Path(mapping_csv).resolve().parent / "sector_dictionary.csv"
+def _canonical_source_dictionary_path(mapping_csv: str | Path, classification: str) -> Path:
+    base = Path(mapping_csv).resolve().parent
+    if classification == "industry":
+        return base / "exiobase_industries_dictionary.csv"
+    return base / "exiobase_products_dictionary.csv"
+
+
+def _canonical_target_dictionary_path(mapping_csv: str | Path, classification: str) -> Path:
+    base = Path(mapping_csv).resolve().parent
+    if classification == "industry":
+        return base / "eurostat_nace_rev_2_1_industries_dictionary.csv"
+    return base / "eurostat_cpa65_products_dictionary.csv"
 
 
 def _write_df_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
@@ -1575,6 +1585,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     p = argparse.ArgumentParser(description="Aggregate (re-group) an IO table (Z,Y) using the canonical annotated mapping CSV format.")
     p.add_argument("--verbose", action="store_true")
+    p.add_argument(
+        "--classification",
+        choices=["product", "industry"],
+        default="product",
+        help="Choose the source/target dictionary pair for the canonical mapping CSV.",
+    )
 
     p.add_argument("--mapping-csv", required=True, help="Canonical annotated aggregation mapping CSV.")
 
@@ -1628,7 +1644,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if _is_canonical_mapping_csv(args.mapping_csv):
-        mapping, mapping_df = read_canonical_aggregation_mapping(args.mapping_csv, _canonical_dictionary_path(args.mapping_csv))
+        mapping, mapping_df = read_canonical_aggregation_mapping(
+            args.mapping_csv,
+            _canonical_source_dictionary_path(args.mapping_csv, args.classification),
+            _canonical_target_dictionary_path(args.mapping_csv, args.classification),
+        )
     else:
         mapping, mapping_df = read_aggregation_mapping(args.mapping_csv)
 

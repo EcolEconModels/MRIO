@@ -97,6 +97,70 @@ def test_read_split_mapping(tmp_path: Path) -> None:
     assert mapping["CPA_D"]["Electricity generation"] == ["Electricity by coal", "Electricity by gas"]
 
 
+def test_read_split_mapping_expands_manifest_with_exio_mapping(tmp_path: Path) -> None:
+    from ecolecon_mrio.mapping_csv import load_split_manifest_frame, read_split_mapping
+
+    eurostat_dictionary = tmp_path / "eurostat_cpa65_products_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "CPA_C19", "label": "Coke and refined petroleum products", "description": "Eurostat"},
+            {"code": "CPA_D", "label": "Electricity, gas, steam and air conditioning", "description": "Eurostat"},
+        ]
+    ).to_csv(eurostat_dictionary, index=False)
+
+    exio_dictionary = tmp_path / "exiobase_products_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "p23.1", "label": "Coke oven products", "description": "EXIO"},
+            {"code": "p23.2", "label": "Refined Petroleum", "description": "EXIO"},
+            {"code": "p40.11.a", "label": "Electricity by coal", "description": "EXIO"},
+            {"code": "p40.11.b", "label": "Electricity by gas", "description": "EXIO"},
+        ]
+    ).to_csv(exio_dictionary, index=False)
+
+    manifest = tmp_path / "split_manifest.csv"
+    pd.DataFrame(
+        [
+            {"source_code": "CPA_C19", "source_label": "Coke and refined petroleum products"},
+            {"source_code": "CPA_D", "source_label": "Electricity, gas, steam and air conditioning"},
+        ]
+    ).to_csv(manifest, index=False)
+
+    exio_mapping = tmp_path / "exio_to_eurostat_cpa_products.csv"
+    rows = []
+    for source_code, source_label, target_code, target_label in [
+        ("p23.1", "Coke oven products", "CPA_C19", "Coke and refined petroleum products"),
+        ("p23.2", "Refined Petroleum", "CPA_C19", "Coke and refined petroleum products"),
+        ("p40.11.a", "Electricity by coal", "CPA_D", "Electricity, gas, steam and air conditioning"),
+        ("p40.11.b", "Electricity by gas", "CPA_D", "Electricity, gas, steam and air conditioning"),
+    ]:
+        row = _canonical_base("weighted")
+        row.update(
+            {
+                "source_key": source_label,
+                "source_code": source_code,
+                "source_label": source_label,
+                "target_key": target_code,
+                "target_code": target_code,
+                "target_label": target_label,
+                "weight": "1.0",
+            }
+        )
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(exio_mapping, index=False)
+
+    frame = load_split_manifest_frame(manifest, eurostat_dictionary)
+    mapping = read_split_mapping(
+        manifest,
+        exio_to_eurostat_mapping_csv=exio_mapping,
+        source_dictionary_path=eurostat_dictionary,
+        target_dictionary_path=eurostat_dictionary,
+    )
+
+    assert list(frame["source_code"]) == ["CPA_C19", "CPA_D"]
+    assert mapping == {"CPA_C19": ["p23.1", "p23.2"], "CPA_D": ["p40.11.a", "p40.11.b"]}
+
+
 def test_read_aggregation_mapping(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_aggregation_mapping_frame, read_aggregation_mapping
 

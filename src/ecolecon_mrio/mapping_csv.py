@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.canonical_mapping_csv import load_sector_dictionary
+
 
 MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "kind",
@@ -55,6 +57,11 @@ TARGET_SECTOR_ROLES: frozenset[str] = frozenset(
     }
 )
 
+SPLIT_SECTOR_MANIFEST_COLUMNS: tuple[str, ...] = (
+    "source_code",
+    "source_label",
+)
+
 
 def _parse_boolish(x: object) -> bool:
     if x is None or (isinstance(x, float) and np.isnan(x)):
@@ -78,6 +85,14 @@ def _parse_required_boolish(x: object, *, column: str) -> bool:
     if s == "":
         raise ValueError(f"Mapping CSV requires an explicit boolean value in {column!r}.")
     return _parse_boolish(s)
+
+
+def _normalize_text(value: object) -> str:
+    return " ".join(str(value).strip().split())
+
+
+def _dictionary_lookup(dictionary: pd.DataFrame) -> dict[str, pd.Series]:
+    return {str(row.code): row for row in dictionary.itertuples(index=False)}
 
 
 def _normalize_role_column(
@@ -178,26 +193,170 @@ def load_split_mapping_frame(path: str | Path) -> pd.DataFrame:
     return frame
 
 
+def load_split_manifest_frame(
+    path: str | Path,
+    source_dictionary_path: str | Path,
+) -> pd.DataFrame:
+    manifest_path = Path(path)
+    frame = pd.read_csv(manifest_path, dtype=str).fillna("")
+    missing = [column for column in ("source_code",) if column not in frame.columns]
+    if missing:
+        raise ValueError(f"Split manifest CSV {manifest_path} missing required columns: {missing}")
+
+    source_dictionary = load_sector_dictionary(source_dictionary_path)
+    lookup = _dictionary_lookup(source_dictionary)
+
+    frame["source_code"] = frame["source_code"].map(_normalize_text)
+    if "source_label" not in frame.columns:
+        frame["source_label"] = ""
+    frame["source_label"] = frame["source_label"].map(_normalize_text)
+
+    if (frame["source_code"] == "").any():
+        raise ValueError(f"Split manifest CSV {manifest_path} contains blank source codes.")
+
+    duplicated = frame[frame.duplicated(subset=["source_code"], keep=False)]["source_code"].tolist()
+    if duplicated:
+        sample = sorted(dict.fromkeys(duplicated))[:8]
+        raise ValueError(f"Split manifest CSV {manifest_path} contains duplicate source codes: {sample!r}")
+
+    validated_labels: list[str] = []
+    for row_number, row in enumerate(frame.itertuples(index=False), start=2):
+        dictionary_row = lookup.get(str(row.source_code))
+        if dictionary_row is None:
+            raise ValueError(f"{manifest_path} row {row_number}: unknown source code {row.source_code!r}.")
+        expected_label = _normalize_text(dictionary_row.label)
+        observed_label = _normalize_text(row.source_label)
+        if observed_label and observed_label != expected_label:
+            raise ValueError(
+                f"{manifest_path} row {row_number}: source label mismatch for {row.source_code!r}, "
+                f"expected {expected_label!r}, got {observed_label!r}."
+            )
+        validated_labels.append(expected_label)
+
+    frame["source_label"] = validated_labels
+    return frame.loc[:, list(SPLIT_SECTOR_MANIFEST_COLUMNS)].copy()
+
+
 def read_split_mapping(
     path: str | Path,
+    *,
+    exio_to_eurostat_mapping_csv: str | Path | None = None,
+    source_dictionary_path: str | Path | None = None,
+    target_dictionary_path: str | Path | None = None,
 ) -> dict[str, list[str]] | dict[str, dict[str, list[str]]]:
-    frame = load_split_mapping_frame(path)
-    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
-    frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
+    path = Path(path)
+    header = pd.read_csv(path, nrows=0)
+    columns = set(header.columns)
 
-    if "subtarget_key" not in frame.columns:
-        out_simple: dict[str, list[str]] = {}
-        for aggregate_sector, group in frame.groupby("aggregate_sector", sort=False):
-            out_simple[str(aggregate_sector)] = list(map(str, group["exio_sector"].tolist()))
-        return out_simple
+    if {"target_key", "source_key"}.issubset(columns):
+        frame = load_split_mapping_frame(path)
+        frame = frame[frame["enabled"].map(_parse_boolish)].copy()
+        frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
 
-    out_grouped: dict[str, dict[str, list[str]]] = {}
-    for aggregate_sector, aggregate_group in frame.groupby("aggregate_sector", sort=False):
-        sub_dict: dict[str, list[str]] = {}
-        for subsector, subsector_group in aggregate_group.groupby("subsector", sort=False):
-            sub_dict[str(subsector)] = list(map(str, subsector_group["exio_sector"].tolist()))
-        out_grouped[str(aggregate_sector)] = sub_dict
-    return out_grouped
+        if "subtarget_key" not in frame.columns:
+            out_simple: dict[str, list[str]] = {}
+            for aggregate_sector, group in frame.groupby("aggregate_sector", sort=False):
+                out_simple[str(aggregate_sector)] = list(map(str, group["exio_sector"].tolist()))
+            return out_simple
+
+        out_grouped: dict[str, dict[str, list[str]]] = {}
+        for aggregate_sector, aggregate_group in frame.groupby("aggregate_sector", sort=False):
+            sub_dict: dict[str, list[str]] = {}
+            for subsector, subsector_group in aggregate_group.groupby("subsector", sort=False):
+                sub_dict[str(subsector)] = list(map(str, subsector_group["exio_sector"].tolist()))
+            out_grouped[str(aggregate_sector)] = sub_dict
+        return out_grouped
+
+    if "source_code" not in columns:
+        raise ValueError(f"Split mapping CSV {path} must include either 'source_key' or 'source_code' columns.")
+    if exio_to_eurostat_mapping_csv is None:
+        raise ValueError(
+            f"Split mapping CSV {path} contains only sector codes; provide exio_to_eurostat_mapping_csv to expand it."
+        )
+
+    source_dictionary = source_dictionary_path or (path.parent / "eurostat_cpa65_products_dictionary.csv")
+    target_dictionary = target_dictionary_path or source_dictionary
+    manifest = load_split_manifest_frame(path, source_dictionary)
+    exio_dictionary = load_sector_dictionary(path.parent / "exiobase_products_dictionary.csv")
+    exio_lookup = _dictionary_lookup(exio_dictionary)
+    target_lookup = _dictionary_lookup(load_sector_dictionary(target_dictionary))
+
+    weighted_frame = pd.read_csv(exio_to_eurostat_mapping_csv, dtype=str).fillna("")
+    required = {"source_code", "source_label", "target_code", "target_label"}
+    missing = required - set(weighted_frame.columns)
+    if missing:
+        raise ValueError(
+            f"EXIO-to-Eurostat mapping CSV {exio_to_eurostat_mapping_csv} missing required columns: {sorted(missing)!r}"
+        )
+
+    weighted_frame["source_code"] = weighted_frame["source_code"].map(_normalize_text)
+    weighted_frame["source_label"] = weighted_frame["source_label"].map(_normalize_text)
+    weighted_frame["target_code"] = weighted_frame["target_code"].map(_normalize_text)
+    weighted_frame["target_label"] = weighted_frame["target_label"].map(_normalize_text)
+    if "enabled" in weighted_frame.columns:
+        weighted_frame = weighted_frame[weighted_frame["enabled"].map(_parse_boolish)].copy()
+
+    requested_targets = set(manifest["source_code"].tolist())
+    selected = weighted_frame[weighted_frame["target_code"].isin(requested_targets)].copy()
+    if selected.empty:
+        raise ValueError(
+            f"Split manifest {path} refers to sectors missing from {exio_to_eurostat_mapping_csv}: {sorted(requested_targets)!r}"
+        )
+
+    selected_missing = sorted(requested_targets - set(selected["target_code"].tolist()))
+    if selected_missing:
+        raise ValueError(
+            f"Split manifest {path} refers to sectors missing from {exio_to_eurostat_mapping_csv}: {selected_missing[:8]!r}"
+        )
+
+    out: dict[str, list[str]] = {}
+    for target_code, group in selected.groupby("target_code", sort=False):
+        target_row = target_lookup.get(str(target_code))
+        if target_row is None:
+            raise ValueError(
+                f"{exio_to_eurostat_mapping_csv}: unknown target code {target_code!r} for split expansion."
+            )
+        expected_target_label = _normalize_text(target_row.label)
+        observed_target_label = _normalize_text(group.iloc[0]["target_label"])
+        if observed_target_label != expected_target_label:
+            raise ValueError(
+                f"{exio_to_eurostat_mapping_csv}: target label mismatch for {target_code!r}, "
+                f"expected {expected_target_label!r}, got {observed_target_label!r}."
+            )
+
+        members: list[str] = []
+        seen: set[str] = set()
+        for row_number, row in enumerate(group.itertuples(index=False), start=2):
+            source_label = _normalize_text(row.source_label)
+            source_code = _normalize_text(row.source_code)
+            if source_code:
+                source_row = exio_lookup.get(source_code)
+                if source_row is None:
+                    raise ValueError(
+                        f"{exio_to_eurostat_mapping_csv} row {row_number}: unknown source code {source_code!r}."
+                    )
+                expected_source_label = _normalize_text(source_row.label)
+                if source_label and source_label != expected_source_label:
+                    raise ValueError(
+                        f"{exio_to_eurostat_mapping_csv} row {row_number}: source label mismatch for {source_code!r}, "
+                        f"expected {expected_source_label!r}, got {source_label!r}."
+                    )
+                sector_label = expected_source_label
+            else:
+                source_row = exio_lookup.get(source_label)
+                if source_row is None:
+                    raise ValueError(
+                        f"{exio_to_eurostat_mapping_csv} row {row_number}: unknown EXIO sector label {source_label!r}."
+                    )
+                sector_label = _normalize_text(source_row.label)
+
+            if sector_label not in seen:
+                seen.add(sector_label)
+                members.append(sector_label)
+
+        out[str(target_code)] = members
+
+    return out
 
 
 def load_aggregation_mapping_frame(path: str | Path) -> pd.DataFrame:
