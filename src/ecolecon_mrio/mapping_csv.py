@@ -9,6 +9,7 @@ from ecolecon_mrio.canonical_mapping_csv import load_sector_dictionary
 
 
 MAPPING_CSV_COLUMNS: tuple[str, ...] = (
+    "order",
     "kind",
     "source_dataset",
     "source_system",
@@ -23,7 +24,6 @@ MAPPING_CSV_COLUMNS: tuple[str, ...] = (
     "target_code",
     "target_label",
     "subtarget_code",
-    "order",
     "enabled",
     "provenance",
     "certainty",
