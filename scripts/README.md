@@ -25,12 +25,12 @@ The workflow depends on the following checked-in concordance files under `script
 | `exio_to_eurostat_cpa.csv` | checked in | Weighted EXIOBASE product to the repo's 65-product CPA-based IO targets, used for mapping diagnostics and Eurostat-sector CO2/intensity outputs. |
 | `exio_energy_split_cpa_with_electricity_source.csv` | checked in | Split map from the two aggregate Eurostat energy sectors to detailed EXIO energy subsectors, preserving electricity-by-source detail. |
 | `exio_energy_split_cpa_no_electricity_source.csv` | checked in | Alternate split map without electricity-by-source detail. |
-| `energy_green_brown_2sector_from_split_subsectors.csv` | checked in | Collapse the detailed split subsectors into the analytical `ENERGY_GREEN` / `ENERGY_BROWN` sectors. |
+| `energy_green_brown_reaggregation.csv` | checked in | Collapse the detailed split subsectors into the analytical `ENERGY_GREEN` / `ENERGY_BROWN` sectors using code keys. |
 | `energy_balance_to_cpa65_products_mapping.csv` | checked in | Legacy filename retained for compatibility; direct-combustion bridge from raw Eurostat energy-balance rows, many of which are defined on the activity side in NACE terms, to the repo's 65-product CPA-based IO targets plus households, including explicit refinery and electricity/heat transformation rows where applicable. |
 | `siec_to_primary_energy_sources.csv` | checked in | Map Eurostat SIEC carriers into the model’s primary-source carrier basis. |
 | `energy_primary_source_buckets.csv` | checked in | Group the primary-source carriers into the analytical brown/green buckets used in the exported workbook. |
 
-The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported, and all checked-in mapping files must carry the full header including `source_balance_role`, `target_sector_role`, and `include_in_direct_energy`.
+The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported, and all checked-in mapping files must carry the full header including `source_balance_role`, `target_sector_role`, and `include_in_direct_energy`. For split and reaggregation tables, `source_code` is the runtime key; labels are descriptive metadata only.
 
 Terminology note: Eurostat's NACE classification is for economic activities, while CPA is for products by activity. The energy-balance bridge in this repo therefore uses NACE only on the source-definition side of some correspondence logic; its operative targets are the repo's 65-product CPA-based IO rows plus households. The retained `nace2` naming in one bridge filename and one shell script path is historical compatibility naming rather than the operative target classification.
 

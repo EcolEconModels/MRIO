@@ -267,9 +267,7 @@ def read_weighted_mapping(
 def load_split_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="split").copy()
     frame["aggregate_sector"] = frame["target_code"].astype(str).str.strip()
-    frame["subsector"] = frame["source_label"].astype(str).str.strip()
-    blank_subsectors = frame["subsector"] == ""
-    frame.loc[blank_subsectors, "subsector"] = frame.loc[blank_subsectors, "source_code"].astype(str).str.strip()
+    frame["subsector"] = frame["source_code"].astype(str).str.strip()
     frame["exio_sector"] = frame["source_code"].astype(str).str.strip()
     return frame
 

@@ -124,6 +124,8 @@ These files are narrower helper tables used by the split/reaggregation pipelines
 - `scripts/mappings/energy_green_brown_reaggregation.csv`
   - columns: `source_code`, `source_label`, `target_code`, `target_label`, `weight`, `enabled`, `notes`
 
+For these tables, `source_code` and `target_code` are the operational keys used by the loaders. The label columns are carried only as descriptive metadata.
+
 These tables are intentionally small; they are not the same schema as the full canonical mapping files.
 
 ### 4. Dictionary Files

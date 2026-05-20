@@ -156,8 +156,7 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
 
     assert "C19" not in res.Z.index
     assert "D35" not in res.Z.index
-    assert any(s.startswith("C19::") for s in res.Z.index)
-    assert any(s.startswith("D35::") for s in res.Z.index)
+    assert len(res.Z.index) > len(euro_sectors)
 
     assert res.exio_quantity_and_price is not None
     assert set(res.exio_quantity_and_price["exio_sector"]) == set(exio_sectors)
@@ -336,10 +335,10 @@ def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
     )
 
     assert res.balancing_method == "DONOR_BLOCK"
-    assert res.Z.loc["A::a1", "B::b1"] == pytest.approx(90.0)
-    assert res.Z.loc["A::a1", "B::b2"] == pytest.approx(10.0)
-    assert res.Z.loc["A::a2", "B::b1"] == pytest.approx(10.0)
-    assert res.Z.loc["A::a2", "B::b2"] == pytest.approx(90.0)
+    assert res.Z.loc["a1", "b1"] == pytest.approx(90.0)
+    assert res.Z.loc["a1", "b2"] == pytest.approx(10.0)
+    assert res.Z.loc["a2", "b1"] == pytest.approx(10.0)
+    assert res.Z.loc["a2", "b2"] == pytest.approx(90.0)
 
 
 def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
@@ -387,10 +386,10 @@ def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
         create_io_system=False,
     )
 
-    assert res.Z.loc["U", "A::a1"] == pytest.approx(90.0)
-    assert res.Z.loc["U", "A::a2"] == pytest.approx(10.0)
-    assert res.Z.loc["V", "A::a1"] == pytest.approx(10.0)
-    assert res.Z.loc["V", "A::a2"] == pytest.approx(90.0)
+    assert res.Z.loc["U", "a1"] == pytest.approx(90.0)
+    assert res.Z.loc["U", "a2"] == pytest.approx(10.0)
+    assert res.Z.loc["V", "a1"] == pytest.approx(10.0)
+    assert res.Z.loc["V", "a2"] == pytest.approx(90.0)
 
 
 def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
@@ -430,10 +429,10 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
         create_io_system=False,
     )
 
-    assert res.Y.loc["A::a1", "P3"] == pytest.approx(90.0)
-    assert res.Y.loc["A::a2", "P3"] == pytest.approx(10.0)
-    assert res.Y.loc["A::a1", "P6"] == pytest.approx(10.0)
-    assert res.Y.loc["A::a2", "P6"] == pytest.approx(90.0)
+    assert res.Y.loc["a1", "P3"] == pytest.approx(90.0)
+    assert res.Y.loc["a2", "P3"] == pytest.approx(10.0)
+    assert res.Y.loc["a1", "P6"] == pytest.approx(10.0)
+    assert res.Y.loc["a2", "P6"] == pytest.approx(90.0)
 
 
 def test_validate_split_reconstruction_preserves_original_final_demand_columns():

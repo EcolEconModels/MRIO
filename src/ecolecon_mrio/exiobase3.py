@@ -6,6 +6,8 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
+from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
+
 try:
     import pymrio
 except Exception:  # pragma: no cover
@@ -72,6 +74,26 @@ def _compute_region_output_from_mrio(*, Z: pd.DataFrame, Y: pd.DataFrame, region
     x_output = (Z_from_r.sum(axis=1) + Y_from_r.sum(axis=1)).astype("float64")
     x_output.index = x_output.index.astype(str)
     return x_output
+
+
+def _exio_label_to_code_lookup(system: str) -> dict[str, str]:
+    concordance = load_pymrio_exio3_sectors(system=system).sectors
+    return {
+        str(row.ExioName): str(row.ExioCode)
+        for row in concordance.itertuples(index=False)
+        if str(row.ExioName).strip() != "" and str(row.ExioCode).strip() != ""
+    }
+
+
+def _code_index(index: pd.Index, *, label_to_code: dict[str, str]) -> pd.Index:
+    labels = [str(value) for value in index.astype(str)]
+    known_codes = set(label_to_code.values())
+    if all(value in known_codes for value in labels):
+        return pd.Index(labels)
+    missing = [label for label in labels if label not in label_to_code]
+    if missing:
+        raise ValueError(f"Could not map EXIO sector labels to codes: {missing[:10]!r}")
+    return pd.Index([label_to_code[label] for label in labels])
 
 
 def build_exio_region_use_slice_from_mrio(
@@ -230,10 +252,14 @@ def load_exiobase3_region_slice(
             print(f"Loading cached EXIOBASE region slice from {slice_dir} [flow={flow_norm}] ...")
         Z_use = pd.read_pickle(z_path)
         Y_use = pd.read_pickle(y_path)
+        label_to_code = _exio_label_to_code_lookup(system)
+        Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code)
+        Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
+        Y_use.index = _code_index(Y_use.index, label_to_code=label_to_code)
         sectors = pd.Index(Z_use.index.astype(str))
         if x_path.exists():
             x_output = _coerce_single_column_df_to_series(pd.read_pickle(x_path), name="x_region").astype("float64")
-            x_output.index = x_output.index.astype(str)
+            x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
         else:
             if verbose:
                 print(f"Cached slice missing {x_path.name}; rebuilding producer-side output vector ...")
@@ -246,7 +272,11 @@ def load_exiobase3_region_slice(
                 verbose=verbose,
             )
             x_output = _compute_region_output_from_mrio(Z=mrio.Z, Y=mrio.Y, region=region)
-            x_output.to_pickle(x_path)
+            x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
+
+        Z_use.to_pickle(z_path)
+        Y_use.to_pickle(y_path)
+        x_output.to_pickle(x_path)
         return ExioRegionSlice(
             year=year,
             system=system,
@@ -293,6 +323,18 @@ def load_exiobase3_region_slice(
 
     if verbose:
         print(f"Writing EXIOBASE region slice cache to {slice_dir} ...")
+    label_to_code = _exio_label_to_code_lookup(system)
+    slice_obj = ExioRegionSlice(
+        year=slice_obj.year,
+        system=slice_obj.system,
+        region=slice_obj.region,
+        sectors=_code_index(slice_obj.sectors, label_to_code=label_to_code),
+        Z_domestic=slice_obj.Z_domestic.rename(index=label_to_code, columns=label_to_code),
+        Y_region=slice_obj.Y_region.rename(index=label_to_code),
+        x_region=slice_obj.x_region.rename(index=label_to_code),
+        source_zip=slice_obj.source_zip,
+        flow=slice_obj.flow,
+    )
     slice_obj.Z_domestic.to_pickle(z_path)
     slice_obj.Y_region.to_pickle(y_path)
     slice_obj.x_region.to_pickle(x_path)

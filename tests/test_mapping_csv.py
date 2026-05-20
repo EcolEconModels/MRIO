@@ -148,7 +148,7 @@ def test_read_split_mapping_uses_code_columns(tmp_path: Path) -> None:
     frame = load_split_mapping_frame(csv_path)
     mapping = read_split_mapping(csv_path)
     assert set(frame["aggregate_sector"]) == {"CPA_D"}
-    assert mapping == {"CPA_D": {"Electricity by coal": ["p40.11.a"], "Electricity by gas": ["p40.11.b"]}}
+    assert mapping == {"CPA_D": {"p40.11.a": ["p40.11.a"], "p40.11.b": ["p40.11.b"]}}
 
 
 def test_read_split_manifest_uses_exio_to_eurostat_concordance(tmp_path: Path) -> None:

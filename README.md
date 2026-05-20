@@ -78,6 +78,8 @@ This repo includes a reproducible 3-step pipeline to:
 2) Split Eurostat AT 2021 IOT into energy subsectors (batch over `stk_flow`).
 3) Re-aggregate split subsectors into `ENERGY_GREEN` / `ENERGY_BROWN` and write one Eurostat-shaped workbook per `stk_flow`.
 
+The pipeline is code-driven end to end: `source_code` is the runtime key for split and reaggregation mappings, and labels are retained for human readability only.
+
 Recommended entrypoint (no extra dependencies):
 
 ```
