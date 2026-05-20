@@ -21,6 +21,7 @@ EXIO_YEAR="${EXIO_YEAR:-2020}"
 EXIO_REGION="${EXIO_REGION:-$EUROSTAT_GEO}"
 MAPPING_CONSISTENCY_RTOL="${MAPPING_CONSISTENCY_RTOL:-0.2}"
 MAPPING_CONSISTENCY_ATOL="${MAPPING_CONSISTENCY_ATOL:-1e-6}"
+EXPECTED_REAGG_SECTORS="${EXPECTED_REAGG_SECTORS:-}"
 
 GENERATED_MAPPINGS_OUT="${GENERATED_MAPPINGS_OUT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_generated_mappings}"
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_split_flows}"
@@ -63,6 +64,11 @@ CONSISTENCY_ARGS=(
   --mapping-consistency-rtol "$MAPPING_CONSISTENCY_RTOL"
   --mapping-consistency-atol "$MAPPING_CONSISTENCY_ATOL"
 )
+
+EXPECT_ARGS=()
+if [[ -n "$EXPECTED_REAGG_SECTORS" ]]; then
+  EXPECT_ARGS=(--expect-n-sectors "$EXPECTED_REAGG_SECTORS")
+fi
 
 set -x
 
@@ -143,7 +149,7 @@ PY
   --outdir "$OUT_REAGG" \
   --mapping-csv "$REAGG_MAPPING_CSV" \
   --fail-on-unmapped-split-children \
-  --expect-n-sectors 65 \
+  "${EXPECT_ARGS[@]}" \
   --write-sfc-workbook \
   --sfc-template-xlsx "$TEMPLATE_XLSX" \
   --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_reaggregated.xlsx" \

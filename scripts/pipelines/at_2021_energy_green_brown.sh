@@ -94,6 +94,8 @@ fi
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_AGG" \
   --mapping-csv "$MAP_GREEN_BROWN" \
+  --fail-on-unmapped-split-children \
+  --expect-n-sectors 65 \
   --write-sfc-workbook \
   --sfc-template-xlsx "$TEMPLATE_XLSX" \
   --sfc-outname "$SFC_OUTNAME" \
