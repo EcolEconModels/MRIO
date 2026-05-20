@@ -10,9 +10,11 @@ from .constraints import BetaResult, build_constraints, build_constraints_with_c
 from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import (
     load_mrio,
+    load_mrio_matrices,
     ensure_exiobase_year_zip,
     resolve_exiobase_year_dir,
     resolve_exiobase_cache_paths,
+    resolve_exiobase_matrix_cache_paths,
 )
 from .decomposition import decompose_slack_change
 from .diagnostics import (
@@ -136,9 +138,11 @@ from .mapping_csv import (
 
 __all__ = [
     "load_mrio",
+    "load_mrio_matrices",
     "ensure_exiobase_year_zip",
     "resolve_exiobase_year_dir",
     "resolve_exiobase_cache_paths",
+    "resolve_exiobase_matrix_cache_paths",
     "load_mrio_panel",
     "PanelDiagnostics",
     "compute_viability_panel",
