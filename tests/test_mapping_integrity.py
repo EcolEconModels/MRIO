@@ -104,6 +104,15 @@ def test_green_brown_split_includes_c20_and_reaggregation_covers_children() -> N
         f"n_children={len(children)} n_reagg_sources={len(reagg_sources)} missing={missing[:20]} extra={extra[:20]}"
     )
 
+    def _targets_for(code: str) -> set[str]:
+        return set(reagg.loc[reagg["source_code"].astype(str).str.strip() == code, "target_code"].astype(str).str.strip())
+
+    for code in ["p24.g", "p24.h", "p24.i"]:
+        assert _targets_for(code) == {"ENERGY_GREEN"}, f"{code} must map to ENERGY_GREEN"
+
+    for code in ["p24.a", "p24.a.w", "p24.b", "p24.c", "p24.d", "p24.e", "p24.f"]:
+        assert _targets_for(code) == {"CPA_C20_others"}, f"{code} must map to CPA_C20_others"
+
 
 def test_fuels_reaggregation_covers_all_c20_children_and_biofuels() -> None:
     children = _split_children("fuels_split.csv", "exio_to_eurostat_cpa_products.csv")
@@ -121,6 +130,9 @@ def test_fuels_reaggregation_covers_all_c20_children_and_biofuels() -> None:
         row = reagg.loc[reagg["source_code"].astype(str).str.strip() == code]
         assert not row.empty, f"{code} must be explicitly reaggregated in fuels_reaggregation.csv"
         assert set(row["target_code"].astype(str).str.strip()) == {"CPA_C20_BIOFUELS"}
+
+    for bad in ["p23.1", "p23.2", "p24.4", "p40.2.2"]:
+        assert bad not in reagg_sources, f"{bad} must not appear in fuels_reaggregation.csv"
 
 
 def test_reaggregation_source_codes_do_not_map_to_multiple_targets() -> None:
