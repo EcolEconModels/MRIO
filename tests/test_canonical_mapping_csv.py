@@ -172,3 +172,44 @@ def test_validate_canonical_chain_rejects_missing_coverage(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="missing from reaggregation"):
         validate_canonical_chain(split_path, reagg_path, dictionary_path)
+
+
+def test_validate_canonical_chain_checks_reaggregation_source_dictionary(tmp_path: Path) -> None:
+    from ecolecon_mrio.canonical_mapping_csv import validate_canonical_chain
+
+    split_dictionary_path = tmp_path / "split_dictionary.csv"
+    pd.DataFrame(_dictionary_rows()).to_csv(split_dictionary_path, index=False)
+
+    reaggregation_dictionary_path = tmp_path / "reaggregation_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "SRC_A", "label": "Source A", "description": "Source dictionary"},
+            {"code": "SPL_1", "label": "Split 1", "description": "Source dictionary"},
+        ]
+    ).to_csv(reaggregation_dictionary_path, index=False)
+
+    split_path = tmp_path / "split.csv"
+    pd.DataFrame(_mapping_rows()).to_csv(split_path, index=False)
+
+    reagg_path = tmp_path / "reagg.csv"
+    pd.DataFrame(
+        [
+            {
+                "source_code": "p23.2",
+                "source_label": "Refined Petroleum",
+                "target_code": "TGT_X",
+                "target_label": "Target X",
+                "order": 1,
+                "enabled": True,
+                "notes": "stale source code",
+            }
+        ]
+    ).to_csv(reagg_path, index=False)
+
+    with pytest.raises(ValueError, match="unknown source code"):
+        validate_canonical_chain(
+            split_path,
+            reagg_path,
+            split_dictionary_path,
+            reaggregation_dictionary_path,
+        )

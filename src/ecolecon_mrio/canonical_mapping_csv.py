@@ -198,10 +198,15 @@ def load_canonical_mapping_frame(
 def validate_canonical_chain(
     split_mapping_path: str | Path,
     reaggregation_mapping_path: str | Path,
-    dictionary_path: str | Path,
+    split_dictionary_path: str | Path,
+    reaggregation_source_dictionary_path: str | Path | None = None,
 ) -> None:
-    split_frame = load_canonical_mapping_frame(split_mapping_path, dictionary_path)
-    reaggregation_frame = load_canonical_mapping_frame(reaggregation_mapping_path, dictionary_path)
+    split_frame = load_canonical_mapping_frame(split_mapping_path, split_dictionary_path)
+    reaggregation_frame = load_canonical_mapping_frame(
+        reaggregation_mapping_path,
+        reaggregation_source_dictionary_path or split_dictionary_path,
+        validate_target_codes=False,
+    )
 
     split_active = split_frame[split_frame["enabled"]].copy()
     reaggregation_active = reaggregation_frame[reaggregation_frame["enabled"]].copy()
