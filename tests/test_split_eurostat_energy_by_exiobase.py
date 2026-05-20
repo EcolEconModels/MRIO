@@ -110,6 +110,23 @@ def test_split_metadata_helpers_include_fallback_count_and_legacy_aliases() -> N
     )
 
 
+def test_assert_mapping_integrity_only_requires_explicit_targets() -> None:
+    from scripts.split_eurostat_energy_by_exiobase import _assert_mapping_integrity
+
+    eurostat_Z = pd.DataFrame([[10.0, 1.0], [2.0, 3.0]], index=["CPA_C19", "CPA_C21"], columns=["CPA_C19", "CPA_C21"])
+    eurostat_Y = pd.DataFrame({"FD": [4.0, 5.0]}, index=["CPA_C19", "CPA_C21"])
+    sector_mapping = {"CPA_C19": {"p24.g": 1.0}}
+
+    _assert_mapping_integrity(
+        sector_mapping=sector_mapping,
+        eurostat_Z=eurostat_Z,
+        eurostat_Y=eurostat_Y,
+        required_target_codes=["CPA_C19"],
+        label="test",
+    )
+
+
+
 def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
     zf.writestr(name, text.encode("utf-8"))
 

@@ -207,6 +207,7 @@ def _assert_mapping_integrity(
     sector_mapping: dict[str, dict[str, float]],
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
+    required_target_codes: Sequence[str] | None = None,
     label: str,
 ) -> None:
     class _Parsed:
@@ -217,12 +218,14 @@ def _assert_mapping_integrity(
     euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
     euro_x.index = euro_x.index.astype(str)
     euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
-    euro_codes = set(euro_x.index)
-    missing = sorted([c for c in euro_codes if c not in sector_mapping])
+    if required_target_codes is None:
+        required_target_codes = tuple(map(str, euro_x.index))
+    required_codes = [str(code) for code in required_target_codes if str(code).strip() != ""]
+    missing = sorted([code for code in required_codes if code not in sector_mapping])
     if missing:
         show = ", ".join(missing[:10])
         raise SystemExit(
-            "Mapping integrity check failed: missing Eurostat CPA codes in mapping "
+            "Mapping integrity check failed: missing required target codes in mapping "
             f"({label}). Examples: {show}"
         )
     try:
@@ -737,6 +740,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         sector_mapping=full_sector_mapping,
                         eurostat_Z=parsed.Z,
                         eurostat_Y=parsed.Y,
+                        required_target_codes=report_aggregates,
                         label=label,
                     )
                     if _should_check_output(flow, eurostat_year, args.exio_year):
@@ -991,6 +995,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sector_mapping=full_sector_mapping,
             eurostat_Z=Z,
             eurostat_Y=Y,
+            required_target_codes=report_aggregates,
             label="single",
         )
         flow_value_single = None
