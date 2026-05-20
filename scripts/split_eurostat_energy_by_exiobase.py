@@ -110,6 +110,67 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
     _vprint(verbose, f"Wrote: {path.resolve()}")
 
 
+SPLIT_OUTPUT_NAME_ALIASES: tuple[tuple[str, str], ...] = (
+    ("Z_split.csv", "Z_split_balanced.csv"),
+    ("Y_split.csv", "Y_split_balanced.csv"),
+    ("x_split.csv", "x_split_balanced.csv"),
+    ("A_split.csv", "A_split_balanced.csv"),
+)
+
+
+def _split_info_payload(result, *, variant_dim: str | None = None, variant_value: str | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "method": result.balancing_method,
+        "is_ras_balanced": False,
+        "is_reconstruction_validated": True,
+        "iterations": result.balancing_stats.iterations,
+        "max_abs_row_gap": result.balancing_stats.max_abs_row_gap,
+        "max_abs_col_gap": result.balancing_stats.max_abs_col_gap,
+        "fallback_count": result.fallback_count,
+        "has_fallback_diagnostics": result.fallback_diagnostics is not None and not result.fallback_diagnostics.empty,
+    }
+    if variant_dim is not None:
+        payload["variant_dim"] = variant_dim
+    if variant_value is not None:
+        payload["variant_value"] = variant_value
+    return payload
+
+
+def _legacy_split_info_payload(split_info: dict[str, object]) -> dict[str, object]:
+    legacy_info = dict(split_info)
+    legacy_info.update({"deprecated_name": True, "actual_method": split_info["method"]})
+    return legacy_info
+
+
+def write_split_core_outputs(res, outdir: Path, *, verbose: bool, extra_info: dict | None = None) -> None:
+    for primary_name, legacy_name in SPLIT_OUTPUT_NAME_ALIASES:
+        if primary_name.startswith("Z_"):
+            _write_df_csv(res.Z, outdir / primary_name, verbose=verbose)
+            _write_df_csv(res.Z, outdir / legacy_name, verbose=verbose)
+        elif primary_name.startswith("Y_"):
+            _write_df_csv(res.Y, outdir / primary_name, verbose=verbose)
+            _write_df_csv(res.Y, outdir / legacy_name, verbose=verbose)
+        elif primary_name.startswith("x_"):
+            _write_series_csv(res.x, outdir / primary_name, verbose=verbose, header=True)
+            _write_series_csv(res.x, outdir / legacy_name, verbose=verbose, header=True)
+        else:
+            _write_df_csv(res.A, outdir / primary_name, verbose=verbose)
+            _write_df_csv(res.A, outdir / legacy_name, verbose=verbose)
+
+    _write_text(
+        outdir / "exio_selected_sectors.json",
+        json.dumps(res.exio_selected_sectors, indent=2),
+        verbose=verbose,
+    )
+    split_info = _split_info_payload(res, **(extra_info or {}))
+    _write_text(outdir / "split_info.json", json.dumps(split_info, indent=2), verbose=verbose)
+    legacy_info = _legacy_split_info_payload(split_info)
+    _write_text(outdir / "balance_info.json", json.dumps(legacy_info, indent=2), verbose=verbose)
+    _write_text(outdir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=verbose)
+    if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
+        _write_df_csv(res.fallback_diagnostics, outdir / "fallback_diagnostics.csv", verbose=verbose)
+
+
 def _read_exio_to_eurostat_mapping_with_notes(
     path: str | Path,
     notes_col: str = "notes",
@@ -723,36 +784,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
-                for name in ["Z_split.csv", "Z_split_balanced.csv"]:
-                    _write_df_csv(res.Z, flow_dir / name, verbose=args.verbose)
-                for name in ["Y_split.csv", "Y_split_balanced.csv"]:
-                    _write_df_csv(res.Y, flow_dir / name, verbose=args.verbose)
-                for name in ["x_split.csv", "x_split_balanced.csv"]:
-                    _write_series_csv(res.x, flow_dir / name, verbose=args.verbose, header=True)
-                for name in ["A_split.csv", "A_split_balanced.csv"]:
-                    _write_df_csv(res.A, flow_dir / name, verbose=args.verbose)
-                _write_text(
-                    flow_dir / "exio_selected_sectors.json",
-                    json.dumps(res.exio_selected_sectors, indent=2),
+                write_split_core_outputs(
+                    res,
+                    flow_dir,
                     verbose=args.verbose,
+                    extra_info={
+                        "variant_dim": args.eurostat_stk_flow_dim,
+                        "variant_value": flow,
+                    },
                 )
-                split_info = {
-                    "method": res.balancing_method,
-                    "is_ras_balanced": False,
-                    "is_reconstruction_validated": True,
-                    "iterations": res.balancing_stats.iterations,
-                    "max_abs_row_gap": res.balancing_stats.max_abs_row_gap,
-                    "max_abs_col_gap": res.balancing_stats.max_abs_col_gap,
-                    "variant_dim": args.eurostat_stk_flow_dim,
-                    "variant_value": flow,
-                }
-                _write_text(flow_dir / "split_info.json", json.dumps(split_info, indent=2), verbose=args.verbose)
-                legacy_info = dict(split_info)
-                legacy_info.update({"deprecated_name": True, "actual_method": res.balancing_method})
-                _write_text(flow_dir / "balance_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
-                _write_text(flow_dir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
-                if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
-                    _write_df_csv(res.fallback_diagnostics, flow_dir / "fallback_diagnostics.csv", verbose=args.verbose)
                 if res.exio_quantity_and_price is not None:
                     out = flow_dir / "exio_quantity_and_price.csv"
                     res.exio_quantity_and_price.to_csv(out, index=False)
@@ -918,34 +958,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
     assert outdir is not None
-    for name in ["Z_split.csv", "Z_split_balanced.csv"]:
-        _write_df_csv(res.Z, outdir / name, verbose=args.verbose)
-    for name in ["Y_split.csv", "Y_split_balanced.csv"]:
-        _write_df_csv(res.Y, outdir / name, verbose=args.verbose)
-    for name in ["x_split.csv", "x_split_balanced.csv"]:
-        _write_series_csv(res.x, outdir / name, verbose=args.verbose, header=True)
-    for name in ["A_split.csv", "A_split_balanced.csv"]:
-        _write_df_csv(res.A, outdir / name, verbose=args.verbose)
-    _write_text(
-        outdir / "exio_selected_sectors.json",
-        json.dumps(res.exio_selected_sectors, indent=2),
-        verbose=args.verbose,
-    )
-    split_info = {
-        "method": res.balancing_method,
-        "is_ras_balanced": False,
-        "is_reconstruction_validated": True,
-        "iterations": res.balancing_stats.iterations,
-        "max_abs_row_gap": res.balancing_stats.max_abs_row_gap,
-        "max_abs_col_gap": res.balancing_stats.max_abs_col_gap,
-    }
-    _write_text(outdir / "split_info.json", json.dumps(split_info, indent=2), verbose=args.verbose)
-    legacy_info = dict(split_info)
-    legacy_info.update({"deprecated_name": True, "actual_method": res.balancing_method})
-    _write_text(outdir / "balance_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
-    _write_text(outdir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
-    if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
-        _write_df_csv(res.fallback_diagnostics, outdir / "fallback_diagnostics.csv", verbose=args.verbose)
+    write_split_core_outputs(res, outdir, verbose=args.verbose)
     if res.exio_quantity_and_price is not None:
         out = outdir / "exio_quantity_and_price_proxies.csv"
         res.exio_quantity_and_price.to_csv(out, index=False)

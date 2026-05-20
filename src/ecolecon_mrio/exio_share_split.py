@@ -37,6 +37,12 @@ class SplitResult:
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
+    @property
+    def fallback_count(self) -> int:
+        if self.fallback_diagnostics is None:
+            return 0
+        return int(len(self.fallback_diagnostics))
+
 
 def _aggregate_rows_to_original(
     df: pd.DataFrame,
@@ -346,7 +352,6 @@ def _split_iot_using_donor_blocks(
     donor_Z.index = donor_Z.index.astype(str)
     donor_Z.columns = donor_Z.columns.astype(str)
 
-    donor_fallback_count = 0
     fallback_records: list[dict[str, object]] = []
 
     for row_sector in sectors_old:
@@ -444,7 +449,6 @@ def _split_iot_using_donor_blocks(
                 )
             else:
                 alloc = pd.DataFrame([[cell_total]], index=row_labels, columns=col_labels)
-                donor_fallback_count += 1
                 fallback_records.append(
                     {
                         "row_sector": str(row_sector),
@@ -503,7 +507,8 @@ def _split_iot_using_donor_blocks(
         except ImportError:
             pass
 
-    method = "DONOR_BLOCK" if not fallback_records else "DONOR_BLOCK_WITH_SHARE_FALLBACK"
+    fallback_count = len(fallback_records)
+    method = "DONOR_BLOCK" if fallback_count == 0 else "DONOR_BLOCK_WITH_SHARE_FALLBACK"
     return SplitResult(
         Z=Z_split,
         Y=Y_split,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import zipfile
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -70,6 +71,42 @@ def test_output_consistency_check_allows_sector_mix_differences_within_total_tol
         rtol=0.2,
         atol=1e-6,
         label="test",
+    )
+
+
+def test_split_metadata_helpers_include_fallback_count_and_legacy_aliases() -> None:
+    from scripts.split_eurostat_energy_by_exiobase import (
+        SPLIT_OUTPUT_NAME_ALIASES,
+        _legacy_split_info_payload,
+        _split_info_payload,
+    )
+
+    fake_result = SimpleNamespace(
+        balancing_method="DONOR_BLOCK_WITH_SHARE_FALLBACK",
+        balancing_stats=SimpleNamespace(iterations=7, max_abs_row_gap=0.0, max_abs_col_gap=0.0),
+        fallback_count=3,
+        fallback_diagnostics=pd.DataFrame([{"row_sector": "A"}, {"row_sector": "B"}, {"row_sector": "C"}]),
+    )
+
+    split_info = _split_info_payload(fake_result, variant_dim="stk_flow", variant_value="TOTAL")
+    assert split_info["method"] == "DONOR_BLOCK_WITH_SHARE_FALLBACK"
+    assert split_info["is_ras_balanced"] is False
+    assert split_info["is_reconstruction_validated"] is True
+    assert split_info["fallback_count"] == 3
+    assert split_info["has_fallback_diagnostics"] is True
+    assert split_info["variant_dim"] == "stk_flow"
+    assert split_info["variant_value"] == "TOTAL"
+
+    legacy_info = _legacy_split_info_payload(split_info)
+    assert legacy_info["deprecated_name"] is True
+    assert legacy_info["actual_method"] == split_info["method"]
+    assert legacy_info["is_ras_balanced"] is False
+
+    assert SPLIT_OUTPUT_NAME_ALIASES == (
+        ("Z_split.csv", "Z_split_balanced.csv"),
+        ("Y_split.csv", "Y_split_balanced.csv"),
+        ("x_split.csv", "x_split_balanced.csv"),
+        ("A_split.csv", "A_split_balanced.csv"),
     )
 
 

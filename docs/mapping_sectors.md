@@ -44,15 +44,15 @@ Terminology note: under Eurostat's statistical classifications, NACE classifies 
 
 ## Classification vs analytical energy taxonomy
 
-The EXIO→Eurostat concordance maps EXIO products to Eurostat CPA sectors according to statistical classification. For example, EXIOBASE liquid biofuels (`p24.g`, `p24.h`, `p24.i`) are classified under `CPA_C20` in the concordance even though they are analytically treated as biofuels later.
+The EXIO→Eurostat concordance maps EXIO products to Eurostat CPA sectors according to statistical classification. EXIO p24.g, p24.h, and p24.i map statistically to `CPA_C20` in the concordance.
 
-The fuels and green/brown tables are analytical taxonomies applied after concordance. The same EXIO product can therefore be:
+The fuels taxonomy is a separate analytical layer. In that taxonomy, p24.g, p24.h, and p24.i map to `CPA_C20_BIOFUELS`.
 
-- statistically classified under `CPA_C20`
-- fuel-taxonomy classified as liquid biofuel
-- transition-classified as green/low-carbon by convention
+The green/brown taxonomy is also separate from concordance. In that taxonomy, p24.g, p24.h, and p24.i map to `ENERGY_GREEN`. Other C20 products remain `CPA_C20_others` in green/brown, not `ENERGY_GREEN` or `ENERGY_BROWN`.
 
-The current green/brown convention in this repo is a three-way analytical reaggregation with green, brown, and others. Ambiguous carriers such as nuclear, biomass/waste, electricity network services, and gas distribution should be documented in the reaggregation notes rather than silently mixed into the concordance layer.
+The current green/brown taxonomy intentionally keeps only `ENERGY_GREEN` and `ENERGY_BROWN` as transition categories. Non-energy C20 products are retained as `CPA_C20_others`.
+
+Ambiguous carriers such as nuclear, biomass/waste, electricity network services, and gas distribution should be documented in the reaggregation notes rather than silently mixed into the concordance layer.
 
 ## CSV Schemas
 
