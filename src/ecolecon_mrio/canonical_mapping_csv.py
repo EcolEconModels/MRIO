@@ -259,7 +259,7 @@ def read_canonical_aggregation_mapping(
     )
     active = frame[frame["enabled"]].copy()
     active = active[(active["source_code"] != "") & (active["target_code"] != "")]
-    dictionary = load_sector_dictionary(dictionary_path)
+    dictionary = load_sector_dictionary(source_dictionary_path)
     lookup = _dictionary_lookup(dictionary)
 
     mapping: dict[str, str] = {}

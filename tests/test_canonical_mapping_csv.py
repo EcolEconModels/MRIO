@@ -109,6 +109,45 @@ def test_split_mapping_rejects_unknown_target_code(tmp_path: Path) -> None:
         )
 
 
+def test_read_canonical_aggregation_mapping(tmp_path: Path) -> None:
+    from ecolecon_mrio.canonical_mapping_csv import read_canonical_aggregation_mapping
+
+    source_dictionary_path = tmp_path / "source_dictionary.csv"
+    pd.DataFrame(_dictionary_rows()).to_csv(source_dictionary_path, index=False)
+    target_dictionary_path = tmp_path / "target_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "TGT_X", "label": "Target X", "description": "Target dictionary"},
+            {"code": "SPL_1", "label": "Split 1", "description": "Target dictionary"},
+        ]
+    ).to_csv(target_dictionary_path, index=False)
+
+    mapping_path = tmp_path / "mapping.csv"
+    pd.DataFrame(
+        [
+            {
+                "source_code": "SRC_A",
+                "source_label": "Source A",
+                "target_code": "TGT_X",
+                "target_label": "Target X",
+                "order": 1,
+                "enabled": True,
+                "notes": "ok",
+            }
+        ]
+    ).to_csv(mapping_path, index=False)
+
+    mapping, returned_frame = read_canonical_aggregation_mapping(
+        mapping_path,
+        source_dictionary_path,
+        target_dictionary_path=target_dictionary_path,
+    )
+
+    assert mapping == {"Source A": "Target X"}
+    assert list(returned_frame["from_sector"]) == ["Source A"]
+    assert list(returned_frame["to_sector"]) == ["Target X"]
+
+
 def test_committed_fuels_labels_do_not_stack_prefixes() -> None:
     from pathlib import Path
 
