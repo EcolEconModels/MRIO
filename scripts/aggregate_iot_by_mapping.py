@@ -1671,9 +1671,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 + (f" (and {len(bad)-10} more)" if len(bad) > 10 else "")
             )
 
-    strict_unmapped_check = bool(
-        args.fail_on_unmapped or args.fail_on_unmapped_split_children or args.expect_n_sectors is not None
-    )
+    keep_unmapped = not bool(args.fail_on_unmapped)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -1690,29 +1688,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         Y.columns = Y.columns.astype(str)
         z_dir = Z_path.parent
 
-        if args.fail_on_unmapped or args.fail_on_unmapped_split_children:
-            input_sectors = set(Z.index.astype(str))
-            mapped_sources = set(map(str, mapping.keys()))
-            unmapped = sorted(input_sectors - mapped_sources)
-            if args.fail_on_unmapped and unmapped:
-                raise SystemExit(
-                    "Aggregation mapping leaves unmapped input sectors: "
-                    f"{unmapped[:20]}"
-                )
+        input_sectors = set(Z.index.astype(str))
+        mapped_sources = set(map(str, mapping.keys()))
+        unmapped = sorted(input_sectors - mapped_sources)
+        if args.fail_on_unmapped and unmapped:
+            raise SystemExit(
+                "Aggregation mapping leaves unmapped input sectors: "
+                f"{unmapped[:20]}"
+            )
 
-            if args.fail_on_unmapped_split_children:
-                selected_json = (
-                    Path(args.split_selected_sectors_json)
-                    if args.split_selected_sectors_json
-                    else z_dir / "exio_selected_sectors.json"
+        if args.fail_on_unmapped_split_children:
+            selected_json = (
+                Path(args.split_selected_sectors_json)
+                if args.split_selected_sectors_json
+                else z_dir / "exio_selected_sectors.json"
+            )
+            selected_children = _load_split_selected_children(selected_json)
+            missing_selected = sorted(selected_children - mapped_sources)
+            if missing_selected:
+                raise SystemExit(
+                    "Aggregation mapping leaves selected split children unmapped: "
+                    f"{missing_selected[:20]}"
                 )
-                selected_children = _load_split_selected_children(selected_json)
-                missing_selected = sorted(selected_children - mapped_sources)
-                if missing_selected:
-                    raise SystemExit(
-                        "Aggregation mapping leaves selected split children unmapped: "
-                        f"{missing_selected[:20]}"
-                    )
 
         # Try to load disaggregated sector value-per-physical-input if they exist
         disaggregated_values = None
@@ -1797,7 +1794,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             Z,
             Y,
             mapping,
-            keep_unmapped=not strict_unmapped_check,
+            keep_unmapped=keep_unmapped,
             create_io_system=args.create_io_system,
             compute_sector_value_per_physical_input=disaggregated_values is not None,
             disaggregated_sector_value_per_physical_input=disaggregated_values,

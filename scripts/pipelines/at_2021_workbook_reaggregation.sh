@@ -142,7 +142,6 @@ PY
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_REAGG" \
   --mapping-csv "$REAGG_MAPPING_CSV" \
-  --fail-on-unmapped \
   --fail-on-unmapped-split-children \
   --expect-n-sectors 65 \
   --write-sfc-workbook \
