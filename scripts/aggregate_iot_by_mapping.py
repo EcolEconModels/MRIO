@@ -13,7 +13,6 @@ import pandas as pd
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
 )
-from ecolecon_mrio.canonical_mapping_csv import read_canonical_aggregation_mapping
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
 
@@ -41,29 +40,6 @@ def _read_table(path: Path) -> pd.DataFrame:
     if suffix in {".xlsx", ".xls"}:
         return pd.read_excel(path, index_col=0)
     raise ValueError(f"Unsupported table format: {path}")
-
-
-def _is_canonical_mapping_csv(path: str | Path) -> bool:
-    try:
-        header = pd.read_csv(path, nrows=0)
-    except Exception:
-        return False
-    required = {"source_code", "source_label", "target_code", "target_label", "weight", "enabled", "notes"}
-    return required.issubset(set(header.columns))
-
-
-def _canonical_source_dictionary_path(mapping_csv: str | Path, classification: str) -> Path:
-    base = Path(mapping_csv).resolve().parent
-    if classification == "industry":
-        return base / "exiobase_industries_dictionary.csv"
-    return base / "exiobase_products_dictionary.csv"
-
-
-def _canonical_target_dictionary_path(mapping_csv: str | Path, classification: str) -> Path:
-    base = Path(mapping_csv).resolve().parent
-    if classification == "industry":
-        return base / "eurostat_nace_rev_2_1_industries_dictionary.csv"
-    return base / "eurostat_cpa65_products_dictionary.csv"
 
 
 def _write_df_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
@@ -363,20 +339,21 @@ def _write_excel_mapping_sheet(
                 display_df[header_energy] = display_df[mapping_from_col].map(sums["quantity"]).fillna("")
                 display_df[header_value] = display_df[mapping_from_col].map(sums["monetary_output"]).fillna("")
 
-    # Add CO2 monetary output + production-based intensity columns for disaggregated sectors when available.
-    if disaggregated_sector_emission_intensity is not None and not disaggregated_sector_emission_intensity.empty:
-        emis_df = disaggregated_sector_emission_intensity.copy()
-        _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
-        unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
-        if len(unique_keys) != 1:
-            raise ValueError(
-                "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
-            )
-        disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
-        header_out = f"{mapping_from_col} Monetary output (M€)"
-        header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
-        display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
-        display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
+    # Add CO2 monetary output + production-based intensity columns for disaggregated sectors.
+    if disaggregated_sector_emission_intensity is None or disaggregated_sector_emission_intensity.empty:
+        raise ValueError("disaggregated_sector_emission_intensity is required for production-based CO2 intensity.")
+    emis_df = disaggregated_sector_emission_intensity.copy()
+    _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
+    unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
+    if len(unique_keys) != 1:
+        raise ValueError(
+            "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
+        )
+    disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
+    header_out = f"{mapping_from_col} Monetary output (M€)"
+    header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
+    display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
+    display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
 
     # Add domestic/exports/stocks final demand + CO2 intensity for domestic demand (per disaggregated sector)
     domestic_fd_by_sector = None
@@ -707,14 +684,11 @@ def _write_excel_mapping_sheet(
 
         for agg_sector in sector_index:
             agg_sector_s = str(agg_sector)
-            display_sector = (
-                aggregated_sector_labels.get(agg_sector_s)
-                if aggregated_sector_labels is not None
-                else agg_sector_s
-            )
             ws_s.append(
                 [
-                    display_sector,
+                    aggregated_sector_labels.get(agg_sector_s)
+                    if aggregated_sector_labels is not None
+                    else agg_sector_s,
                     output_by_sector.get(agg_sector_s) if output_by_sector is not None else None,
                     intensity_by_sector.get(agg_sector_s) if intensity_by_sector is not None else None,
                     agg_domestic_fd.get(agg_sector_s) if agg_domestic_fd is not None else None,
@@ -1642,14 +1616,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = p.parse_args(argv)
 
-    if _is_canonical_mapping_csv(args.mapping_csv):
-        mapping, mapping_df = read_canonical_aggregation_mapping(
-            args.mapping_csv,
-            _canonical_source_dictionary_path(args.mapping_csv, args.classification),
-            _canonical_target_dictionary_path(args.mapping_csv, args.classification),
-        )
-    else:
-        mapping, mapping_df = read_aggregation_mapping(args.mapping_csv)
+    mapping, mapping_df = read_aggregation_mapping(args.mapping_csv)
 
     if args.require_from_contains is not None:
         bad = [k for k in mapping.keys() if args.require_from_contains not in str(k)]

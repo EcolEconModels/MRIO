@@ -10,6 +10,8 @@ import zipfile
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
+
 
 MatrixKind = Literal["F", "F_Y"]
 
@@ -20,6 +22,15 @@ class ExioExtension:
     unit: pd.Series  # index=stressor, value=unit
     F: pd.DataFrame | None
     F_Y: pd.DataFrame | None
+
+
+def _exio_code_to_name_lookup(system: str = "pxp") -> dict[str, str]:
+    concordance = load_pymrio_exio3_sectors(system=system).sectors
+    return {
+        str(row.ExioCode): str(row.ExioName)
+        for row in concordance.itertuples(index=False)
+        if str(row.ExioCode).strip() != "" and str(row.ExioName).strip() != ""
+    }
 
 
 def _open_text_from_zip(zf: zipfile.ZipFile, member: str) -> TextIOWrapper:
@@ -257,6 +268,8 @@ def extract_quantity_and_price(
     sectors = list(map(str, sectors))
     monetary_output = monetary_output.reindex(sectors).astype("float64")
 
+    code_to_name = _exio_code_to_name_lookup()
+
     rows: list[pd.DataFrame] = []
     for ext in extensions:
         ext_obj = load_exiobase3_extension(
@@ -280,8 +293,11 @@ def extract_quantity_and_price(
             F_r.columns = pd.Index(map(str, F_r.columns))
         F_r = F_r.loc[:, F_r.columns.astype(str)]
 
-        # If the EXIO sector names don't match exactly, fail gracefully.
-        missing = [s for s in sectors if s not in set(map(str, F_r.columns))]
+        sector_columns = sectors
+        available = set(map(str, F_r.columns))
+        if not all(sector in available for sector in sectors):
+            sector_columns = [code_to_name.get(sector, sector) for sector in sectors]
+        missing = [sector for sector, column in zip(sectors, sector_columns, strict=False) if column not in available]
         if missing:
             continue
 
@@ -290,7 +306,7 @@ def extract_quantity_and_price(
             continue
 
         for stressor in stressors:
-            qty = F_r.loc[stressor, sectors].astype("float64")
+            qty = pd.Series(F_r.loc[stressor, sector_columns].to_numpy(dtype="float64"), index=sectors)
             total_qty = float(qty.sum())
             if not np.isfinite(total_qty) or total_qty == 0:
                 continue
@@ -299,6 +315,7 @@ def extract_quantity_and_price(
             unit = ext_obj.unit.get(stressor, None)
             out = pd.DataFrame(
                 {
+                    "exio_sector": sectors,
                     "extension": ext,
                     "stressor": stressor,
                     "unit": unit,
@@ -308,8 +325,7 @@ def extract_quantity_and_price(
                     "value_per_physical_input": value_per_physical_input,
                 }
             )
-            out.index.name = "exio_sector"
-            rows.append(out.reset_index())
+            rows.append(out)
 
     if not rows:
         return None
@@ -342,6 +358,8 @@ def extract_emissions_and_intensity(
     sectors = list(map(str, sectors))
     monetary_output = monetary_output.reindex(sectors).astype("float64")
 
+    code_to_name = _exio_code_to_name_lookup()
+
     ext_obj = load_exiobase3_extension(
         container, extension=str(extension), region=str(region), cache_dir=cache_dir
     )
@@ -361,7 +379,11 @@ def extract_emissions_and_intensity(
         F_r.columns = pd.Index(map(str, F_r.columns))
     F_r = F_r.loc[:, F_r.columns.astype(str)]
 
-    missing = [s for s in sectors if s not in set(map(str, F_r.columns))]
+    available = set(map(str, F_r.columns))
+    sector_columns = sectors
+    if not all(sector in available for sector in sectors):
+        sector_columns = [code_to_name.get(sector, sector) for sector in sectors]
+    missing = [sector for sector, column in zip(sectors, sector_columns, strict=False) if column not in available]
     if missing:
         return None
 
@@ -371,11 +393,12 @@ def extract_emissions_and_intensity(
 
     rows: list[pd.DataFrame] = []
     for stressor in stressors:
-        emis = F_r.loc[stressor, sectors].astype("float64")
+        emis = pd.Series(F_r.loc[stressor, sector_columns].to_numpy(dtype="float64"), index=sectors)
         unit = ext_obj.unit.get(stressor, None)
         emission_intensity = emis / monetary_output.replace(0.0, np.nan)
         out = pd.DataFrame(
             {
+                "exio_sector": sectors,
                 "extension": str(extension),
                 "stressor": stressor,
                 "unit": unit,
@@ -384,8 +407,7 @@ def extract_emissions_and_intensity(
                 "emission_intensity": emission_intensity,
             }
         )
-        out.index.name = "exio_sector"
-        rows.append(out.reset_index())
+        rows.append(out)
 
     if not rows:
         return None
