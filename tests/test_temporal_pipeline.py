@@ -40,6 +40,24 @@ def test_load_mrio_panel_test_dataset():
         assert len(y_full) > 0
 
 
+def test_load_mrio_panel_defaults_to_non_writing_exio_cache(monkeypatch):
+    import ecolecon_mrio.temporal as temporal_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_load_mrio(**kwargs):
+        captured.update(kwargs)
+        mrio = type("_Mrio", (), {"x": pd.Series([1.0], index=pd.Index(["a"])), "Y": pd.DataFrame({"FD": [1.0]}, index=pd.Index(["a"]))})()
+        return mrio, pd.Series([1.0], index=pd.Index(["a"]))
+
+    monkeypatch.setattr(temporal_mod, "load_mrio", _fake_load_mrio)
+
+    panel = load_mrio_panel(dataset="exiobase", years=[2020], calc_all=False, include_ghosh=False)
+
+    assert set(panel.keys()) == {2020}
+    assert captured["exio_full_cache"] == "none"
+
+
 def test_compute_viability_panel_outputs():
     panel = load_mrio_panel(dataset="test", years=[2020, 2021], calc_all=True, include_ghosh=True)
     out = compute_viability_panel(panel, CONSTRAINTS_CFG, dataset="test", max_sectors=20, allow_relaxation=True)

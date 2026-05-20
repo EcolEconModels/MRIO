@@ -265,6 +265,7 @@ def load_mrio_panel(
     calc_all: bool = True,
     include_ghosh: bool = True,
     verbose: bool = False,
+    exio_full_cache: str = "none",
     allow_download_missing: bool = True,
     resume_downloads: bool = True,
     show_download_progress: bool = True,
@@ -293,6 +294,7 @@ def load_mrio_panel(
             download_timeout_seconds=download_timeout_seconds,
             download_retries=download_retries,
             delete_source_zip_after_parse=delete_source_zip_after_parse,
+            exio_full_cache=exio_full_cache,
         )
         panel[int(year)] = (mrio, _series_from_any(y_full))
         if verbose:
