@@ -39,6 +39,13 @@ def _mapping_by_source_target(df: pd.DataFrame) -> dict[str, set[str]]:
     }
 
 
+def _active_targets_for(code: str, concordance: pd.DataFrame | None = None) -> set[str]:
+    if concordance is None:
+        concordance = _active_rows(_read_csv("exio_to_eurostat_cpa_products.csv"))
+    mask = concordance["source_code"].astype(str).str.strip() == code
+    return set(concordance.loc[mask, "target_code"].astype(str).str.strip())
+
+
 def test_exio_concordance_covers_all_dictionary_codes_and_biofuels_map_to_c20() -> None:
     exio_dict = _read_csv("exiobase_products_dictionary.csv")
     concordance = _active_rows(_read_csv("exio_to_eurostat_cpa_products.csv"))
@@ -48,12 +55,12 @@ def test_exio_concordance_covers_all_dictionary_codes_and_biofuels_map_to_c20() 
     missing = sorted(exio_codes - mapped_codes)
     assert not missing, f"Missing EXIO source codes in concordance: {missing[:20]}"
 
-    for code in ["p24.g", "p24.h", "p24.i"]:
-        targets = set(
-            concordance.loc[concordance["source_code"].astype(str).str.strip() == code, "target_code"].astype(str).str.strip()
-        )
-        assert "CPA_C20" in targets, f"{code} must map to CPA_C20; got {sorted(targets)!r}"
-        assert "CPA_C19" not in targets, f"{code} must not map to CPA_C19; got {sorted(targets)!r}"
+    for code in ["p24.a", "p24.a.w", "p24.b", "p24.c", "p24.d", "p24.e", "p24.f", "p24.g", "p24.h", "p24.i"]:
+        assert _active_targets_for(code, concordance) == {"CPA_C20"}, f"{code} must map only to CPA_C20"
+
+    for code in ["p24.e", "p24.f", "p24.g", "p24.h", "p24.i"]:
+        targets = _active_targets_for(code, concordance)
+        assert "CPA_C21" not in targets, f"{code} must not map to CPA_C21; got {sorted(targets)!r}"
 
 
 def test_concordance_allocation_rules_are_explicit() -> None:
@@ -75,6 +82,12 @@ def test_concordance_allocation_rules_are_explicit() -> None:
         if not allocation_rules.str.contains("split-by-output-share|derived-output-share-split", regex=True).any():
             bad_sources.append(source)
     assert not bad_sources, f"Sources with multiple active rows need explicit split allocation rules: {bad_sources[:20]}"
+
+
+def test_p24_energy_and_fuel_relevant_block_stays_single_target_c20() -> None:
+    concordance = _active_rows(_read_csv("exio_to_eurostat_cpa_products.csv"))
+    for code in ["p24.a", "p24.a.w", "p24.b", "p24.c", "p24.d", "p24.e", "p24.f", "p24.g", "p24.h", "p24.i"]:
+        assert _active_targets_for(code, concordance) == {"CPA_C20"}, f"{code} must map only to CPA_C20"
 
 
 def test_green_brown_split_includes_c20_and_reaggregation_covers_children() -> None:
