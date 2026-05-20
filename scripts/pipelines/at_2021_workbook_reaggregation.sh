@@ -97,10 +97,10 @@ seen: set[str] = set()
 for json_path in sorted(out_split.glob("stk_flow=*/exio_selected_sectors.json")):
     with json_path.open() as handle:
         data = json.load(handle)
-  for aggregate_code, sector_codes in data.items():
-    for sector_code in sector_codes:
-      code = str(sector_code)
-      if code in seen:
+    for aggregate_code, sector_codes in data.items():
+        for sector_code in sector_codes:
+            code = str(sector_code)
+            if code in seen:
                 continue
             seen.add(code)
             rows.append(
@@ -108,7 +108,7 @@ for json_path in sorted(out_split.glob("stk_flow=*/exio_selected_sectors.json"))
                     "mapping_set": f"{mapping_set}_identity_generated",
                     "source_code": code,
                     "target_code": code,
-          "enabled": True,
+                    "enabled": True,
                     "notes": f"Generated from {json_path.name}.",
                 }
             )
