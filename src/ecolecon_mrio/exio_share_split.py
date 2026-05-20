@@ -33,6 +33,7 @@ class SplitResult:
     balancing_stats: BalanceStats
     exio_selected_sectors: dict[str, list[str]]
     exio_quantity_and_price: pd.DataFrame | None
+    fallback_diagnostics: pd.DataFrame | None = None
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
@@ -346,6 +347,7 @@ def _split_iot_using_donor_blocks(
     donor_Z.columns = donor_Z.columns.astype(str)
 
     donor_fallback_count = 0
+    fallback_records: list[dict[str, object]] = []
 
     for row_sector in sectors_old:
         row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
@@ -389,6 +391,17 @@ def _split_iot_using_donor_blocks(
                     index=row_labels,
                     columns=col_labels,
                 )
+                fallback_records.append(
+                    {
+                        "row_sector": str(row_sector),
+                        "col_sector": str(col_sector),
+                        "cell_total": float(cell_total),
+                        "row_labels": "|".join(map(str, row_labels)),
+                        "col_labels": "|".join(map(str, col_labels)),
+                        "donor_total": float(donor_total),
+                        "fallback_type": "both_split_outer_product",
+                    }
+                )
             elif row_sector in split_profiles:
                 row_share = _normalize_vector(
                     split_profiles[row_sector].intermediate_sales_share.reindex(row_labels).fillna(0.0)
@@ -397,6 +410,17 @@ def _split_iot_using_donor_blocks(
                     row_share.to_numpy().reshape(-1, 1) * cell_total,
                     index=row_labels,
                     columns=col_labels,
+                )
+                fallback_records.append(
+                    {
+                        "row_sector": str(row_sector),
+                        "col_sector": str(col_sector),
+                        "cell_total": float(cell_total),
+                        "row_labels": "|".join(map(str, row_labels)),
+                        "col_labels": "|".join(map(str, col_labels)),
+                        "donor_total": float(donor_total),
+                        "fallback_type": "row_split_sales_share",
+                    }
                 )
             elif col_sector in split_profiles:
                 col_share = _normalize_vector(
@@ -407,9 +431,31 @@ def _split_iot_using_donor_blocks(
                     index=row_labels,
                     columns=col_labels,
                 )
+                fallback_records.append(
+                    {
+                        "row_sector": str(row_sector),
+                        "col_sector": str(col_sector),
+                        "cell_total": float(cell_total),
+                        "row_labels": "|".join(map(str, row_labels)),
+                        "col_labels": "|".join(map(str, col_labels)),
+                        "donor_total": float(donor_total),
+                        "fallback_type": "col_split_input_share",
+                    }
+                )
             else:
                 alloc = pd.DataFrame([[cell_total]], index=row_labels, columns=col_labels)
                 donor_fallback_count += 1
+                fallback_records.append(
+                    {
+                        "row_sector": str(row_sector),
+                        "col_sector": str(col_sector),
+                        "cell_total": float(cell_total),
+                        "row_labels": "|".join(map(str, row_labels)),
+                        "col_labels": "|".join(map(str, col_labels)),
+                        "donor_total": float(donor_total),
+                        "fallback_type": "both_split_marginal_share",
+                    }
+                )
 
             Z_split.loc[row_labels, col_labels] = alloc.to_numpy(dtype="float64")
 
@@ -428,6 +474,17 @@ def _split_iot_using_donor_blocks(
             if donor_share is None:
                 donor_share = split_profiles[row_sector].final_demand_share.reindex(row_labels).fillna(0.0)
                 donor_share = _normalize_vector(donor_share)
+                fallback_records.append(
+                    {
+                        "row_sector": str(row_sector),
+                        "col_sector": str(fd_code),
+                        "cell_total": float(fd_total),
+                        "row_labels": "|".join(map(str, row_labels)),
+                        "col_labels": str(fd_code),
+                        "donor_total": float("nan"),
+                        "fallback_type": "final_demand_share",
+                    }
+                )
             Y_split.loc[row_labels, fd_code] = donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64") * fd_total
 
     x_split = calc_x(Z_split, Y_split)
@@ -446,7 +503,7 @@ def _split_iot_using_donor_blocks(
         except ImportError:
             pass
 
-    method = "DONOR_BLOCK" if donor_fallback_count == 0 else "DONOR_BLOCK_WITH_SHARE_FALLBACK"
+    method = "DONOR_BLOCK" if not fallback_records else "DONOR_BLOCK_WITH_SHARE_FALLBACK"
     return SplitResult(
         Z=Z_split,
         Y=Y_split,
@@ -457,6 +514,7 @@ def _split_iot_using_donor_blocks(
         balancing_stats=BalanceStats(0, 0.0, 0.0),
         exio_selected_sectors={},
         exio_quantity_and_price=None,
+        fallback_diagnostics=pd.DataFrame(fallback_records) if fallback_records else None,
         io_system=io_system,
     )
 
@@ -976,6 +1034,7 @@ def split_iot_using_exiobase_split_profiles(
         balancing_stats=res.balancing_stats,
         exio_selected_sectors=selected,
         exio_quantity_and_price=exio_qp,
+        fallback_diagnostics=res.fallback_diagnostics,
         disaggregated_sector_value_per_physical_input=res.disaggregated_sector_value_per_physical_input,
         io_system=res.io_system,
     )

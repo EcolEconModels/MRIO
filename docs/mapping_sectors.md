@@ -42,6 +42,18 @@ There should be no parallel `.mapping.csv` duplicates and no separate mapping ta
 
 Terminology note: under Eurostat's statistical classifications, NACE classifies economic activities, while CPA classifies products by activity. In this repo, the direct energy-balance bridge uses NACE only on the source-definition side of some correspondence logic; operationally it is a mapping into the repo's 65-product CPA-based IO targets. The retained `nace2` filename reflects legacy naming only, not the bridge's target classification.
 
+## Classification vs analytical energy taxonomy
+
+The EXIO→Eurostat concordance maps EXIO products to Eurostat CPA sectors according to statistical classification. For example, EXIOBASE liquid biofuels (`p24.g`, `p24.h`, `p24.i`) are classified under `CPA_C20` in the concordance even though they are analytically treated as biofuels later.
+
+The fuels and green/brown tables are analytical taxonomies applied after concordance. The same EXIO product can therefore be:
+
+- statistically classified under `CPA_C20`
+- fuel-taxonomy classified as liquid biofuel
+- transition-classified as green/low-carbon by convention
+
+The current green/brown convention in this repo is a three-way analytical reaggregation with green, brown, and others. Ambiguous carriers such as nuclear, biomass/waste, electricity network services, and gas distribution should be documented in the reaggregation notes rather than silently mixed into the concordance layer.
+
 ## CSV Schemas
 
 The checked-in CSVs fall into a small number of schema families.

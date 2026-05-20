@@ -20,6 +20,16 @@ p23.20.o,Bitumen,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule
 p23.20.p,Paraffin Waxes,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'p23.20.p (Paraffin Waxes)' is assigned to aggregate 'ENERGY_BROWN'.
 p23.20.q,Petroleum Coke,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'p23.20.q (Petroleum Coke)' is assigned to aggregate 'ENERGY_BROWN'.
 p23.20.r,Non-specified Petroleum Products,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'p23.20.r (Non-specified Petroleum Products)' is assigned to aggregate 'ENERGY_BROWN'.
+p24.a,"Plastics, basic",ENERGY_OTHERS,Energy Others,True,"Repo analytical aggregation rule. Source sector 'p24.a (Plastics, basic)' is assigned to aggregate 'ENERGY_OTHERS'."
+p24.a.w,"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",ENERGY_OTHERS,Energy Others,True,"Repo analytical aggregation rule. Source sector 'p24.a.w (Secondary plastic for treatment, Re-processing of secondary plastic into new plastic)' is assigned to aggregate 'ENERGY_OTHERS'."
+p24.b,N-fertiliser,ENERGY_OTHERS,Energy Others,True,Repo analytical aggregation rule. Source sector 'p24.b (N-fertiliser)' is assigned to aggregate 'ENERGY_OTHERS'.
+p24.c,"P- and other fertiliser",ENERGY_OTHERS,Energy Others,True,Repo analytical aggregation rule. Source sector 'p24.c (P- and other fertiliser)' is assigned to aggregate 'ENERGY_OTHERS'.
+p24.d,Chemicals nec,ENERGY_OTHERS,Energy Others,True,Repo analytical aggregation rule. Source sector 'p24.d (Chemicals nec)' is assigned to aggregate 'ENERGY_OTHERS'.
+p24.e,Charcoal,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'p24.e (Charcoal)' is assigned to aggregate 'ENERGY_BROWN'.
+p24.f,Additives/Blending Components,ENERGY_OTHERS,Energy Others,True,Repo analytical aggregation rule. Source sector 'p24.f (Additives/Blending Components)' is assigned to aggregate 'ENERGY_OTHERS'.
+p24.g,Biogasoline,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'p24.g (Biogasoline)' is assigned to aggregate 'ENERGY_GREEN'.
+p24.h,Biodiesels,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'p24.h (Biodiesels)' is assigned to aggregate 'ENERGY_GREEN'.
+p24.i,Other Liquid Biofuels,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'p24.i (Other Liquid Biofuels)' is assigned to aggregate 'ENERGY_GREEN'.
 p40.11.a,Electricity by coal,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'p40.11.a (Electricity by coal)' is assigned to aggregate 'ENERGY_BROWN'.
 p40.11.b,Electricity by gas,ENERGY_BROWN,Energy Brown,True,Repo analytical aggregation rule. Source sector 'p40.11.b (Electricity by gas)' is assigned to aggregate 'ENERGY_BROWN'.
 p40.11.c,Electricity by nuclear,ENERGY_GREEN,Energy Green,True,Repo analytical aggregation rule. Source sector 'p40.11.c (Electricity by nuclear)' is assigned to aggregate 'ENERGY_GREEN'.

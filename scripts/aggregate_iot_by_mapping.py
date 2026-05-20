@@ -60,6 +60,34 @@ def _write_text(path: Path, content: str, *, verbose: bool) -> None:
     _vprint(verbose, f"Wrote: {path.resolve()}")
 
 
+def _flatten_selected_sector_values(value: object) -> set[str]:
+    children: set[str] = set()
+    if value is None:
+        return children
+    if isinstance(value, dict):
+        for nested in value.values():
+            children.update(_flatten_selected_sector_values(nested))
+        return children
+    if isinstance(value, (list, tuple, set)):
+        for nested in value:
+            children.update(_flatten_selected_sector_values(nested))
+        return children
+    text = str(value).strip()
+    if text:
+        children.add(text)
+    return children
+
+
+def _load_split_selected_children(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    if not path.exists():
+        raise SystemExit(f"Split selected sectors JSON not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    return _flatten_selected_sector_values(data)
+
+
 def _infer_variant_value(
     *,
     out_base: Path,
@@ -1584,6 +1612,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     inp.add_argument("--variant-dim", default="stk_flow")
     inp.add_argument("--z-filename", default="Z_split_balanced.csv")
     inp.add_argument("--y-filename", default="Y_split_balanced.csv")
+    inp.add_argument(
+        "--split-selected-sectors-json",
+        default=None,
+        help="Optional exio_selected_sectors.json path for strict split-child coverage checks.",
+    )
+    inp.add_argument("--fail-on-unmapped", action="store_true", help="Fail if any input sector is unmapped.")
+    inp.add_argument(
+        "--fail-on-unmapped-split-children",
+        action="store_true",
+        help="Fail if any selected split child is unmapped.",
+    )
+    inp.add_argument(
+        "--expect-n-sectors",
+        type=int,
+        default=None,
+        help="Fail if the aggregated output does not have exactly this many sectors.",
+    )
 
     out = p.add_argument_group("Output")
     out.add_argument("--outdir", required=True, help="Output directory.")
@@ -1626,6 +1671,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 + (f" (and {len(bad)-10} more)" if len(bad) > 10 else "")
             )
 
+    strict_unmapped_check = bool(
+        args.fail_on_unmapped or args.fail_on_unmapped_split_children or args.expect_n_sectors is not None
+    )
+
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -1639,10 +1688,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         Z.columns = Z.columns.astype(str)
         Y.index = Y.index.astype(str)
         Y.columns = Y.columns.astype(str)
+        z_dir = Z_path.parent
+
+        if args.fail_on_unmapped or args.fail_on_unmapped_split_children:
+            input_sectors = set(Z.index.astype(str))
+            mapped_sources = set(map(str, mapping.keys()))
+            unmapped = sorted(input_sectors - mapped_sources)
+            if args.fail_on_unmapped and unmapped:
+                raise SystemExit(
+                    "Aggregation mapping leaves unmapped input sectors: "
+                    f"{unmapped[:20]}"
+                )
+
+            if args.fail_on_unmapped_split_children:
+                selected_json = (
+                    Path(args.split_selected_sectors_json)
+                    if args.split_selected_sectors_json
+                    else z_dir / "exio_selected_sectors.json"
+                )
+                selected_children = _load_split_selected_children(selected_json)
+                missing_selected = sorted(selected_children - mapped_sources)
+                if missing_selected:
+                    raise SystemExit(
+                        "Aggregation mapping leaves selected split children unmapped: "
+                        f"{missing_selected[:20]}"
+                    )
 
         # Try to load disaggregated sector value-per-physical-input if they exist
         disaggregated_values = None
-        z_dir = Z_path.parent
         values_path = z_dir / "disaggregated_sector_value_per_physical_input.csv"
         if values_path.exists():
             _vprint(args.verbose, f"Reading: {values_path.resolve()}")
@@ -1724,7 +1797,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             Z,
             Y,
             mapping,
-            keep_unmapped=True,
+            keep_unmapped=not strict_unmapped_check,
             create_io_system=args.create_io_system,
             compute_sector_value_per_physical_input=disaggregated_values is not None,
             disaggregated_sector_value_per_physical_input=disaggregated_values,
@@ -1732,6 +1805,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
+
+        if args.expect_n_sectors is not None and len(res.Z.index) != int(args.expect_n_sectors):
+            raise SystemExit(
+                f"Aggregated output has {len(res.Z.index)} sectors, expected {int(args.expect_n_sectors)}."
+            )
 
         combined_emissions = res.aggregated_sector_emission_intensity
         if full_sector_emissions is not None and not full_sector_emissions.empty:

@@ -723,30 +723,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
-                _write_df_csv(res.Z, flow_dir / "Z_split_balanced.csv", verbose=args.verbose)
-                _write_df_csv(res.Y, flow_dir / "Y_split_balanced.csv", verbose=args.verbose)
-                _write_series_csv(res.x, flow_dir / "x_split_balanced.csv", verbose=args.verbose, header=True)
-                _write_df_csv(res.A, flow_dir / "A_split_balanced.csv", verbose=args.verbose)
+                for name in ["Z_split.csv", "Z_split_balanced.csv"]:
+                    _write_df_csv(res.Z, flow_dir / name, verbose=args.verbose)
+                for name in ["Y_split.csv", "Y_split_balanced.csv"]:
+                    _write_df_csv(res.Y, flow_dir / name, verbose=args.verbose)
+                for name in ["x_split.csv", "x_split_balanced.csv"]:
+                    _write_series_csv(res.x, flow_dir / name, verbose=args.verbose, header=True)
+                for name in ["A_split.csv", "A_split_balanced.csv"]:
+                    _write_df_csv(res.A, flow_dir / name, verbose=args.verbose)
                 _write_text(
                     flow_dir / "exio_selected_sectors.json",
                     json.dumps(res.exio_selected_sectors, indent=2),
                     verbose=args.verbose,
                 )
-                _write_text(
-                    flow_dir / "balance_info.json",
-                    json.dumps(
-                        {
-                            "method": res.balancing_method,
-                            "iterations": res.balancing_stats.iterations,
-                            "max_abs_row_gap": res.balancing_stats.max_abs_row_gap,
-                            "max_abs_col_gap": res.balancing_stats.max_abs_col_gap,
-                            "variant_dim": args.eurostat_stk_flow_dim,
-                            "variant_value": flow,
-                        },
-                        indent=2,
-                    ),
-                    verbose=args.verbose,
-                )
+                split_info = {
+                    "method": res.balancing_method,
+                    "is_ras_balanced": False,
+                    "is_reconstruction_validated": True,
+                    "iterations": res.balancing_stats.iterations,
+                    "max_abs_row_gap": res.balancing_stats.max_abs_row_gap,
+                    "max_abs_col_gap": res.balancing_stats.max_abs_col_gap,
+                    "variant_dim": args.eurostat_stk_flow_dim,
+                    "variant_value": flow,
+                }
+                _write_text(flow_dir / "split_info.json", json.dumps(split_info, indent=2), verbose=args.verbose)
+                legacy_info = dict(split_info)
+                legacy_info.update({"deprecated_name": True, "actual_method": res.balancing_method})
+                _write_text(flow_dir / "balance_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
+                _write_text(flow_dir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
+                if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
+                    _write_df_csv(res.fallback_diagnostics, flow_dir / "fallback_diagnostics.csv", verbose=args.verbose)
                 if res.exio_quantity_and_price is not None:
                     out = flow_dir / "exio_quantity_and_price.csv"
                     res.exio_quantity_and_price.to_csv(out, index=False)
@@ -912,28 +918,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
     assert outdir is not None
-    _write_df_csv(res.Z, outdir / "Z_split_balanced.csv", verbose=args.verbose)
-    _write_df_csv(res.Y, outdir / "Y_split_balanced.csv", verbose=args.verbose)
-    _write_series_csv(res.x, outdir / "x_split_balanced.csv", verbose=args.verbose, header=True)
-    _write_df_csv(res.A, outdir / "A_split_balanced.csv", verbose=args.verbose)
+    for name in ["Z_split.csv", "Z_split_balanced.csv"]:
+        _write_df_csv(res.Z, outdir / name, verbose=args.verbose)
+    for name in ["Y_split.csv", "Y_split_balanced.csv"]:
+        _write_df_csv(res.Y, outdir / name, verbose=args.verbose)
+    for name in ["x_split.csv", "x_split_balanced.csv"]:
+        _write_series_csv(res.x, outdir / name, verbose=args.verbose, header=True)
+    for name in ["A_split.csv", "A_split_balanced.csv"]:
+        _write_df_csv(res.A, outdir / name, verbose=args.verbose)
     _write_text(
         outdir / "exio_selected_sectors.json",
         json.dumps(res.exio_selected_sectors, indent=2),
         verbose=args.verbose,
     )
-    _write_text(
-        outdir / "ras_info.json",
-        json.dumps(
-            {
-                "method": res.balancing_method,
-                "iterations": res.balancing_stats.iterations,
-                "max_abs_row_gap": res.balancing_stats.max_abs_row_gap,
-                "max_abs_col_gap": res.balancing_stats.max_abs_col_gap,
-            },
-            indent=2,
-        ),
-        verbose=args.verbose,
-    )
+    split_info = {
+        "method": res.balancing_method,
+        "is_ras_balanced": False,
+        "is_reconstruction_validated": True,
+        "iterations": res.balancing_stats.iterations,
+        "max_abs_row_gap": res.balancing_stats.max_abs_row_gap,
+        "max_abs_col_gap": res.balancing_stats.max_abs_col_gap,
+    }
+    _write_text(outdir / "split_info.json", json.dumps(split_info, indent=2), verbose=args.verbose)
+    legacy_info = dict(split_info)
+    legacy_info.update({"deprecated_name": True, "actual_method": res.balancing_method})
+    _write_text(outdir / "balance_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
+    _write_text(outdir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=args.verbose)
+    if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
+        _write_df_csv(res.fallback_diagnostics, outdir / "fallback_diagnostics.csv", verbose=args.verbose)
     if res.exio_quantity_and_price is not None:
         out = outdir / "exio_quantity_and_price_proxies.csv"
         res.exio_quantity_and_price.to_csv(out, index=False)
