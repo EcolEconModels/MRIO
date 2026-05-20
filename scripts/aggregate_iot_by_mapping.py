@@ -363,21 +363,20 @@ def _write_excel_mapping_sheet(
                 display_df[header_energy] = display_df[mapping_from_col].map(sums["quantity"]).fillna("")
                 display_df[header_value] = display_df[mapping_from_col].map(sums["monetary_output"]).fillna("")
 
-    # Add CO2 monetary output + production-based intensity columns for disaggregated sectors
-    if disaggregated_sector_emission_intensity is None or disaggregated_sector_emission_intensity.empty:
-        raise ValueError("disaggregated_sector_emission_intensity is required for production-based CO2 intensity.")
-    emis_df = disaggregated_sector_emission_intensity.copy()
-    _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
-    unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
-    if len(unique_keys) != 1:
-        raise ValueError(
-            "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
-        )
-    disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
-    header_out = f"{mapping_from_col} Monetary output (M€)"
-    header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
-    display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
-    display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
+    # Add CO2 monetary output + production-based intensity columns for disaggregated sectors when available.
+    if disaggregated_sector_emission_intensity is not None and not disaggregated_sector_emission_intensity.empty:
+        emis_df = disaggregated_sector_emission_intensity.copy()
+        _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
+        unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
+        if len(unique_keys) != 1:
+            raise ValueError(
+                "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
+            )
+        disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
+        header_out = f"{mapping_from_col} Monetary output (M€)"
+        header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
+        display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
+        display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
 
     # Add domestic/exports/stocks final demand + CO2 intensity for domestic demand (per disaggregated sector)
     domestic_fd_by_sector = None
