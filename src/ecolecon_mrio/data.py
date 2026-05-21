@@ -136,9 +136,6 @@ def _save_exio_matrix_cache(
 ) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     save_npz(cache_dir / "Z.npz", Z, compressed=True)
-    legacy_a_path = cache_dir / "A.npz"
-    if legacy_a_path.exists():
-        legacy_a_path.unlink()
     x = _coerce_series_like(x, index=index, name=x.name or "x")
     y = _coerce_series_like(y, index=index, name=y.name or "y")
     x.to_pickle(cache_dir / "x.pkl.gz", compression="gzip")
@@ -154,14 +151,12 @@ def _load_exio_matrix_cache(
     cache_dir: Path,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
     z_path = cache_dir / "Z.npz"
-    legacy_a_path = cache_dir / "A.npz"
     x_path = cache_dir / "x.pkl.gz"
     y_path = cache_dir / "y.pkl.gz"
     index_path = cache_dir / "index.csv.gz"
     metadata_path = cache_dir / "metadata.json"
 
-    matrix_path = z_path if z_path.exists() else legacy_a_path
-    matrix = load_npz(matrix_path).tocsr().astype(float)
+    matrix = load_npz(z_path).tocsr().astype(float)
     x = _coerce_series_like(pd.read_pickle(x_path)).astype(float)
     y = _coerce_series_like(pd.read_pickle(y_path)).astype(float)
     index_frame = pd.read_csv(index_path)
@@ -179,17 +174,8 @@ def _load_exio_matrix_cache(
 
     x = x.reindex(basis_index).astype(float)
     y = y.reindex(basis_index).astype(float)
-    if matrix_path == z_path:
-        inv_x = (1.0 / x.replace(0.0, pd.NA)).fillna(0.0).astype(float)
-        A = (matrix @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
-        storage_kind = "Z"
-    else:
-        A = matrix
-        storage_kind = "legacy_A"
-
-    metadata = dict(metadata)
-    metadata["matrix_storage"] = storage_kind
-    metadata["derived_matrix"] = "A"
+    inv_x = (1.0 / x.replace(0.0, pd.NA)).fillna(0.0).astype(float)
+    A = (matrix @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
     return A, x, y, basis_index, metadata
 
 
@@ -943,7 +929,6 @@ def load_mrio_matrices(
         "source_zip": str(zip_path),
         "cache_dir": str(cache_dir),
         "index_columns": ["region", "sector"],
-        "matrix_storage": "Z",
     }
     _save_exio_matrix_cache(cache_dir=cache_dir, Z=Z_csr, x=x_series, y=y_series, index=basis_index, metadata=metadata, verbose=verbose)
 

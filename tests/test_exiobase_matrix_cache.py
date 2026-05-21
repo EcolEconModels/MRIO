@@ -82,8 +82,6 @@ def test_load_mrio_matrices_roundtrip_and_cache_hit(monkeypatch, tmp_path):
     pd.testing.assert_series_equal(y, pd.Series([10.0, 20.0], index=index, name="y"))
     assert metadata["cache_kind"] == "exiobase_matrix"
     assert metadata["cache_status"] == "hit_after_rebuild"
-    assert metadata["matrix_storage"] == "Z"
-    assert metadata["derived_matrix"] == "A"
     assert (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp" / "Z.npz").exists()
     assert not (tmp_path / f"exiobase3_{year}" / f"mrio_system_{year}_pxp.fast.pkl").exists()
 
