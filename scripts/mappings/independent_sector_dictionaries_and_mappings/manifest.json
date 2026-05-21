@@ -1,0 +1,28 @@
+{
+  "created_files": [
+    "eurostat_products_detailed_dictionary.csv",
+    "eurostat_products_cpa_dictionary.csv",
+    "eurostat_industries_detailed_dictionary.csv",
+    "eurostat_industries_nace_dictionary.csv",
+    "exiobase_products_dictionary.csv",
+    "exiobase_industries_dictionary.csv",
+    "eurostat_products_detailed_to_cpa.csv",
+    "eurostat_industries_detailed_to_nace.csv",
+    "exiobase_products_to_cpa.csv",
+    "exiobase_industries_to_nace.csv",
+    "README.md"
+  ],
+  "counts": {
+    "eurostat_products_detailed": 630,
+    "eurostat_products_cpa": 64,
+    "eurostat_industries_detailed": 630,
+    "eurostat_industries_nace": 64,
+    "exiobase_products": 200,
+    "exiobase_industries": 164,
+    "eurostat_products_detailed_to_cpa": 630,
+    "eurostat_industries_detailed_to_nace": 630,
+    "exiobase_products_to_cpa": 200,
+    "exiobase_industries_to_nace": 164
+  },
+  "not_used": "No MRIO repository mapping rows or target assignments were used."
+}
