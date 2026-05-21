@@ -1015,7 +1015,7 @@ def _validate_template_reaggregation(
     elif "TFU" in Y_before_base.columns:
         original_tfu = Y_before_base["TFU"].astype("float64")
 
-    if not has_multi_parent_outputs:
+    if validate_template_parent_totals and not has_multi_parent_outputs:
         for parent_code in base_codes:
             child_codes = children_by_parent.get(parent_code, [])
             if not child_codes:
@@ -1165,6 +1165,7 @@ def _write_sfc_workbook(
     aggregated_sector_emission_intensity: pd.DataFrame | None = None,
     exio_final_demand_emission_intensity: pd.DataFrame | None = None,
     eurostat_sector_co2_mapping: pd.DataFrame | None = None,
+    validate_template_parent_totals: bool = True,
 ) -> None:
     """
     Write an Eurostat-export-shaped workbook for downstream R/SFC scripts.
@@ -1554,7 +1555,10 @@ def _write_sfc_workbook(
             Y_ord=Y_ord,
             lower_row_vectors=lower_row_vectors,
             lower_fd_vectors=lower_fd_vectors,
-            validate_template_parent_totals=(variant_value is None or str(variant_value).upper() == "TOTAL"),
+            validate_template_parent_totals=validate_template_parent_totals
+            and (variant_value is None or str(variant_value).upper() == "TOTAL"),
+            rtol=1e-9,
+            atol=1e-6,
         )
     _write_excel_mapping_sheet(
         wb,
@@ -1638,6 +1642,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--write-sfc-workbook",
         action="store_true",
         help="Write an additional Eurostat-export-shaped workbook for SFC/R scripts (one per variant).",
+    )
+    out.add_argument(
+        "--skip-template-parent-totals",
+        action="store_true",
+        help="Skip template parent-total validation when writing the SFC workbook.",
     )
     out.add_argument(
         "--sfc-template-xlsx",
@@ -1947,6 +1956,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mapping_from_col="from_sector",
                 mapping_to_col="to_sector",
                 verbose=args.verbose,
+                validate_template_parent_totals=not bool(args.skip_template_parent_totals),
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
                 disaggregated_sector_emission_intensity=disaggregated_emissions,
