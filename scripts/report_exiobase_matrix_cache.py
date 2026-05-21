@@ -49,7 +49,7 @@ def main() -> int:
     source_zip_size = _dir_size(full_paths["zip"])
     fast_pickle_size = _dir_size(full_paths["fast"])
     matrix_cache_size = _dir_size(matrix_paths["matrix_cache_dir"])
-    a_size = _dir_size(matrix_paths["A"])
+    z_size = _dir_size(matrix_paths["Z"])
 
     start = time.perf_counter()
     A, x, y, basis_index, metadata = load_mrio_matrices(
@@ -64,7 +64,7 @@ def main() -> int:
     print(f"source zip: {_fmt_mb(source_zip_size)}")
     print(f"full fast pickle: {_fmt_mb(fast_pickle_size)}")
     print(f"matrix cache total: {_fmt_mb(matrix_cache_size)}")
-    print(f"A.npz: {_fmt_mb(a_size)}")
+    print(f"Z.npz: {_fmt_mb(z_size)}")
     print(f"A shape: {A.shape[0]} x {A.shape[1]}")
     print(f"A nnz: {int(A.nnz)}")
     print(f"A density: {float(metadata.get('density', 0.0)):.6g}")

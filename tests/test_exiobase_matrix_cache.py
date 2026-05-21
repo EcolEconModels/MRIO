@@ -49,7 +49,7 @@ def test_resolve_exiobase_matrix_cache_paths(tmp_path):
     paths = resolve_exiobase_matrix_cache_paths(2021, system="pxp", data_root=tmp_path)
 
     assert paths["matrix_cache_dir"].name == "matrix_cache_2021_pxp"
-    assert paths["A"].name == "A.npz"
+    assert paths["Z"].name == "Z.npz"
     assert paths["x"].name == "x.pkl.gz"
     assert paths["y"].name == "y.pkl.gz"
     assert paths["index"].name == "index.csv.gz"
@@ -82,6 +82,9 @@ def test_load_mrio_matrices_roundtrip_and_cache_hit(monkeypatch, tmp_path):
     pd.testing.assert_series_equal(y, pd.Series([10.0, 20.0], index=index, name="y"))
     assert metadata["cache_kind"] == "exiobase_matrix"
     assert metadata["cache_status"] == "hit_after_rebuild"
+    assert metadata["matrix_storage"] == "Z"
+    assert metadata["derived_matrix"] == "A"
+    assert (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp" / "Z.npz").exists()
     assert not (tmp_path / f"exiobase3_{year}" / f"mrio_system_{year}_pxp.fast.pkl").exists()
 
     monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: (_ for _ in ()).throw(AssertionError("parse should not run on matrix-cache hit")))

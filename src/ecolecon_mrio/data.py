@@ -11,7 +11,7 @@ from typing import Any, Tuple
 
 import pandas as pd
 import pymrio
-from scipy.sparse import csr_matrix, load_npz, save_npz
+from scipy.sparse import csr_matrix, diags, load_npz, save_npz
 from pymrio.tools.iodownloader import EXIOBASE3_CONFIG, HEADERS, MRIOMetaData, _get_url_datafiles
 
 from ecolecon_mrio.download_utils import DownloadSpec, download_file_resumable, zip_contains_member
@@ -78,7 +78,7 @@ def resolve_exiobase_matrix_cache_paths(
     return {
         "data_dir": data_dir,
         "matrix_cache_dir": cache_dir,
-        "A": cache_dir / "A.npz",
+        "Z": cache_dir / "Z.npz",
         "x": cache_dir / "x.pkl.gz",
         "y": cache_dir / "y.pkl.gz",
         "index": cache_dir / "index.csv.gz",
@@ -127,7 +127,7 @@ def _exio_index_from_frame(index_frame: pd.DataFrame) -> pd.MultiIndex:
 def _save_exio_matrix_cache(
     *,
     cache_dir: Path,
-    A: csr_matrix,
+    Z: csr_matrix,
     x: pd.Series,
     y: pd.Series,
     index: pd.MultiIndex,
@@ -135,7 +135,10 @@ def _save_exio_matrix_cache(
     verbose: bool = False,
 ) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    save_npz(cache_dir / "A.npz", A, compressed=True)
+    save_npz(cache_dir / "Z.npz", Z, compressed=True)
+    legacy_a_path = cache_dir / "A.npz"
+    if legacy_a_path.exists():
+        legacy_a_path.unlink()
     x = _coerce_series_like(x, index=index, name=x.name or "x")
     y = _coerce_series_like(y, index=index, name=y.name or "y")
     x.to_pickle(cache_dir / "x.pkl.gz", compression="gzip")
@@ -150,30 +153,43 @@ def _load_exio_matrix_cache(
     *,
     cache_dir: Path,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    a_path = cache_dir / "A.npz"
+    z_path = cache_dir / "Z.npz"
+    legacy_a_path = cache_dir / "A.npz"
     x_path = cache_dir / "x.pkl.gz"
     y_path = cache_dir / "y.pkl.gz"
     index_path = cache_dir / "index.csv.gz"
     metadata_path = cache_dir / "metadata.json"
 
-    A = load_npz(a_path).tocsr().astype(float)
+    matrix_path = z_path if z_path.exists() else legacy_a_path
+    matrix = load_npz(matrix_path).tocsr().astype(float)
     x = _coerce_series_like(pd.read_pickle(x_path)).astype(float)
     y = _coerce_series_like(pd.read_pickle(y_path)).astype(float)
     index_frame = pd.read_csv(index_path)
     basis_index = _exio_index_from_frame(index_frame)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
-    if A.shape != (len(basis_index), len(basis_index)):
-        raise ValueError(f"Matrix cache shape mismatch: A.shape={A.shape}, index={len(basis_index)}")
+    if matrix.shape != (len(basis_index), len(basis_index)):
+        raise ValueError(f"Matrix cache shape mismatch: matrix.shape={matrix.shape}, index={len(basis_index)}")
     if len(x) != len(basis_index) or len(y) != len(basis_index):
         raise ValueError("Matrix cache vectors do not match the basis index length.")
-    if tuple(metadata.get("matrix_shape", [])) != tuple(int(v) for v in A.shape):
+    if tuple(metadata.get("matrix_shape", [])) != tuple(int(v) for v in matrix.shape):
         raise ValueError("Matrix cache metadata does not match the cached matrix shape.")
-    if int(metadata.get("nnz", -1)) != int(A.nnz):
+    if int(metadata.get("nnz", -1)) != int(matrix.nnz):
         raise ValueError("Matrix cache metadata does not match the cached matrix nnz.")
 
     x = x.reindex(basis_index).astype(float)
     y = y.reindex(basis_index).astype(float)
+    if matrix_path == z_path:
+        inv_x = (1.0 / x.replace(0.0, pd.NA)).fillna(0.0).astype(float)
+        A = (matrix @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
+        storage_kind = "Z"
+    else:
+        A = matrix
+        storage_kind = "legacy_A"
+
+    metadata = dict(metadata)
+    metadata["matrix_storage"] = storage_kind
+    metadata["derived_matrix"] = "A"
     return A, x, y, basis_index, metadata
 
 
@@ -910,30 +926,26 @@ def load_mrio_matrices(
     y_series = Y[y_cols].sum(axis=1).astype(float)
     y_series = _coerce_series_like(y_series, index=basis_index, name="y")
 
-    A_src = getattr(mrio, "A", None)
-    if A_src is None:
-        A_df = pd.DataFrame(Z, copy=False).divide(x_series.replace(0.0, pd.NA), axis=1).fillna(0.0)
-        A_csr = csr_matrix(A_df.to_numpy(dtype=float))
-    else:
-        A_df = pd.DataFrame(A_src, copy=False).reindex(index=basis_index, columns=basis_index).fillna(0.0).astype(float)
-        A_csr = csr_matrix(A_df.to_numpy(dtype=float))
+    Z_df = pd.DataFrame(Z, copy=False).reindex(index=basis_index, columns=basis_index).fillna(0.0).astype(float)
+    Z_csr = csr_matrix(Z_df.to_numpy(dtype=float))
 
-    density = float(A_csr.nnz) / float(A_csr.shape[0] * A_csr.shape[1]) if A_csr.shape[0] and A_csr.shape[1] else 0.0
+    density = float(Z_csr.nnz) / float(Z_csr.shape[0] * Z_csr.shape[1]) if Z_csr.shape[0] and Z_csr.shape[1] else 0.0
     metadata = {
         "cache_kind": "exiobase_matrix",
         "cache_status": "rebuilt",
         "system": system,
         "year": int(year),
-        "matrix_shape": [int(A_csr.shape[0]), int(A_csr.shape[1])],
-        "nnz": int(A_csr.nnz),
+        "matrix_shape": [int(Z_csr.shape[0]), int(Z_csr.shape[1])],
+        "nnz": int(Z_csr.nnz),
         "density": float(density),
-        "stored_objects": ["A", "x", "y", "index"],
-        "not_stored_objects": ["full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "extensions"],
+        "stored_objects": ["Z", "x", "y", "index"],
+        "not_stored_objects": ["A", "full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "extensions"],
         "source_zip": str(zip_path),
         "cache_dir": str(cache_dir),
         "index_columns": ["region", "sector"],
+        "matrix_storage": "Z",
     }
-    _save_exio_matrix_cache(cache_dir=cache_dir, A=A_csr, x=x_series, y=y_series, index=basis_index, metadata=metadata, verbose=verbose)
+    _save_exio_matrix_cache(cache_dir=cache_dir, Z=Z_csr, x=x_series, y=y_series, index=basis_index, metadata=metadata, verbose=verbose)
 
     A_loaded, x_loaded, y_loaded, basis_index_loaded, metadata_loaded = _load_exio_matrix_cache(cache_dir=cache_dir)
     metadata_loaded = dict(metadata_loaded)
