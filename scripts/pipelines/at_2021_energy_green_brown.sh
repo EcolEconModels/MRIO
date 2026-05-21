@@ -35,8 +35,8 @@ EXIO_REGION="${EXIO_REGION:-AT}"
 EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
 
-MAP_EXIO_TO_EUROSTAT="$ROOT_DIR/scripts/mappings/energy_green_brown_split.csv"
-MAP_GREEN_BROWN="$ROOT_DIR/scripts/mappings/energy_green_brown_reaggregation.csv"
+MAP_EXIO_TO_EUROSTAT="$ROOT_DIR/scripts/pipelines/energy_green_brown_split.csv"
+MAP_GREEN_BROWN="$ROOT_DIR/scripts/pipelines/energy_green_brown_reaggregation.csv"
 EXIO_TO_EUROSTAT_MAP="${EXIO_TO_EUROSTAT_MAP:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa_products.csv}"
 
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/AT_2021_energy_split_flows_with_source}"

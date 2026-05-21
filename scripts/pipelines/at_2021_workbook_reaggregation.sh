@@ -5,6 +5,10 @@ set -euo pipefail
 #
 # Required / important env vars:
 #   OUTPUT_SUFFIX=fuels_more|fuels|...
+# Optional overrides:
+#   SPLIT_MAPPING_CSV=scripts/pipelines/fuels_split.csv
+#   REAGG_MAPPING_CSV=scripts/pipelines/fuels_reaggregation.csv
+#   CONCORDANCE_CSV=scripts/mappings/exio_to_eurostat_cpa_products.csv
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"
@@ -30,8 +34,8 @@ OUT_REAGG="${OUT_REAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUT
 
 IDENTITY_MAPPING_CSV="$(mktemp)"
 
-SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/mappings/${OUTPUT_SUFFIX}_split.csv}"
-REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/mappings/${OUTPUT_SUFFIX}_reaggregation.csv}"
+SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_split.csv}"
+REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_reaggregation.csv}"
 CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa_products.csv}"
 
 TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_2021_Eurostat.xlsx}"
@@ -43,7 +47,7 @@ fi
 for mapping_csv in "$SPLIT_MAPPING_CSV" "$REAGG_MAPPING_CSV"; do
   if [[ ! -f "$mapping_csv" ]]; then
     echo "ERROR: Canonical mapping CSV not found: $mapping_csv" >&2
-    echo "Use the committed canonical fuels CSVs under scripts/mappings/." >&2
+    echo "Use the committed canonical fuels CSVs under scripts/pipelines/." >&2
     exit 1
   fi
 done
