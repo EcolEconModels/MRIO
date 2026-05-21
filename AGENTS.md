@@ -19,3 +19,7 @@
 - `scripts/`: Replication and analysis scripts
 - `tests/`: Unit tests
 - `.venv/`: Local virtual environment (Primary Python)
+
+## Mapping Source Of Truth
+- Split and reaggregation helper CSVs live under `scripts/pipelines/` and are the single source of truth.
+- Do not mirror those helper CSVs into `scripts/mappings/` or maintain parallel checked-in copies.

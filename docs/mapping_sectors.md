@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The source of truth for sector mapping in this repo is now the annotated CSV files in `scripts/mappings/`.
+The source of truth for sector mapping in this repo is split by artifact type: static concordances stay in `scripts/mappings/`, while user-editable split and reaggregation helper tables live in `scripts/pipelines/`.
 
 Legacy ad hoc mapping tables such as bare `Category,TargetSector` CSVs are no longer a supported runtime contract.
 
@@ -25,18 +25,20 @@ These are the only mapping CSVs that should be used by code and by humans:
   - same split template, but electricity rows are grouped
 - `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
   - legacy filename retained for compatibility; the bridge itself maps Eurostat energy-balance rows, whose official row definitions are often activity-based, to the repo's 65-product CPA-based IO targets plus `Households`, including explicit direct-combustion transformation rows for `CPA_C19` and `CPA_D`
-- `scripts/mappings/fuels_split.csv`
+- `scripts/pipelines/fuels_split.csv`
   - split manifest for the fuels pipeline
-- `scripts/mappings/fuels_more_split.csv`
+- `scripts/pipelines/fuels_more_split.csv`
   - expanded split manifest for the fuels-more pipeline
-- `scripts/mappings/fuels_reaggregation.csv`
+- `scripts/pipelines/fuels_reaggregation.csv`
   - fuels reaggregation table
-- `scripts/mappings/fuels_more_reaggregation.csv`
+- `scripts/pipelines/fuels_more_reaggregation.csv`
   - expanded fuels reaggregation table
-- `scripts/mappings/energy_green_brown_split.csv`
+- `scripts/pipelines/energy_green_brown_split.csv`
   - split manifest for the analytical green/brown energy view
-- `scripts/mappings/energy_green_brown_reaggregation.csv`
+- `scripts/pipelines/energy_green_brown_reaggregation.csv`
   - reaggregation table for the analytical green/brown energy view
+
+The split and reaggregation helper tables are single-sourced under `scripts/pipelines/`; do not mirror them into `scripts/mappings/`.
 
 There should be no parallel `.mapping.csv` duplicates and no separate mapping tables in the markdown documentation.
 
@@ -46,7 +48,7 @@ Terminology note: under Eurostat's statistical classifications, NACE classifies 
 
 The EXIO→Eurostat concordance maps EXIO products to Eurostat CPA sectors according to statistical classification. EXIO p24.g, p24.h, and p24.i map statistically to `CPA_C20` in the concordance.
 
-The fuels taxonomy is a separate analytical layer. In that taxonomy, p24.g, p24.h, and p24.i map to `CPA_C20_BIOFUELS`.
+The fuels taxonomy is a separate analytical layer. In that taxonomy, p24.g, p24.h, and p24.i map to `CPA_C20_BIOGASOLINE`, `CPA_C20_BIODIESEL`, and `CPA_C20_OTHER_LIQUID_BIOFUELS`.
 
 The green/brown taxonomy is also separate from concordance. In that taxonomy, p24.g, p24.h, and p24.i map to `ENERGY_GREEN`. Other C20 products remain `CPA_C20_others` in green/brown, not `ENERGY_GREEN` or `ENERGY_BROWN`.
 
@@ -126,14 +128,14 @@ File-specific extras:
 
 These files are narrower helper tables used by the split/reaggregation pipelines:
 
-- `scripts/mappings/fuels_split.csv`
-- `scripts/mappings/fuels_more_split.csv`
-- `scripts/mappings/energy_green_brown_split.csv`
+- `scripts/pipelines/fuels_split.csv`
+- `scripts/pipelines/fuels_more_split.csv`
+- `scripts/pipelines/energy_green_brown_split.csv`
   - columns: `source_code`, `source_label`
 
-- `scripts/mappings/fuels_reaggregation.csv`
-- `scripts/mappings/fuels_more_reaggregation.csv`
-- `scripts/mappings/energy_green_brown_reaggregation.csv`
+- `scripts/pipelines/fuels_reaggregation.csv`
+- `scripts/pipelines/fuels_more_reaggregation.csv`
+- `scripts/pipelines/energy_green_brown_reaggregation.csv`
   - columns: `source_code`, `source_label`, `target_code`, `target_label`, `weight`, `enabled`, `notes`
 
 For these tables, `source_code` and `target_code` are the operational keys used by the loaders. The label columns are carried only as descriptive metadata.
@@ -241,7 +243,7 @@ Relevant CSVs:
 
 Relevant CSV:
 
-- `scripts/mappings/energy_green_brown_reaggregation.csv`
+- `scripts/pipelines/energy_green_brown_reaggregation.csv`
 
 ### Diagnostics
 

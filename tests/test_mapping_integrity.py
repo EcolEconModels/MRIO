@@ -7,10 +7,11 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAPPINGS = REPO_ROOT / "scripts" / "mappings"
+PIPELINES = REPO_ROOT / "scripts" / "pipelines"
 
 
-def _read_csv(name: str) -> pd.DataFrame:
-    return pd.read_csv(MAPPINGS / name, dtype=str).fillna("")
+def _read_csv(name: str, root: Path = MAPPINGS) -> pd.DataFrame:
+    return pd.read_csv(root / name, dtype=str).fillna("")
 
 
 def _active_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -21,7 +22,7 @@ def _active_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _split_children(split_csv: str, concordance_csv: str) -> set[str]:
-    split_df = _active_rows(_read_csv(split_csv))
+    split_df = _active_rows(_read_csv(split_csv, PIPELINES))
     concordance_df = _active_rows(_read_csv(concordance_csv))
     sources = set(split_df["source_code"].astype(str).str.strip())
     children = set()
@@ -91,11 +92,11 @@ def test_p24_energy_and_fuel_relevant_block_stays_single_target_c20() -> None:
 
 
 def test_green_brown_split_includes_c20_and_reaggregation_covers_children() -> None:
-    split = _active_rows(_read_csv("energy_green_brown_split.csv"))
+    split = _active_rows(_read_csv("energy_green_brown_split.csv", PIPELINES))
     assert set(split["source_code"].astype(str).str.strip()) == {"CPA_C19", "CPA_C20", "CPA_D"}
 
     children = _split_children("energy_green_brown_split.csv", "exio_to_eurostat_cpa_products.csv")
-    reagg = _active_rows(_read_csv("energy_green_brown_reaggregation.csv"))
+    reagg = _active_rows(_read_csv("energy_green_brown_reaggregation.csv", PIPELINES))
     reagg_sources = set(reagg["source_code"].astype(str).str.strip())
     missing = sorted(children - reagg_sources)
     extra = sorted(reagg_sources - children)
@@ -114,9 +115,51 @@ def test_green_brown_split_includes_c20_and_reaggregation_covers_children() -> N
         assert _targets_for(code) == {"CPA_C20_others"}, f"{code} must map to CPA_C20_others"
 
 
-def test_fuels_reaggregation_covers_all_c20_children_and_biofuels() -> None:
+def _assert_split_liquid_biofuel_semantics(reagg: pd.DataFrame, csv_name: str) -> None:
+    reagg_sources = set(reagg["source_code"].astype(str).str.strip())
+
+    for bad in ["p27.a", "p27.a.w", "p27.41", "p27.41.w", "p27.42", "p27.42.w", "p27.43", "p27.43.w", "p27.44", "p27.44.w", "p27.45", "p27.45.w", "p27.5"]:
+        assert bad not in reagg_sources, f"{bad} must not appear in {csv_name}"
+
+    expectations = {
+        "p24.e": ("CPA_C20_others", "CPA_C20: Chemicals and chemical products_others", "to CPA_C20: Chemicals and chemical products_remaining"),
+        "p24.g": ("CPA_C20_BIOGASOLINE", "CPA_C20: Biogasoline", "to CPA_C20: Biogasoline"),
+        "p24.h": ("CPA_C20_BIODIESEL", "CPA_C20: Biodiesel", "to CPA_C20: Biodiesel"),
+        "p24.i": ("CPA_C20_OTHER_LIQUID_BIOFUELS", "CPA_C20: Other liquid biofuels", "to CPA_C20: Other liquid biofuels"),
+    }
+    for code, (target_code, target_label, note_snippet) in expectations.items():
+        row = reagg.loc[reagg["source_code"].astype(str).str.strip() == code]
+        assert not row.empty, f"{code} must be explicitly reaggregated in {csv_name}"
+        assert set(row["target_code"].astype(str).str.strip()) == {target_code}
+        assert set(row["target_label"].astype(str).str.strip()) == {target_label}
+        assert row["notes"].astype(str).str.contains(note_snippet, regex=False).all(), f"{code} notes must mention {note_snippet} in {csv_name}"
+
+
+def _assert_electricity_target_codes(reagg: pd.DataFrame, csv_name: str) -> None:
+    expectations = {
+        "p40.11.k": ("CPA_D_Electricity_by_Geothermal", "CPA_D: Electricity by Geothermal"),
+        "p40.11.g": ("CPA_D_Electricity_by_biomass_and_waste", "CPA_D: Electricity by biomass and waste"),
+        "p40.11.a": ("CPA_D_Electricity_by_coal", "CPA_D: Electricity by coal"),
+        "p40.11.b": ("CPA_D_Electricity_by_gas", "CPA_D: Electricity by gas"),
+        "p40.11.d": ("CPA_D_Electricity_by_hydro", "CPA_D: Electricity by hydro"),
+        "p40.11.c": ("CPA_D_Electricity_by_nuclear", "CPA_D: Electricity by nuclear"),
+        "p40.11.f": ("CPA_D_Electricity_by_petroleum_and_other_oil_derivatives", "CPA_D: Electricity by petroleum and other oil derivatives"),
+        "p40.11.h": ("CPA_D_Electricity_by_solar_photovoltaic", "CPA_D: Electricity by solar photovoltaic"),
+        "p40.11.i": ("CPA_D_Electricity_by_solar_thermal", "CPA_D: Electricity by solar thermal"),
+        "p40.11.j": ("CPA_D_Electricity_by_tide_wave_ocean", "CPA_D: Electricity by tide, wave, ocean"),
+        "p40.11.e": ("CPA_D_Electricity_by_wind", "CPA_D: Electricity by wind"),
+        "p40.11.l": ("CPA_D_Electricity_nec", "CPA_D: Electricity nec"),
+    }
+    for code, (target_code, target_label) in expectations.items():
+        row = reagg.loc[reagg["source_code"].astype(str).str.strip() == code]
+        assert not row.empty, f"{code} must be explicitly reaggregated in {csv_name}"
+        assert set(row["target_code"].astype(str).str.strip()) == {target_code}
+        assert set(row["target_label"].astype(str).str.strip()) == {target_label}
+
+
+def test_fuels_reaggregation_covers_all_c20_children_and_split_biofuels() -> None:
     children = _split_children("fuels_split.csv", "exio_to_eurostat_cpa_products.csv")
-    reagg = _active_rows(_read_csv("fuels_reaggregation.csv"))
+    reagg = _active_rows(_read_csv("fuels_reaggregation.csv", PIPELINES))
     reagg_sources = set(reagg["source_code"].astype(str).str.strip())
 
     missing = sorted(children - reagg_sources)
@@ -126,18 +169,22 @@ def test_fuels_reaggregation_covers_all_c20_children_and_biofuels() -> None:
         f"n_children={len(children)} n_reagg_sources={len(reagg_sources)} missing={missing[:20]} extra={extra[:20]}"
     )
 
-    for code in ["p24.g", "p24.h", "p24.i"]:
-        row = reagg.loc[reagg["source_code"].astype(str).str.strip() == code]
-        assert not row.empty, f"{code} must be explicitly reaggregated in fuels_reaggregation.csv"
-        assert set(row["target_code"].astype(str).str.strip()) == {"CPA_C20_BIOFUELS"}
+    _assert_split_liquid_biofuel_semantics(reagg, "fuels_reaggregation.csv")
+    _assert_electricity_target_codes(reagg, "fuels_reaggregation.csv")
 
     for bad in ["p23.1", "p23.2", "p24.4", "p40.2.2"]:
         assert bad not in reagg_sources, f"{bad} must not appear in fuels_reaggregation.csv"
 
 
+def test_fuels_more_reaggregation_matches_fuels_semantics() -> None:
+    reagg = _active_rows(_read_csv("fuels_more_reaggregation.csv", PIPELINES))
+    _assert_split_liquid_biofuel_semantics(reagg, "fuels_more_reaggregation.csv")
+    _assert_electricity_target_codes(reagg, "fuels_more_reaggregation.csv")
+
+
 def test_reaggregation_source_codes_do_not_map_to_multiple_targets() -> None:
-    for csv_name in ["energy_green_brown_reaggregation.csv", "fuels_reaggregation.csv"]:
-        df = _active_rows(_read_csv(csv_name))
+    for csv_name in ["energy_green_brown_reaggregation.csv", "fuels_reaggregation.csv", "fuels_more_reaggregation.csv"]:
+        df = _active_rows(_read_csv(csv_name, PIPELINES))
         counts = df.groupby(df["source_code"].astype(str).str.strip())["target_code"].nunique()
         bad = counts[counts > 1]
         assert bad.empty, f"{csv_name} maps source_code values to multiple targets: {bad.head(20).to_dict()}"

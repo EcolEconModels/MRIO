@@ -156,14 +156,14 @@ def test_committed_fuels_labels_do_not_stack_prefixes() -> None:
 
     eurostat_dictionary_path = Path("scripts/mappings/eurostat_cpa65_products_dictionary.csv")
     split_paths = [
-        Path("scripts/mappings/fuels_split.csv"),
-        Path("scripts/mappings/fuels_more_split.csv"),
-        Path("scripts/mappings/energy_green_brown_split.csv"),
+        Path("scripts/pipelines/fuels_split.csv"),
+        Path("scripts/pipelines/fuels_more_split.csv"),
+        Path("scripts/pipelines/energy_green_brown_split.csv"),
     ]
     reaggregation_paths = [
-        Path("scripts/mappings/fuels_reaggregation.csv"),
-        Path("scripts/mappings/fuels_more_reaggregation.csv"),
-        Path("scripts/mappings/energy_green_brown_reaggregation.csv"),
+        Path("scripts/pipelines/fuels_reaggregation.csv"),
+        Path("scripts/pipelines/fuels_more_reaggregation.csv"),
+        Path("scripts/pipelines/energy_green_brown_reaggregation.csv"),
     ]
 
     for mapping_path in split_paths:
