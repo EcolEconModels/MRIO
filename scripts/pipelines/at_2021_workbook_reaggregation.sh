@@ -74,11 +74,6 @@ if [[ -n "$EXPECTED_REAGG_SECTORS" ]]; then
   EXPECT_ARGS=(--expect-n-sectors "$EXPECTED_REAGG_SECTORS")
 fi
 
-PARENT_TOTAL_ARGS=()
-if [[ "$OUTPUT_SUFFIX" == "fuels" ]]; then
-  PARENT_TOTAL_ARGS=(--skip-template-parent-totals)
-fi
-
 set -x
 
 "$PY" "$ROOT_DIR/scripts/split_eurostat_energy_by_exiobase.py" --verbose \
@@ -159,7 +154,6 @@ PY
   --mapping-csv "$REAGG_MAPPING_CSV" \
   --fail-on-unmapped-split-children \
   "${EXPECT_ARGS[@]}" \
-  "${PARENT_TOTAL_ARGS[@]}" \
   --write-sfc-workbook \
   --sfc-template-xlsx "$TEMPLATE_XLSX" \
   --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_reaggregated.xlsx" \

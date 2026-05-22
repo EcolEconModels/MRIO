@@ -49,6 +49,91 @@ def _row_values(ws, row_idx: int, start_col: int, count: int) -> list[object]:
     return [ws.cell(row=row_idx, column=col).value for col in range(start_col, start_col + count)]
 
 
+def _build_lineage_toy_case():
+    from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
+
+    parsed = ParsedEurostatIOT(
+        Z=pd.DataFrame(
+            [[0.0, 0.0], [0.0, 0.0]],
+            index=["CPA_C10-12", "CPA_C20"],
+            columns=["CPA_C10-12", "CPA_C20"],
+        ),
+        Y=pd.DataFrame(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            index=["CPA_C10-12", "CPA_C20"],
+            columns=["P3", "P5", "P6"],
+        ),
+        meta={
+            "dimensions": {
+                "prd_ava": {
+                    "CPA_C10-12": "Food, beverages and tobacco products",
+                    "CPA_C20": "Chemicals and chemical products",
+                },
+                "prd_use": {
+                    "P3": "Final consumption expediture",
+                    "P5": "Gross capital formation",
+                    "P6": "Exports of goods and services",
+                    "TU": "Total use",
+                    "TFU": "Total final use",
+                },
+            },
+            "identified_industry_columns": ["CPA_C10-12", "CPA_C20"],
+            "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
+        },
+    )
+
+    z_before = pd.DataFrame(
+        [
+            [2.0, 1.0, 0.0],
+            [1.0, 3.0, 1.0],
+            [0.0, 2.0, 4.0],
+        ],
+        index=["p15.j", "p16", "p24.g"],
+        columns=["p15.j", "p16", "p24.g"],
+    )
+    y_before = pd.DataFrame(
+        {
+            "P3": [10.0, 5.0, 7.0],
+            "P5": [4.0, 3.0, 2.0],
+            "P6": [1.0, 2.0, 1.0],
+        },
+        index=z_before.index,
+    )
+    z_after = pd.DataFrame(
+        [
+            [2.0, 1.0, 0.0],
+            [1.0, 3.0, 1.0],
+            [0.0, 2.0, 4.0],
+        ],
+        index=["CPA_C10-12_FOOD_AND_BEVERAGES", "CPA_C10-12_TOBACCO_PRODUCTS", "CPA_C20_BIOGASOLINE"],
+        columns=["CPA_C10-12_FOOD_AND_BEVERAGES", "CPA_C10-12_TOBACCO_PRODUCTS", "CPA_C20_BIOGASOLINE"],
+    )
+    y_after = pd.DataFrame(
+        {
+            "P3": [10.0, 5.0, 7.0],
+            "P5": [4.0, 3.0, 2.0],
+            "P6": [1.0, 2.0, 1.0],
+        },
+        index=z_after.index,
+    )
+    mapping_df = pd.DataFrame(
+        {
+            "from_sector": ["p15.j", "p16", "p24.g"],
+            "to_sector": [
+                "CPA_C10-12_FOOD_AND_BEVERAGES",
+                "CPA_C10-12_TOBACCO_PRODUCTS",
+                "CPA_C20_BIOGASOLINE",
+            ],
+            "target_label": [
+                "CPA_C10-12: Food and beverages",
+                "CPA_C10-12: Tobacco products",
+                "CPA_C20: Biogasoline",
+            ],
+        }
+    )
+    return parsed, z_before, y_before, z_after, y_after, mapping_df
+
+
 def test_pretty_sector_label_formats_energy_codes() -> None:
     from scripts.aggregate_iot_by_mapping import _pretty_sector_label
 
@@ -510,6 +595,115 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
             mapping_to_col="to_sector",
             verbose=False,
         )
+
+
+def test_build_source_parent_by_input_uses_target_lineage_for_split_children() -> None:
+    from scripts.aggregate_iot_by_mapping import _build_source_parent_by_input
+
+    _, _, _, _, _, mapping_df = _build_lineage_toy_case()
+    source_parent_by_input = _build_source_parent_by_input(
+        mapping_df,
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
+        base_product_codes=["CPA_C10-12", "CPA_C20"],
+    )
+
+    assert source_parent_by_input["p15.j"] == "CPA_C10-12"
+    assert source_parent_by_input["p16"] == "CPA_C10-12"
+    assert source_parent_by_input["p24.g"] == "CPA_C20"
+
+
+def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tmp_path: Path, monkeypatch) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template_path = tmp_path / "template.xlsx"
+    out_path = tmp_path / "out.xlsx"
+    _build_template(template_path)
+
+    parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+
+    mod._write_sfc_workbook(
+        out_path=out_path,
+        template_xlsx=template_path,
+        eurostat_dataset="naio_10_cp1700",
+        eurostat_filters={"geo": "AT", "time": "2021"},
+        eurostat_row_dim="prd_ava",
+        eurostat_col_dim="prd_use",
+        eurostat_storage_folder=tmp_path,
+        variant_dim="stk_flow",
+        variant_value="TOTAL",
+        Z_before=z_before,
+        Y_before=y_before,
+        Z_after=z_after,
+        Y_after=y_after,
+        mapping_df=mapping_df,
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
+        verbose=False,
+    )
+
+    audit_path = out_path.with_name("template_parent_total_audit.csv")
+    audit = pd.read_csv(audit_path)
+    c10 = audit[(audit["parent_code"] == "CPA_C10-12") & (audit["fd_code"] == "P3")].iloc[0]
+    assert float(c10["before_parent_total"]) == pytest.approx(15.0)
+    assert float(c10["after_child_sum"]) == pytest.approx(15.0)
+    assert float(c10["difference"]) == pytest.approx(0.0)
+    assert c10["status"] == "ok"
+    assert int(c10["n_children"]) == 2
+    assert c10["child_codes"] == "CPA_C10-12_FOOD_AND_BEVERAGES|CPA_C10-12_TOBACCO_PRODUCTS"
+
+
+def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Path, monkeypatch) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template_path = tmp_path / "template.xlsx"
+    out_path = tmp_path / "out.xlsx"
+    _build_template(template_path)
+
+    parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
+    y_after = y_after.copy()
+    y_after.loc["CPA_C10-12_TOBACCO_PRODUCTS", "P3"] = 6.0
+
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+
+    with pytest.raises(ValueError, match="Template reaggregation validation failed"):
+        mod._write_sfc_workbook(
+            out_path=out_path,
+            template_xlsx=template_path,
+            eurostat_dataset="naio_10_cp1700",
+            eurostat_filters={"geo": "AT", "time": "2021"},
+            eurostat_row_dim="prd_ava",
+            eurostat_col_dim="prd_use",
+            eurostat_storage_folder=tmp_path,
+            variant_dim="stk_flow",
+            variant_value="TOTAL",
+            Z_before=z_before,
+            Y_before=y_before,
+            Z_after=z_after,
+            Y_after=y_after,
+            mapping_df=mapping_df,
+            mapping_from_col="from_sector",
+            mapping_to_col="to_sector",
+            verbose=False,
+        )
+
+    audit_path = out_path.with_name("template_parent_total_audit.csv")
+    audit = pd.read_csv(audit_path)
+    c10 = audit[(audit["parent_code"] == "CPA_C10-12") & (audit["fd_code"] == "P3")].iloc[0]
+    assert float(c10["before_parent_total"]) == pytest.approx(15.0)
+    assert float(c10["after_child_sum"]) == pytest.approx(16.0)
+    assert float(c10["difference"]) == pytest.approx(1.0)
+    assert c10["status"] == "drift"
+
+
+def test_canonical_workbook_wrapper_does_not_pass_parent_total_skip_flag() -> None:
+    script_text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(encoding="utf-8")
+    assert "--skip-template-parent-totals" not in script_text
 
 
 def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_path: Path, monkeypatch) -> None:

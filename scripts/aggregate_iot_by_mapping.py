@@ -278,6 +278,52 @@ def _base_sector_from_code(code: str, base_product_codes: Sequence[str]) -> str 
     return None
 
 
+def _build_source_parent_by_input(
+    mapping_df: pd.DataFrame,
+    *,
+    mapping_from_col: str,
+    mapping_to_col: str,
+    base_product_codes: Sequence[str],
+) -> dict[str, str]:
+    base_codes = [str(code) for code in base_product_codes]
+    source_parent_by_input: dict[str, str] = {}
+
+    if mapping_from_col not in mapping_df.columns or mapping_to_col not in mapping_df.columns:
+        return source_parent_by_input
+
+    for _, row in mapping_df.iterrows():
+        if "enabled" in mapping_df.columns:
+            enabled_value = row.get("enabled", True)
+            if isinstance(enabled_value, str):
+                enabled_text = enabled_value.strip().lower()
+                if enabled_text in {"0", "false", "f", "no", "n", "off"}:
+                    continue
+            elif not bool(enabled_value):
+                continue
+
+        source_code = str(row[mapping_from_col]).strip()
+        target_code = str(row[mapping_to_col]).strip()
+        if not source_code or not target_code:
+            continue
+
+        target_parent = _base_sector_from_code(target_code, base_codes)
+        chosen_parent = target_parent or _base_sector_from_code(source_code, base_codes)
+        if chosen_parent is None:
+            continue
+
+        existing_parent = source_parent_by_input.get(source_code)
+        if existing_parent is None:
+            source_parent_by_input[source_code] = chosen_parent
+            continue
+        if existing_parent != chosen_parent:
+            raise ValueError(
+                "Conflicting parent lineage for source sector "
+                f"{source_code!r}: {existing_parent!r} vs {chosen_parent!r}"
+            )
+
+    return source_parent_by_input
+
+
 def _write_excel_mapping_sheet(
     wb,
     *,
@@ -898,6 +944,7 @@ def _validate_template_reaggregation(
     Y_ord: pd.DataFrame,
     lower_row_vectors: dict[str, pd.Series],
     lower_fd_vectors: dict[str, pd.Series],
+    source_parent_by_input: dict[str, str] | None = None,
     validate_template_parent_totals: bool = True,
     rtol: float = 1e-9,
     atol: float = 1e-6,
@@ -916,6 +963,7 @@ def _validate_template_reaggregation(
     workbook_fd_cols = {
         code: int(workbook_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes)
     }
+    source_parent_by_input = {} if source_parent_by_input is None else dict(source_parent_by_input)
 
     children_by_parent: dict[str, list[str]] = {code: [] for code in base_codes}
     has_multi_parent_outputs = any(len(tuple(parents)) > 1 for parents in parents_by_output.values())
@@ -924,7 +972,10 @@ def _validate_template_reaggregation(
             if parent_code in children_by_parent:
                 children_by_parent[parent_code].append(output_code)
 
-    before_parent_index = [_base_sector_from_code(str(code), base_codes) for code in Y_before.index]
+    before_parent_index = [
+        source_parent_by_input.get(str(code)) or _base_sector_from_code(str(code), base_codes)
+        for code in Y_before.index
+    ]
     valid_before_rows = [parent is not None for parent in before_parent_index]
     Y_before_valid = Y_before.loc[valid_before_rows, :].copy()
     Y_before_valid.index = [parent for parent in before_parent_index if parent is not None]
@@ -1108,12 +1159,18 @@ def _resolve_product_template_alignment(
     product_order = list(map(str, output_product_codes))
     base_codes = [str(code) for code in base_product_codes]
     parents_by_output: dict[str, tuple[str, ...]] = {}
+    source_parent_by_input = _build_source_parent_by_input(
+        mapping_df if mapping_df is not None else pd.DataFrame(),
+        mapping_from_col=mapping_from_col,
+        mapping_to_col=mapping_to_col,
+        base_product_codes=base_codes,
+    )
 
     mapped_parents: dict[str, list[str]] = {}
     if mapping_df is not None and mapping_from_col in mapping_df.columns and mapping_to_col in mapping_df.columns:
         for _, row in mapping_df.iterrows():
             output_code = str(row[mapping_to_col])
-            parent_code = _base_sector_from_code(str(row[mapping_from_col]), base_codes)
+            parent_code = source_parent_by_input.get(str(row[mapping_from_col]))
             if parent_code is None:
                 continue
             mapped_parents.setdefault(output_code, [])
@@ -1138,6 +1195,57 @@ def _resolve_product_template_alignment(
         )
         return None, product_order, primary_parent_by_output, parents_by_output
     return template_xlsx, product_order, primary_parent_by_output, parents_by_output
+
+
+def _build_template_parent_total_audit(
+    *,
+    variant_value: str | None,
+    source_parent_by_input: dict[str, str],
+    parents_by_output: dict[str, tuple[str, ...]],
+    base_product_codes: Sequence[str],
+    Y_before: pd.DataFrame,
+    Y_after: pd.DataFrame,
+    fd_codes_order_no_total: Sequence[str],
+) -> pd.DataFrame:
+    base_codes = [str(code) for code in base_product_codes]
+    before_parent_index = [
+        source_parent_by_input.get(str(code)) or _base_sector_from_code(str(code), base_codes)
+        for code in Y_before.index
+    ]
+    valid_before_rows = [parent is not None for parent in before_parent_index]
+    Y_before_valid = Y_before.loc[valid_before_rows, :].copy()
+    Y_before_valid.index = [parent for parent in before_parent_index if parent is not None]
+    Y_before_base = Y_before_valid.groupby(level=0).sum().reindex(index=base_codes).fillna(0.0).astype("float64")
+
+    rows: list[dict[str, object]] = []
+    product_codes = [str(code) for code in Y_after.index]
+    for parent_code in base_codes:
+        child_codes = [code for code in product_codes if parent_code in parents_by_output.get(code, ())]
+        for fd_code in fd_codes_order_no_total:
+            if fd_code == "TU":
+                continue
+            if fd_code == "TFU":
+                before_parent_total = float(Y_before_base.loc[parent_code].sum())
+                after_child_sum = float(Y_after.reindex(index=child_codes).fillna(0.0).sum().sum())
+            else:
+                before_parent_total = float(Y_before_base.reindex(columns=[fd_code]).fillna(0.0).loc[parent_code, fd_code])
+                after_child_sum = float(
+                    Y_after.reindex(index=child_codes, columns=[fd_code]).fillna(0.0)[fd_code].sum()
+                )
+            rows.append(
+                {
+                    "variant": "" if variant_value is None else str(variant_value),
+                    "parent_code": parent_code,
+                    "fd_code": fd_code,
+                    "before_parent_total": before_parent_total,
+                    "after_child_sum": after_child_sum,
+                    "difference": after_child_sum - before_parent_total,
+                    "n_children": len(child_codes),
+                    "child_codes": "|".join(child_codes),
+                    "status": "ok" if np.isclose(after_child_sum, before_parent_total, rtol=1e-9, atol=1e-6) else "drift",
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _write_sfc_workbook(
@@ -1223,6 +1331,12 @@ def _write_sfc_workbook(
         mapping_from_col=mapping_from_col,
         mapping_to_col=mapping_to_col,
         verbose=verbose,
+    )
+    source_parent_by_input = _build_source_parent_by_input(
+        mapping_df,
+        mapping_from_col=mapping_from_col,
+        mapping_to_col=mapping_to_col,
+        base_product_codes=base_product_codes,
     )
 
     # TOTAL column is moved to the left in the Eurostat XLSX export; the remaining final-demand columns
@@ -1327,8 +1441,6 @@ def _write_sfc_workbook(
     c_total = int(layout["total_col"])
     c_prod0 = int(layout["first_product_col"])
     c_fd0 = int(layout["first_fd_col"])
-    n_prod = len(product_codes_order)
-    n_fd = len(fd_codes_order_no_total)
 
     # Header labels (row hr)
     ws.cell(row=hr, column=1).value = ws.cell(row=hr, column=1).value or f"{str(eurostat_col_dim).upper()} (Labels)"
@@ -1459,7 +1571,7 @@ def _write_sfc_workbook(
             for _, row in mapping_df.iterrows():
                 from_sector = str(row[mapping_from_col])
                 to_sector = str(row[mapping_to_col])
-                parent_code = _base_sector_from_code(from_sector, base_product_codes)
+                parent_code = source_parent_by_input.get(from_sector) or _base_sector_from_code(from_sector, base_product_codes)
                 if parent_code is None or to_sector not in output_contrib_by_parent or from_sector not in x_before.index:
                     continue
                 output_contrib_by_parent[to_sector][parent_code] = output_contrib_by_parent[to_sector].get(parent_code, 0.0) + float(
@@ -1541,6 +1653,19 @@ def _write_sfc_workbook(
                 _write_num(ws, row=target_r, col=c_fd0 + j, value=float(value))
             lower_fd_vectors[label_text] = fd_vector
 
+        audit_df = _build_template_parent_total_audit(
+            variant_value=variant_value,
+            source_parent_by_input=source_parent_by_input,
+            parents_by_output=parents_by_output,
+            base_product_codes=base_product_codes,
+            Y_before=Y_before,
+            Y_after=Y_ord,
+            fd_codes_order_no_total=fd_codes_order_no_total,
+        )
+        audit_path = out_path.with_name("template_parent_total_audit.csv")
+        audit_df.to_csv(audit_path, index=False)
+        _vprint(verbose, f"Wrote: {audit_path.resolve()}")
+
         _validate_template_reaggregation(
             product_codes_order=product_codes_order,
             base_product_codes=base_product_codes,
@@ -1555,6 +1680,7 @@ def _write_sfc_workbook(
             Y_ord=Y_ord,
             lower_row_vectors=lower_row_vectors,
             lower_fd_vectors=lower_fd_vectors,
+            source_parent_by_input=source_parent_by_input,
             validate_template_parent_totals=validate_template_parent_totals
             and (variant_value is None or str(variant_value).upper() == "TOTAL"),
             rtol=1e-9,
@@ -1644,9 +1770,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Write an additional Eurostat-export-shaped workbook for SFC/R scripts (one per variant).",
     )
     out.add_argument(
-        "--skip-template-parent-totals",
+        "--unsafe-skip-template-parent-totals",
         action="store_true",
-        help="Skip template parent-total validation when writing the SFC workbook.",
+        help="Unsafe debug-only option: skip template parent-total validation when writing the SFC workbook. Do not use in canonical pipelines.",
     )
     out.add_argument(
         "--sfc-template-xlsx",
@@ -1956,7 +2082,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mapping_from_col="from_sector",
                 mapping_to_col="to_sector",
                 verbose=args.verbose,
-                validate_template_parent_totals=not bool(args.skip_template_parent_totals),
+                validate_template_parent_totals=not bool(args.unsafe_skip_template_parent_totals),
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
                 disaggregated_sector_emission_intensity=disaggregated_emissions,
