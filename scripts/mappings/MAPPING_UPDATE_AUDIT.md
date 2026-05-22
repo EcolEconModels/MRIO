@@ -24,3 +24,15 @@ This note records the mapping cleanup performed in this pass.
 
 - The new regression tests check the dictionary provenance column, the static split-template biofuel target codes, and the updated green/brown note wording.
 - Existing statistical concordance semantics for p24.g, p24.h, and p24.i remain `CPA_C20`.
+
+## Final cleanup pass
+
+- Cleaned 15 malformed active EXIO concordance fallback notes that previously used empty-division wording. The rewritten notes now identify the source code, source label, EXIO prefix, target code, target label, and the substantive fallback rationale.
+- Fossil extraction and mining-related fallback rows mapped to `CPA_B` now state that `CPA_B` is the Eurostat aggregate for mining and quarrying.
+- Gas and energy-network fallback rows mapped to `CPA_D` now state that `CPA_D` is the Eurostat aggregate for electricity, gas, steam and air conditioning.
+- Active Eurostat product dictionary inspection: 5,522 rows; 0 blank descriptions; 0 blank provenance values; 21 rows where `description == label`; all 21 are explicitly marked as fallback.
+- Active Eurostat industry dictionary inspection: 996 rows; 0 blank descriptions; 0 blank provenance values; 21 rows where `description == label`; all 21 are explicitly marked as fallback.
+- Liquid biofuels remain statistically mapped to `CPA_C20` in the EXIO-to-Eurostat concordance: p24.g Biogasoline, p24.h Biodiesels, and p24.i Other Liquid Biofuels.
+- Liquid biofuels remain analytically mapped to `ENERGY_GREEN` in green/brown reaggregation.
+- Other C20 rows remain outside green/brown as `CPA_C20_others`: p24.a, p24.a.w, p24.b, p24.c, p24.d, p24.e, and p24.f.
+- Temporary/local checks run: dictionary inspection for products and industries; malformed-note phrase scan over `scripts/**/*.csv` and `scripts/**/*.md`; biofuel mapping grep over `scripts/mappings` and `scripts/pipelines`; existing lightweight pytest check `tests/test_mapping_integrity.py`.
