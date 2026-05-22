@@ -613,6 +613,42 @@ def test_build_source_parent_by_input_uses_target_lineage_for_split_children() -
     assert source_parent_by_input["p24.g"] == "CPA_C20"
 
 
+def test_template_parent_total_audit_uses_detailed_tfu_columns_without_double_counting() -> None:
+    from scripts.aggregate_iot_by_mapping import _build_template_parent_total_audit
+
+    _, _, y_before, _, y_after, _ = _build_lineage_toy_case()
+    y_before = y_before.copy()
+    y_after = y_after.copy()
+    y_before["TFU"] = [999.0, 999.0, 999.0]
+    y_after["TFU"] = [888.0, 888.0, 888.0]
+
+    audit = _build_template_parent_total_audit(
+        variant_value="TOTAL",
+        source_parent_by_input={
+            "p15.j": "CPA_C10-12",
+            "p16": "CPA_C10-12",
+            "p24.g": "CPA_C20",
+        },
+        parents_by_output={
+            "CPA_C10-12_FOOD_AND_BEVERAGES": ("CPA_C10-12",),
+            "CPA_C10-12_TOBACCO_PRODUCTS": ("CPA_C10-12",),
+            "CPA_C20_BIOGASOLINE": ("CPA_C20",),
+        },
+        base_product_codes=["CPA_C10-12", "CPA_C20"],
+        Y_before=y_before,
+        Y_after=y_after,
+        fd_codes_order_no_total=["P3", "P5", "P6", "TFU"],
+    )
+
+    c10_tfu = audit[(audit["parent_code"] == "CPA_C10-12") & (audit["fd_code"] == "TFU")].iloc[0]
+    assert float(c10_tfu["before_parent_total"]) == pytest.approx(25.0)
+    assert float(c10_tfu["after_child_sum"]) == pytest.approx(25.0)
+    assert float(c10_tfu["difference"]) == pytest.approx(0.0)
+    assert c10_tfu["status"] == "ok"
+    assert float(c10_tfu["before_parent_total"]) != pytest.approx(999.0)
+    assert float(c10_tfu["after_child_sum"]) != pytest.approx(888.0)
+
+
 def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tmp_path: Path, monkeypatch) -> None:
     import ecolecon_mrio.eurostat_iot as eurostat_iot
     from scripts import aggregate_iot_by_mapping as mod

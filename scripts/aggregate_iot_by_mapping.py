@@ -1225,8 +1225,21 @@ def _build_template_parent_total_audit(
             if fd_code == "TU":
                 continue
             if fd_code == "TFU":
-                before_parent_total = float(Y_before_base.loc[parent_code].sum())
-                after_child_sum = float(Y_after.reindex(index=child_codes).fillna(0.0).sum().sum())
+                if {"P3", "P5", "P6"}.issubset(set(Y_before_base.columns.astype(str))):
+                    before_parent_total = float(Y_before_base.loc[parent_code, ["P3", "P5", "P6"]].sum())
+                elif "TFU" in Y_before_base.columns:
+                    before_parent_total = float(Y_before_base.loc[parent_code, "TFU"])
+                else:
+                    before_parent_total = 0.0
+
+                if {"P3", "P5", "P6"}.issubset(set(Y_after.columns.astype(str))):
+                    after_child_sum = float(
+                        Y_after.reindex(index=child_codes)[["P3", "P5", "P6"]].fillna(0.0).sum().sum()
+                    )
+                elif "TFU" in Y_after.columns:
+                    after_child_sum = float(Y_after.reindex(index=child_codes)["TFU"].fillna(0.0).sum())
+                else:
+                    after_child_sum = 0.0
             else:
                 before_parent_total = float(Y_before_base.reindex(columns=[fd_code]).fillna(0.0).loc[parent_code, fd_code])
                 after_child_sum = float(
