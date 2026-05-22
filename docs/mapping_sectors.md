@@ -158,6 +158,8 @@ Columns:
 - `label`
 - `description`
 
+Some dictionary snapshots also carry `provenance_source` so the curated aggregate labels can be traced back to the detailed mined source tables.
+
 ## Main Field Meanings
 
 The meanings below apply to the full-schema family. The reduced EXIO concordance intentionally omits `share`.

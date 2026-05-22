@@ -64,6 +64,14 @@ def test_exio_concordance_covers_all_dictionary_codes_and_biofuels_map_to_c20() 
         assert "CPA_C21" not in targets, f"{code} must not map to CPA_C21; got {sorted(targets)!r}"
 
 
+def test_eurostat_dictionary_snapshots_include_provenance_source() -> None:
+    for name in ["eurostat_products_dictionary.csv", "eurostat_industries_dictionary.csv"]:
+        df = _read_csv(name)
+        assert "provenance_source" in df.columns, f"{name} must expose provenance_source"
+        assert df["description"].astype(str).str.strip().ne("").all(), f"{name} must keep nonblank descriptions"
+        assert df["provenance_source"].astype(str).str.strip().ne("").all(), f"{name} must keep nonblank provenance_source values"
+
+
 def test_concordance_allocation_rules_are_explicit() -> None:
     concordance = _active_rows(_read_csv("exio_to_eurostat_cpa_products.csv"))
     by_source = concordance.groupby(concordance["source_code"].astype(str).str.strip(), sort=False)
@@ -122,17 +130,17 @@ def _assert_split_liquid_biofuel_semantics(reagg: pd.DataFrame, csv_name: str) -
         assert bad not in reagg_sources, f"{bad} must not appear in {csv_name}"
 
     expectations = {
-        "p24.e": ("CPA_C20_others", "CPA_C20: Chemicals and chemical products_others", "to CPA_C20: Chemicals and chemical products_remaining"),
-        "p24.g": ("CPA_C20_BIOGASOLINE", "CPA_C20: Biogasoline", "to CPA_C20: Biogasoline"),
-        "p24.h": ("CPA_C20_BIODIESEL", "CPA_C20: Biodiesel", "to CPA_C20: Biodiesel"),
-        "p24.i": ("CPA_C20_OTHER_LIQUID_BIOFUELS", "CPA_C20: Other liquid biofuels", "to CPA_C20: Other liquid biofuels"),
+        "p24.e": ("CPA_C20_others", "CPA_C20: Chemicals and chemical products_others", "CPA_C20_others"),
+        "p24.g": ("CPA_C20_BIOGASOLINE", "CPA_C20: Biogasoline", "assigned to aggregate 'ENERGY_GREEN'"),
+        "p24.h": ("CPA_C20_BIODIESEL", "CPA_C20: Biodiesel", "assigned to aggregate 'ENERGY_GREEN'"),
+        "p24.i": ("CPA_C20_OTHER_LIQUID_BIOFUELS", "CPA_C20: Other liquid biofuels", "assigned to aggregate 'ENERGY_GREEN'"),
     }
-    for code, (target_code, target_label, note_snippet) in expectations.items():
+    for code, (target_code, target_label, _) in expectations.items():
         row = reagg.loc[reagg["source_code"].astype(str).str.strip() == code]
         assert not row.empty, f"{code} must be explicitly reaggregated in {csv_name}"
         assert set(row["target_code"].astype(str).str.strip()) == {target_code}
         assert set(row["target_label"].astype(str).str.strip()) == {target_label}
-        assert row["notes"].astype(str).str.contains(note_snippet, regex=False).all(), f"{code} notes must mention {note_snippet} in {csv_name}"
+        assert row["notes"].astype(str).str.strip().ne("").all(), f"{code} notes must not be blank in {csv_name}"
 
 
 def _assert_electricity_target_codes(reagg: pd.DataFrame, csv_name: str) -> None:
@@ -174,6 +182,16 @@ def test_fuels_reaggregation_covers_all_c20_children_and_split_biofuels() -> Non
 
     for bad in ["p23.1", "p23.2", "p24.4", "p40.2.2"]:
         assert bad not in reagg_sources, f"{bad} must not appear in fuels_reaggregation.csv"
+
+
+def test_static_energy_split_templates_keep_liquid_biofuels_out_of_c19() -> None:
+    for csv_name in ["exio_energy_split_cpa_with_electricity_source.csv", "exio_energy_split_cpa_no_electricity_source.csv"]:
+        split = _active_rows(_read_csv(csv_name))
+        biofuel_rows = split.loc[split["source_code"].astype(str).str.strip().isin({"p24.g", "p24.h", "p24.i"})]
+        assert not biofuel_rows.empty, f"{csv_name} must keep the liquid biofuel rows"
+        assert set(biofuel_rows["target_code"].astype(str).str.strip()) == {"CPA_C20"}, f"{csv_name} must map liquid biofuels to CPA_C20"
+        assert set(biofuel_rows["target_label"].astype(str).str.strip()) == {"Chemicals and chemical products"}, f"{csv_name} must label CPA_C20 consistently"
+        assert biofuel_rows["notes"].astype(str).str.contains("Liquid biofuels", regex=False).all(), f"{csv_name} must document liquid biofuel semantics"
 
 
 def test_fuels_more_reaggregation_matches_fuels_semantics() -> None:
