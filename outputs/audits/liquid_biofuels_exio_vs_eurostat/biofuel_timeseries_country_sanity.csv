@@ -1,0 +1,3 @@
+year,region,fuel_code,fuel_label,share_wholesale_biogasoline,share_transport_biogasoline,transport_share_of_Z_biogasoline,final_demand_share_biogasoline,total_use_meur,notes
+2020,AT,p24.g,Biogasoline,0.19745321708602487,0.003159120335432764,0.0032801345514055728,0.03689306462167922,134.61462069743249,Computed only for locally cached AT total-use slices; no multi-country EXIO slices were available locally.
+2021,AT,p24.g,Biogasoline,0.007277112975014882,0.0003140112968995866,0.00032649439848741807,0.038233738911488624,448.0766898044534,Computed only for locally cached AT total-use slices; no multi-country EXIO slices were available locally.
