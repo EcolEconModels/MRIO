@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import io
 import json
+import numpy as np
 import os
 import pickle
 import time
@@ -176,6 +178,101 @@ def _load_exio_matrix_cache(
     y = y.reindex(basis_index).astype(float)
     inv_x = (1.0 / x.replace(0.0, pd.NA)).fillna(0.0).astype(float)
     A = (matrix @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
+    return A, x, y, basis_index, metadata
+
+
+def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
+    with zipfile.ZipFile(zip_path) as zf, zf.open("x.txt") as fh:
+        frame = pd.read_csv(fh, sep="\t")
+    required = {"region", "sector"}
+    if not required.issubset(frame.columns):
+        raise ValueError("EXIOBASE x.txt must contain region and sector columns.")
+    value_col = "indout" if "indout" in frame.columns else frame.columns[-1]
+    basis_index = pd.MultiIndex.from_frame(frame.loc[:, ["region", "sector"]].astype(str), names=["region", "sector"])
+    x = pd.to_numeric(frame[value_col], errors="coerce").fillna(0.0).astype(float)
+    return pd.Series(x.to_numpy(dtype=float), index=basis_index, name="x"), basis_index
+
+
+def _numeric_tail_from_exio_line(line: str) -> np.ndarray:
+    # EXIO text rows start with two tab-separated labels, followed by numeric columns.
+    try:
+        _region, _sector, rest = line.rstrip("\n\r").split("\t", 2)
+    except ValueError:
+        return np.array([], dtype=float)
+    return np.fromstring(rest.replace("\t", " "), sep=" ", dtype=float)
+
+
+def _read_exio_A_direct_from_zip(zip_path: Path, *, n: int) -> csr_matrix:
+    counts = np.zeros(int(n), dtype=np.int64)
+    with zipfile.ZipFile(zip_path) as zf, zf.open("A.txt") as raw:
+        fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+        for _ in range(3):
+            next(fh)
+        for row_idx, line in enumerate(fh):
+            if row_idx >= n:
+                break
+            vals = _numeric_tail_from_exio_line(line)
+            counts[row_idx] = int(np.count_nonzero(vals))
+    indptr = np.empty(int(n) + 1, dtype=np.int64)
+    indptr[0] = 0
+    np.cumsum(counts, out=indptr[1:])
+    nnz = int(indptr[-1])
+    indices = np.empty(nnz, dtype=np.int32)
+    data = np.empty(nnz, dtype=float)
+    with zipfile.ZipFile(zip_path) as zf, zf.open("A.txt") as raw:
+        fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+        for _ in range(3):
+            next(fh)
+        for row_idx, line in enumerate(fh):
+            if row_idx >= n:
+                break
+            vals = _numeric_tail_from_exio_line(line)
+            nz = np.flatnonzero(vals)
+            start = int(indptr[row_idx])
+            stop = int(indptr[row_idx + 1])
+            indices[start:stop] = nz.astype(np.int32, copy=False)
+            data[start:stop] = vals[nz]
+    A = csr_matrix((data, indices, indptr), shape=(int(n), int(n)))
+    A.eliminate_zeros()
+    return A
+
+
+def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> pd.Series:
+    n = len(basis_index)
+    with zipfile.ZipFile(zip_path) as zf, zf.open("Y.txt") as raw:
+        fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+        _regions = next(fh).rstrip("\n\r").split("\t")[2:]
+        categories = next(fh).rstrip("\n\r").split("\t")[2:]
+        keep = np.array(["export" not in str(cat).lower() for cat in categories], dtype=bool)
+        next(fh)
+        y_vals = np.zeros(n, dtype=float)
+        for row_idx, line in enumerate(fh):
+            if row_idx >= n:
+                break
+            vals = _numeric_tail_from_exio_line(line)
+            if vals.size:
+                y_vals[row_idx] = float(vals[keep[: vals.size]].sum())
+    return pd.Series(y_vals, index=basis_index, name="y", dtype=float)
+
+
+def _load_exio_matrices_direct_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
+    x, basis_index = _read_exio_x_from_zip(zip_path)
+    A = _read_exio_A_direct_from_zip(zip_path, n=len(basis_index))
+    y = _read_exio_y_direct_from_zip(zip_path, basis_index=basis_index)
+    density = float(A.nnz) / float(A.shape[0] * A.shape[1]) if A.shape[0] and A.shape[1] else 0.0
+    metadata = {
+        "cache_kind": "exiobase_matrix",
+        "cache_status": "parsed_direct_from_zip_no_cache_write",
+        "matrix_source": "A.txt",
+        "matrix_shape": [int(A.shape[0]), int(A.shape[1])],
+        "nnz": int(A.nnz),
+        "density": density,
+        "stored_objects": [],
+        "not_stored_objects": ["Z", "full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "extensions"],
+        "source_zip": str(zip_path),
+        "index_columns": ["region", "sector"],
+        "cache_matrices": False,
+    }
     return A, x, y, basis_index, metadata
 
 
@@ -901,6 +998,24 @@ def load_mrio_matrices(
 
     if verbose:
         print(f"Parsing EXIOBASE zip {zip_path} for matrix cache ...")
+    if not cache_matrices:
+        A_direct, x_direct, y_direct, basis_index_direct, metadata_direct = _load_exio_matrices_direct_from_zip(zip_path)
+        metadata_direct = dict(metadata_direct)
+        metadata_direct["system"] = system
+        metadata_direct["year"] = int(year)
+        metadata_direct["cache_dir"] = str(cache_dir)
+        if delete_source_zip_after_parse:
+            try:
+                zip_path.unlink(missing_ok=True)
+                if verbose:
+                    print(f"Deleted EXIOBASE source zip after successful direct matrix load: {zip_path}")
+            except Exception as exc:
+                if verbose:
+                    print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
+        if calc_all and verbose:
+            print("calc_all is ignored for load_mrio_matrices(); the compact cache stores matrices only.")
+        return A_direct, x_direct, y_direct, basis_index_direct, metadata_direct
+
     mrio = pymrio.parse_exiobase3(zip_path)
     _validate_exiobase_system(mrio, system)
 

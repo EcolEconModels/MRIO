@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import zipfile
 
 import pandas as pd
 
@@ -40,6 +41,25 @@ def _fake_zip(tmp_path: Path, year: int) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     zip_path = data_dir / f"IOT_{year}_pxp.zip"
     zip_path.write_bytes(b"fake-zip")
+    return zip_path
+
+
+def _fake_matrix_zip(tmp_path: Path, year: int) -> Path:
+    data_dir = tmp_path / f"exiobase3_{year}"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = data_dir / f"IOT_{year}_pxp.zip"
+    z_header = "region\t\tAT\tAT\nsector\t\ta\tb\nregion\tsector\t\t\n"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("x.txt", "region\tsector\tindout\nAT\ta\t10\nAT\tb\t20\n")
+        zf.writestr("A.txt", z_header + "AT\ta\t0.1\t0\nAT\tb\t0.2\t0.3\n")
+        zf.writestr(
+            "Y.txt",
+            "region\t\tAT\tAT\n"
+            "category\t\tFinal consumption expenditure by households\tExports: Total (fob)\n"
+            "region\tsector\t\t\n"
+            "AT\ta\t7\t1\n"
+            "AT\tb\t8\t2\n",
+        )
     return zip_path
 
 
@@ -138,12 +158,11 @@ def test_load_mrio_matrices_can_parse_without_writing_matrix_cache(monkeypatch, 
     import ecolecon_mrio.data as data_mod
 
     year = 2090
-    zip_path = _fake_zip(tmp_path, year)
-    fake_mrio = _FakeExioMrio(with_x=False, with_a=False)
+    zip_path = _fake_matrix_zip(tmp_path, year)
 
     monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
     monkeypatch.setattr(data_mod, "_validate_exiobase_system", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: fake_mrio)
+    monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: (_ for _ in ()).throw(AssertionError("parse should not run in no-cache direct mode")))
 
     A, x, y, index, metadata = data_mod.load_mrio_matrices(
         year,
@@ -157,6 +176,9 @@ def test_load_mrio_matrices_can_parse_without_writing_matrix_cache(monkeypatch, 
     assert A.shape == (2, 2)
     assert len(x) == 2
     assert len(y) == 2
-    pd.testing.assert_index_equal(index, fake_mrio.Z.index)
-    assert metadata["cache_status"] == "parsed_no_cache_write"
+    expected_index = pd.MultiIndex.from_tuples([("AT", "a"), ("AT", "b")], names=["region", "sector"])
+    pd.testing.assert_index_equal(index, expected_index)
+    assert A.nnz == 3
+    assert y.tolist() == [7.0, 8.0]
+    assert metadata["cache_status"] == "parsed_direct_from_zip_no_cache_write"
     assert not (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp" / "Z.npz").exists()
