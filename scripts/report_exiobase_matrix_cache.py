@@ -40,6 +40,8 @@ def main() -> int:
     parser.add_argument("year", type=int, help="EXIOBASE year")
     parser.add_argument("--system", default="pxp", choices=["pxp", "ixi"], help="EXIOBASE system")
     parser.add_argument("--data-root", default=None, help="Cache root directory")
+    parser.add_argument("--write-cache", action="store_true", help="Create/update the compact Z/x/y matrix cache if missing")
+    parser.add_argument("--ignore-existing-cache", action="store_true", help="Parse from source zip instead of reading an existing matrix cache")
     args = parser.parse_args()
 
     data_root = Path(args.data_root).expanduser() if args.data_root is not None else None
@@ -57,6 +59,8 @@ def main() -> int:
         data_root=data_root,
         exio_system=args.system,
         allow_download_missing=False,
+        cache_matrices=bool(args.write_cache),
+        read_existing_cache=not bool(args.ignore_existing_cache),
         verbose=False,
     )
     load_seconds = time.perf_counter() - start

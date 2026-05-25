@@ -16,6 +16,7 @@ from .data import (
     resolve_exiobase_cache_paths,
     resolve_exiobase_matrix_cache_paths,
 )
+load_MRIO_matrices = load_mrio_matrices
 from .decomposition import decompose_slack_change
 from .diagnostics import (
     SafeJustResult,
@@ -139,6 +140,7 @@ from .mapping_csv import (
 __all__ = [
     "load_mrio",
     "load_mrio_matrices",
+    "load_MRIO_matrices",
     "ensure_exiobase_year_zip",
     "resolve_exiobase_year_dir",
     "resolve_exiobase_cache_paths",

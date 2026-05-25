@@ -826,6 +826,8 @@ def load_mrio_matrices(
     download_retries: int = 3,
     delete_source_zip_after_parse: bool = False,
     exio_system: str = "pxp",
+    cache_matrices: bool = True,
+    read_existing_cache: bool = True,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
     """Load a compact EXIOBASE matrix cache for matrix-only workflows.
 
@@ -841,23 +843,31 @@ def load_mrio_matrices(
         Basis index with ``region`` and ``sector`` levels.
     metadata : dict
         Cache metadata describing what is stored and what is not.
+
+    Notes
+    -----
+    Set ``cache_matrices=False`` to parse the source zip without writing a
+    compact ``Z/x/y`` cache. With ``read_existing_cache=True`` this still uses
+    an existing compact cache when one is already present, but it will not
+    create a new one. This is the lowest-disk mode for short matrix-only runs.
     """
     system = str(exio_system).strip().lower()
     if system not in {"pxp", "ixi"}:
         raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
 
-    data_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
-    data_dir.mkdir(parents=True, exist_ok=True)
     paths = resolve_exiobase_matrix_cache_paths(int(year), system=system, data_root=data_root)
+    data_dir = paths["data_dir"]
+    data_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = paths["matrix_cache_dir"]
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    if cache_matrices:
+        cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if force_download and cache_dir.exists():
+    if force_download and cache_matrices and cache_dir.exists():
         ts = int(time.time())
         cache_dir.rename(data_dir / f"{cache_dir.name}.forced.{ts}")
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if not force_download:
+    if read_existing_cache and not force_download:
         try:
             A, x, y, basis_index, metadata = _load_exio_matrix_cache(cache_dir=cache_dir)
             metadata = dict(metadata)
@@ -916,9 +926,12 @@ def load_mrio_matrices(
     Z_csr = csr_matrix(Z_df.to_numpy(dtype=float))
 
     density = float(Z_csr.nnz) / float(Z_csr.shape[0] * Z_csr.shape[1]) if Z_csr.shape[0] and Z_csr.shape[1] else 0.0
+    inv_x = (1.0 / x_series.replace(0.0, pd.NA)).fillna(0.0).astype(float)
+    A_csr = (Z_csr @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
+
     metadata = {
         "cache_kind": "exiobase_matrix",
-        "cache_status": "rebuilt",
+        "cache_status": "rebuilt" if cache_matrices else "parsed_no_cache_write",
         "system": system,
         "year": int(year),
         "matrix_shape": [int(Z_csr.shape[0]), int(Z_csr.shape[1])],
@@ -929,13 +942,11 @@ def load_mrio_matrices(
         "source_zip": str(zip_path),
         "cache_dir": str(cache_dir),
         "index_columns": ["region", "sector"],
+        "cache_matrices": bool(cache_matrices),
     }
-    _save_exio_matrix_cache(cache_dir=cache_dir, Z=Z_csr, x=x_series, y=y_series, index=basis_index, metadata=metadata, verbose=verbose)
-
-    A_loaded, x_loaded, y_loaded, basis_index_loaded, metadata_loaded = _load_exio_matrix_cache(cache_dir=cache_dir)
-    metadata_loaded = dict(metadata_loaded)
-    metadata_loaded["cache_status"] = "hit_after_rebuild"
-    metadata_loaded["cache_dir"] = str(cache_dir)
+    if cache_matrices:
+        _save_exio_matrix_cache(cache_dir=cache_dir, Z=Z_csr, x=x_series, y=y_series, index=basis_index, metadata=metadata, verbose=verbose)
+        metadata["cache_status"] = "rebuilt_returned_direct"
     if delete_source_zip_after_parse:
         try:
             zip_path.unlink(missing_ok=True)
@@ -946,4 +957,4 @@ def load_mrio_matrices(
                 print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
     if calc_all and verbose:
         print("calc_all is ignored for load_mrio_matrices(); the compact cache stores matrices only.")
-    return A_loaded, x_loaded, y_loaded, basis_index_loaded, metadata_loaded
+    return A_csr, x_series, y_series, basis_index, metadata

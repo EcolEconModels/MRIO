@@ -81,7 +81,7 @@ def test_load_mrio_matrices_roundtrip_and_cache_hit(monkeypatch, tmp_path):
     pd.testing.assert_series_equal(x, pd.Series([14.0, 29.0], index=index, name="x"))
     pd.testing.assert_series_equal(y, pd.Series([10.0, 20.0], index=index, name="y"))
     assert metadata["cache_kind"] == "exiobase_matrix"
-    assert metadata["cache_status"] == "hit_after_rebuild"
+    assert metadata["cache_status"] == "rebuilt_returned_direct"
     assert (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp" / "Z.npz").exists()
     assert not (tmp_path / f"exiobase3_{year}" / f"mrio_system_{year}_pxp.fast.pkl").exists()
 
@@ -131,4 +131,32 @@ def test_load_mrio_matrices_rebuilds_incomplete_cache(monkeypatch, tmp_path):
     assert len(x) == 2
     assert len(y) == 2
     assert index.names == ["region", "sector"]
-    assert metadata["cache_status"] == "hit_after_rebuild"
+    assert metadata["cache_status"] == "rebuilt_returned_direct"
+
+
+def test_load_mrio_matrices_can_parse_without_writing_matrix_cache(monkeypatch, tmp_path):
+    import ecolecon_mrio.data as data_mod
+
+    year = 2090
+    zip_path = _fake_zip(tmp_path, year)
+    fake_mrio = _FakeExioMrio(with_x=False, with_a=False)
+
+    monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
+    monkeypatch.setattr(data_mod, "_validate_exiobase_system", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: fake_mrio)
+
+    A, x, y, index, metadata = data_mod.load_mrio_matrices(
+        year,
+        data_root=tmp_path,
+        allow_download_missing=False,
+        cache_matrices=False,
+        read_existing_cache=False,
+        verbose=False,
+    )
+
+    assert A.shape == (2, 2)
+    assert len(x) == 2
+    assert len(y) == 2
+    pd.testing.assert_index_equal(index, fake_mrio.Z.index)
+    assert metadata["cache_status"] == "parsed_no_cache_write"
+    assert not (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp" / "Z.npz").exists()
