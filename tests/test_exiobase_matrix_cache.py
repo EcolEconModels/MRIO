@@ -4,6 +4,7 @@ from pathlib import Path
 import zipfile
 
 import pandas as pd
+import pytest
 
 
 class _FakeExioMrio:
@@ -52,6 +53,25 @@ def _fake_matrix_zip(tmp_path: Path, year: int) -> Path:
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("x.txt", "region\tsector\tindout\nAT\ta\t10\nAT\tb\t20\n")
         zf.writestr("A.txt", z_header + "AT\ta\t0.1\t0\nAT\tb\t0.2\t0.3\n")
+        zf.writestr(
+            "Y.txt",
+            "region\t\tAT\tAT\n"
+            "category\t\tFinal consumption expenditure by households\tExports: Total (fob)\n"
+            "region\tsector\t\t\n"
+            "AT\ta\t7\t1\n"
+            "AT\tb\t8\t2\n",
+        )
+    return zip_path
+
+
+def _fake_matrix_zip_with_swapped_a_rows(tmp_path: Path, year: int) -> Path:
+    data_dir = tmp_path / f"exiobase3_{year}"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = data_dir / f"IOT_{year}_pxp.zip"
+    z_header = "region\t\tAT\tAT\nsector\t\ta\tb\nregion\tsector\t\t\n"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("x.txt", "region\tsector\tindout\nAT\ta\t10\nAT\tb\t20\n")
+        zf.writestr("A.txt", z_header + "AT\tb\t0.2\t0.3\nAT\ta\t0.1\t0\n")
         zf.writestr(
             "Y.txt",
             "region\t\tAT\tAT\n"
@@ -182,3 +202,23 @@ def test_load_mrio_matrices_can_parse_without_writing_matrix_cache(monkeypatch, 
     assert y.tolist() == [7.0, 8.0]
     assert metadata["cache_status"] == "parsed_direct_from_zip_no_cache_write"
     assert not (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp" / "Z.npz").exists()
+
+
+def test_load_mrio_matrices_direct_parser_validates_a_row_order(monkeypatch, tmp_path):
+    import ecolecon_mrio.data as data_mod
+
+    year = 2089
+    zip_path = _fake_matrix_zip_with_swapped_a_rows(tmp_path, year)
+
+    monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
+    monkeypatch.setattr(data_mod.pymrio, "parse_exiobase3", lambda _path: (_ for _ in ()).throw(AssertionError("parse should not run in no-cache direct mode")))
+
+    with pytest.raises(ValueError, match="A.txt row labels do not match"):
+        data_mod.load_mrio_matrices(
+            year,
+            data_root=tmp_path,
+            allow_download_missing=False,
+            cache_matrices=False,
+            read_existing_cache=False,
+            verbose=False,
+        )

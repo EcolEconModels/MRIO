@@ -193,6 +193,15 @@ def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
     return pd.Series(x.to_numpy(dtype=float), index=basis_index, name="x"), basis_index
 
 
+def _exio_text_header_index(fh: io.TextIOBase, *, table_name: str) -> pd.MultiIndex:
+    regions = next(fh).rstrip("\n\r").split("\t")[2:]
+    sectors = next(fh).rstrip("\n\r").split("\t")[2:]
+    next(fh)
+    if len(regions) != len(sectors):
+        raise ValueError(f"EXIOBASE {table_name} column-header length mismatch: regions={len(regions)}, sectors={len(sectors)}")
+    return pd.MultiIndex.from_arrays([regions, sectors], names=["region", "sector"])
+
+
 def _numeric_tail_from_exio_line(line: str) -> np.ndarray:
     # EXIO text rows start with two tab-separated labels, followed by numeric columns.
     try:
@@ -202,17 +211,35 @@ def _numeric_tail_from_exio_line(line: str) -> np.ndarray:
     return np.fromstring(rest.replace("\t", " "), sep=" ", dtype=float)
 
 
-def _read_exio_A_direct_from_zip(zip_path: Path, *, n: int) -> csr_matrix:
+def _read_exio_A_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> csr_matrix:
+    n = len(basis_index)
     counts = np.zeros(int(n), dtype=np.int64)
     with zipfile.ZipFile(zip_path) as zf, zf.open("A.txt") as raw:
         fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-        for _ in range(3):
-            next(fh)
+        column_index = _exio_text_header_index(fh, table_name="A.txt")
+        if not column_index.equals(basis_index):
+            raise ValueError("EXIOBASE A.txt column labels do not match x.txt basis order.")
+        rows_seen = 0
         for row_idx, line in enumerate(fh):
             if row_idx >= n:
                 break
+            try:
+                region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
+            except ValueError:
+                raise ValueError(f"EXIOBASE A.txt malformed row at position {row_idx}") from None
+            expected = basis_index[row_idx]
+            if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
+                raise ValueError(
+                    "EXIOBASE A.txt row labels do not match x.txt basis order: "
+                    f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
+                )
             vals = _numeric_tail_from_exio_line(line)
+            if vals.size != n:
+                raise ValueError(f"EXIOBASE A.txt row width mismatch at row {row_idx}: got {vals.size}, expected {n}.")
             counts[row_idx] = int(np.count_nonzero(vals))
+            rows_seen += 1
+        if rows_seen != n:
+            raise ValueError(f"EXIOBASE A.txt row count mismatch: got {rows_seen}, expected {n}.")
     indptr = np.empty(int(n) + 1, dtype=np.int64)
     indptr[0] = 0
     np.cumsum(counts, out=indptr[1:])
@@ -221,11 +248,22 @@ def _read_exio_A_direct_from_zip(zip_path: Path, *, n: int) -> csr_matrix:
     data = np.empty(nnz, dtype=float)
     with zipfile.ZipFile(zip_path) as zf, zf.open("A.txt") as raw:
         fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-        for _ in range(3):
-            next(fh)
+        column_index = _exio_text_header_index(fh, table_name="A.txt")
+        if not column_index.equals(basis_index):
+            raise ValueError("EXIOBASE A.txt column labels do not match x.txt basis order.")
         for row_idx, line in enumerate(fh):
             if row_idx >= n:
                 break
+            try:
+                region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
+            except ValueError:
+                raise ValueError(f"EXIOBASE A.txt malformed row at position {row_idx}") from None
+            expected = basis_index[row_idx]
+            if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
+                raise ValueError(
+                    "EXIOBASE A.txt row labels do not match x.txt basis order: "
+                    f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
+                )
             vals = _numeric_tail_from_exio_line(line)
             nz = np.flatnonzero(vals)
             start = int(indptr[row_idx])
@@ -249,6 +287,16 @@ def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
         for row_idx, line in enumerate(fh):
             if row_idx >= n:
                 break
+            try:
+                region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
+            except ValueError:
+                raise ValueError(f"EXIOBASE Y.txt malformed row at position {row_idx}") from None
+            expected = basis_index[row_idx]
+            if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
+                raise ValueError(
+                    "EXIOBASE Y.txt row labels do not match x.txt basis order: "
+                    f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
+                )
             vals = _numeric_tail_from_exio_line(line)
             if vals.size:
                 y_vals[row_idx] = float(vals[keep[: vals.size]].sum())
@@ -257,7 +305,7 @@ def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
 
 def _load_exio_matrices_direct_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
     x, basis_index = _read_exio_x_from_zip(zip_path)
-    A = _read_exio_A_direct_from_zip(zip_path, n=len(basis_index))
+    A = _read_exio_A_direct_from_zip(zip_path, basis_index=basis_index)
     y = _read_exio_y_direct_from_zip(zip_path, basis_index=basis_index)
     density = float(A.nnz) / float(A.shape[0] * A.shape[1]) if A.shape[0] and A.shape[1] else 0.0
     metadata = {
