@@ -827,31 +827,17 @@ def build_concordance_audit(
 
     mapped_x = _mapped_series(mapping_matrix, exio_x)
     mapped_y = _mapped_series(mapping_matrix, exio_y_total)
-    flagged_cells = z_cell_drilldown[z_cell_drilldown["subsector_exceeds_eurostat_cell"].fillna(False)].copy()
-    if not flagged_cells.empty:
-        for row in flagged_cells.itertuples(index=False):
-            euro_value = float(eurostat_Z.loc[str(row.supplier_code), str(row.buyer_code)])
-            contribution_value = float(row.contribution_value)
-            abs_gap = abs(contribution_value - euro_value)
-            rel_gap = _relative_gap(contribution_value, euro_value)
-            rows.append(
-                {
-                    "metric": METRIC_Z_CELL,
-                    "target_code": str(row.supplier_code),
-                    "target_label": euro_labels.get(str(row.supplier_code), str(row.supplier_code)),
-                    "buyer_code": str(row.buyer_code),
-                    "buyer_label": euro_labels.get(str(row.buyer_code), str(row.buyer_code)),
-                    "exio_subsector_code": str(row.exio_subsector_code),
-                    "exio_subsector_label": exio_labels.get(str(row.exio_subsector_code), str(row.exio_subsector_code)),
-                    "exio_subsector_value": contribution_value,
-                    "eurostat_aggregate_value": euro_value,
-                    "ratio": _safe_ratio(contribution_value, euro_value),
-                    "abs_gap": abs_gap,
-                    "severity": _severity(rel_gap),
-                    "issue_type": "SUBSECTOR_EXCEEDS_AGGREGATE",
-                    "interpretation": f"{row.exio_subsector_code} {exio_labels.get(str(row.exio_subsector_code), str(row.exio_subsector_code))} exceeds the Eurostat cell {row.supplier_code}→{row.buyer_code}.",
-                }
-            )
+    mapped_z = _mapped_matrix(mapping_matrix, exio_Z)
+    z_cell_mismatches, z_cell_drilldown = _z_cell_table(
+        exio_mapped_Z=mapped_z,
+        eurostat_Z=eurostat_Z,
+        mapping_matrix=mapping_matrix,
+        source_Z=exio_Z,
+        exio_labels=exio_labels,
+        euro_labels=eurostat_labels,
+        rel_threshold=rel_threshold,
+        min_abs_meur=min_abs_meur,
+    )
     row_contrib_lookup = {code: _series_contributions(mapping_weights, exio_row_total, target_code=code) for code in mapped_z.index}
     col_contrib_lookup = {code: _series_contributions(mapping_weights, exio_col_total, target_code=code) for code in mapped_z.columns}
 
@@ -910,17 +896,6 @@ def build_concordance_audit(
     z_row_col_mismatches = pd.concat([row_comparison, col_comparison], ignore_index=True)
     x_mismatches = x_comparison[x_comparison["flag"]].copy().reset_index(drop=True)
     y_mismatches = y_comparison[y_comparison["flag"]].copy().reset_index(drop=True)
-
-    z_cell_mismatches, z_cell_drilldown = _z_cell_table(
-        exio_mapped_Z=mapped_z,
-        eurostat_Z=eurostat_Z,
-        mapping_matrix=mapping_matrix,
-        source_Z=exio_Z,
-        exio_labels=exio_labels,
-        euro_labels=eurostat_labels,
-        rel_threshold=rel_threshold,
-        min_abs_meur=min_abs_meur,
-    )
 
     y_drilldown_rows: list[dict[str, Any]] = []
     for code, contribs in y_contrib_lookup.items():
