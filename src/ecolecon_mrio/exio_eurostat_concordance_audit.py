@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,29 +113,6 @@ def human_metric_explanation(metric: str) -> str:
     return METRIC_EXPLANATIONS.get(metric, "")
 
 
-def _display_contributor_string(contributions: str, label_map: Mapping[str, str]) -> str:
-    if not contributions:
-        return ""
-    rendered: list[str] = []
-    for segment in str(contributions).split(" | "):
-        text = segment.strip()
-        if not text:
-            continue
-        left, separator, right = text.partition(": ")
-        if not separator:
-            rendered.append(text)
-            continue
-        code, _, label = left.partition(" ")
-        match = re.search(r"^(?P<value>.+?) \((?P<share>[-+0-9.eE]+)%\)$", right.strip())
-        if match:
-            value_text = match.group("value")
-            share_text = match.group("share")
-            rendered.append(f"{code} — {label_map.get(code, label)}: {fmt_meur(value_text)} MEUR ({share_text}%)")
-        else:
-            rendered.append(f"{code} — {label_map.get(code, label)}: {right}")
-    return "<br>".join(rendered)
-
-
 def _signed_meur(value: object) -> str:
     try:
         numeric_value = float(value)
@@ -163,26 +139,51 @@ def _display_metric(metric: object) -> str:
 def _display_contributor_string(raw_value: object) -> str:
     if raw_value is None:
         return ""
+    try:
+        if pd.isna(raw_value):
+            return ""
+    except TypeError:
+        pass
     text = str(raw_value).strip()
-    if not text:
+    if not text or text.lower() == "nan":
         return ""
     rendered: list[str] = []
     for segment in text.split(" | "):
         segment = segment.strip()
-        if not segment:
+        if not segment or segment.lower() == "nan":
             continue
         left, separator, right = segment.partition(": ")
         if not separator:
-            rendered.append(segment)
+            if segment.lower() != "nan":
+                rendered.append(segment)
             continue
         code, _, label = left.partition(" ")
+        label = label.strip() or code
+        if not code or code.lower() == "nan" or not right or right.lower() == "nan":
+            continue
         if "(" in right and right.endswith("%)"):
             value_text, share_text = right.rsplit(" (", 1)
             share_text = share_text.rstrip("%)")
+            if not value_text or value_text.lower() == "nan":
+                continue
             rendered.append(f"{code} — {label}: {fmt_meur(value_text)} MEUR ({share_text}%)")
         else:
             rendered.append(f"{code} — {label}: {right}")
     return "<br>".join(rendered)
+
+
+def _markdown_cell(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    text = str(value)
+    if text.lower() == "nan":
+        return ""
+    return text.replace("\n", "<br>").replace("|", "\\|")
 
 
 def _direction_label(exio_value: object, euro_value: object) -> str:
@@ -196,6 +197,60 @@ def _direction_label(exio_value: object, euro_value: object) -> str:
     if exio_numeric < euro_numeric:
         return "Eurostat larger"
     return "Equal"
+
+
+def _human_identity_status(status: object) -> str:
+    text = str(status).strip().upper()
+    if text in {"OK", ""}:
+        return "OK"
+    if text in {"DIAGNOSTIC_GAP", "INTERNAL_IDENTITY_FAIL"}:
+        return "Flagged"
+    return text.replace("_", " ").title()
+
+
+def _human_comparison_prose(*, metric: str, direction: str, exio_value: object, euro_value: object, contributors: str, extra: str = "") -> str:
+    metric_text = human_metric_label(metric)
+    if not direction:
+        return metric_text
+    if direction == "Equal":
+        summary = f"{metric_text}: EXIOBASE and Eurostat match at {fmt_meur(exio_value)} MEUR."
+    else:
+        summary = f"{metric_text}: EXIOBASE is {('larger' if direction == 'EXIOBASE larger' else 'smaller')} than Eurostat ({fmt_meur(exio_value)} vs {fmt_meur(euro_value)} MEUR)."
+    if contributors:
+        summary += f" Top EXIOBASE contributors: {contributors}."
+    if extra:
+        summary += f" {extra}"
+    return summary
+
+
+def _human_flow_prose(*, supplier_display: str, buyer_display: str, direction: str, exio_value: object, euro_value: object, source_contribs: str, buyer_contribs: str) -> str:
+    if direction == "Equal":
+        summary = f"{supplier_display} to {buyer_display}: EXIOBASE and Eurostat match at {fmt_meur(exio_value)} MEUR."
+    else:
+        summary = f"{supplier_display} to {buyer_display}: EXIOBASE is {('larger' if direction == 'EXIOBASE larger' else 'smaller')} than Eurostat ({fmt_meur(exio_value)} vs {fmt_meur(euro_value)} MEUR)."
+    pieces: list[str] = []
+    if source_contribs:
+        pieces.append(f"Top source subsectors: {source_contribs}.")
+    if buyer_contribs:
+        pieces.append(f"Top buyer subsectors: {buyer_contribs}.")
+    if pieces:
+        summary += " " + " ".join(pieces)
+    return summary
+
+
+def _human_subcomponent_prose(*, metric: str, aggregate_display: str, buyer_display: str, exio_subsector_display: str, exio_subsector_value: object, euro_value: object, ratio: object) -> str:
+    metric_text = human_metric_label(metric)
+    if metric == METRIC_Z_CELL:
+        comparison = f"{exio_subsector_display} exceeds the Eurostat cell {aggregate_display}"
+        if buyer_display:
+            comparison = f"{exio_subsector_display} exceeds the Eurostat cell {aggregate_display} → {buyer_display}"
+    else:
+        comparison = f"{exio_subsector_display} exceeds the Eurostat aggregate for {aggregate_display}"
+    return f"{metric_text}: {comparison} ({fmt_meur(exio_subsector_value)} vs {fmt_meur(euro_value)} MEUR; ratio {fmt_ratio(ratio)})."
+
+
+def _human_y_prose(*, source_display: str, contribution_value: object, share_of_exio: object, share_of_eurostat: object) -> str:
+    return f"{source_display} contributes {fmt_meur(contribution_value)} MEUR, or {fmt_pct(share_of_exio)} of mapped EXIOBASE final demand and {fmt_pct(share_of_eurostat)} of Eurostat final demand."
 
 
 def _normalize_text(value: object) -> str:
@@ -331,7 +386,7 @@ def _markdown_table(df: pd.DataFrame, *, columns: Sequence[str], max_rows: int |
     if max_rows is not None:
         view = view.head(max_rows)
     rows: list[str] = []
-    headers = [str(col) for col in view.columns]
+    headers = [_markdown_cell(col) for col in view.columns]
     rows.append("| " + " | ".join(headers) + " |")
     rows.append("| " + " | ".join(["---"] * len(headers)) + " |")
     for _, row in view.iterrows():
@@ -341,9 +396,9 @@ def _markdown_table(df: pd.DataFrame, *, columns: Sequence[str], max_rows: int |
                 if math.isnan(value):
                     cells.append("")
                 else:
-                    cells.append(f"{value:.3f}")
+                    cells.append(_markdown_cell(f"{value:.3f}"))
             else:
-                cells.append(str(value))
+                cells.append(_markdown_cell(value))
         rows.append("| " + " | ".join(cells) + " |")
     return "\n".join(rows)
 
@@ -744,6 +799,7 @@ def _z_cell_table(
     euro_labels: Mapping[str, str],
     rel_threshold: float,
     min_abs_meur: float,
+    verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     exio_mapped_Z = _to_float_frame(exio_mapped_Z, name="mapped_Z")
     eurostat_Z = _to_float_frame(eurostat_Z, name="eurostat_Z")
@@ -753,6 +809,10 @@ def _z_cell_table(
 
     rows: list[dict[str, Any]] = []
     drilldown_rows: list[dict[str, Any]] = []
+    total_cells = max(1, len(codes) * len(codes))
+    progress_step = max(1, total_cells // 20)
+    next_progress_tick = progress_step
+    processed_cells = 0
     cell_columns = [
         "supplier_code",
         "supplier_label",
@@ -787,6 +847,7 @@ def _z_cell_table(
     ]
     for supplier_code in codes:
         for buyer_code in codes:
+            processed_cells += 1
             exio_value = float(exio_mapped_Z.loc[supplier_code, buyer_code])
             euro_value = float(eurostat_Z.loc[supplier_code, buyer_code])
             signed_gap = exio_value - euro_value
@@ -854,6 +915,14 @@ def _z_cell_table(
                                 ),
                             }
                         )
+            if verbose and (processed_cells >= next_progress_tick or processed_cells == total_cells):
+                pct_done = 100.0 * processed_cells / total_cells
+                pct_remaining = max(0.0, 100.0 - pct_done)
+                print(
+                    f"  [4.6] Z-cell mismatch table | {pct_done:5.1f}% complete, {pct_remaining:5.1f}% remaining ({processed_cells}/{total_cells} cells)",
+                    flush=True,
+                )
+                next_progress_tick += progress_step
     cell_frame = pd.DataFrame(rows, columns=cell_columns)
     drilldown_frame = pd.DataFrame(drilldown_rows, columns=drilldown_columns)
     if not cell_frame.empty:
@@ -867,6 +936,7 @@ def _z_cell_table(
 
 def _subcomponent_exceeds_aggregate_table(
     *,
+    x_metric: str,
     mapping_weights: pd.DataFrame,
     mapping_matrix: pd.DataFrame,
     source_x: pd.Series,
@@ -902,7 +972,7 @@ def _subcomponent_exceeds_aggregate_table(
         "interpretation",
     ]
     for metric, source_values, euro_values in (
-        (METRIC_X_OUTPUT, source_x, eurostat_x),
+        (x_metric, source_x, eurostat_x),
         (METRIC_Y_FINAL_DEMAND_TOTAL, source_y_total, eurostat_y_total),
         (METRIC_Z_ROW_INTERMEDIATE_SALES, source_row_total, eurostat_row_total),
     ):
@@ -1142,6 +1212,7 @@ def build_concordance_audit(
         euro_labels=eurostat_labels,
         rel_threshold=rel_threshold,
         min_abs_meur=min_abs_meur,
+        verbose=verbose,
     )
     _stage_log("[4.6]", "Z-cell mismatch table complete", z_cell_started_at)
 
@@ -1277,6 +1348,7 @@ def build_concordance_audit(
     }
 
     subcomponent_exceeds_aggregate = _subcomponent_exceeds_aggregate_table(
+        x_metric=x_metric,
         mapping_weights=mapping_weights,
         mapping_matrix=mapping_matrix,
         source_x=exio_x,
@@ -1353,7 +1425,8 @@ def render_concordance_audit_report(
             filtered = filtered[filtered["metric"].astype(str).eq(metric)]
         if filtered.empty:
             return pd.Series(dtype="float64")
-        return filtered.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").iloc[0]
+        filtered["severity_rank"] = filtered["severity"].map(_severity_rank).fillna(-1).astype(int)
+        return filtered.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]).iloc[0]
 
     def _section_heading(title: str) -> None:
         lines.append(title)
@@ -1368,9 +1441,18 @@ def render_concordance_audit_report(
     lines.append("2. Sectors where Eurostat separates aggregates more finely than EXIOBASE.")
     lines.append("3. Specific supplier→buyer flows where a single EXIOBASE subsector dominates the mapped flow.")
     lines.append("")
-    top_agg = aggregate_totals[aggregate_totals["flag"]].sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable")
-    top_cell = z_cell_mismatches[z_cell_mismatches["flag"]].sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable")
-    top_sub = subcomponent_exceeds_aggregate.sort_values(["ratio", "abs_gap"], ascending=[False, False], kind="stable")
+    top_agg = aggregate_totals[aggregate_totals["flag"]].copy()
+    if not top_agg.empty:
+        top_agg["severity_rank"] = top_agg["severity"].map(_severity_rank).fillna(-1).astype(int)
+        top_agg = top_agg.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+    top_cell = z_cell_mismatches[z_cell_mismatches["flag"]].copy()
+    if not top_cell.empty:
+        top_cell["severity_rank"] = top_cell["severity"].map(_severity_rank).fillna(-1).astype(int)
+        top_cell = top_cell.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+    top_sub = subcomponent_exceeds_aggregate.copy()
+    if not top_sub.empty:
+        top_sub["severity_rank"] = top_sub["severity"].map(_severity_rank).fillna(-1).astype(int)
+        top_sub = top_sub.sort_values(["severity_rank", "ratio", "abs_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
     c20_focus = z_cell_mismatches[(z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (z_cell_mismatches["buyer_code"].astype(str).eq("CPA_G46"))]
     lines.append(f"- Largest absolute aggregate mismatch: {human_metric_label(str(top_agg.iloc[0]['metric'])) if not top_agg.empty else 'n/a'} on {_display_code_label(top_agg.iloc[0]['target_code'], top_agg.iloc[0]['target_label']) if not top_agg.empty else 'n/a'}.")
     lines.append(f"- Largest Z-cell mismatch: {_display_code_label(top_cell.iloc[0]['supplier_code'], top_cell.iloc[0]['supplier_label']) + ' → ' + _display_code_label(top_cell.iloc[0]['buyer_code'], top_cell.iloc[0]['buyer_label']) if not top_cell.empty else 'n/a'}.")
@@ -1409,24 +1491,33 @@ def render_concordance_audit_report(
         if proxy_mode:
             lines.append("X comparison uses the inferred Eurostat total-use proxy (x proxy) because no independent Eurostat output vector was supplied.")
             lines.append("")
-        x_human = _human_aggregate_table(x_mismatches.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        x_sorted = x_mismatches.copy()
+        x_sorted["severity_rank"] = x_sorted["severity"].map(_severity_rank).fillna(-1).astype(int)
+        x_sorted = x_sorted.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+        x_human = _human_aggregate_table(x_sorted)
         lines.append(_markdown_table(x_human, columns=["Readable metric", "Eurostat sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Largest EXIOBASE contributors", "Plain-English interpretation"], max_rows=8))
         lines.append("")
 
     if not y_mismatches.empty:
         _section_heading("## Final-demand mismatches")
-        y_human = _human_aggregate_table(y_mismatches.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        y_sorted = y_mismatches.copy()
+        y_sorted["severity_rank"] = y_sorted["severity"].map(_severity_rank).fillna(-1).astype(int)
+        y_sorted = y_sorted.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+        y_human = _human_aggregate_table(y_sorted)
         lines.append(_markdown_table(y_human, columns=["Readable metric", "Eurostat sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Largest EXIOBASE contributors", "Plain-English interpretation"], max_rows=8))
         lines.append("")
 
-    if not z_cell_mismatches.empty:
+    flagged_z_cells = z_cell_mismatches[z_cell_mismatches["flag"]].copy()
+    if not flagged_z_cells.empty:
         _section_heading("## Intermediate supplier→buyer flow mismatches")
-        z_human = _human_z_cell_table(z_cell_mismatches.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        flagged_z_cells["severity_rank"] = flagged_z_cells["severity"].map(_severity_rank).fillna(-1).astype(int)
+        flagged_z_cells = flagged_z_cells.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+        z_human = _human_z_cell_table(flagged_z_cells)
         lines.append(_markdown_table(z_human, columns=["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Top EXIOBASE source subsectors", "Top EXIOBASE buyer subsectors", "Plain-English interpretation"], max_rows=12))
         lines.append("")
         lines.append("### Detailed drill-down for the top flagged Z-cell mismatches")
         lines.append("")
-        for cell in z_cell_mismatches[z_cell_mismatches["flag"]].sort_values(["severity", "abs_gap"], ascending=[False, False], kind="stable").head(10).itertuples(index=False):
+        for cell in flagged_z_cells.head(10).itertuples(index=False):
             supplier_display = _display_code_label(cell.supplier_code, cell.supplier_label)
             buyer_display = _display_code_label(cell.buyer_code, cell.buyer_label)
             lines.append(f"#### Detailed drill-down: {supplier_display} → {buyer_display}")
@@ -1464,15 +1555,28 @@ def render_concordance_audit_report(
                 lines.append(f"Top EXIOBASE buyer subsectors mapped into {buyer_display}:")
                 lines.append(_markdown_table(buyer_human, columns=["EXIOBASE buyer subsector", "Contribution, MEUR", "Share of EXIO mapped cell"], max_rows=5))
             lines.append("")
-            lines.append("Interpretation:")
-            lines.append(cell.interpretation)
+            lines.append("Summary:")
+            lines.append(
+                _human_flow_prose(
+                    supplier_display=supplier_display,
+                    buyer_display=buyer_display,
+                    direction=_direction_label(cell.exio_mapped_z, cell.eurostat_z),
+                    exio_value=cell.exio_mapped_z,
+                    euro_value=cell.eurostat_z,
+                    source_contribs=_display_contributor_string(getattr(cell, "top_source_subsectors", "")),
+                    buyer_contribs=_display_contributor_string(getattr(cell, "top_buyer_subsectors", "")),
+                )
+            )
             lines.append("")
 
     if not subcomponent_exceeds_aggregate.empty:
         _section_heading("## Single EXIOBASE subsectors larger than Eurostat aggregates")
         lines.append("This section flags cases where a single EXIOBASE subsector mapped into a Eurostat aggregate is larger than the whole Eurostat aggregate or cell it maps into. These are especially important because they indicate that the mismatch is not diffuse: it is concentrated in one source subsector.")
         lines.append("")
-        sub_human = _human_subcomponent_table(subcomponent_exceeds_aggregate.sort_values(["severity", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable"))
+        sub_sorted = subcomponent_exceeds_aggregate.copy()
+        sub_sorted["severity_rank"] = sub_sorted["severity"].map(_severity_rank).fillna(-1).astype(int)
+        sub_sorted = sub_sorted.sort_values(["severity_rank", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+        sub_human = _human_subcomponent_table(sub_sorted)
         lines.append(_markdown_table(sub_human, columns=["Readable metric", "Eurostat aggregate sector", "Eurostat buyer sector", "EXIOBASE subsector", "EXIOBASE subsector value, MEUR", "Eurostat aggregate/cell value, MEUR", "EXIO / Eurostat ratio", "Reason"], max_rows=12))
         lines.append("")
 
@@ -1489,21 +1593,32 @@ def render_concordance_audit_report(
             lines.append("No flagged Y mismatches to drill down.")
         lines.append("")
 
-    biofuel_mask = (
-        z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")
-        | z_cell_mismatches["supplier_label"].astype(str).str.contains("chemicals and chemical products", case=False, na=False)
-    )
-    biofuel_rows = z_cell_mismatches[biofuel_mask].copy()
+    biofuel_rows = z_cell_mismatches[z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")].copy()
+    biofuel_rows = biofuel_rows[biofuel_rows["flag"]].copy()
     if not biofuel_rows.empty:
         _section_heading("## CPA_C20 / Biofuels Diagnostic")
         lines.append("This section focuses on CPA_C20 because liquid biofuels are mapped statistically into CPA_C20 but may be analytically important for the energy-transition split. The table asks: after mapping EXIOBASE products such as p24.g — Biogasoline and p24.h — Biodiesels into CPA_C20, do the resulting CPA_C20 flows agree with Eurostat?")
         lines.append("")
-        c20_focus = biofuel_rows[biofuel_rows["buyer_code"].astype(str).eq("CPA_G46")]
+        c20_focus_all = z_cell_mismatches[(z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (z_cell_mismatches["buyer_code"].astype(str).eq("CPA_G46"))].copy()
+        c20_focus = biofuel_rows[biofuel_rows["buyer_code"].astype(str).eq("CPA_G46")].copy()
+        if c20_focus.empty:
+            c20_focus = c20_focus_all.copy()
+        elif not c20_focus_all.empty:
+            c20_focus = pd.concat([c20_focus, c20_focus_all[~c20_focus_all.index.isin(c20_focus.index)]], axis=0)
+        biofuel_display_rows = biofuel_rows.copy()
+        if not c20_focus_all.empty:
+            biofuel_display_rows = pd.concat([biofuel_display_rows, c20_focus_all[~c20_focus_all.index.isin(biofuel_display_rows.index)]], axis=0)
+        if not biofuel_rows.empty:
+            biofuel_rows = biofuel_rows.assign(severity_rank=biofuel_rows["severity"].map(_severity_rank).fillna(-1).astype(int))
+            biofuel_rows = biofuel_rows.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")
+        if not c20_focus.empty:
+            c20_focus = c20_focus.assign(severity_rank=c20_focus["severity"].map(_severity_rank).fillna(-1).astype(int))
+            c20_focus = c20_focus.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
         if not c20_focus.empty:
             c20_row = c20_focus.iloc[0]
             lines.append(f"Explicit focus row: {_display_code_label(c20_row.supplier_code, c20_row.supplier_label)} → {_display_code_label(c20_row.buyer_code, c20_row.buyer_label)}.")
             lines.append("")
-        bio_human = _human_z_cell_table(biofuel_rows.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        bio_human = _human_z_cell_table(biofuel_display_rows.assign(severity_rank=biofuel_display_rows.get("severity", pd.Series(dtype=object)).map(_severity_rank).fillna(-1).astype(int)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"], errors="ignore"))
         lines.append(_markdown_table(bio_human, columns=["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Top EXIOBASE source subsectors", "Top EXIOBASE buyer subsectors", "Plain-English interpretation"], max_rows=10))
         lines.append("")
         if not c20_focus.empty:
@@ -1516,7 +1631,19 @@ def render_concordance_audit_report(
             lines.append(f"- Eurostat flow: {fmt_meur(focus.eurostat_z)} MEUR")
             lines.append(f"- Ratio: {fmt_ratio(focus.ratio_exio_to_eurostat)}")
             lines.append(f"- Difference: {_signed_meur(focus.signed_gap)} MEUR")
-            focus_source = z_cell_drilldown[(z_cell_drilldown["supplier_code"].astype(str).eq("CPA_C20")) & (z_cell_drilldown["buyer_code"].astype(str).eq("CPA_G46")) & (z_cell_drilldown["role"].astype(str).eq("source_contributor"))]
+            focus_source = z_cell_drilldown[(z_cell_drilldown["supplier_code"].astype(str).eq("CPA_C20")) & (z_cell_drilldown["buyer_code"].astype(str).eq("CPA_G46")) & (z_cell_drilldown["role"].astype(str).eq("source_contributor"))].copy()
+            if not focus_source.empty:
+                p24g = focus_source[focus_source["exio_subsector_code"].astype(str).eq("p24.g")]
+                p24h = focus_source[focus_source["exio_subsector_code"].astype(str).eq("p24.h")]
+                if not p24g.empty:
+                    p24g_value = float(p24g.iloc[0]["contribution_value"])
+                    lines.append(f"- p24.g — Biogasoline alone contributes {fmt_meur(p24g_value)} MEUR and exceeds the whole Eurostat CPA_C20 → CPA_G46 cell ({fmt_meur(focus.eurostat_z)} MEUR).")
+                if not p24h.empty:
+                    p24h_value = float(p24h.iloc[0]["contribution_value"])
+                    lines.append(f"- p24.h — Biodiesels contributes {fmt_meur(p24h_value)} MEUR.")
+                subtotal = float(focus_source[focus_source["exio_subsector_code"].astype(str).isin(["p24.g", "p24.h"])]["contribution_value"].sum())
+                if subtotal > 0:
+                    lines.append(f"- Liquid biofuel subtotal from p24.g + p24.h is {fmt_meur(subtotal)} MEUR.")
             if not focus_source.empty:
                 focus_source_human = focus_source.assign(
                     **{
@@ -1592,10 +1719,34 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
     result.z_cell_drilldown.to_csv(paths["audit_z_cell_drilldown.csv"], index=False)
     result.y_drilldown.to_csv(paths["audit_y_drilldown.csv"], index=False)
     result.subcomponent_exceeds_aggregate.to_csv(paths["audit_subcomponent_exceeds_aggregate.csv"], index=False)
-    top_agg_human = _human_aggregate_table(result.aggregate_totals[result.aggregate_totals["flag"]].sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")).head(10)
-    top_cell_human = _human_z_cell_table(result.z_cell_mismatches[result.z_cell_mismatches["flag"]].sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")).head(10)
-    top_sub_human = _human_subcomponent_table(result.subcomponent_exceeds_aggregate.sort_values(["severity", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable")).head(10)
-    c20_focus = result.z_cell_mismatches[(result.z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (result.z_cell_mismatches["buyer_code"].astype(str).eq("CPA_G46"))]
+    top_agg_human = _human_aggregate_table(
+        result.aggregate_totals[result.aggregate_totals["flag"]]
+        .assign(severity_rank=lambda frame: frame["severity"].map(_severity_rank).fillna(-1).astype(int))
+        .sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")
+        .drop(columns=["severity_rank"])
+    ).head(10)
+    top_cell_human = _human_z_cell_table(
+        result.z_cell_mismatches[result.z_cell_mismatches["flag"]]
+        .assign(severity_rank=lambda frame: frame["severity"].map(_severity_rank).fillna(-1).astype(int))
+        .sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")
+        .drop(columns=["severity_rank"])
+    ).head(10)
+    top_sub_human = _human_subcomponent_table(
+        result.subcomponent_exceeds_aggregate
+        .assign(severity_rank=lambda frame: frame["severity"].map(_severity_rank).fillna(-1).astype(int))
+        .sort_values(["severity_rank", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable")
+        .drop(columns=["severity_rank"])
+    ).head(10)
+    c20_flagged = result.z_cell_mismatches[(result.z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (result.z_cell_mismatches["flag"])]
+    c20_focus = c20_flagged[c20_flagged["buyer_code"].astype(str).eq("CPA_G46")].copy()
+    c20_force = result.z_cell_mismatches[(result.z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (result.z_cell_mismatches["buyer_code"].astype(str).eq("CPA_G46"))].copy()
+    if c20_focus.empty:
+        c20_focus = c20_force.copy()
+    elif not c20_force.empty:
+        c20_focus = pd.concat([c20_focus, c20_force[~c20_force.index.isin(c20_focus.index)]], axis=0)
+    c20_display_rows = c20_flagged.copy()
+    if not c20_force.empty:
+        c20_display_rows = pd.concat([c20_display_rows, c20_force[~c20_force.index.isin(c20_display_rows.index)]], axis=0)
 
     def _table_or_message(frame: pd.DataFrame, columns: Sequence[str], empty_message: str) -> str:
         if frame.empty:
@@ -1631,13 +1782,16 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         "",
     ]
     if not c20_focus.empty:
-        c20_row = c20_focus.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").iloc[0]
+        c20_focus = c20_focus.assign(severity_rank=lambda frame: frame["severity"].map(_severity_rank).fillna(-1).astype(int)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+        c20_row = c20_focus.iloc[0]
         top_flags_lines.extend([
             f"Explicit focus row: {_display_code_label(c20_row.supplier_code, c20_row.supplier_label)} → {_display_code_label(c20_row.buyer_code, c20_row.buyer_label)}.",
             "",
             _table_or_message(
-                _human_z_cell_table(c20_focus.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")),
-                ["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Direction", "Top EXIOBASE source subsectors", "Plain-English interpretation"],
+                _human_z_cell_table(
+                    c20_display_rows.assign(severity_rank=lambda frame: frame["severity"].map(_severity_rank).fillna(-1).astype(int)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+                ),
+                ["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Direction", "Top EXIOBASE source subsectors", "Top EXIOBASE buyer subsectors", "Plain-English interpretation"],
                 "No CPA_C20 → CPA_G46 row was flagged in the current run.",
             ),
             "",
@@ -1713,7 +1867,7 @@ def _human_internal_identities_table(internal_identities: pd.DataFrame) -> pd.Da
                 "Absolute gap, MEUR": fmt_meur(row.abs_gap),
                 "Relative gap": fmt_pct(row.rel_gap),
                 "Severity": row.severity,
-                "Status": row.status.replace("_", " "),
+                "Status": _human_identity_status(row.status),
                 "Identity mode": row.identity_mode,
             }
         )
@@ -1737,7 +1891,13 @@ def _human_aggregate_table(aggregate_totals: pd.DataFrame) -> pd.DataFrame:
                 "Relative gap": fmt_pct(row.rel_gap),
                 "Direction": _direction_label(row.exio_mapped_value, row.eurostat_value),
                 "Largest EXIOBASE contributors": _display_contributor_string(row.top_exio_contributors),
-                "Plain-English interpretation": row.interpretation,
+                "Plain-English interpretation": _human_comparison_prose(
+                    metric=str(row.metric),
+                    direction=_direction_label(row.exio_mapped_value, row.eurostat_value),
+                    exio_value=row.exio_mapped_value,
+                    euro_value=row.eurostat_value,
+                    contributors=_display_contributor_string(row.top_exio_contributors),
+                ),
             }
         )
     return pd.DataFrame(
@@ -1762,7 +1922,15 @@ def _human_z_cell_table(z_cell_mismatches: pd.DataFrame) -> pd.DataFrame:
                 "Direction": _direction_label(row.exio_mapped_z, row.eurostat_z),
                 "Top EXIOBASE source subsectors": _display_contributor_string(row.top_source_subsectors),
                 "Top EXIOBASE buyer subsectors": _display_contributor_string(row.top_buyer_subsectors),
-                "Plain-English interpretation": row.interpretation,
+                "Plain-English interpretation": _human_flow_prose(
+                    supplier_display=_display_code_label(row.supplier_code, row.supplier_label),
+                    buyer_display=_display_code_label(row.buyer_code, row.buyer_label),
+                    direction=_direction_label(row.exio_mapped_z, row.eurostat_z),
+                    exio_value=row.exio_mapped_z,
+                    euro_value=row.eurostat_z,
+                    source_contribs=_display_contributor_string(row.top_source_subsectors),
+                    buyer_contribs=_display_contributor_string(row.top_buyer_subsectors),
+                ),
             }
         )
     return pd.DataFrame(
@@ -1789,7 +1957,15 @@ def _human_subcomponent_table(subcomponent_exceeds_aggregate: pd.DataFrame) -> p
                 "EXIOBASE subsector value, MEUR": fmt_meur(row.exio_subsector_value),
                 "Eurostat aggregate/cell value, MEUR": fmt_meur(row.eurostat_aggregate_value),
                 "EXIO / Eurostat ratio": fmt_ratio(row.ratio),
-                "Reason": row.interpretation,
+                "Reason": _human_subcomponent_prose(
+                    metric=str(row.metric),
+                    aggregate_display=aggregate_display,
+                    buyer_display=buyer_display,
+                    exio_subsector_display=_display_code_label(row.exio_subsector_code, row.exio_subsector_label),
+                    exio_subsector_value=row.exio_subsector_value,
+                    euro_value=row.eurostat_aggregate_value,
+                    ratio=row.ratio,
+                ),
             }
         )
     return pd.DataFrame(
@@ -1809,7 +1985,12 @@ def _human_y_drilldown_table(y_drilldown: pd.DataFrame) -> pd.DataFrame:
                 "Share of EXIO mapped final demand": fmt_pct(row.share_of_exio_mapped_y),
                 "Share of Eurostat final demand": fmt_pct(row.share_of_eurostat_y),
                 "Contribution rank": int(row.contribution_rank),
-                "Interpretation": row.interpretation,
+                "Interpretation": _human_y_prose(
+                    source_display=_display_code_label(row.exio_subsector_code, row.exio_subsector_label),
+                    contribution_value=row.contribution_value,
+                    share_of_exio=row.share_of_exio_mapped_y,
+                    share_of_eurostat=row.share_of_eurostat_y,
+                ),
             }
         )
     return pd.DataFrame(

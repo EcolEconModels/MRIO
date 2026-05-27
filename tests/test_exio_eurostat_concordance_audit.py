@@ -56,6 +56,54 @@ def _build_base_frames() -> tuple[pd.Series, pd.DataFrame, pd.DataFrame, pd.Seri
     return exio_x, exio_Z, exio_Y, euro_x, euro_Z, euro_Y, mapping, labels
 
 
+def _build_regression_frames() -> tuple[pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str], dict[str, str]]:
+    source_codes = ["p24.g", "p24.h", "p15.i", "p55"]
+    target_codes = ["CPA_C20", "CPA_G46", "CPA_C10-12", "CPA_I"]
+    labels = {
+        "p24.g": "Biogasoline",
+        "p24.h": "Biodiesels",
+        "p15.i": "Food products nec",
+        "p55": "Hotel and restaurant services",
+        "CPA_C20": "Chemicals and chemical products",
+        "CPA_G46": "Wholesale trade services, except of motor vehicles and motorcycles",
+        "CPA_C10-12": "Food, beverages and tobacco products",
+        "CPA_I": "Accommodation and food services",
+    }
+    mapping = _build_mapping(source_codes, target_codes, labels)
+
+    exio_Z = pd.DataFrame(
+        [
+            [0.0, 60.0, 0.0, 0.0],
+            [0.0, 20.0, 0.0, 0.0],
+            [0.0, 100.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ],
+        index=source_codes,
+        columns=source_codes,
+    )
+    exio_Y = pd.DataFrame(
+        {"FD": [90.0, 10.0, 30.0, 0.0]},
+        index=source_codes,
+    )
+    exio_x = exio_Z.sum(axis=1) + exio_Y.sum(axis=1)
+
+    euro_Z = pd.DataFrame(
+        [
+            [0.0, 10.0, 0.0, 0.0],
+            [0.0, 20.0, 0.0, 0.0],
+            [0.0, 99.5, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ],
+        index=target_codes,
+        columns=target_codes,
+    )
+    euro_Y = pd.DataFrame(
+        {"FD": [0.0, 0.0, 30.0, 0.0]},
+        index=target_codes,
+    )
+    return exio_x, exio_Z, exio_Y, euro_Z, euro_Y, mapping, labels
+
+
 def test_concordance_audit_perfect_agreement_has_no_flags():
     from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit
 
@@ -227,6 +275,97 @@ def test_at_2020_audit_report_contains_motivating_biofuels_case():
     assert ((z_cell_frame["supplier_code"] == "CPA_C20") & (z_cell_frame["buyer_code"] == "CPA_G46")).any()
     assert (z_cell_frame["supplier_code"] == "CPA_C20").any()
     assert ((drilldown_frame["supplier_code"] == "CPA_C20") & (drilldown_frame["buyer_code"] == "CPA_G46") & (drilldown_frame["exio_subsector_code"] == "p24.g")).any() or ((subcomponent_frame["metric"] == "Z_CELL") & (subcomponent_frame["exio_subsector_code"] == "p24.g")).any()
+
+
+def test_concordance_audit_markdown_is_clean_and_flagged_only(tmp_path):
+    from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit, write_concordance_audit_outputs
+
+    exio_x, exio_Z, exio_Y, euro_Z, euro_Y, mapping, labels = _build_regression_frames()
+
+    result = build_concordance_audit(
+        country="AT",
+        year=2020,
+        exio_x=exio_x,
+        exio_Z=exio_Z,
+        exio_Y=exio_Y,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        mapping_df=mapping,
+        exio_labels=labels,
+        eurostat_labels={
+            "CPA_C20": "Chemicals and chemical products",
+            "CPA_G46": "Wholesale trade services, except of motor vehicles and motorcycles",
+            "CPA_C10-12": "Food, beverages and tobacco products",
+            "CPA_I": "Accommodation and food services",
+        },
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    result.metadata["run_command"] = "PYTHONPATH=src .venv/bin/python scripts/run_exio_eurostat_concordance_audit.py --country AT --year 2020"
+
+    paths = write_concordance_audit_outputs(result, tmp_path)
+    report_text = Path(paths["audit_exio_eurostat_concordance.md"]).read_text(encoding="utf-8")
+    top_flags_text = Path(paths["audit_top_flags.md"]).read_text(encoding="utf-8")
+    z_section = report_text.split("## Intermediate supplier→buyer flow mismatches")[1].split("### Detailed drill-down for the top flagged Z-cell mismatches")[0]
+    z_rows = [line for line in z_section.splitlines() if line.startswith("| ") and "---" not in line and "CPA_" in line]
+    flagged_pairs = {
+        (str(row.supplier_code), str(row.buyer_code))
+        for row in result.z_cell_mismatches[result.z_cell_mismatches["flag"]].itertuples(index=False)
+    }
+
+    assert "nan" not in report_text.lower()
+    assert "nan" not in top_flags_text.lower()
+    assert "INTERNAL IDENTITY FAIL" not in report_text
+    assert "INTERNAL IDENTITY FAIL" not in top_flags_text
+    assert "Output / total-use proxy comparison" in report_text
+    assert "Output comparison" not in report_text.split("## Technical appendix: raw metric names")[0]
+    assert "Z_ROW_INTERMEDIATE_SALES" not in report_text.split("## Technical appendix: raw metric names")[0]
+    assert "Z_CELL" not in report_text.split("## Technical appendix: raw metric names")[0]
+    assert "CPA_C10-12 — Food, beverages and tobacco products → CPA_I — Accommodation and food services" not in report_text
+    assert "## Intermediate supplier→buyer flow mismatches" in report_text
+    assert "Top EXIOBASE buyer subsectors" in report_text
+    assert z_rows, "expected at least one Z-cell row in the main report"
+    for row in z_rows:
+        cells = [part.strip() for part in row.strip("|").split("|")]
+        supplier_code = cells[0].split(" — ", 1)[0]
+        buyer_code = cells[1].split(" — ", 1)[0]
+        assert (supplier_code, buyer_code) in flagged_pairs
+
+
+def test_concordance_audit_c20_section_mentions_biogasoline_and_biodiesels(tmp_path):
+    from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit, write_concordance_audit_outputs
+
+    exio_x, exio_Z, exio_Y, euro_Z, euro_Y, mapping, labels = _build_regression_frames()
+
+    result = build_concordance_audit(
+        country="AT",
+        year=2020,
+        exio_x=exio_x,
+        exio_Z=exio_Z,
+        exio_Y=exio_Y,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        mapping_df=mapping,
+        exio_labels=labels,
+        eurostat_labels={
+            "CPA_C20": "Chemicals and chemical products",
+            "CPA_G46": "Wholesale trade services, except of motor vehicles and motorcycles",
+            "CPA_C10-12": "Food, beverages and tobacco products",
+            "CPA_I": "Accommodation and food services",
+        },
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    result.metadata["run_command"] = "PYTHONPATH=src .venv/bin/python scripts/run_exio_eurostat_concordance_audit.py --country AT --year 2020"
+
+    paths = write_concordance_audit_outputs(result, tmp_path)
+    report_text = Path(paths["audit_exio_eurostat_concordance.md"]).read_text(encoding="utf-8")
+
+    assert "CPA_C20 / Biofuels Diagnostic" in report_text
+    assert "p24.g — Biogasoline alone contributes" in report_text
+    assert "exceeds the whole Eurostat CPA_C20 → CPA_G46 cell" in report_text
+    assert "p24.h — Biodiesels contributes" in report_text
+    assert "Liquid biofuel subtotal from p24.g + p24.h" in report_text
 
 
 def test_write_concordance_audit_outputs_emits_run_script(tmp_path):
