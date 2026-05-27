@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 
@@ -204,3 +206,24 @@ def test_concordance_audit_suppresses_tiny_values_with_min_abs_threshold():
 
     assert result.aggregate_totals["flag"].sum() == 0
     assert result.z_cell_mismatches["flag"].sum() == 0
+
+
+def test_at_2020_audit_report_contains_motivating_biofuels_case():
+    report_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_exio_eurostat_concordance_AT_2020.md")
+    z_cell_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_z_cell_mismatches.csv")
+    drilldown_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_z_cell_drilldown.csv")
+    subcomponent_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_subcomponent_exceeds_aggregate.csv")
+    if not report_path.exists() or not z_cell_path.exists() or not drilldown_path.exists() or not subcomponent_path.exists():
+        import pytest
+
+        pytest.skip("AT 2020 concordance audit outputs are not available")
+
+    report_text = report_path.read_text(encoding="utf-8")
+    z_cell_frame = pd.read_csv(z_cell_path)
+    drilldown_frame = pd.read_csv(drilldown_path)
+    subcomponent_frame = pd.read_csv(subcomponent_path)
+
+    assert "CPA_C20 / Biofuels Diagnostic" in report_text
+    assert ((z_cell_frame["supplier_code"] == "CPA_C20") & (z_cell_frame["buyer_code"] == "CPA_G46")).any()
+    assert (z_cell_frame["supplier_code"] == "CPA_C20").any()
+    assert ((drilldown_frame["supplier_code"] == "CPA_C20") & (drilldown_frame["buyer_code"] == "CPA_G46") & (drilldown_frame["exio_subsector_code"] == "p24.g")).any() or ((subcomponent_frame["metric"] == "Z_CELL") & (subcomponent_frame["exio_subsector_code"] == "p24.g")).any()

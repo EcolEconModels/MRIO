@@ -65,6 +65,9 @@ def main() -> int:
     parser.add_argument("--full-subcomponent-z-scan", action="store_true", help="Evaluate Z-cell subcomponent exceedances by scanning every Z cell.")
     args = parser.parse_args()
 
+    if args.full_subcomponent_z_scan:
+        print("Warning: --full-subcomponent-z-scan enables a slower full Z-cell scan.", flush=True)
+
     data_root = default_data_root()
     exio_year = args.exio_year if args.exio_year is not None else args.year
     output_dir = Path(args.output_dir) if args.output_dir else REPO_ROOT / "outputs" / "audits" / "exio_eurostat_concordance" / args.country / str(args.year)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -877,7 +878,13 @@ def build_concordance_audit(
         if verbose:
             print(message, flush=True)
 
+    def _stage_log(stage: str, label: str, started_at: float) -> None:
+        if verbose:
+            elapsed = time.perf_counter() - started_at
+            print(f"  {stage} {label} | elapsed={elapsed:.3f}s", flush=True)
+
     _log("  [4.1] normalizing inputs")
+    stage_started_at = time.perf_counter()
     exio_x = _to_float_series(exio_x, name="exio_x")
     exio_Z = _to_float_frame(exio_Z, name="exio_Z")
     exio_Y = _to_float_frame(exio_Y, name="exio_Y")
@@ -886,6 +893,8 @@ def build_concordance_audit(
     eurostat_x_supplied = eurostat_x is not None
     eurostat_x = _to_float_series(eurostat_x, name="eurostat_x") if eurostat_x is not None else (eurostat_Z.sum(axis=1) + eurostat_Y.sum(axis=1)).astype("float64")
     x_metric = METRIC_X_OUTPUT if eurostat_x_supplied else METRIC_X_OUTPUT_PROXY_TOTAL_USE
+    if verbose and not eurostat_x_supplied:
+        _log("  [4.3] X comparison uses the Eurostat total-use proxy (no independent Eurostat output vector supplied)")
 
     _log("  [4.2] building mapping weights/matrix")
     exio_row_total, exio_col_total, exio_y_total = _source_metrics(exio_Z, exio_Y)
@@ -896,10 +905,14 @@ def build_concordance_audit(
     target_codes = sorted(set(eurostat_Z.index.astype(str)).union(set(eurostat_Z.columns.astype(str)), set(eurostat_Y.index.astype(str))))
     mapping_matrix = _build_mapping_matrix(mapping_weights, source_codes=source_codes, target_codes=target_codes)
 
+    _stage_log("[4.2]", "building mapping weights/matrix complete", stage_started_at)
+
     _log("  [4.3] mapping x/y/Z")
+    stage_started_at = time.perf_counter()
     mapped_x = _mapped_series(mapping_matrix, exio_x)
     mapped_y = _mapped_series(mapping_matrix, exio_y_total)
     mapped_z = _mapped_matrix(mapping_matrix, exio_Z)
+    _stage_log("[4.3]", "mapping x/y/Z complete", stage_started_at)
 
     _log("  [4.4] internal identities and mapping coverage")
     internal_mapped = _identity_metric_rows(
@@ -945,7 +958,9 @@ def build_concordance_audit(
     col_contrib_lookup = {code: _series_contributions(mapping_weights, exio_col_total, target_code=code) for code in mapped_z.columns}
 
     _log("  [4.5] aggregate comparisons")
+    stage_started_at = time.perf_counter()
     _log("  [4.6] Z-cell mismatch table")
+    z_cell_started_at = time.perf_counter()
     z_cell_mismatches, z_cell_drilldown = _z_cell_table(
         exio_mapped_Z=mapped_z,
         eurostat_Z=eurostat_Z,
@@ -956,7 +971,9 @@ def build_concordance_audit(
         rel_threshold=rel_threshold,
         min_abs_meur=min_abs_meur,
     )
+    _stage_log("[4.6]", "Z-cell mismatch table complete", z_cell_started_at)
 
+    stage_started_at = time.perf_counter()
     x_comparison = _aggregate_comparison_table(
         metric=x_metric,
         exio_mapped=mapped_x,
@@ -967,6 +984,7 @@ def build_concordance_audit(
         rel_threshold=rel_threshold,
         min_abs_meur=min_abs_meur,
     )
+
     y_comparison = _aggregate_comparison_table(
         metric=METRIC_Y_FINAL_DEMAND_TOTAL,
         exio_mapped=mapped_y,
@@ -1012,8 +1030,10 @@ def build_concordance_audit(
     z_row_col_mismatches = pd.concat([row_comparison, col_comparison], ignore_index=True)
     x_mismatches = x_comparison[x_comparison["flag"]].copy().reset_index(drop=True)
     y_mismatches = y_comparison[y_comparison["flag"]].copy().reset_index(drop=True)
+    _stage_log("[4.5]", "aggregate comparisons complete", stage_started_at)
 
     _log("  [4.7] Y drill-down")
+    stage_started_at = time.perf_counter()
     y_flagged_codes = set(y_mismatches["target_code"].astype(str))
     y_drilldown_rows: list[dict[str, Any]] = []
     for code, contribs in y_contrib_lookup.items():
@@ -1054,8 +1074,10 @@ def build_concordance_audit(
     y_drilldown = pd.DataFrame(y_drilldown_rows, columns=y_drilldown_columns)
     if not y_drilldown.empty:
         y_drilldown = y_drilldown.sort_values(["target_code", "contribution_rank"], kind="stable").reset_index(drop=True)
+    _stage_log("[4.7]", "Y drill-down complete", stage_started_at)
 
     _log("  [4.8] subcomponent-exceeds-aggregate")
+    stage_started_at = time.perf_counter()
     audit_metadata = {
         "country": country,
         "year": year,
@@ -1076,6 +1098,7 @@ def build_concordance_audit(
         "eurostat_request_url": metadata.get("eurostat_request_url") if metadata else None,
         "eurostat_x_is_proxy": not eurostat_x_supplied,
         "full_subcomponent_z_scan": full_subcomponent_z_scan,
+        "z_subcomponent_scan_mode": "full_scan" if full_subcomponent_z_scan else "flagged_cells_only",
         "mapped_exio_source_sectors": mapped_exio_source_sectors,
         "mapped_euro_target_sectors": mapped_euro_target_sectors,
     }
@@ -1098,8 +1121,10 @@ def build_concordance_audit(
         min_abs_meur=min_abs_meur,
         full_subcomponent_z_scan=full_subcomponent_z_scan,
     )
+    _stage_log("[4.8]", "subcomponent-exceeds-aggregate complete", stage_started_at)
 
     _log("  [4.9] rendering report")
+    stage_started_at = time.perf_counter()
     report_markdown = render_concordance_audit_report(
         metadata=audit_metadata,
         mapping_coverage=mapping_coverage,
@@ -1112,6 +1137,7 @@ def build_concordance_audit(
         x_mismatches=x_mismatches,
         y_drilldown=y_drilldown,
     )
+    _stage_log("[4.9]", "rendering report complete", stage_started_at)
 
     return ConcordanceAuditResult(
         metadata=audit_metadata,
@@ -1156,11 +1182,13 @@ def render_concordance_audit_report(
     lines.append("- Caveat: EXIO x_region is producer-side output while the mapped Z/Y slice is use-side, so internal identities are diagnostic unless the two bases are aligned.")
     lines.append(f"- Mapped EXIO source sectors: {int(metadata.get('mapped_exio_source_sectors', int(mapping_coverage['mapped_targets'].gt(0).sum())))}")
     lines.append(f"- Mapped Eurostat target sectors: {int(metadata.get('mapped_euro_target_sectors', 0))}")
+    lines.append(f"- Z-cell subcomponent scan mode: {metadata.get('z_subcomponent_scan_mode', 'flagged_cells_only')}")
     lines.append(f"- Unmapped non-zero source sectors: {int((mapping_coverage['status'].str.contains('UNMAPPED_NONZERO', na=False)).sum())}")
     lines.append(f"- Aggregate mismatches above threshold: {int(aggregate_totals['flag'].sum())}")
     lines.append(f"- Flagged Z cells: {int(z_cell_mismatches['flag'].sum())}")
     lines.append(f"- Subcomponents exceeding aggregates: {len(subcomponent_exceeds_aggregate)}")
     if metadata.get("full_subcomponent_z_scan", False):
+        lines.append("- Warning: full Z-cell subcomponent scanning is enabled and may be slow.")
         lines.append("- Z-cell subcomponent exceedance is evaluated with a full scan of all Z cells.")
     else:
         lines.append("- Z-cell subcomponent exceedance is evaluated only inside Z cells that pass the aggregate mismatch threshold.")
@@ -1201,7 +1229,7 @@ def render_concordance_audit_report(
         lines.append("## X-Output Mismatches")
         lines.append("")
         if metadata.get("eurostat_x_is_proxy", False):
-            lines.append("X comparison uses the inferred Eurostat proxy total-use vector because no independent Eurostat output vector was supplied.")
+            lines.append("X comparison uses the inferred Eurostat total-use proxy (x proxy) because no independent Eurostat output vector was supplied.")
             lines.append("")
         x_sorted = x_mismatches.assign(severity_rank=x_mismatches["severity"].map(_severity_rank))
         x_sorted = x_sorted.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
@@ -1254,6 +1282,7 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         "audit_y_mismatches.csv": outdir / "audit_y_mismatches.csv",
         "audit_z_row_col_mismatches.csv": outdir / "audit_z_row_col_mismatches.csv",
         "audit_z_cell_mismatches.csv": outdir / "audit_z_cell_mismatches.csv",
+        "audit_z_cell_mismatches_flagged.csv": outdir / "audit_z_cell_mismatches_flagged.csv",
         "audit_z_cell_drilldown.csv": outdir / "audit_z_cell_drilldown.csv",
         "audit_y_drilldown.csv": outdir / "audit_y_drilldown.csv",
         "audit_subcomponent_exceeds_aggregate.csv": outdir / "audit_subcomponent_exceeds_aggregate.csv",
@@ -1268,6 +1297,7 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
     result.y_mismatches.to_csv(paths["audit_y_mismatches.csv"], index=False)
     result.z_row_col_mismatches.to_csv(paths["audit_z_row_col_mismatches.csv"], index=False)
     result.z_cell_mismatches.to_csv(paths["audit_z_cell_mismatches.csv"], index=False)
+    result.z_cell_mismatches[result.z_cell_mismatches["flag"]].to_csv(paths["audit_z_cell_mismatches_flagged.csv"], index=False)
     result.z_cell_drilldown.to_csv(paths["audit_z_cell_drilldown.csv"], index=False)
     result.y_drilldown.to_csv(paths["audit_y_drilldown.csv"], index=False)
     result.subcomponent_exceeds_aggregate.to_csv(paths["audit_subcomponent_exceeds_aggregate.csv"], index=False)
