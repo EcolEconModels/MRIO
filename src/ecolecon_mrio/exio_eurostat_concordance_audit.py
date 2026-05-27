@@ -17,6 +17,7 @@ DEFAULT_SUBCOMPONENT_RATIO = 1.20
 EPS = 1e-12
 
 METRIC_X_OUTPUT = "X_OUTPUT"
+METRIC_X_OUTPUT_PROXY_TOTAL_USE = "X_OUTPUT_PROXY_TOTAL_USE"
 METRIC_Y_FINAL_DEMAND_TOTAL = "Y_FINAL_DEMAND_TOTAL"
 METRIC_Z_ROW_INTERMEDIATE_SALES = "Z_ROW_INTERMEDIATE_SALES"
 METRIC_Z_COL_INTERMEDIATE_PURCHASES = "Z_COL_INTERMEDIATE_PURCHASES"
@@ -80,12 +81,12 @@ def _relative_gap(a: float, b: float) -> float:
     return abs(a - b) / max(abs(a), abs(b), EPS)
 
 
-def _severity(rel_gap: float) -> str:
+def _severity(rel_gap: float, rel_threshold: float = DEFAULT_REL_THRESHOLD) -> str:
     if rel_gap >= 1.0:
         return "CRITICAL"
     if rel_gap >= 0.5:
         return "HIGH"
-    if rel_gap >= DEFAULT_REL_THRESHOLD:
+    if rel_gap >= rel_threshold:
         return "MEDIUM"
     return "OK"
 
@@ -108,7 +109,7 @@ def _metric_issue_type(metric: str, *, is_flagged: bool, low_value_noise: bool =
         return "FINAL_DEMAND_ALLOCATION_DIFFERENCE"
     if metric in {METRIC_Z_ROW_INTERMEDIATE_SALES, METRIC_Z_COL_INTERMEDIATE_PURCHASES}:
         return "INTERMEDIATE_USE_ALLOCATION_DIFFERENCE"
-    if metric in {METRIC_X_OUTPUT, METRIC_TOTAL_USE}:
+    if metric in {METRIC_X_OUTPUT, METRIC_X_OUTPUT_PROXY_TOTAL_USE, METRIC_TOTAL_USE}:
         return "OUTPUT_LEVEL_DIFFERENCE"
     if metric == METRIC_Z_CELL:
         return "DATABASE_CLASSIFICATION_DIFFERENCE"
@@ -183,6 +184,8 @@ def _identity_metric_rows(
     z: pd.DataFrame,
     y: pd.DataFrame,
     identity_mode: str,
+    rel_threshold: float,
+    min_abs_meur: float,
 ) -> pd.DataFrame:
     x = _to_float_series(x, name="x")
     z = _to_float_frame(z, name="Z")
@@ -200,6 +203,11 @@ def _identity_metric_rows(
         total_value = float(z_plus_y.get(code, 0.0))
         abs_gap = abs(x_value - total_value)
         rel_gap = _relative_gap(x_value, total_value)
+        threshold_exceeded = abs_gap >= min_abs_meur and rel_gap >= rel_threshold
+        if identity_mode == "diagnostic":
+            status = "DIAGNOSTIC_GAP" if threshold_exceeded else "OK"
+        else:
+            status = "INTERNAL_IDENTITY_FAIL" if threshold_exceeded else "OK"
         rows.append(
             {
                 "database": database,
@@ -213,9 +221,9 @@ def _identity_metric_rows(
                 "signed_gap": x_value - total_value,
                 "abs_gap": abs_gap,
                 "rel_gap": rel_gap,
-                "severity": _severity(rel_gap),
+                "severity": _severity(rel_gap, rel_threshold),
                 "identity_mode": identity_mode,
-                "status": "OK" if abs_gap <= EPS else "INTERNAL_IDENTITY_FAIL",
+                "status": status,
                 "notes": "",
             }
         )
@@ -504,7 +512,7 @@ def _aggregate_comparison_table(
                 "rel_gap": rel_gap,
                 "ratio_exio_to_eurostat": _safe_ratio(exio_value, euro_value),
                 "flag": flagged,
-                "severity": _severity(rel_gap),
+                "severity": _severity(rel_gap, rel_threshold),
                 "top_exio_contributors": top_contribs,
                 "issue_type": _metric_issue_type(metric, is_flagged=flagged, low_value_noise=abs_gap < min_abs_meur),
                 "interpretation": "" if not flagged else _explain_aggregate_mismatch(metric, exio_value, euro_value, rel_gap, top_contribs),
@@ -521,6 +529,8 @@ def _aggregate_comparison_table(
 def _explain_aggregate_mismatch(metric: str, exio_value: float, euro_value: float, rel_gap: float, top_contribs: str) -> str:
     if metric == METRIC_X_OUTPUT:
         base = "Mapped EXIO output differs from Eurostat output."
+    elif metric == METRIC_X_OUTPUT_PROXY_TOTAL_USE:
+        base = "Mapped EXIO output differs from the inferred Eurostat proxy total use."
     elif metric == METRIC_Y_FINAL_DEMAND_TOTAL:
         base = "Mapped EXIO final-demand total differs from Eurostat final demand."
     elif metric in {METRIC_Z_ROW_INTERMEDIATE_SALES, METRIC_Z_COL_INTERMEDIATE_PURCHASES}:
@@ -564,7 +574,7 @@ def _z_cell_table(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     exio_mapped_Z = _to_float_frame(exio_mapped_Z, name="mapped_Z")
     eurostat_Z = _to_float_frame(eurostat_Z, name="eurostat_Z")
-    codes = sorted(set(exio_mapped_Z.index).union(set(eurostat_Z.index)))
+    codes = sorted(set(exio_mapped_Z.index).union(set(exio_mapped_Z.columns), set(eurostat_Z.index), set(eurostat_Z.columns)))
     exio_mapped_Z = exio_mapped_Z.reindex(index=codes, columns=codes).fillna(0.0)
     eurostat_Z = eurostat_Z.reindex(index=codes, columns=codes).fillna(0.0)
 
@@ -638,7 +648,7 @@ def _z_cell_table(
                     "rel_gap": rel_gap,
                     "ratio_exio_to_eurostat": _safe_ratio(exio_value, euro_value),
                     "flag": flagged,
-                    "severity": _severity(rel_gap),
+                    "severity": _severity(rel_gap, rel_threshold),
                     "top_source_subsectors": _top_contributors_string(source_contribs, label_map=exio_labels),
                     "top_buyer_subsectors": _top_contributors_string(buyer_contribs, label_map=exio_labels),
                     "interpretation": "" if not flagged else _explain_cell_mismatch(exio_value, euro_value, source_contribs, exio_labels),
@@ -699,6 +709,7 @@ def _subcomponent_exceeds_aggregate_table(
     euro_labels: Mapping[str, str],
     rel_threshold: float,
     min_abs_meur: float,
+    full_subcomponent_z_scan: bool = False,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     columns = [
@@ -745,13 +756,49 @@ def _subcomponent_exceeds_aggregate_table(
                         "eurostat_aggregate_value": euro_value,
                         "ratio": _safe_ratio(source_value, euro_value),
                         "abs_gap": abs_gap,
-                        "severity": _severity(rel_gap),
+                        "severity": _severity(rel_gap, rel_threshold),
                         "issue_type": "SUBSECTOR_EXCEEDS_AGGREGATE",
                         "interpretation": f"{source_code} {exio_labels.get(source_code, source_code)} exceeds the Eurostat aggregate for {target_code}.",
                     }
                 )
 
-    if z_cell_drilldown is not None and not z_cell_drilldown.empty:
+    if full_subcomponent_z_scan:
+        exio_mapped_Z = _mapped_matrix(mapping_matrix, source_Z)
+        exio_mapped_Z = exio_mapped_Z.reindex(index=eurostat_Z.index, columns=eurostat_Z.columns).fillna(0.0)
+        for supplier_code in eurostat_Z.index.astype(str):
+            for buyer_code in eurostat_Z.columns.astype(str):
+                euro_value = float(eurostat_Z.loc[supplier_code, buyer_code])
+                source_contribs = _cell_source_contributions(
+                    mapping_matrix,
+                    source_Z,
+                    supplier_code=supplier_code,
+                    buyer_code=buyer_code,
+                )
+                if source_contribs.empty:
+                    continue
+                for source_code, contribution_value in source_contribs.items():
+                    abs_gap = abs(float(contribution_value) - euro_value)
+                    rel_gap = _relative_gap(float(contribution_value), euro_value)
+                    if float(contribution_value) > euro_value * DEFAULT_SUBCOMPONENT_RATIO and abs_gap >= min_abs_meur and rel_gap >= rel_threshold:
+                        rows.append(
+                            {
+                                "metric": METRIC_Z_CELL,
+                                "target_code": supplier_code,
+                                "target_label": euro_labels.get(supplier_code, supplier_code),
+                                "buyer_code": buyer_code,
+                                "buyer_label": euro_labels.get(buyer_code, buyer_code),
+                                "exio_subsector_code": source_code,
+                                "exio_subsector_label": exio_labels.get(source_code, source_code),
+                                "exio_subsector_value": float(contribution_value),
+                                "eurostat_aggregate_value": euro_value,
+                                "ratio": _safe_ratio(float(contribution_value), euro_value),
+                                "abs_gap": abs_gap,
+                                "severity": _severity(rel_gap, rel_threshold),
+                                "issue_type": "SUBSECTOR_EXCEEDS_AGGREGATE",
+                                "interpretation": f"{source_code} {exio_labels.get(source_code, source_code)} exceeds the Eurostat cell {supplier_code}→{buyer_code}.",
+                            }
+                        )
+    elif z_cell_drilldown is not None and not z_cell_drilldown.empty:
         flagged_cells = z_cell_drilldown[
             (z_cell_drilldown["role"].astype(str) == "source_contributor")
             & (z_cell_drilldown["subsector_exceeds_eurostat_cell"].fillna(False))
@@ -777,7 +824,7 @@ def _subcomponent_exceeds_aggregate_table(
                         "eurostat_aggregate_value": euro_value,
                         "ratio": _safe_ratio(contribution_value, euro_value),
                         "abs_gap": abs_gap,
-                        "severity": _severity(rel_gap),
+                        "severity": _severity(rel_gap, rel_threshold),
                         "issue_type": "SUBSECTOR_EXCEEDS_AGGREGATE",
                         "interpretation": f"{row.exio_subsector_code} {exio_labels.get(str(row.exio_subsector_code), str(row.exio_subsector_code))} exceeds the Eurostat cell {supplier_code}→{buyer_code}.",
                     }
@@ -824,6 +871,7 @@ def build_concordance_audit(
     min_abs_meur: float = DEFAULT_MIN_ABS_MEUR,
     identity_mode: str = "diagnostic",
     verbose: bool = False,
+    full_subcomponent_z_scan: bool = False,
 ) -> ConcordanceAuditResult:
     def _log(message: str) -> None:
         if verbose:
@@ -835,7 +883,9 @@ def build_concordance_audit(
     exio_Y = _to_float_frame(exio_Y, name="exio_Y")
     eurostat_Z = _to_float_frame(eurostat_Z, name="eurostat_Z")
     eurostat_Y = _to_float_frame(eurostat_Y, name="eurostat_Y")
+    eurostat_x_supplied = eurostat_x is not None
     eurostat_x = _to_float_series(eurostat_x, name="eurostat_x") if eurostat_x is not None else (eurostat_Z.sum(axis=1) + eurostat_Y.sum(axis=1)).astype("float64")
+    x_metric = METRIC_X_OUTPUT if eurostat_x_supplied else METRIC_X_OUTPUT_PROXY_TOTAL_USE
 
     _log("  [4.2] building mapping weights/matrix")
     exio_row_total, exio_col_total, exio_y_total = _source_metrics(exio_Z, exio_Y)
@@ -843,7 +893,7 @@ def build_concordance_audit(
 
     mapping_weights = _build_mapping_weights(mapping_df)
     source_codes = list(exio_Z.index.astype(str))
-    target_codes = list(eurostat_Z.index.astype(str))
+    target_codes = sorted(set(eurostat_Z.index.astype(str)).union(set(eurostat_Z.columns.astype(str)), set(eurostat_Y.index.astype(str))))
     mapping_matrix = _build_mapping_matrix(mapping_weights, source_codes=source_codes, target_codes=target_codes)
 
     _log("  [4.3] mapping x/y/Z")
@@ -860,6 +910,8 @@ def build_concordance_audit(
         z=mapped_z,
         y=pd.DataFrame({"FINAL_DEMAND_TOTAL": mapped_y}),
         identity_mode=identity_mode,
+        rel_threshold=rel_threshold,
+        min_abs_meur=min_abs_meur,
     )
     internal_euro = _identity_metric_rows(
         database="Eurostat",
@@ -869,6 +921,8 @@ def build_concordance_audit(
         z=eurostat_Z,
         y=eurostat_Y,
         identity_mode=identity_mode,
+        rel_threshold=rel_threshold,
+        min_abs_meur=min_abs_meur,
     )
     internal_identities = pd.concat([internal_mapped, internal_euro], ignore_index=True)
 
@@ -882,6 +936,8 @@ def build_concordance_audit(
         exio_labels=exio_labels,
         euro_target_codes=euro_target_codes,
     )
+    mapped_exio_source_sectors = int(mapping_coverage["mapped_targets"].gt(0).sum())
+    mapped_euro_target_sectors = int(len(set(mapping_weights["target_code"].astype(str)).intersection(euro_target_codes)))
 
     x_contrib_lookup = {code: _series_contributions(mapping_weights, exio_x, target_code=code) for code in mapped_x.index}
     y_contrib_lookup = {code: _series_contributions(mapping_weights, exio_y_total, target_code=code) for code in mapped_y.index}
@@ -889,6 +945,7 @@ def build_concordance_audit(
     col_contrib_lookup = {code: _series_contributions(mapping_weights, exio_col_total, target_code=code) for code in mapped_z.columns}
 
     _log("  [4.5] aggregate comparisons")
+    _log("  [4.6] Z-cell mismatch table")
     z_cell_mismatches, z_cell_drilldown = _z_cell_table(
         exio_mapped_Z=mapped_z,
         eurostat_Z=eurostat_Z,
@@ -901,7 +958,7 @@ def build_concordance_audit(
     )
 
     x_comparison = _aggregate_comparison_table(
-        metric=METRIC_X_OUTPUT,
+        metric=x_metric,
         exio_mapped=mapped_x,
         eurostat=eurostat_x,
         exio_contrib_lookup=x_contrib_lookup,
@@ -956,7 +1013,8 @@ def build_concordance_audit(
     x_mismatches = x_comparison[x_comparison["flag"]].copy().reset_index(drop=True)
     y_mismatches = y_comparison[y_comparison["flag"]].copy().reset_index(drop=True)
 
-    _log("  [4.6] Y drill-down")
+    _log("  [4.7] Y drill-down")
+    y_flagged_codes = set(y_mismatches["target_code"].astype(str))
     y_drilldown_rows: list[dict[str, Any]] = []
     for code, contribs in y_contrib_lookup.items():
         euro_value = float(euro_y_total.get(code, 0.0))
@@ -972,6 +1030,7 @@ def build_concordance_audit(
                     "share_of_exio_mapped_y": _safe_ratio(float(contribution_value), exio_value),
                     "share_of_eurostat_y": _safe_ratio(float(contribution_value), euro_value),
                     "contribution_rank": rank,
+                    "parent_y_flagged": bool(code in y_flagged_codes),
                     "interpretation": _explain_subcomponent_exceedance(
                         contribution_value=float(contribution_value),
                         euro_value=euro_value,
@@ -989,13 +1048,14 @@ def build_concordance_audit(
         "share_of_exio_mapped_y",
         "share_of_eurostat_y",
         "contribution_rank",
+        "parent_y_flagged",
         "interpretation",
     ]
     y_drilldown = pd.DataFrame(y_drilldown_rows, columns=y_drilldown_columns)
     if not y_drilldown.empty:
         y_drilldown = y_drilldown.sort_values(["target_code", "contribution_rank"], kind="stable").reset_index(drop=True)
 
-    _log("  [4.7] subcomponent-exceeds-aggregate")
+    _log("  [4.8] subcomponent-exceeds-aggregate")
     audit_metadata = {
         "country": country,
         "year": year,
@@ -1014,6 +1074,10 @@ def build_concordance_audit(
         "exio_year": metadata.get("exio_year") if metadata else None,
         "eurostat_dataset": metadata.get("eurostat_dataset") if metadata else None,
         "eurostat_request_url": metadata.get("eurostat_request_url") if metadata else None,
+        "eurostat_x_is_proxy": not eurostat_x_supplied,
+        "full_subcomponent_z_scan": full_subcomponent_z_scan,
+        "mapped_exio_source_sectors": mapped_exio_source_sectors,
+        "mapped_euro_target_sectors": mapped_euro_target_sectors,
     }
 
     subcomponent_exceeds_aggregate = _subcomponent_exceeds_aggregate_table(
@@ -1032,9 +1096,10 @@ def build_concordance_audit(
         euro_labels=eurostat_labels,
         rel_threshold=rel_threshold,
         min_abs_meur=min_abs_meur,
+        full_subcomponent_z_scan=full_subcomponent_z_scan,
     )
 
-    _log("  [4.8] rendering report")
+    _log("  [4.9] rendering report")
     report_markdown = render_concordance_audit_report(
         metadata=audit_metadata,
         mapping_coverage=mapping_coverage,
@@ -1089,11 +1154,16 @@ def render_concordance_audit_report(
     lines.append(f"- Mapping file SHA256: {metadata.get('mapping_file_sha256', 'unknown')}")
     lines.append(f"- Identity mode: {metadata.get('identity_mode', 'diagnostic')}")
     lines.append("- Caveat: EXIO x_region is producer-side output while the mapped Z/Y slice is use-side, so internal identities are diagnostic unless the two bases are aligned.")
-    lines.append(f"- Mapped target sectors: {int(mapping_coverage['mapped_targets'].gt(0).sum())}")
+    lines.append(f"- Mapped EXIO source sectors: {int(metadata.get('mapped_exio_source_sectors', int(mapping_coverage['mapped_targets'].gt(0).sum())))}")
+    lines.append(f"- Mapped Eurostat target sectors: {int(metadata.get('mapped_euro_target_sectors', 0))}")
     lines.append(f"- Unmapped non-zero source sectors: {int((mapping_coverage['status'].str.contains('UNMAPPED_NONZERO', na=False)).sum())}")
     lines.append(f"- Aggregate mismatches above threshold: {int(aggregate_totals['flag'].sum())}")
     lines.append(f"- Flagged Z cells: {int(z_cell_mismatches['flag'].sum())}")
     lines.append(f"- Subcomponents exceeding aggregates: {len(subcomponent_exceeds_aggregate)}")
+    if metadata.get("full_subcomponent_z_scan", False):
+        lines.append("- Z-cell subcomponent exceedance is evaluated with a full scan of all Z cells.")
+    else:
+        lines.append("- Z-cell subcomponent exceedance is evaluated only inside Z cells that pass the aggregate mismatch threshold.")
     lines.append("")
 
     lines.append("## Mapping Coverage")
@@ -1130,6 +1200,9 @@ def render_concordance_audit_report(
     if not x_mismatches.empty:
         lines.append("## X-Output Mismatches")
         lines.append("")
+        if metadata.get("eurostat_x_is_proxy", False):
+            lines.append("X comparison uses the inferred Eurostat proxy total-use vector because no independent Eurostat output vector was supplied.")
+            lines.append("")
         x_sorted = x_mismatches.assign(severity_rank=x_mismatches["severity"].map(_severity_rank))
         x_sorted = x_sorted.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
         lines.append(_markdown_table(x_sorted, columns=["target_code", "exio_mapped_value", "eurostat_value", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "top_exio_contributors", "interpretation"], max_rows=8))
@@ -1146,7 +1219,11 @@ def render_concordance_audit_report(
     if not y_drilldown.empty:
         lines.append("## Final Demand Drill-Down")
         lines.append("")
-        lines.append(_markdown_table(y_drilldown.sort_values(["target_code", "contribution_rank"], kind="stable"), columns=["target_code", "exio_subsector_code", "contribution_value", "share_of_exio_mapped_y", "share_of_eurostat_y", "contribution_rank", "interpretation"], max_rows=12))
+        y_drilldown_flagged = y_drilldown[y_drilldown["parent_y_flagged"]].copy()
+        if not y_drilldown_flagged.empty:
+            lines.append(_markdown_table(y_drilldown_flagged.sort_values(["target_code", "contribution_rank"], kind="stable"), columns=["target_code", "exio_subsector_code", "contribution_value", "share_of_exio_mapped_y", "share_of_eurostat_y", "contribution_rank", "interpretation"], max_rows=12))
+        else:
+            lines.append("No flagged Y mismatches to drill down.")
         lines.append("")
 
     biofuel_mask = (
@@ -1199,8 +1276,9 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         "",
         "## Aggregate mismatches",
         "",
+        
         _markdown_table(
-            result.aggregate_totals[result.aggregate_totals["flag"]].sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"),
+            result.aggregate_totals[result.aggregate_totals["flag"]].assign(severity_rank=result.aggregate_totals["severity"].map(_severity_rank)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]),
             columns=["metric", "target_code", "exio_mapped_value", "eurostat_value", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "top_exio_contributors"],
             max_rows=8,
         ),
@@ -1208,7 +1286,7 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         "## Z-cell mismatches",
         "",
         _markdown_table(
-            result.z_cell_mismatches[result.z_cell_mismatches["flag"]].sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"),
+            result.z_cell_mismatches[result.z_cell_mismatches["flag"]].assign(severity_rank=result.z_cell_mismatches["severity"].map(_severity_rank)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]),
             columns=["supplier_code", "buyer_code", "exio_mapped_z", "eurostat_z", "ratio_exio_to_eurostat", "top_source_subsectors"],
             max_rows=8,
         ),
@@ -1216,7 +1294,7 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         "## Subcomponents exceeding aggregates",
         "",
         _markdown_table(
-            result.subcomponent_exceeds_aggregate.sort_values(["severity", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable"),
+            result.subcomponent_exceeds_aggregate.assign(severity_rank=result.subcomponent_exceeds_aggregate["severity"].map(_severity_rank)).sort_values(["severity_rank", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]),
             columns=["metric", "target_code", "buyer_code", "exio_subsector_code", "exio_subsector_value", "eurostat_aggregate_value", "ratio"],
             max_rows=8,
         ),

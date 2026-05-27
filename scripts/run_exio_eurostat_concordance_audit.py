@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import time
+import resource
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +22,30 @@ from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _rss_mb() -> float:
+    status_path = Path("/proc/self/status")
+    if status_path.exists():
+        for line in status_path.read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    value_kb = float(parts[1])
+                    unit = parts[2].lower() if len(parts) >= 3 else "kb"
+                    if unit == "kb":
+                        return value_kb / 1024.0
+                    if unit == "mb":
+                        return value_kb
+                    if unit == "gb":
+                        return value_kb * 1024.0
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return float(usage) / 1024.0
+
+
+def _log_stage(stage: str, message: str, started: float) -> None:
+    elapsed = time.monotonic() - started
+    print(f"[{stage}] {message} | elapsed={elapsed:.1f}s | rss={_rss_mb():.1f} MB", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run an EXIOBASE–Eurostat concordance audit.")
     parser.add_argument("--country", default="AT")
@@ -36,14 +61,16 @@ def main() -> int:
     parser.add_argument("--eurostat-flow", default="TOTAL")
     parser.add_argument("--exio-flow", default="total")
     parser.add_argument("--exio-system", default="pxp")
+    parser.add_argument("--verbose", action="store_true", help="Enable detailed audit-stage logging.")
+    parser.add_argument("--full-subcomponent-z-scan", action="store_true", help="Evaluate Z-cell subcomponent exceedances by scanning every Z cell.")
     args = parser.parse_args()
 
     data_root = default_data_root()
     exio_year = args.exio_year if args.exio_year is not None else args.year
     output_dir = Path(args.output_dir) if args.output_dir else REPO_ROOT / "outputs" / "audits" / "exio_eurostat_concordance" / args.country / str(args.year)
 
-    started = time.time()
-    print(f"[1/5] Preparing Eurostat slice for {args.country} {args.year}...", flush=True)
+    started = time.monotonic()
+    _log_stage("1/5", f"Preparing Eurostat slice for {args.country} {args.year}...", started)
 
     euro_filters = {
         "geo": args.country,
@@ -58,9 +85,9 @@ def main() -> int:
         storage_folder=data_root / "eurostat",
         force_download=False,
     )
-    print("[2/5] Parsing Eurostat IOT from cached raw payload...", flush=True)
+    _log_stage("2/5", "Parsing Eurostat IOT from cached raw payload...", started)
     eurostat = parse_eurostat_iot(read_eurostat_raw(euro_dataset.raw_path), row_dim="prd_ava", col_dim="prd_use")
-    print(f"[3/5] Loading EXIOBASE region slice for {args.country} {exio_year}...", flush=True)
+    _log_stage("3/5", f"Loading EXIOBASE region slice for {args.country} {exio_year}...", started)
     exio = load_exiobase3_region_slice(
         year=exio_year,
         region=args.country,
@@ -71,7 +98,7 @@ def main() -> int:
         force_rebuild_slice=False,
     )
 
-    print("[4/5] Building concordance audit tables...", flush=True)
+    _log_stage("4/5", "Building concordance audit tables...", started)
     exio_labels, euro_labels = load_default_label_maps(REPO_ROOT)
     metadata = build_audit_metadata(
         country=args.country,
@@ -99,12 +126,16 @@ def main() -> int:
         rel_threshold=args.rel_threshold,
         min_abs_meur=args.min_abs_meur,
         identity_mode=args.identity_mode,
+        verbose=args.verbose,
+        full_subcomponent_z_scan=args.full_subcomponent_z_scan,
     )
 
-    print("[5/5] Writing audit outputs...", flush=True)
+    _log_stage("4/5", "Finished concordance audit tables.", started)
+
+    _log_stage("5/5", "Writing audit outputs...", started)
     write_concordance_audit_outputs(result, output_dir)
-    elapsed = time.time() - started
-    print(f"Wrote audit outputs to {output_dir.resolve()} in {elapsed:.1f}s", flush=True)
+    elapsed = time.monotonic() - started
+    print(f"Wrote audit outputs to {output_dir.resolve()} in {elapsed:.1f}s | rss={_rss_mb():.1f} MB", flush=True)
     return 0
 
 
