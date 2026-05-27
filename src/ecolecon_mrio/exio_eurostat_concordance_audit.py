@@ -960,24 +960,6 @@ def build_concordance_audit(
     if not y_drilldown.empty:
         y_drilldown = y_drilldown.sort_values(["target_code", "contribution_rank"], kind="stable").reset_index(drop=True)
 
-    subcomponent_exceeds_aggregate = _subcomponent_exceeds_aggregate_table(
-        mapping_weights=mapping_weights,
-        mapping_matrix=mapping_matrix,
-        source_x=exio_x,
-        source_y_total=exio_y_total,
-        source_row_total=exio_row_total,
-        source_Z=exio_Z,
-        eurostat_x=eurostat_x,
-        eurostat_y_total=euro_y_total,
-        eurostat_row_total=euro_row_total,
-        eurostat_Z=eurostat_Z,
-        z_cell_drilldown=z_cell_drilldown,
-        exio_labels=exio_labels,
-        euro_labels=eurostat_labels,
-        rel_threshold=rel_threshold,
-        min_abs_meur=min_abs_meur,
-    )
-
     audit_metadata = {
         "country": country,
         "year": year,
@@ -997,6 +979,24 @@ def build_concordance_audit(
         "eurostat_dataset": metadata.get("eurostat_dataset") if metadata else None,
         "eurostat_request_url": metadata.get("eurostat_request_url") if metadata else None,
     }
+
+    subcomponent_exceeds_aggregate = _subcomponent_exceeds_aggregate_table(
+        mapping_weights=mapping_weights,
+        mapping_matrix=mapping_matrix,
+        source_x=exio_x,
+        source_y_total=exio_y_total,
+        source_row_total=exio_row_total,
+        source_Z=exio_Z,
+        eurostat_x=eurostat_x,
+        eurostat_y_total=euro_y_total,
+        eurostat_row_total=euro_row_total,
+        eurostat_Z=eurostat_Z,
+        z_cell_drilldown=z_cell_drilldown,
+        exio_labels=exio_labels,
+        euro_labels=eurostat_labels,
+        rel_threshold=rel_threshold,
+        min_abs_meur=min_abs_meur,
+    )
 
     report_markdown = render_concordance_audit_report(
         metadata=audit_metadata,
