@@ -1096,6 +1096,7 @@ def build_concordance_audit(
         "exio_year": metadata.get("exio_year") if metadata else None,
         "eurostat_dataset": metadata.get("eurostat_dataset") if metadata else None,
         "eurostat_request_url": metadata.get("eurostat_request_url") if metadata else None,
+        "run_command": metadata.get("run_command") if metadata else None,
         "eurostat_x_is_proxy": not eurostat_x_supplied,
         "full_subcomponent_z_scan": full_subcomponent_z_scan,
         "z_subcomponent_scan_mode": "full_scan" if full_subcomponent_z_scan else "flagged_cells_only",
@@ -1273,6 +1274,7 @@ def render_concordance_audit_report(
 def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: str | Path) -> dict[str, Path]:
     outdir = Path(output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
+    run_command = str(result.metadata.get("run_command", "")).strip()
     paths = {
         "audit_metadata.json": outdir / "audit_metadata.json",
         "audit_mapping_coverage.csv": outdir / "audit_mapping_coverage.csv",
@@ -1288,6 +1290,7 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         "audit_subcomponent_exceeds_aggregate.csv": outdir / "audit_subcomponent_exceeds_aggregate.csv",
         "audit_top_flags.md": outdir / "audit_top_flags.md",
         "audit_exio_eurostat_concordance.md": outdir / f"audit_exio_eurostat_concordance_{result.metadata.get('country', '')}_{result.metadata.get('year', '')}.md",
+        "audit_run.sh": outdir / "audit_run.sh",
     }
     Path(paths["audit_metadata.json"]).write_text(json.dumps(result.metadata, indent=2, sort_keys=True), encoding="utf-8")
     result.mapping_coverage.to_csv(paths["audit_mapping_coverage.csv"], index=False)
@@ -1332,6 +1335,26 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
     ]
     Path(paths["audit_top_flags.md"]).write_text("\n".join(top_flags_lines).rstrip() + "\n", encoding="utf-8")
     Path(paths["audit_exio_eurostat_concordance.md"]).write_text(result.report_markdown, encoding="utf-8")
+    if run_command:
+        script_text = "\n".join([
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "",
+            f"# Generated command for {result.metadata.get('country', '')} {result.metadata.get('year', '')}",
+            run_command,
+            "",
+        ])
+    else:
+        script_text = "\n".join([
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "",
+            "# No command was recorded for this audit run.",
+            "",
+        ])
+    run_script_path = Path(paths["audit_run.sh"])
+    run_script_path.write_text(script_text, encoding="utf-8")
+    run_script_path.chmod(0o755)
     return paths
 
 

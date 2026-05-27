@@ -5,6 +5,8 @@ import argparse
 import time
 import resource
 from pathlib import Path
+import shlex
+import sys
 
 import pandas as pd
 
@@ -113,6 +115,8 @@ def main() -> int:
         exio_flow=args.exio_flow,
         eurostat_unit=args.eurostat_unit,
     )
+    run_command = shlex.join(["PYTHONPATH=src", ".venv/bin/python", str(Path(__file__).relative_to(REPO_ROOT)), *sys.argv[1:]])
+    metadata["run_command"] = run_command
 
     result = build_concordance_audit(
         country=args.country,

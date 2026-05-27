@@ -227,3 +227,35 @@ def test_at_2020_audit_report_contains_motivating_biofuels_case():
     assert ((z_cell_frame["supplier_code"] == "CPA_C20") & (z_cell_frame["buyer_code"] == "CPA_G46")).any()
     assert (z_cell_frame["supplier_code"] == "CPA_C20").any()
     assert ((drilldown_frame["supplier_code"] == "CPA_C20") & (drilldown_frame["buyer_code"] == "CPA_G46") & (drilldown_frame["exio_subsector_code"] == "p24.g")).any() or ((subcomponent_frame["metric"] == "Z_CELL") & (subcomponent_frame["exio_subsector_code"] == "p24.g")).any()
+
+
+def test_write_concordance_audit_outputs_emits_run_script(tmp_path):
+    from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit, write_concordance_audit_outputs
+
+    exio_x, exio_Z, exio_Y, euro_x, euro_Z, euro_Y, mapping, labels = _build_base_frames()
+    eurostat_labels = {"CPA_C20": "Chemicals and chemical products", "CPA_G46": "Wholesale trade except motor vehicles"}
+
+    result = build_concordance_audit(
+        country="AT",
+        year=2020,
+        exio_x=exio_x,
+        exio_Z=exio_Z,
+        exio_Y=exio_Y,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        eurostat_x=euro_x,
+        mapping_df=mapping,
+        exio_labels=labels,
+        eurostat_labels=eurostat_labels,
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    result.metadata["run_command"] = "PYTHONPATH=src .venv/bin/python scripts/run_exio_eurostat_concordance_audit.py --country AT --year 2020"
+
+    paths = write_concordance_audit_outputs(result, tmp_path)
+    run_script = paths["audit_run.sh"]
+
+    assert run_script.exists()
+    script_text = run_script.read_text(encoding="utf-8")
+    assert "--country AT --year 2020" in script_text
+    assert script_text.startswith("#!/usr/bin/env bash")
