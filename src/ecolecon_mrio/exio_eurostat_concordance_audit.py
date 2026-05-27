@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,177 @@ METRIC_Z_ROW_INTERMEDIATE_SALES = "Z_ROW_INTERMEDIATE_SALES"
 METRIC_Z_COL_INTERMEDIATE_PURCHASES = "Z_COL_INTERMEDIATE_PURCHASES"
 METRIC_TOTAL_USE = "TOTAL_USE_Z_PLUS_Y"
 METRIC_Z_CELL = "Z_CELL"
+
+METRIC_HUMAN_LABELS = {
+    "X_OUTPUT": "Output comparison",
+    "X_OUTPUT_PROXY_TOTAL_USE": "Output / total-use proxy comparison",
+    "Y_FINAL_DEMAND_TOTAL": "Final demand total",
+    "Z_ROW_INTERMEDIATE_SALES": "Intermediate sales by supplying sector",
+    "Z_COL_INTERMEDIATE_PURCHASES": "Intermediate purchases by using sector",
+    "TOTAL_USE_Z_PLUS_Y": "Total use: intermediate sales + final demand",
+    "Z_CELL": "Intermediate flow cell: supplier → buyer",
+}
+
+METRIC_EXPLANATIONS = {
+    "Z_ROW_INTERMEDIATE_SALES": (
+        "For each supplying sector, this sums all intermediate sales from that sector to all buyer sectors."
+    ),
+    "Z_COL_INTERMEDIATE_PURCHASES": (
+        "For each buyer sector, this sums all intermediate inputs purchased by that sector from all supplying sectors."
+    ),
+    "Z_CELL": (
+        "This compares one specific intermediate flow: a supplier sector selling to a buyer sector."
+    ),
+    "Y_FINAL_DEMAND_TOTAL": (
+        "This compares total final demand for the product/sector."
+    ),
+    "TOTAL_USE_Z_PLUS_Y": (
+        "This compares intermediate sales plus final demand."
+    ),
+    "X_OUTPUT_PROXY_TOTAL_USE": (
+        "This is not necessarily true gross output. It uses Eurostat row total plus final demand as a proxy when no independent Eurostat output vector is available."
+    ),
+}
+
+
+def fmt_meur(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if pd.isna(numeric_value):
+        return ""
+    return f"{numeric_value:,.1f}"
+
+
+def fmt_ratio(value: object) -> str:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if np.isinf(numeric_value):
+        return "∞"
+    if pd.isna(numeric_value):
+        return ""
+    return f"{numeric_value:,.2f}"
+
+
+def fmt_pct(value: object) -> str:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if pd.isna(numeric_value):
+        return ""
+    return f"{100 * numeric_value:,.1f}%"
+
+
+def _display_code(code: object, labels: Mapping[str, str]) -> str:
+    code_text = str(code)
+    label_text = labels.get(code_text, code_text)
+    return f"{code_text} — {label_text}"
+
+
+def euro_display(code: object, labels: Mapping[str, str]) -> str:
+    return _display_code(code, labels)
+
+
+def exio_display(code: object, labels: Mapping[str, str]) -> str:
+    return _display_code(code, labels)
+
+
+def human_metric_label(metric: str) -> str:
+    return METRIC_HUMAN_LABELS.get(metric, metric)
+
+
+def human_metric_explanation(metric: str) -> str:
+    return METRIC_EXPLANATIONS.get(metric, "")
+
+
+def _display_contributor_string(contributions: str, label_map: Mapping[str, str]) -> str:
+    if not contributions:
+        return ""
+    rendered: list[str] = []
+    for segment in str(contributions).split(" | "):
+        text = segment.strip()
+        if not text:
+            continue
+        left, separator, right = text.partition(": ")
+        if not separator:
+            rendered.append(text)
+            continue
+        code, _, label = left.partition(" ")
+        match = re.search(r"^(?P<value>.+?) \((?P<share>[-+0-9.eE]+)%\)$", right.strip())
+        if match:
+            value_text = match.group("value")
+            share_text = match.group("share")
+            rendered.append(f"{code} — {label_map.get(code, label)}: {fmt_meur(value_text)} MEUR ({share_text}%)")
+        else:
+            rendered.append(f"{code} — {label_map.get(code, label)}: {right}")
+    return "<br>".join(rendered)
+
+
+def _signed_meur(value: object) -> str:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if pd.isna(numeric_value):
+        return ""
+    sign = "+" if numeric_value > 0 else ""
+    return f"{sign}{numeric_value:,.1f}"
+
+
+def _display_code_label(code: object, label: object) -> str:
+    code_text = str(code)
+    label_text = str(label).strip() if label is not None else code_text
+    if not label_text or label_text == "nan":
+        label_text = code_text
+    return f"{code_text} — {label_text}"
+
+
+def _display_metric(metric: object) -> str:
+    return human_metric_label(str(metric))
+
+
+def _display_contributor_string(raw_value: object) -> str:
+    if raw_value is None:
+        return ""
+    text = str(raw_value).strip()
+    if not text:
+        return ""
+    rendered: list[str] = []
+    for segment in text.split(" | "):
+        segment = segment.strip()
+        if not segment:
+            continue
+        left, separator, right = segment.partition(": ")
+        if not separator:
+            rendered.append(segment)
+            continue
+        code, _, label = left.partition(" ")
+        if "(" in right and right.endswith("%)"):
+            value_text, share_text = right.rsplit(" (", 1)
+            share_text = share_text.rstrip("%)")
+            rendered.append(f"{code} — {label}: {fmt_meur(value_text)} MEUR ({share_text}%)")
+        else:
+            rendered.append(f"{code} — {label}: {right}")
+    return "<br>".join(rendered)
+
+
+def _direction_label(exio_value: object, euro_value: object) -> str:
+    try:
+        exio_numeric = float(exio_value)
+        euro_numeric = float(euro_value)
+    except (TypeError, ValueError):
+        return ""
+    if exio_numeric > euro_numeric:
+        return "EXIOBASE larger"
+    if exio_numeric < euro_numeric:
+        return "Eurostat larger"
+    return "Equal"
 
 
 def _normalize_text(value: object) -> str:
@@ -1172,101 +1344,217 @@ def render_concordance_audit_report(
     lines: list[str] = []
     country = metadata.get("country", "")
     year = metadata.get("year", "")
+    proxy_mode = bool(metadata.get("eurostat_x_is_proxy", False))
+    scan_mode = str(metadata.get("z_subcomponent_scan_mode", "flagged_cells_only"))
+
+    def _top_flag(frame: pd.DataFrame, metric: str | None = None) -> pd.Series:
+        filtered = frame[frame["flag"]].copy()
+        if metric is not None and "metric" in filtered.columns:
+            filtered = filtered[filtered["metric"].astype(str).eq(metric)]
+        if filtered.empty:
+            return pd.Series(dtype="float64")
+        return filtered.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").iloc[0]
+
+    def _section_heading(title: str) -> None:
+        lines.append(title)
+        lines.append("")
+
     lines.append(f"# EXIOBASE–Eurostat Concordance Audit: {country} {year}")
     lines.append("")
-    lines.append("## Executive Summary")
+    _section_heading("## Executive interpretation")
+    lines.append("The largest mismatches are concentrated in sectors where EXIOBASE and Eurostat allocate flows differently, and in a few supplier→buyer cells where one EXIOBASE subsector dominates the mapped flow.")
     lines.append("")
-    lines.append(f"- Country: {country}")
-    lines.append(f"- Year: {year}")
-    lines.append(f"- Mapping file SHA256: {metadata.get('mapping_file_sha256', 'unknown')}")
-    lines.append(f"- Identity mode: {metadata.get('identity_mode', 'diagnostic')}")
-    lines.append("- Caveat: EXIO x_region is producer-side output while the mapped Z/Y slice is use-side, so internal identities are diagnostic unless the two bases are aligned.")
-    lines.append(f"- Mapped EXIO source sectors: {int(metadata.get('mapped_exio_source_sectors', int(mapping_coverage['mapped_targets'].gt(0).sum())))}")
-    lines.append(f"- Mapped Eurostat target sectors: {int(metadata.get('mapped_euro_target_sectors', 0))}")
-    lines.append(f"- Z-cell subcomponent scan mode: {metadata.get('z_subcomponent_scan_mode', 'flagged_cells_only')}")
-    lines.append(f"- Unmapped non-zero source sectors: {int((mapping_coverage['status'].str.contains('UNMAPPED_NONZERO', na=False)).sum())}")
-    lines.append(f"- Aggregate mismatches above threshold: {int(aggregate_totals['flag'].sum())}")
-    lines.append(f"- Flagged Z cells: {int(z_cell_mismatches['flag'].sum())}")
-    lines.append(f"- Subcomponents exceeding aggregates: {len(subcomponent_exceeds_aggregate)}")
-    if metadata.get("full_subcomponent_z_scan", False):
-        lines.append("- Warning: full Z-cell subcomponent scanning is enabled and may be slow.")
-        lines.append("- Z-cell subcomponent exceedance is evaluated with a full scan of all Z cells.")
+    lines.append("1. Sectors where EXIOBASE has no mapped counterpart but Eurostat has large values.")
+    lines.append("2. Sectors where Eurostat separates aggregates more finely than EXIOBASE.")
+    lines.append("3. Specific supplier→buyer flows where a single EXIOBASE subsector dominates the mapped flow.")
+    lines.append("")
+    top_agg = aggregate_totals[aggregate_totals["flag"]].sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable")
+    top_cell = z_cell_mismatches[z_cell_mismatches["flag"]].sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable")
+    top_sub = subcomponent_exceeds_aggregate.sort_values(["ratio", "abs_gap"], ascending=[False, False], kind="stable")
+    c20_focus = z_cell_mismatches[(z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (z_cell_mismatches["buyer_code"].astype(str).eq("CPA_G46"))]
+    lines.append(f"- Largest absolute aggregate mismatch: {human_metric_label(str(top_agg.iloc[0]['metric'])) if not top_agg.empty else 'n/a'} on {_display_code_label(top_agg.iloc[0]['target_code'], top_agg.iloc[0]['target_label']) if not top_agg.empty else 'n/a'}.")
+    lines.append(f"- Largest Z-cell mismatch: {_display_code_label(top_cell.iloc[0]['supplier_code'], top_cell.iloc[0]['supplier_label']) + ' → ' + _display_code_label(top_cell.iloc[0]['buyer_code'], top_cell.iloc[0]['buyer_label']) if not top_cell.empty else 'n/a'}.")
+    lines.append(f"- Largest subcomponent-exceeds-aggregate case: {_display_code_label(top_sub.iloc[0]['exio_subsector_code'], top_sub.iloc[0]['exio_subsector_label']) if not top_sub.empty else 'n/a'}.")
+    if not c20_focus.empty:
+        focus = c20_focus.iloc[0]
+        lines.append(f"- CPA_C20 → CPA_G46 appears and is {'EXIOBASE larger' if float(focus['exio_mapped_z']) > float(focus['eurostat_z']) else 'Eurostat larger'}.")
     else:
-        lines.append("- Z-cell subcomponent exceedance is evaluated only inside Z cells that pass the aggregate mismatch threshold.")
+        lines.append("- CPA_C20 → CPA_G46 does not appear in the flagged Z-cell summary.")
     lines.append("")
 
-    lines.append("## Mapping Coverage")
+    _section_heading("## How to read this report")
+    lines.append("- Intermediate flow cell: supplier → buyer compares one Eurostat supplier sector and one Eurostat buyer sector. Example: CPA_C20 → CPA_G46 means chemicals and chemical products sold as intermediate inputs to wholesale trade.")
+    lines.append("- Intermediate sales by supplying sector sums all intermediate sales from one supplying sector across all buyer sectors.")
+    lines.append("- Intermediate purchases by using sector sums all intermediate inputs bought by one buyer sector from all supplying sectors.")
+    lines.append("- Final demand total compares final demand for that sector/product.")
+    lines.append("- Total use means intermediate sales plus final demand.")
+    lines.append("- EXIOBASE mapped value is the EXIOBASE value after applying the EXIOBASE→Eurostat concordance.")
+    lines.append("- Eurostat value is the corresponding value from the Eurostat IOT.")
+    lines.append("- Ratio is EXIOBASE mapped value divided by Eurostat value. Values greater than 1 mean EXIOBASE is larger; values below 1 mean EXIOBASE is smaller.")
+    lines.append("- Values are in million euros unless otherwise stated.")
     lines.append("")
-    lines.append(_markdown_table(mapping_coverage.sort_values(["status", "source_code"], kind="stable"), columns=["source_code", "source_label", "mapped_targets", "sum_mapping_weight", "status", "x_value", "y_value", "z_row_total", "z_col_total", "reason"], max_rows=20))
-    lines.append("")
-
-    lines.append("## Internal Identities")
-    lines.append("")
-    lines.append(_markdown_table(internal_identities, columns=["database", "code", "x", "z_row_total", "y_total", "z_plus_y", "abs_gap", "rel_gap", "severity", "status", "identity_mode"], max_rows=20))
-    lines.append("")
-
-    lines.append("## Most Serious Aggregate Mismatches")
-    lines.append("")
-    top_agg = aggregate_totals[aggregate_totals["flag"]].assign(severity_rank=aggregate_totals["severity"].map(_severity_rank))
-    top_agg = top_agg.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
-    lines.append(_markdown_table(top_agg, columns=["metric", "target_code", "target_label", "exio_mapped_value", "eurostat_value", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "severity", "issue_type", "top_exio_contributors", "interpretation"], max_rows=12))
+    lines.append("Important caveat: if the metric is Output / total-use proxy comparison, the Eurostat side is inferred from row totals and final demand. Do not interpret it as an independently observed Eurostat gross-output vector.")
     lines.append("")
 
-    lines.append("## Z-Cell Mismatches")
-    lines.append("")
-    top_cells = z_cell_mismatches[z_cell_mismatches["flag"]].assign(severity_rank=z_cell_mismatches["severity"].map(_severity_rank))
-    top_cells = top_cells.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
-    lines.append(_markdown_table(top_cells, columns=["supplier_code", "buyer_code", "exio_mapped_z", "eurostat_z", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "severity", "top_source_subsectors", "top_buyer_subsectors", "interpretation"], max_rows=12))
+    _section_heading("## Mapping coverage")
+    lines.append(_markdown_table(_human_mapping_coverage_table(mapping_coverage), columns=["EXIOBASE source sector", "Mapped targets", "Mapping weight sum", "Status", "EXIOBASE x, MEUR", "EXIOBASE y total, MEUR", "EXIOBASE Z row total, MEUR", "EXIOBASE Z col total, MEUR", "Reason"], max_rows=20))
     lines.append("")
 
-    lines.append("## Subcomponents Exceeding Aggregates")
-    lines.append("")
-    subcomponent_sorted = subcomponent_exceeds_aggregate.assign(severity_rank=subcomponent_exceeds_aggregate["severity"].map(_severity_rank))
-    subcomponent_sorted = subcomponent_sorted.sort_values(["severity_rank", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
-    lines.append(_markdown_table(subcomponent_sorted, columns=["metric", "target_code", "buyer_code", "exio_subsector_code", "exio_subsector_value", "eurostat_aggregate_value", "ratio", "severity", "interpretation"], max_rows=12))
+    _section_heading("## Internal identities")
+    lines.append(_markdown_table(_human_internal_identities_table(internal_identities), columns=["Database", "Sector", "EXIOBASE mapped x, MEUR", "Z row total, MEUR", "Y total, MEUR", "Z + Y, MEUR", "Absolute gap, MEUR", "Relative gap", "Severity", "Status", "Identity mode"], max_rows=20))
     lines.append("")
 
     if not x_mismatches.empty:
-        lines.append("## X-Output Mismatches")
-        lines.append("")
-        if metadata.get("eurostat_x_is_proxy", False):
+        _section_heading("## Output / total-use proxy mismatches")
+        if proxy_mode:
             lines.append("X comparison uses the inferred Eurostat total-use proxy (x proxy) because no independent Eurostat output vector was supplied.")
             lines.append("")
-        x_sorted = x_mismatches.assign(severity_rank=x_mismatches["severity"].map(_severity_rank))
-        x_sorted = x_sorted.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
-        lines.append(_markdown_table(x_sorted, columns=["target_code", "exio_mapped_value", "eurostat_value", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "top_exio_contributors", "interpretation"], max_rows=8))
+        x_human = _human_aggregate_table(x_mismatches.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        lines.append(_markdown_table(x_human, columns=["Readable metric", "Eurostat sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Largest EXIOBASE contributors", "Plain-English interpretation"], max_rows=8))
         lines.append("")
 
     if not y_mismatches.empty:
-        lines.append("## Y-Final Demand Mismatches")
+        _section_heading("## Final-demand mismatches")
+        y_human = _human_aggregate_table(y_mismatches.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        lines.append(_markdown_table(y_human, columns=["Readable metric", "Eurostat sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Largest EXIOBASE contributors", "Plain-English interpretation"], max_rows=8))
         lines.append("")
-        y_sorted = y_mismatches.assign(severity_rank=y_mismatches["severity"].map(_severity_rank))
-        y_sorted = y_sorted.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
-        lines.append(_markdown_table(y_sorted, columns=["target_code", "exio_mapped_value", "eurostat_value", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "top_exio_contributors", "interpretation"], max_rows=8))
+
+    if not z_cell_mismatches.empty:
+        _section_heading("## Intermediate supplier→buyer flow mismatches")
+        z_human = _human_z_cell_table(z_cell_mismatches.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        lines.append(_markdown_table(z_human, columns=["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Top EXIOBASE source subsectors", "Top EXIOBASE buyer subsectors", "Plain-English interpretation"], max_rows=12))
+        lines.append("")
+        lines.append("### Detailed drill-down for the top flagged Z-cell mismatches")
+        lines.append("")
+        for cell in z_cell_mismatches[z_cell_mismatches["flag"]].sort_values(["severity", "abs_gap"], ascending=[False, False], kind="stable").head(10).itertuples(index=False):
+            supplier_display = _display_code_label(cell.supplier_code, cell.supplier_label)
+            buyer_display = _display_code_label(cell.buyer_code, cell.buyer_label)
+            lines.append(f"#### Detailed drill-down: {supplier_display} → {buyer_display}")
+            lines.append("")
+            lines.append("Eurostat comparison:")
+            lines.append(f"- Eurostat supplier sector: {supplier_display}")
+            lines.append(f"- Eurostat buyer sector: {buyer_display}")
+            lines.append(f"- Eurostat Z value: {fmt_meur(cell.eurostat_z)} MEUR")
+            lines.append(f"- EXIOBASE mapped Z value: {fmt_meur(cell.exio_mapped_z)} MEUR")
+            lines.append(f"- Ratio: {fmt_ratio(cell.ratio_exio_to_eurostat)}")
+            lines.append(f"- Difference: {_signed_meur(cell.signed_gap)} MEUR")
+            source_rows = z_cell_drilldown[(z_cell_drilldown["supplier_code"].astype(str).eq(str(cell.supplier_code))) & (z_cell_drilldown["buyer_code"].astype(str).eq(str(cell.buyer_code))) & (z_cell_drilldown["role"].astype(str).eq("source_contributor"))]
+            buyer_rows = z_cell_drilldown[(z_cell_drilldown["supplier_code"].astype(str).eq(str(cell.supplier_code))) & (z_cell_drilldown["buyer_code"].astype(str).eq(str(cell.buyer_code))) & (z_cell_drilldown["role"].astype(str).eq("buyer_contributor"))]
+            if not source_rows.empty:
+                source_human = source_rows.assign(
+                    **{
+                        "EXIOBASE source subsector": source_rows.apply(lambda r: _display_code_label(r.exio_subsector_code, r.exio_subsector_label), axis=1),
+                        "Contribution, MEUR": source_rows["contribution_value"].map(fmt_meur),
+                        "Share of EXIO mapped cell": source_rows["share_of_exio_mapped_cell"].map(fmt_pct),
+                        "Share of Eurostat cell": source_rows["share_of_eurostat_cell"].map(fmt_pct),
+                    }
+                )
+                lines.append("")
+                lines.append(f"Top EXIOBASE source subsectors mapped into {supplier_display}:")
+                lines.append(_markdown_table(source_human, columns=["EXIOBASE source subsector", "Contribution, MEUR", "Share of EXIO mapped cell", "Share of Eurostat cell"], max_rows=5))
+            if not buyer_rows.empty:
+                buyer_human = buyer_rows.assign(
+                    **{
+                        "EXIOBASE buyer subsector": buyer_rows.apply(lambda r: _display_code_label(r.exio_subsector_code, r.exio_subsector_label), axis=1),
+                        "Contribution, MEUR": buyer_rows["contribution_value"].map(fmt_meur),
+                        "Share of EXIO mapped cell": buyer_rows["share_of_exio_mapped_cell"].map(fmt_pct),
+                    }
+                )
+                lines.append("")
+                lines.append(f"Top EXIOBASE buyer subsectors mapped into {buyer_display}:")
+                lines.append(_markdown_table(buyer_human, columns=["EXIOBASE buyer subsector", "Contribution, MEUR", "Share of EXIO mapped cell"], max_rows=5))
+            lines.append("")
+            lines.append("Interpretation:")
+            lines.append(cell.interpretation)
+            lines.append("")
+
+    if not subcomponent_exceeds_aggregate.empty:
+        _section_heading("## Single EXIOBASE subsectors larger than Eurostat aggregates")
+        lines.append("This section flags cases where a single EXIOBASE subsector mapped into a Eurostat aggregate is larger than the whole Eurostat aggregate or cell it maps into. These are especially important because they indicate that the mismatch is not diffuse: it is concentrated in one source subsector.")
+        lines.append("")
+        sub_human = _human_subcomponent_table(subcomponent_exceeds_aggregate.sort_values(["severity", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable"))
+        lines.append(_markdown_table(sub_human, columns=["Readable metric", "Eurostat aggregate sector", "Eurostat buyer sector", "EXIOBASE subsector", "EXIOBASE subsector value, MEUR", "Eurostat aggregate/cell value, MEUR", "EXIO / Eurostat ratio", "Reason"], max_rows=12))
         lines.append("")
 
     if not y_drilldown.empty:
-        lines.append("## Final Demand Drill-Down")
-        lines.append("")
-        y_drilldown_flagged = y_drilldown[y_drilldown["parent_y_flagged"]].copy()
-        if not y_drilldown_flagged.empty:
-            lines.append(_markdown_table(y_drilldown_flagged.sort_values(["target_code", "contribution_rank"], kind="stable"), columns=["target_code", "exio_subsector_code", "contribution_value", "share_of_exio_mapped_y", "share_of_eurostat_y", "contribution_rank", "interpretation"], max_rows=12))
+        _section_heading("## Final-demand drill-down")
+        if "parent_y_flagged" in y_drilldown.columns:
+            y_flagged = y_drilldown[y_drilldown["parent_y_flagged"]].copy()
+        else:
+            y_flagged = y_drilldown.copy()
+        if not y_flagged.empty:
+            y_human = _human_y_drilldown_table(y_flagged.sort_values(["target_code", "contribution_rank"], kind="stable"))
+            lines.append(_markdown_table(y_human, columns=["Eurostat sector", "EXIOBASE contributing source", "Contribution, MEUR", "Share of EXIO mapped final demand", "Share of Eurostat final demand", "Contribution rank", "Interpretation"], max_rows=12))
         else:
             lines.append("No flagged Y mismatches to drill down.")
         lines.append("")
 
     biofuel_mask = (
-        z_cell_mismatches["supplier_label"].astype(str).str.contains("chemicals and chemical products", case=False, na=False)
-        | z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")
-        | z_cell_mismatches["top_source_subsectors"].astype(str).str.contains("Biogasoline|Biodiesels|Other Liquid Biofuels", case=False, na=False)
+        z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")
+        | z_cell_mismatches["supplier_label"].astype(str).str.contains("chemicals and chemical products", case=False, na=False)
     )
-    if biofuel_mask.any():
-        lines.append("## CPA_C20 / Biofuels Diagnostic")
+    biofuel_rows = z_cell_mismatches[biofuel_mask].copy()
+    if not biofuel_rows.empty:
+        _section_heading("## CPA_C20 / Biofuels Diagnostic")
+        lines.append("This section focuses on CPA_C20 because liquid biofuels are mapped statistically into CPA_C20 but may be analytically important for the energy-transition split. The table asks: after mapping EXIOBASE products such as p24.g — Biogasoline and p24.h — Biodiesels into CPA_C20, do the resulting CPA_C20 flows agree with Eurostat?")
         lines.append("")
-        bio = z_cell_mismatches[biofuel_mask].assign(severity_rank=z_cell_mismatches[biofuel_mask]["severity"].map(_severity_rank))
-        bio = bio.sort_values(["severity_rank", "abs_gap"], ascending=[False, False], kind="stable").drop(columns=["severity_rank"])
-        lines.append(_markdown_table(bio, columns=["supplier_code", "buyer_code", "exio_mapped_z", "eurostat_z", "ratio_exio_to_eurostat", "top_source_subsectors", "interpretation"], max_rows=10))
+        c20_focus = biofuel_rows[biofuel_rows["buyer_code"].astype(str).eq("CPA_G46")]
+        if not c20_focus.empty:
+            c20_row = c20_focus.iloc[0]
+            lines.append(f"Explicit focus row: {_display_code_label(c20_row.supplier_code, c20_row.supplier_label)} → {_display_code_label(c20_row.buyer_code, c20_row.buyer_label)}.")
+            lines.append("")
+        bio_human = _human_z_cell_table(biofuel_rows.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable"))
+        lines.append(_markdown_table(bio_human, columns=["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Top EXIOBASE source subsectors", "Top EXIOBASE buyer subsectors", "Plain-English interpretation"], max_rows=10))
         lines.append("")
+        if not c20_focus.empty:
+            lines.append("### Focused CPA_C20 → CPA_G46 check")
+            lines.append("")
+            focus = c20_focus.iloc[0]
+            lines.append(f"- Eurostat supplier sector: {_display_code_label(focus.supplier_code, focus.supplier_label)}")
+            lines.append(f"- Eurostat buyer sector: {_display_code_label(focus.buyer_code, focus.buyer_label)}")
+            lines.append(f"- EXIOBASE mapped flow: {fmt_meur(focus.exio_mapped_z)} MEUR")
+            lines.append(f"- Eurostat flow: {fmt_meur(focus.eurostat_z)} MEUR")
+            lines.append(f"- Ratio: {fmt_ratio(focus.ratio_exio_to_eurostat)}")
+            lines.append(f"- Difference: {_signed_meur(focus.signed_gap)} MEUR")
+            focus_source = z_cell_drilldown[(z_cell_drilldown["supplier_code"].astype(str).eq("CPA_C20")) & (z_cell_drilldown["buyer_code"].astype(str).eq("CPA_G46")) & (z_cell_drilldown["role"].astype(str).eq("source_contributor"))]
+            if not focus_source.empty:
+                focus_source_human = focus_source.assign(
+                    **{
+                        "EXIOBASE source subsector": focus_source.apply(lambda r: _display_code_label(r.exio_subsector_code, r.exio_subsector_label), axis=1),
+                        "Contribution, MEUR": focus_source["contribution_value"].map(fmt_meur),
+                        "Share of EXIO mapped cell": focus_source["share_of_exio_mapped_cell"].map(fmt_pct),
+                        "Share of Eurostat cell": focus_source["share_of_eurostat_cell"].map(fmt_pct),
+                    }
+                )
+                lines.append("")
+                lines.append("Top EXIOBASE source subsectors for CPA_C20 → CPA_G46:")
+                lines.append(_markdown_table(focus_source_human, columns=["EXIOBASE source subsector", "Contribution, MEUR", "Share of EXIO mapped cell", "Share of Eurostat cell"], max_rows=5))
+            lines.append("")
+
+    _section_heading("## Glossary")
+    lines.append("- Z: intermediate input-use matrix. A Z cell is a supplier-sector → buyer-sector flow.")
+    lines.append("- Z row total: total intermediate sales by a supplying sector to all buyer sectors.")
+    lines.append("- Z column total: total intermediate purchases by a buyer sector from all supplying sectors.")
+    lines.append("- Y: final demand.")
+    lines.append("- X: gross output if independently available; otherwise, in this audit, an output/total-use proxy may be used.")
+    lines.append("- EXIOBASE mapped value: EXIOBASE value after applying the EXIOBASE→Eurostat concordance.")
+    lines.append("- Eurostat value: corresponding Eurostat IOT value.")
+    lines.append("- Subcomponent exceeds aggregate: a single EXIOBASE subsector is larger than the whole Eurostat aggregate or cell it maps into.")
+    lines.append("")
+
+    _section_heading("## Technical appendix: raw metric names")
+    technical_rows = pd.DataFrame(
+        [
+            {"Raw metric": "Z_CELL", "Human-readable meaning": "Intermediate supplier→buyer flow"},
+            {"Raw metric": "Z_ROW_INTERMEDIATE_SALES", "Human-readable meaning": "Total intermediate sales by supplier"},
+            {"Raw metric": "Z_COL_INTERMEDIATE_PURCHASES", "Human-readable meaning": "Total intermediate purchases by buyer"},
+            {"Raw metric": "Y_FINAL_DEMAND_TOTAL", "Human-readable meaning": "Final demand total"},
+            {"Raw metric": "TOTAL_USE_Z_PLUS_Y", "Human-readable meaning": "Intermediate sales plus final demand"},
+            {"Raw metric": "X_OUTPUT_PROXY_TOTAL_USE", "Human-readable meaning": "Output / total-use proxy"},
+        ]
+    )
+    lines.append(_markdown_table(technical_rows, columns=["Raw metric", "Human-readable meaning"], max_rows=20))
+    lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1304,35 +1592,59 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
     result.z_cell_drilldown.to_csv(paths["audit_z_cell_drilldown.csv"], index=False)
     result.y_drilldown.to_csv(paths["audit_y_drilldown.csv"], index=False)
     result.subcomponent_exceeds_aggregate.to_csv(paths["audit_subcomponent_exceeds_aggregate.csv"], index=False)
+    top_agg_human = _human_aggregate_table(result.aggregate_totals[result.aggregate_totals["flag"]].sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")).head(10)
+    top_cell_human = _human_z_cell_table(result.z_cell_mismatches[result.z_cell_mismatches["flag"]].sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")).head(10)
+    top_sub_human = _human_subcomponent_table(result.subcomponent_exceeds_aggregate.sort_values(["severity", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable")).head(10)
+    c20_focus = result.z_cell_mismatches[(result.z_cell_mismatches["supplier_code"].astype(str).eq("CPA_C20")) & (result.z_cell_mismatches["buyer_code"].astype(str).eq("CPA_G46"))]
+
+    def _table_or_message(frame: pd.DataFrame, columns: Sequence[str], empty_message: str) -> str:
+        if frame.empty:
+            return empty_message
+        return _markdown_table(frame, columns=columns, max_rows=10)
+
     top_flags_lines = [
         f"# Top Concordance Flags: {result.metadata.get('country', '')} {result.metadata.get('year', '')}",
         "",
-        "## Aggregate mismatches",
+        "## How to read this short report",
         "",
-        
-        _markdown_table(
-            result.aggregate_totals[result.aggregate_totals["flag"]].assign(severity_rank=result.aggregate_totals["severity"].map(_severity_rank)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]),
-            columns=["metric", "target_code", "exio_mapped_value", "eurostat_value", "ratio_exio_to_eurostat", "abs_gap", "rel_gap", "top_exio_contributors"],
-            max_rows=8,
-        ),
+        "- Intermediate flow cell: supplier → buyer compares one Eurostat supplier sector and one Eurostat buyer sector.",
+        "- Intermediate sales by supplying sector sums all intermediate sales from one supplying sector across all buyer sectors.",
+        "- Final demand total compares final demand for that sector/product.",
+        "- EXIOBASE mapped value is the EXIOBASE value after applying the concordance.",
+        "- Eurostat value is the corresponding Eurostat IOT value.",
         "",
-        "## Z-cell mismatches",
+        "## Top 10 aggregate mismatches",
         "",
-        _markdown_table(
-            result.z_cell_mismatches[result.z_cell_mismatches["flag"]].assign(severity_rank=result.z_cell_mismatches["severity"].map(_severity_rank)).sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]),
-            columns=["supplier_code", "buyer_code", "exio_mapped_z", "eurostat_z", "ratio_exio_to_eurostat", "top_source_subsectors"],
-            max_rows=8,
-        ),
+        _table_or_message(top_agg_human, ["Readable metric", "Eurostat sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Direction", "Largest EXIOBASE contributors", "Plain-English interpretation"], "No flagged aggregate mismatches at the current threshold."),
         "",
-        "## Subcomponents exceeding aggregates",
+        "## Top 10 supplier→buyer flow mismatches",
         "",
-        _markdown_table(
-            result.subcomponent_exceeds_aggregate.assign(severity_rank=result.subcomponent_exceeds_aggregate["severity"].map(_severity_rank)).sort_values(["severity_rank", "abs_gap", "ratio"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"]),
-            columns=["metric", "target_code", "buyer_code", "exio_subsector_code", "exio_subsector_value", "eurostat_aggregate_value", "ratio"],
-            max_rows=8,
-        ),
+        _table_or_message(top_cell_human, ["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Direction", "Top EXIOBASE source subsectors", "Plain-English interpretation"], "No flagged supplier→buyer flow mismatches at the current threshold."),
+        "",
+        "## Top single-subsector exceedance cases",
+        "",
+        _table_or_message(top_sub_human, ["Readable metric", "Eurostat aggregate sector", "Eurostat buyer sector", "EXIOBASE subsector", "EXIOBASE subsector value, MEUR", "Eurostat aggregate/cell value, MEUR", "EXIO / Eurostat ratio", "Reason"], "No single-subsector exceedances were flagged at the current threshold."),
+        "",
+        "## CPA_C20 / liquid biofuels check",
+        "",
+        "This section focuses on CPA_C20 because liquid biofuels are mapped statistically into CPA_C20 but may be analytically important for the energy-transition split.",
         "",
     ]
+    if not c20_focus.empty:
+        c20_row = c20_focus.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").iloc[0]
+        top_flags_lines.extend([
+            f"Explicit focus row: {_display_code_label(c20_row.supplier_code, c20_row.supplier_label)} → {_display_code_label(c20_row.buyer_code, c20_row.buyer_label)}.",
+            "",
+            _table_or_message(
+                _human_z_cell_table(c20_focus.sort_values(["severity", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable")),
+                ["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Direction", "Top EXIOBASE source subsectors", "Plain-English interpretation"],
+                "No CPA_C20 → CPA_G46 row was flagged in the current run.",
+            ),
+            "",
+        ])
+    else:
+        top_flags_lines.append("No CPA_C20 → CPA_G46 row was flagged in the current run.")
+        top_flags_lines.append("")
     Path(paths["audit_top_flags.md"]).write_text("\n".join(top_flags_lines).rstrip() + "\n", encoding="utf-8")
     Path(paths["audit_exio_eurostat_concordance.md"]).write_text(result.report_markdown, encoding="utf-8")
     if run_command:
@@ -1363,6 +1675,147 @@ def load_default_label_maps(repo_root: str | Path) -> tuple[dict[str, str], dict
     exio_labels = _read_label_map(root / "scripts" / "mappings" / "exiobase_products_dictionary.csv")
     euro_labels = _read_label_map(root / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv")
     return exio_labels, euro_labels
+
+
+def _human_mapping_coverage_table(mapping_coverage: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in mapping_coverage.itertuples(index=False):
+        rows.append(
+            {
+                "EXIOBASE source sector": _display_code_label(row.source_code, row.source_label),
+                "Mapped targets": int(row.mapped_targets),
+                "Mapping weight sum": fmt_ratio(row.sum_mapping_weight),
+                "Status": row.status.replace("_", " "),
+                "EXIOBASE x, MEUR": fmt_meur(row.x_value),
+                "EXIOBASE y total, MEUR": fmt_meur(row.y_value),
+                "EXIOBASE Z row total, MEUR": fmt_meur(row.z_row_total),
+                "EXIOBASE Z col total, MEUR": fmt_meur(row.z_col_total),
+                "Reason": row.reason,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["EXIOBASE source sector", "Mapped targets", "Mapping weight sum", "Status", "EXIOBASE x, MEUR", "EXIOBASE y total, MEUR", "EXIOBASE Z row total, MEUR", "EXIOBASE Z col total, MEUR", "Reason"],
+    )
+
+
+def _human_internal_identities_table(internal_identities: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in internal_identities.itertuples(index=False):
+        rows.append(
+            {
+                "Database": row.database,
+                "Sector": _display_code_label(row.code, row.code),
+                "EXIOBASE mapped x, MEUR": fmt_meur(row.x),
+                "Z row total, MEUR": fmt_meur(row.z_row_total),
+                "Y total, MEUR": fmt_meur(row.y_total),
+                "Z + Y, MEUR": fmt_meur(row.z_plus_y),
+                "Absolute gap, MEUR": fmt_meur(row.abs_gap),
+                "Relative gap": fmt_pct(row.rel_gap),
+                "Severity": row.severity,
+                "Status": row.status.replace("_", " "),
+                "Identity mode": row.identity_mode,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["Database", "Sector", "EXIOBASE mapped x, MEUR", "Z row total, MEUR", "Y total, MEUR", "Z + Y, MEUR", "Absolute gap, MEUR", "Relative gap", "Severity", "Status", "Identity mode"],
+    )
+
+
+def _human_aggregate_table(aggregate_totals: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in aggregate_totals.itertuples(index=False):
+        rows.append(
+            {
+                "Readable metric": _display_metric(row.metric),
+                "Eurostat sector": _display_code_label(row.target_code, row.target_label),
+                "EXIOBASE mapped value, MEUR": fmt_meur(row.exio_mapped_value),
+                "Eurostat value, MEUR": fmt_meur(row.eurostat_value),
+                "EXIO / Eurostat ratio": fmt_ratio(row.ratio_exio_to_eurostat),
+                "Difference, MEUR": _signed_meur(row.signed_gap),
+                "Relative gap": fmt_pct(row.rel_gap),
+                "Direction": _direction_label(row.exio_mapped_value, row.eurostat_value),
+                "Largest EXIOBASE contributors": _display_contributor_string(row.top_exio_contributors),
+                "Plain-English interpretation": row.interpretation,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["Readable metric", "Eurostat sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Largest EXIOBASE contributors", "Plain-English interpretation"],
+    )
+
+
+def _human_z_cell_table(z_cell_mismatches: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in z_cell_mismatches.itertuples(index=False):
+        rows.append(
+            {
+                "Eurostat supplier sector": _display_code_label(row.supplier_code, row.supplier_label),
+                "Eurostat buyer sector": _display_code_label(row.buyer_code, row.buyer_label),
+                "Meaning of comparison": f"Intermediate flow from {_display_code_label(row.supplier_code, row.supplier_label)} to {_display_code_label(row.buyer_code, row.buyer_label)}",
+                "EXIOBASE mapped flow, MEUR": fmt_meur(row.exio_mapped_z),
+                "Eurostat flow, MEUR": fmt_meur(row.eurostat_z),
+                "EXIO / Eurostat ratio": fmt_ratio(row.ratio_exio_to_eurostat),
+                "Difference, MEUR": _signed_meur(row.signed_gap),
+                "Relative gap": fmt_pct(row.rel_gap),
+                "Direction": _direction_label(row.exio_mapped_z, row.eurostat_z),
+                "Top EXIOBASE source subsectors": _display_contributor_string(row.top_source_subsectors),
+                "Top EXIOBASE buyer subsectors": _display_contributor_string(row.top_buyer_subsectors),
+                "Plain-English interpretation": row.interpretation,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["Eurostat supplier sector", "Eurostat buyer sector", "Meaning of comparison", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "EXIO / Eurostat ratio", "Difference, MEUR", "Relative gap", "Direction", "Top EXIOBASE source subsectors", "Top EXIOBASE buyer subsectors", "Plain-English interpretation"],
+    )
+
+
+def _human_subcomponent_table(subcomponent_exceeds_aggregate: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in subcomponent_exceeds_aggregate.itertuples(index=False):
+        if row.metric == METRIC_Z_CELL:
+            aggregate_display = _display_code_label(row.target_code, row.target_label)
+            buyer_display = _display_code_label(row.buyer_code, row.buyer_label)
+        else:
+            aggregate_display = _display_code_label(row.target_code, row.target_label)
+            buyer_display = ""
+        rows.append(
+            {
+                "Readable metric": _display_metric(row.metric),
+                "Eurostat aggregate sector": aggregate_display,
+                "Eurostat buyer sector": buyer_display,
+                "EXIOBASE subsector": _display_code_label(row.exio_subsector_code, row.exio_subsector_label),
+                "EXIOBASE subsector value, MEUR": fmt_meur(row.exio_subsector_value),
+                "Eurostat aggregate/cell value, MEUR": fmt_meur(row.eurostat_aggregate_value),
+                "EXIO / Eurostat ratio": fmt_ratio(row.ratio),
+                "Reason": row.interpretation,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["Readable metric", "Eurostat aggregate sector", "Eurostat buyer sector", "EXIOBASE subsector", "EXIOBASE subsector value, MEUR", "Eurostat aggregate/cell value, MEUR", "EXIO / Eurostat ratio", "Reason"],
+    )
+
+
+def _human_y_drilldown_table(y_drilldown: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in y_drilldown.itertuples(index=False):
+        rows.append(
+            {
+                "Eurostat sector": _display_code_label(row.target_code, row.target_label),
+                "EXIOBASE contributing source": _display_code_label(row.exio_subsector_code, row.exio_subsector_label),
+                "Contribution, MEUR": fmt_meur(row.contribution_value),
+                "Share of EXIO mapped final demand": fmt_pct(row.share_of_exio_mapped_y),
+                "Share of Eurostat final demand": fmt_pct(row.share_of_eurostat_y),
+                "Contribution rank": int(row.contribution_rank),
+                "Interpretation": row.interpretation,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["Eurostat sector", "EXIOBASE contributing source", "Contribution, MEUR", "Share of EXIO mapped final demand", "Share of Eurostat final demand", "Contribution rank", "Interpretation"],
+    )
 
 
 def build_audit_metadata(
