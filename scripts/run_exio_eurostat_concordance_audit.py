@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -41,6 +42,9 @@ def main() -> int:
     exio_year = args.exio_year if args.exio_year is not None else args.year
     output_dir = Path(args.output_dir) if args.output_dir else REPO_ROOT / "outputs" / "audits" / "exio_eurostat_concordance" / args.country / str(args.year)
 
+    started = time.time()
+    print(f"[1/5] Preparing Eurostat slice for {args.country} {args.year}...", flush=True)
+
     euro_filters = {
         "geo": args.country,
         "time": str(args.year),
@@ -54,7 +58,9 @@ def main() -> int:
         storage_folder=data_root / "eurostat",
         force_download=False,
     )
+    print("[2/5] Parsing Eurostat IOT from cached raw payload...", flush=True)
     eurostat = parse_eurostat_iot(read_eurostat_raw(euro_dataset.raw_path), row_dim="prd_ava", col_dim="prd_use")
+    print(f"[3/5] Loading EXIOBASE region slice for {args.country} {exio_year}...", flush=True)
     exio = load_exiobase3_region_slice(
         year=exio_year,
         region=args.country,
@@ -65,6 +71,7 @@ def main() -> int:
         force_rebuild_slice=False,
     )
 
+    print("[4/5] Building concordance audit tables...", flush=True)
     exio_labels, euro_labels = load_default_label_maps(REPO_ROOT)
     metadata = build_audit_metadata(
         country=args.country,
@@ -94,8 +101,10 @@ def main() -> int:
         identity_mode=args.identity_mode,
     )
 
+    print("[5/5] Writing audit outputs...", flush=True)
     write_concordance_audit_outputs(result, output_dir)
-    print(f"Wrote audit outputs to {output_dir.resolve()}")
+    elapsed = time.time() - started
+    print(f"Wrote audit outputs to {output_dir.resolve()} in {elapsed:.1f}s", flush=True)
     return 0
 
 
