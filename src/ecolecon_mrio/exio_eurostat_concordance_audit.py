@@ -596,18 +596,21 @@ def _z_cell_table(
             abs_gap = abs(signed_gap)
             rel_gap = _relative_gap(exio_value, euro_value)
             flagged = abs_gap >= min_abs_meur and rel_gap >= rel_threshold
-            source_contribs = _cell_source_contributions(
-                mapping_matrix,
-                source_Z,
-                supplier_code=supplier_code,
-                buyer_code=buyer_code,
-            )
-            buyer_contribs = _cell_buyer_contributions(
-                mapping_matrix,
-                source_Z,
-                supplier_code=supplier_code,
-                buyer_code=buyer_code,
-            )
+            source_contribs = pd.Series(dtype="float64")
+            buyer_contribs = pd.Series(dtype="float64")
+            if flagged:
+                source_contribs = _cell_source_contributions(
+                    mapping_matrix,
+                    source_Z,
+                    supplier_code=supplier_code,
+                    buyer_code=buyer_code,
+                )
+                buyer_contribs = _cell_buyer_contributions(
+                    mapping_matrix,
+                    source_Z,
+                    supplier_code=supplier_code,
+                    buyer_code=buyer_code,
+                )
             rows.append(
                 {
                     "supplier_code": supplier_code,
@@ -675,6 +678,7 @@ def _subcomponent_exceeds_aggregate_table(
     eurostat_y_total: pd.Series,
     eurostat_row_total: pd.Series,
     eurostat_Z: pd.DataFrame,
+    z_cell_drilldown: pd.DataFrame,
     exio_labels: Mapping[str, str],
     euro_labels: Mapping[str, str],
     rel_threshold: float,
@@ -823,41 +827,31 @@ def build_concordance_audit(
 
     mapped_x = _mapped_series(mapping_matrix, exio_x)
     mapped_y = _mapped_series(mapping_matrix, exio_y_total)
-    mapped_z = _mapped_matrix(mapping_matrix, exio_Z)
-
-    internal_mapped = _identity_metric_rows(
-        database="EXIOBASE-mapped",
-        country=country,
-        year=year,
-        x=mapped_x,
-        z=mapped_z,
-        y=pd.DataFrame({"FINAL_DEMAND_TOTAL": mapped_y}),
-        identity_mode=identity_mode,
-    )
-    internal_euro = _identity_metric_rows(
-        database="Eurostat",
-        country=country,
-        year=year,
-        x=eurostat_x,
-        z=eurostat_Z,
-        y=eurostat_Y,
-        identity_mode=identity_mode,
-    )
-    internal_identities = pd.concat([internal_mapped, internal_euro], ignore_index=True)
-
-    euro_target_codes = set(eurostat_Z.index.astype(str)).union(set(eurostat_Z.columns.astype(str))).union(set(eurostat_Y.index.astype(str)))
-    mapping_coverage = _mapping_coverage_table(
-        mapping_weights=mapping_weights,
-        exio_source_values=exio_x,
-        exio_row_total=exio_row_total,
-        exio_col_total=exio_col_total,
-        exio_y_total=exio_y_total,
-        exio_labels=exio_labels,
-        euro_target_codes=euro_target_codes,
-    )
-
-    x_contrib_lookup = {code: _series_contributions(mapping_weights, exio_x, target_code=code) for code in mapped_x.index}
-    y_contrib_lookup = {code: _series_contributions(mapping_weights, exio_y_total, target_code=code) for code in mapped_y.index}
+    flagged_cells = z_cell_drilldown[z_cell_drilldown["subsector_exceeds_eurostat_cell"].fillna(False)].copy()
+    if not flagged_cells.empty:
+        for row in flagged_cells.itertuples(index=False):
+            euro_value = float(eurostat_Z.loc[str(row.supplier_code), str(row.buyer_code)])
+            contribution_value = float(row.contribution_value)
+            abs_gap = abs(contribution_value - euro_value)
+            rel_gap = _relative_gap(contribution_value, euro_value)
+            rows.append(
+                {
+                    "metric": METRIC_Z_CELL,
+                    "target_code": str(row.supplier_code),
+                    "target_label": euro_labels.get(str(row.supplier_code), str(row.supplier_code)),
+                    "buyer_code": str(row.buyer_code),
+                    "buyer_label": euro_labels.get(str(row.buyer_code), str(row.buyer_code)),
+                    "exio_subsector_code": str(row.exio_subsector_code),
+                    "exio_subsector_label": exio_labels.get(str(row.exio_subsector_code), str(row.exio_subsector_code)),
+                    "exio_subsector_value": contribution_value,
+                    "eurostat_aggregate_value": euro_value,
+                    "ratio": _safe_ratio(contribution_value, euro_value),
+                    "abs_gap": abs_gap,
+                    "severity": _severity(rel_gap),
+                    "issue_type": "SUBSECTOR_EXCEEDS_AGGREGATE",
+                    "interpretation": f"{row.exio_subsector_code} {exio_labels.get(str(row.exio_subsector_code), str(row.exio_subsector_code))} exceeds the Eurostat cell {row.supplier_code}→{row.buyer_code}.",
+                }
+            )
     row_contrib_lookup = {code: _series_contributions(mapping_weights, exio_row_total, target_code=code) for code in mapped_z.index}
     col_contrib_lookup = {code: _series_contributions(mapping_weights, exio_col_total, target_code=code) for code in mapped_z.columns}
 
@@ -977,6 +971,7 @@ def build_concordance_audit(
         eurostat_y_total=euro_y_total,
         eurostat_row_total=euro_row_total,
         eurostat_Z=eurostat_Z,
+        z_cell_drilldown=z_cell_drilldown,
         exio_labels=exio_labels,
         euro_labels=eurostat_labels,
         rel_threshold=rel_threshold,
