@@ -13,6 +13,7 @@ This directory contains the reproducible workflow used to generate the PostGrowt
 | `pipelines/split_energy_balances_65CPAproducts_aggregate_energy_sources.sh` | Legacy-named end-to-end shell entrypoint for the direct-mapped energy-balance workbook export to the repo's 65-product CPA-based IO targets. |
 | `pipelines/at_2021_energy_green_brown.sh` | End-to-end shell entrypoint for split-and-reaggregate Eurostat IO workbooks; despite the filename it accepts `EUROSTAT_TIME` and works for 2020 and 2021. |
 | `pipelines/at_2021_fuels.sh` | Canonical 2021 fuels entrypoint: split the selected Eurostat CPA sectors with local balancing, generate the identity pass at runtime, then export both disaggregated and reaggregated TOTAL / DOM / IMP workbooks. |
+| `pipelines/run_exio_eurostat_concordance_audit_all_flows.sh` | Shell entrypoint for the domestic/imports/total EXIOBASE-Eurostat concordance audit and the consolidated summary outputs. |
 | `pipelines/export_postgrowth_inputs.sh` | One-command wrapper that exports the current PostGrowth input set into the sibling PostGrowth repo. |
 | `diagnostics/` | Targeted one-off diagnostics used to inspect mapping details, CO2 mappings, and outliers. |
 
@@ -85,6 +86,40 @@ By default this writes:
 - `../PostGrowth-SFC-Austria/Energy_Balances_2021_Eurostat_green_brown.xlsx`
 - `../PostGrowth-SFC-Austria/IOT_AT_2020_TOTAL_energy_green_brown.xlsx`
 - `../PostGrowth-SFC-Austria/IOT_AT_2021_TOTAL_energy_green_brown.xlsx`
+
+### 4. Run the EXIOBASE-Eurostat concordance audit
+
+Use the shell wrapper so the documented CLI arguments stay recorded in-repo and the exact Python command is printed before execution.
+
+```bash
+cd /home/agilra/EcolEconModels/MRIO
+bash scripts/pipelines/run_exio_eurostat_concordance_audit_all_flows.sh
+```
+
+Defaults:
+
+- `COUNTRY=AT`
+- `YEAR=2020`
+- `MAPPING_CSV=scripts/mappings/exio_to_eurostat_cpa_products.csv`
+- `REL_THRESHOLD=0.20`
+- `MIN_ABS_MEUR=5.0`
+- `IDENTITY_MODE=diagnostic`
+- `EUROSTAT_DATASET=naio_10_cp1700`
+- `EUROSTAT_UNIT=MIO_EUR`
+- `EXIO_SYSTEM=pxp`
+- `VERBOSE=1` to keep the Python audit stage logs on by default
+- `PROGRESS_HEARTBEAT_SECONDS=30` to emit periodic shell ticks during long scans
+- `MONITOR_RSS=1` to print the child process RSS alongside each tick
+
+Optional overrides:
+
+```bash
+cd /home/agilra/EcolEconModels/MRIO
+COUNTRY=AT YEAR=2020 OUTPUT_ROOT=/tmp/exio_audit \
+	bash scripts/pipelines/run_exio_eurostat_concordance_audit_all_flows.sh
+```
+
+The wrapper passes through extra CLI arguments as well, so you can still append ad hoc flags such as `--full-subcomponent-z-scan` when you need them.
 
 ## Diagnostic Outputs
 

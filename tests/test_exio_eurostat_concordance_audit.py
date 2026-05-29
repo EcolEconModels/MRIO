@@ -257,10 +257,10 @@ def test_concordance_audit_suppresses_tiny_values_with_min_abs_threshold():
 
 
 def test_at_2020_audit_report_contains_motivating_biofuels_case():
-    report_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_exio_eurostat_concordance_AT_2020.md")
-    z_cell_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_z_cell_mismatches.csv")
-    drilldown_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_z_cell_drilldown.csv")
-    subcomponent_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/audit_subcomponent_exceeds_aggregate.csv")
+    report_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/domestic/audit_exio_eurostat_concordance_AT_2020.md")
+    z_cell_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/domestic/audit_z_cell_mismatches.csv")
+    drilldown_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/domestic/audit_z_cell_drilldown.csv")
+    subcomponent_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/domestic/audit_subcomponent_exceeds_aggregate.csv")
     if not report_path.exists() or not z_cell_path.exists() or not drilldown_path.exists() or not subcomponent_path.exists():
         import pytest
 
@@ -317,7 +317,7 @@ def test_concordance_audit_markdown_is_clean_and_flagged_only(tmp_path):
     assert "nan" not in top_flags_text.lower()
     assert "INTERNAL IDENTITY FAIL" not in report_text
     assert "INTERNAL IDENTITY FAIL" not in top_flags_text
-    assert "Output / total-use proxy comparison" in report_text
+    assert "Flow-specific total-use proxy comparison" in report_text
     assert "Output comparison" not in report_text.split("## Technical appendix: raw metric names")[0]
     assert "Z_ROW_INTERMEDIATE_SALES" not in report_text.split("## Technical appendix: raw metric names")[0]
     assert "Z_CELL" not in report_text.split("## Technical appendix: raw metric names")[0]

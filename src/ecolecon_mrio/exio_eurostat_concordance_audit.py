@@ -27,7 +27,7 @@ METRIC_Z_CELL = "Z_CELL"
 
 METRIC_HUMAN_LABELS = {
     "X_OUTPUT": "Output comparison",
-    "X_OUTPUT_PROXY_TOTAL_USE": "Output / total-use proxy comparison",
+    "X_OUTPUT_PROXY_TOTAL_USE": "Flow-specific total-use proxy comparison",
     "Y_FINAL_DEMAND_TOTAL": "Final demand total",
     "Z_ROW_INTERMEDIATE_SALES": "Intermediate sales by supplying sector",
     "Z_COL_INTERMEDIATE_PURCHASES": "Intermediate purchases by using sector",
@@ -52,7 +52,7 @@ METRIC_EXPLANATIONS = {
         "This compares intermediate sales plus final demand."
     ),
     "X_OUTPUT_PROXY_TOTAL_USE": (
-        "This is not necessarily true gross output. It uses Eurostat row total plus final demand as a proxy when no independent Eurostat output vector is available."
+        "This is a flow-specific total-use proxy, not independently observed gross output. It uses row total plus final demand when no independent output vector is available."
     ),
 }
 
@@ -1094,6 +1094,12 @@ class ConcordanceAuditResult:
     y_drilldown: pd.DataFrame
     subcomponent_exceeds_aggregate: pd.DataFrame
     report_markdown: str
+    mapped_x: pd.Series | None = None
+    mapped_y: pd.Series | None = None
+    mapped_z: pd.DataFrame | None = None
+    eurostat_x: pd.Series | None = None
+    eurostat_y_total: pd.Series | None = None
+    eurostat_z: pd.DataFrame | None = None
 
 
 def build_concordance_audit(
@@ -1327,8 +1333,11 @@ def build_concordance_audit(
         "rel_threshold": rel_threshold,
         "min_abs_meur": min_abs_meur,
         "identity_mode": identity_mode,
+        "comparison_mode": metadata.get("comparison_mode") if metadata else None,
         "source_database": metadata.get("source_database") if metadata else None,
         "target_database": metadata.get("target_database") if metadata else None,
+        "exio_flow": metadata.get("exio_flow") if metadata else None,
+        "eurostat_flow": metadata.get("eurostat_flow") if metadata else None,
         "price_basis": metadata.get("price_basis") if metadata else "unknown",
         "table_basis": metadata.get("table_basis") if metadata else "product-by-product",
         "domestic_import_treatment": metadata.get("domestic_import_treatment") if metadata else "total-use comparison",
@@ -1340,7 +1349,11 @@ def build_concordance_audit(
         "eurostat_dataset": metadata.get("eurostat_dataset") if metadata else None,
         "eurostat_request_url": metadata.get("eurostat_request_url") if metadata else None,
         "run_command": metadata.get("run_command") if metadata else None,
-        "eurostat_x_is_proxy": not eurostat_x_supplied,
+        "exio_x_is_proxy": bool(metadata.get("exio_x_is_proxy")) if metadata else False,
+        "exio_x_proxy_basis": metadata.get("exio_x_proxy_basis") if metadata else None,
+        "eurostat_x_is_proxy": bool(metadata.get("eurostat_x_is_proxy", not eurostat_x_supplied)) if metadata else (not eurostat_x_supplied),
+        "eurostat_x_proxy_basis": metadata.get("eurostat_x_proxy_basis") if metadata else None,
+        "flow_interpretation": metadata.get("flow_interpretation") if metadata else None,
         "full_subcomponent_z_scan": full_subcomponent_z_scan,
         "z_subcomponent_scan_mode": "full_scan" if full_subcomponent_z_scan else "flagged_cells_only",
         "mapped_exio_source_sectors": mapped_exio_source_sectors,
@@ -1397,6 +1410,12 @@ def build_concordance_audit(
         y_drilldown=y_drilldown,
         subcomponent_exceeds_aggregate=subcomponent_exceeds_aggregate,
         report_markdown=report_markdown,
+        mapped_x=mapped_x,
+        mapped_y=mapped_y,
+        mapped_z=mapped_z,
+        eurostat_x=eurostat_x,
+        eurostat_y_total=euro_y_total,
+        eurostat_z=eurostat_Z,
     )
 
 
@@ -1418,6 +1437,10 @@ def render_concordance_audit_report(
     year = metadata.get("year", "")
     proxy_mode = bool(metadata.get("eurostat_x_is_proxy", False))
     scan_mode = str(metadata.get("z_subcomponent_scan_mode", "flagged_cells_only"))
+    comparison_mode = str(metadata.get("comparison_mode", "")).strip()
+    exio_flow = str(metadata.get("exio_flow", "")).strip()
+    eurostat_flow = str(metadata.get("eurostat_flow", "")).strip()
+    flow_interpretation = metadata.get("flow_interpretation", "")
 
     def _top_flag(frame: pd.DataFrame, metric: str | None = None) -> pd.Series:
         filtered = frame[frame["flag"]].copy()
@@ -1433,6 +1456,22 @@ def render_concordance_audit_report(
         lines.append("")
 
     lines.append(f"# EXIOBASE–Eurostat Concordance Audit: {country} {year}")
+    lines.append("")
+    _section_heading("## Flow comparison")
+    lines.append("This audit compares:")
+    lines.append(f"- EXIOBASE flow: {exio_flow or comparison_mode or 'unknown'}")
+    lines.append(f"- Eurostat `stk_flow`: {eurostat_flow or 'unknown'}")
+    lines.append("Interpretation:")
+    if isinstance(flow_interpretation, dict):
+        interpretation_text = str(flow_interpretation.get(comparison_mode, "")).strip()
+    else:
+        interpretation_text = str(flow_interpretation).strip()
+    if interpretation_text:
+        lines.append(f"- {interpretation_text}")
+    else:
+        lines.append("- Flow-specific domestic/import/total comparison based on the selected EXIOBASE and Eurostat flow slices.")
+    lines.append("- x-like rows in this report are flow-specific total-use proxy comparisons, not independently observed gross-output comparisons.")
+    lines.append("- Producer-side EXIOBASE x_region is not used in this audit runner for the flow comparison rows.")
     lines.append("")
     _section_heading("## Executive interpretation")
     lines.append("The largest mismatches are concentrated in sectors where EXIOBASE and Eurostat allocate flows differently, and in a few supplier→buyer cells where one EXIOBASE subsector dominates the mapped flow.")
@@ -1475,19 +1514,18 @@ def render_concordance_audit_report(
     lines.append("- Ratio is EXIOBASE mapped value divided by Eurostat value. Values greater than 1 mean EXIOBASE is larger; values below 1 mean EXIOBASE is smaller.")
     lines.append("- Values are in million euros unless otherwise stated.")
     lines.append("")
-    lines.append("Important caveat: if the metric is Output / total-use proxy comparison, the Eurostat side is inferred from row totals and final demand. Do not interpret it as an independently observed Eurostat gross-output vector.")
+    lines.append(f"Important caveat: if the metric is {human_metric_label(METRIC_X_OUTPUT_PROXY_TOTAL_USE)}, the Eurostat side is inferred from row totals and final demand. Do not interpret it as an independently observed Eurostat gross-output vector.")
     lines.append("")
 
     _section_heading("## Mapping coverage")
     lines.append(_markdown_table(_human_mapping_coverage_table(mapping_coverage), columns=["EXIOBASE source sector", "Mapped targets", "Mapping weight sum", "Status", "EXIOBASE x, MEUR", "EXIOBASE y total, MEUR", "EXIOBASE Z row total, MEUR", "EXIOBASE Z col total, MEUR", "Reason"], max_rows=20))
-    lines.append("")
 
     _section_heading("## Internal identities")
     lines.append(_markdown_table(_human_internal_identities_table(internal_identities), columns=["Database", "Sector", "EXIOBASE mapped x, MEUR", "Z row total, MEUR", "Y total, MEUR", "Z + Y, MEUR", "Absolute gap, MEUR", "Relative gap", "Severity", "Status", "Identity mode"], max_rows=20))
     lines.append("")
 
     if not x_mismatches.empty:
-        _section_heading("## Output / total-use proxy mismatches")
+        _section_heading(f"## {human_metric_label(METRIC_X_OUTPUT_PROXY_TOTAL_USE)} mismatches")
         if proxy_mode:
             lines.append("X comparison uses the inferred Eurostat total-use proxy (x proxy) because no independent Eurostat output vector was supplied.")
             lines.append("")
@@ -1663,7 +1701,7 @@ def render_concordance_audit_report(
     lines.append("- Z row total: total intermediate sales by a supplying sector to all buyer sectors.")
     lines.append("- Z column total: total intermediate purchases by a buyer sector from all supplying sectors.")
     lines.append("- Y: final demand.")
-    lines.append("- X: gross output if independently available; otherwise, in this audit, an output/total-use proxy may be used.")
+    lines.append("- X: flow-specific total-use proxy if independently available; otherwise, in this audit, a flow-specific total-use proxy is used.")
     lines.append("- EXIOBASE mapped value: EXIOBASE value after applying the EXIOBASE→Eurostat concordance.")
     lines.append("- Eurostat value: corresponding Eurostat IOT value.")
     lines.append("- Subcomponent exceeds aggregate: a single EXIOBASE subsector is larger than the whole Eurostat aggregate or cell it maps into.")
@@ -1677,7 +1715,7 @@ def render_concordance_audit_report(
             {"Raw metric": "Z_COL_INTERMEDIATE_PURCHASES", "Human-readable meaning": "Total intermediate purchases by buyer"},
             {"Raw metric": "Y_FINAL_DEMAND_TOTAL", "Human-readable meaning": "Final demand total"},
             {"Raw metric": "TOTAL_USE_Z_PLUS_Y", "Human-readable meaning": "Intermediate sales plus final demand"},
-            {"Raw metric": "X_OUTPUT_PROXY_TOTAL_USE", "Human-readable meaning": "Output / total-use proxy"},
+            {"Raw metric": "X_OUTPUT_PROXY_TOTAL_USE", "Human-readable meaning": "Flow-specific total-use proxy"},
         ]
     )
     lines.append(_markdown_table(technical_rows, columns=["Raw metric", "Human-readable meaning"], max_rows=20))
@@ -1757,6 +1795,12 @@ def write_concordance_audit_outputs(result: ConcordanceAuditResult, output_dir: 
         f"# Top Concordance Flags: {result.metadata.get('country', '')} {result.metadata.get('year', '')}",
         "",
         "## How to read this short report",
+        "",
+        "## Flow comparison",
+        "",
+        f"- EXIOBASE flow: {result.metadata.get('exio_flow', 'unknown')}",
+        f"- Eurostat `stk_flow`: {result.metadata.get('eurostat_flow', 'unknown')}",
+        f"- x-like rows are {human_metric_label(METRIC_X_OUTPUT_PROXY_TOTAL_USE)} comparisons, not independently observed gross-output comparisons.",
         "",
         "- Intermediate flow cell: supplier → buyer compares one Eurostat supplier sector and one Eurostat buyer sector.",
         "- Intermediate sales by supplying sector sums all intermediate sales from one supplying sector across all buyer sectors.",
