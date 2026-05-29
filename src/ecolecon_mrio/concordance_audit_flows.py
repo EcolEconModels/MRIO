@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
-from ecolecon_mrio.eurostat_iot import download_eurostat_dataset, parse_eurostat_iot, read_eurostat_raw
+from ecolecon_mrio.eurostat_iot import build_eurostat_atomic_final_demand, download_eurostat_dataset, parse_eurostat_iot, read_eurostat_raw
 from ecolecon_mrio.exio_eurostat_concordance_audit import (
     ConcordanceAuditResult,
     DEFAULT_MIN_ABS_MEUR,
@@ -145,7 +145,8 @@ def run_single_flow_audit(
         storage_folder=data_root / "eurostat",
         force_download=force_download,
     )
-    eurostat = parse_eurostat_iot(read_eurostat_raw(euro_dataset_obj.raw_path), row_dim="prd_ava", col_dim="prd_use")
+    parsed = parse_eurostat_iot(read_eurostat_raw(euro_dataset_obj.raw_path), row_dim="prd_ava", col_dim="prd_use")
+    eurostat_Y_atomic = build_eurostat_atomic_final_demand(parsed, include_exports=False)
 
     exio = load_exiobase3_region_slice(
         year=resolved_exio_year,
@@ -176,6 +177,10 @@ def run_single_flow_audit(
             "comparison_mode": comparison_mode,
             "exio_flow": exio_flow,
             "eurostat_flow": eurostat_flow,
+            "rel_threshold": rel_threshold,
+            "min_abs_meur": min_abs_meur,
+            "eurostat_final_demand_basis": "atomic_final_demand_excluding_exports",
+            "eurostat_exports_included": False,
             "exio_x_is_proxy": True,
             "exio_x_proxy_basis": "Z row total + Y row total for selected EXIO flow slice",
             "eurostat_x_is_proxy": True,
@@ -202,8 +207,8 @@ def run_single_flow_audit(
         exio_x=exio_x_flow_proxy,
         exio_Z=exio_Z_flow,
         exio_Y=exio_Y_flow,
-        eurostat_Z=eurostat.Z,
-        eurostat_Y=eurostat.Y,
+        eurostat_Z=parsed.Z,
+        eurostat_Y=eurostat_Y_atomic,
         mapping_df=pd.read_csv(mapping_csv, dtype=str).fillna(""),
         exio_labels=exio_labels,
         eurostat_labels=euro_labels,
@@ -292,8 +297,6 @@ def build_flow_reconciliation(
         "Eurostat": (domestic.result.eurostat_z, imports.result.eurostat_z, total.result.eurostat_z, domestic.result.eurostat_y_total, imports.result.eurostat_y_total, total.result.eurostat_y_total, domestic.result.eurostat_x, imports.result.eurostat_x, total.result.eurostat_x),
         "EXIOBASE-mapped": (domestic.result.mapped_z, imports.result.mapped_z, total.result.mapped_z, domestic.result.mapped_y, imports.result.mapped_y, total.result.mapped_y, domestic.result.mapped_x, imports.result.mapped_x, total.result.mapped_x),
     }
-    metrics = [METRIC_Z_CELL, METRIC_Z_ROW_INTERMEDIATE_SALES, METRIC_Z_COL_INTERMEDIATE_PURCHASES, METRIC_Y_FINAL_DEMAND_TOTAL, METRIC_X_OUTPUT_PROXY_TOTAL_USE]
-
     def _recon_row(*, database: str, metric: str, supplier_code: str = "", supplier_label: str = "", buyer_code: str = "", buyer_label: str = "", target_code: str = "", target_label: str = "", domestic_value: float = 0.0, imports_value: float = 0.0, total_value: float = 0.0) -> dict[str, Any]:
         domestic_plus_imports = float(domestic_value) + float(imports_value)
         signed_gap = domestic_plus_imports - float(total_value)
@@ -325,6 +328,26 @@ def build_flow_reconciliation(
             ),
         }
 
+    def _align_square(frame: pd.DataFrame | None, codes: list[str]) -> pd.DataFrame:
+        if frame is None or frame.empty:
+            return pd.DataFrame(0.0, index=codes, columns=codes, dtype="float64")
+        return frame.reindex(index=codes, columns=codes).fillna(0.0).astype("float64")
+
+    def _align_series(frame: pd.Series | None, codes: list[str]) -> pd.Series:
+        if frame is None or frame.empty:
+            return pd.Series(0.0, index=codes, dtype="float64")
+        return frame.reindex(index=codes).fillna(0.0).astype("float64")
+
+    def _lookup_label(frames: tuple[pd.DataFrame, ...], code: str, *, code_column: str, label_column: str) -> str:
+        code_text = str(code)
+        for frame in frames:
+            if frame.empty or code_column not in frame.columns or label_column not in frame.columns:
+                continue
+            matches = frame.loc[frame[code_column].astype(str).eq(code_text), label_column]
+            if not matches.empty:
+                return str(matches.iloc[0])
+        return code_text
+
     for database, pieces in databases.items():
         dom_z, imp_z, tot_z, dom_y, imp_y, tot_y, dom_x, imp_x, tot_x = pieces
         dom_z = dom_z if dom_z is not None else pd.DataFrame(dtype="float64")
@@ -338,6 +361,24 @@ def build_flow_reconciliation(
         tot_x = tot_x if tot_x is not None else pd.Series(dtype="float64")
 
         z_codes = sorted(set(dom_z.index.astype(str)).union(set(dom_z.columns.astype(str)), set(imp_z.index.astype(str)), set(imp_z.columns.astype(str)), set(tot_z.index.astype(str)), set(tot_z.columns.astype(str))))
+        dom_z_aligned = _align_square(dom_z, z_codes)
+        imp_z_aligned = _align_square(imp_z, z_codes)
+        tot_z_aligned = _align_square(tot_z, z_codes)
+        dom_z_row_total = dom_z_aligned.sum(axis=1)
+        imp_z_row_total = imp_z_aligned.sum(axis=1)
+        tot_z_row_total = tot_z_aligned.sum(axis=1)
+        dom_z_col_total = dom_z_aligned.sum(axis=0)
+        imp_z_col_total = imp_z_aligned.sum(axis=0)
+        tot_z_col_total = tot_z_aligned.sum(axis=0)
+
+        row_codes = sorted(set(dom_z_aligned.index.astype(str)).union(set(imp_z_aligned.index.astype(str)), set(tot_z_aligned.index.astype(str)), set(dom_y.index.astype(str)), set(imp_y.index.astype(str)), set(tot_y.index.astype(str)), set(dom_x.index.astype(str)), set(imp_x.index.astype(str)), set(tot_x.index.astype(str))))
+        dom_y_aligned = _align_series(dom_y, row_codes)
+        imp_y_aligned = _align_series(imp_y, row_codes)
+        tot_y_aligned = _align_series(tot_y, row_codes)
+        dom_x_aligned = _align_series(dom_x, row_codes)
+        imp_x_aligned = _align_series(imp_x, row_codes)
+        tot_x_aligned = _align_series(tot_x, row_codes)
+
         for supplier_code in z_codes:
             for buyer_code in z_codes:
                 rows.append(
@@ -348,13 +389,11 @@ def build_flow_reconciliation(
                         supplier_label=eurostat_labels.get(supplier_code, supplier_code),
                         buyer_code=buyer_code,
                         buyer_label=eurostat_labels.get(buyer_code, buyer_code),
-                        domestic_value=float(dom_z.reindex(index=z_codes, columns=z_codes).fillna(0.0).loc[supplier_code, buyer_code]) if not dom_z.empty else 0.0,
-                        imports_value=float(imp_z.reindex(index=z_codes, columns=z_codes).fillna(0.0).loc[supplier_code, buyer_code]) if not imp_z.empty else 0.0,
-                        total_value=float(tot_z.reindex(index=z_codes, columns=z_codes).fillna(0.0).loc[supplier_code, buyer_code]) if not tot_z.empty else 0.0,
+                        domestic_value=float(dom_z_aligned.loc[supplier_code, buyer_code]),
+                        imports_value=float(imp_z_aligned.loc[supplier_code, buyer_code]),
+                        total_value=float(tot_z_aligned.loc[supplier_code, buyer_code]),
                     )
                 )
-
-        row_codes = sorted(set(dom_z.index.astype(str)).union(set(imp_z.index.astype(str)), set(tot_z.index.astype(str)), set(dom_y.index.astype(str)), set(imp_y.index.astype(str)), set(tot_y.index.astype(str)), set(dom_x.index.astype(str)), set(imp_x.index.astype(str)), set(tot_x.index.astype(str))))
         for code in row_codes:
             rows.append(
                 _recon_row(
@@ -362,13 +401,13 @@ def build_flow_reconciliation(
                     metric=METRIC_Z_ROW_INTERMEDIATE_SALES,
                     target_code=code,
                     target_label=eurostat_labels.get(code, code),
-                    domestic_value=float(dom_z.sum(axis=1).reindex(row_codes, fill_value=0.0).get(code, 0.0)) if not dom_z.empty else 0.0,
-                    imports_value=float(imp_z.sum(axis=1).reindex(row_codes, fill_value=0.0).get(code, 0.0)) if not imp_z.empty else 0.0,
-                    total_value=float(tot_z.sum(axis=1).reindex(row_codes, fill_value=0.0).get(code, 0.0)) if not tot_z.empty else 0.0,
+                    domestic_value=float(dom_z_row_total.get(code, 0.0)),
+                    imports_value=float(imp_z_row_total.get(code, 0.0)),
+                    total_value=float(tot_z_row_total.get(code, 0.0)),
                 )
             )
 
-        col_codes = sorted(set(dom_z.columns.astype(str)).union(set(imp_z.columns.astype(str)), set(tot_z.columns.astype(str))))
+        col_codes = sorted(set(dom_z_aligned.columns.astype(str)).union(set(imp_z_aligned.columns.astype(str)), set(tot_z_aligned.columns.astype(str))))
         for code in col_codes:
             rows.append(
                 _recon_row(
@@ -376,13 +415,13 @@ def build_flow_reconciliation(
                     metric=METRIC_Z_COL_INTERMEDIATE_PURCHASES,
                     target_code=code,
                     target_label=eurostat_labels.get(code, code),
-                    domestic_value=float(dom_z.sum(axis=0).get(code, 0.0)) if not dom_z.empty else 0.0,
-                    imports_value=float(imp_z.sum(axis=0).get(code, 0.0)) if not imp_z.empty else 0.0,
-                    total_value=float(tot_z.sum(axis=0).get(code, 0.0)) if not tot_z.empty else 0.0,
+                    domestic_value=float(dom_z_col_total.get(code, 0.0)),
+                    imports_value=float(imp_z_col_total.get(code, 0.0)),
+                    total_value=float(tot_z_col_total.get(code, 0.0)),
                 )
             )
 
-        y_codes = sorted(set(dom_y.index.astype(str)).union(set(imp_y.index.astype(str)), set(tot_y.index.astype(str))))
+        y_codes = sorted(set(dom_y_aligned.index.astype(str)).union(set(imp_y_aligned.index.astype(str)), set(tot_y_aligned.index.astype(str))))
         for code in y_codes:
             rows.append(
                 _recon_row(
@@ -390,13 +429,13 @@ def build_flow_reconciliation(
                     metric=METRIC_Y_FINAL_DEMAND_TOTAL,
                     target_code=code,
                     target_label=eurostat_labels.get(code, code),
-                    domestic_value=float(dom_y.get(code, 0.0)),
-                    imports_value=float(imp_y.get(code, 0.0)),
-                    total_value=float(tot_y.get(code, 0.0)),
+                    domestic_value=float(dom_y_aligned.get(code, 0.0)),
+                    imports_value=float(imp_y_aligned.get(code, 0.0)),
+                    total_value=float(tot_y_aligned.get(code, 0.0)),
                 )
             )
 
-        x_codes = sorted(set(dom_x.index.astype(str)).union(set(imp_x.index.astype(str)), set(tot_x.index.astype(str))))
+        x_codes = sorted(set(dom_x_aligned.index.astype(str)).union(set(imp_x_aligned.index.astype(str)), set(tot_x_aligned.index.astype(str))))
         for code in x_codes:
             rows.append(
                 _recon_row(
@@ -404,9 +443,9 @@ def build_flow_reconciliation(
                     metric=METRIC_X_OUTPUT_PROXY_TOTAL_USE,
                     target_code=code,
                     target_label=eurostat_labels.get(code, code),
-                    domestic_value=float(dom_x.get(code, 0.0)),
-                    imports_value=float(imp_x.get(code, 0.0)),
-                    total_value=float(tot_x.get(code, 0.0)),
+                    domestic_value=float(dom_x_aligned.get(code, 0.0)),
+                    imports_value=float(imp_x_aligned.get(code, 0.0)),
+                    total_value=float(tot_x_aligned.get(code, 0.0)),
                 )
             )
 
@@ -417,9 +456,9 @@ def build_flow_reconciliation(
     return frame
 
 
-def _reconciliation_markdown(frame: pd.DataFrame) -> str:
+def _reconciliation_markdown(frame: pd.DataFrame, country: str, year: int) -> str:
     lines = [
-        "# Flow reconciliation audit: AT 2020",
+        f"# Flow reconciliation audit: {country} {year}",
         "",
         "## What this checks",
         "This report checks whether domestic + imports equals total for both Eurostat and mapped EXIOBASE.",
@@ -544,6 +583,16 @@ def _flow_classification_frame(domestic: pd.DataFrame, imports: pd.DataFrame, to
                 lookup[(str(row.get("metric", "")), str(row.get("supplier_code", "")), str(row.get("buyer_code", "")))] = float(row.get("abs_gap", 0.0))
         return lookup
 
+    def _lookup_label(frames: tuple[pd.DataFrame, ...], code: str, *, code_column: str, label_column: str) -> str:
+        code_text = str(code)
+        for frame in frames:
+            if frame.empty or code_column not in frame.columns or label_column not in frame.columns:
+                continue
+            matches = frame.loc[frame[code_column].astype(str).eq(code_text), label_column]
+            if not matches.empty:
+                return str(matches.iloc[0])
+        return code_text
+
     rows: list[dict[str, Any]] = []
     if kind == "aggregate":
         dom_lookup = _flag_lookup(domestic)
@@ -571,7 +620,7 @@ def _flow_classification_frame(domestic: pd.DataFrame, imports: pd.DataFrame, to
                     "kind": "aggregate",
                     "metric": metric,
                     "target_code": target_code,
-                    "target_label": domestic.loc[domestic["target_code"].astype(str).eq(target_code), "target_label"].iloc[0] if not domestic.empty and "target_code" in domestic.columns and (domestic["target_code"].astype(str).eq(target_code)).any() else target_code,
+                    "target_label": _lookup_label((domestic, imports, total), target_code, code_column="target_code", label_column="target_label"),
                     "supplier_code": "",
                     "supplier_label": "",
                     "buyer_code": "",
@@ -613,9 +662,9 @@ def _flow_classification_frame(domestic: pd.DataFrame, imports: pd.DataFrame, to
                     "target_code": "",
                     "target_label": "",
                     "supplier_code": supplier_code,
-                    "supplier_label": domestic.loc[(domestic["supplier_code"].astype(str).eq(supplier_code)) & (domestic["buyer_code"].astype(str).eq(buyer_code)), "supplier_label"].iloc[0] if not domestic.empty and "supplier_code" in domestic.columns and "buyer_code" in domestic.columns and ((domestic["supplier_code"].astype(str).eq(supplier_code)) & (domestic["buyer_code"].astype(str).eq(buyer_code))).any() else supplier_code,
+                    "supplier_label": _lookup_label((domestic, imports, total), supplier_code, code_column="supplier_code", label_column="supplier_label"),
                     "buyer_code": buyer_code,
-                    "buyer_label": domestic.loc[(domestic["supplier_code"].astype(str).eq(supplier_code)) & (domestic["buyer_code"].astype(str).eq(buyer_code)), "buyer_label"].iloc[0] if not domestic.empty and "supplier_code" in domestic.columns and "buyer_code" in domestic.columns and ((domestic["supplier_code"].astype(str).eq(supplier_code)) & (domestic["buyer_code"].astype(str).eq(buyer_code))).any() else buyer_code,
+                    "buyer_label": _lookup_label((domestic, imports, total), buyer_code, code_column="buyer_code", label_column="buyer_label"),
                     "domestic_flag": domestic_flag,
                     "imports_flag": imports_flag,
                     "total_flag": total_flag,
@@ -632,6 +681,511 @@ def _flow_classification_frame(domestic: pd.DataFrame, imports: pd.DataFrame, to
     return frame
 
 
+def _quality_metric_label(metric: str) -> str:
+    metric_text = str(metric)
+    if metric_text == METRIC_X_OUTPUT_PROXY_TOTAL_USE:
+        return "TOTAL_USE_PROXY"
+    return metric_text
+
+
+def _quality_bucket_label(rel_gap: float, eurostat_value: float, exio_mapped_value: float) -> str:
+    euro_abs = abs(float(eurostat_value))
+    exio_abs = abs(float(exio_mapped_value))
+    if euro_abs <= EPS and exio_abs > EPS:
+        return "Eurostat zero / EXIO positive"
+    if exio_abs <= EPS and euro_abs > EPS:
+        return "EXIO zero / Eurostat positive"
+    pct = abs(float(rel_gap)) * 100.0
+    if pct <= 5.0:
+        return "0–5%"
+    if pct <= 10.0:
+        return "5–10%"
+    if pct <= 20.0:
+        return "10–20%"
+    if pct <= 50.0:
+        return "20–50%"
+    if pct <= 100.0:
+        return "50–100%"
+    return ">100%"
+
+
+def _align_series_to_index(series: pd.Series | None, index: list[str]) -> pd.Series:
+    if series is None or series.empty:
+        return pd.Series(0.0, index=index, dtype="float64")
+    return series.reindex(index=index).fillna(0.0).astype("float64")
+
+
+def _safe_ratio(numerator: object, denominator: object) -> float:
+    try:
+        numerator_value = float(numerator)
+        denominator_value = float(denominator)
+    except (TypeError, ValueError):
+        return 0.0
+    if abs(denominator_value) <= EPS:
+        return 0.0
+    return numerator_value / denominator_value
+
+
+def _quality_sector_frame(flow: str, result: ConcordanceAuditResult, *, eurostat_labels: Mapping[str, str]) -> pd.DataFrame:
+    rel_threshold = float(result.metadata.get("rel_threshold", DEFAULT_REL_THRESHOLD))
+    frame = result.aggregate_totals.copy()
+    frame = frame[frame["metric"].astype(str).isin({METRIC_Z_ROW_INTERMEDIATE_SALES, METRIC_Z_COL_INTERMEDIATE_PURCHASES, METRIC_Y_FINAL_DEMAND_TOTAL, METRIC_X_OUTPUT_PROXY_TOTAL_USE})].copy()
+    if frame.empty:
+        return frame
+
+    rows: list[dict[str, Any]] = []
+    for metric, metric_frame in frame.groupby(frame["metric"].astype(str), sort=False):
+        metric_block = _quality_metric_label(metric)
+        metric_frame = metric_frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
+        eurostat_mass = float(metric_frame["eurostat_value"].abs().sum())
+        abs_gap_mass = float(metric_frame["abs_gap"].sum())
+        cumulative = metric_frame["abs_gap"].cumsum()
+        for position, row in metric_frame.iterrows():
+            abs_gap = float(row["abs_gap"])
+            euro_value = float(row["eurostat_value"])
+            exio_value = float(row["exio_mapped_value"])
+            rows.append(
+                {
+                    "flow": flow,
+                    "block": metric_block,
+                    "sector_code": str(row["target_code"]),
+                    "sector_label": str(row["target_label"]),
+                    "metric": metric_block,
+                    "eurostat_value": euro_value,
+                    "exio_mapped_value": exio_value,
+                    "signed_gap": float(row["signed_gap"]),
+                    "abs_gap": abs_gap,
+                    "rel_gap": float(row["rel_gap"]),
+                    "ratio": float(row["ratio_exio_to_eurostat"]),
+                    "eurostat_mass_share": _safe_ratio(abs(euro_value), eurostat_mass),
+                    "abs_gap_share": _safe_ratio(abs_gap, abs_gap_mass),
+                    "cumulative_abs_gap_share": _safe_ratio(float(cumulative.iloc[position]), abs_gap_mass),
+                    "flag": bool(row["flag"]),
+                    "severity": str(row["severity"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _quality_z_cell_frame(flow: str, result: ConcordanceAuditResult, *, eurostat_labels: Mapping[str, str]) -> pd.DataFrame:
+    rel_threshold = float(result.metadata.get("rel_threshold", DEFAULT_REL_THRESHOLD))
+    min_abs_meur = float(result.metadata.get("min_abs_meur", DEFAULT_MIN_ABS_MEUR))
+    exio_z = result.mapped_z if result.mapped_z is not None else pd.DataFrame(dtype="float64")
+    euro_z = result.eurostat_z if result.eurostat_z is not None else pd.DataFrame(dtype="float64")
+    if exio_z.empty and euro_z.empty:
+        return pd.DataFrame()
+
+    codes = sorted(set(exio_z.index.astype(str)).union(set(exio_z.columns.astype(str)), set(euro_z.index.astype(str)), set(euro_z.columns.astype(str))))
+    exio_aligned = exio_z.reindex(index=codes, columns=codes).fillna(0.0).astype("float64")
+    euro_aligned = euro_z.reindex(index=codes, columns=codes).fillna(0.0).astype("float64")
+
+    cell_rows: list[dict[str, Any]] = []
+    for supplier_code in codes:
+        for buyer_code in codes:
+            exio_value = float(exio_aligned.loc[supplier_code, buyer_code])
+            euro_value = float(euro_aligned.loc[supplier_code, buyer_code])
+            signed_gap = exio_value - euro_value
+            abs_gap = abs(signed_gap)
+            rel_gap = _safe_ratio(abs_gap, max(abs(euro_value), EPS))
+            cell_rows.append(
+                {
+                    "flow": flow,
+                    "block": "Z_CELL",
+                    "metric": "Z_CELL",
+                    "supplier_code": supplier_code,
+                    "supplier_label": eurostat_labels.get(supplier_code, supplier_code),
+                    "buyer_code": buyer_code,
+                    "buyer_label": eurostat_labels.get(buyer_code, buyer_code),
+                    "eurostat_value": euro_value,
+                    "exio_mapped_value": exio_value,
+                    "signed_gap": signed_gap,
+                    "abs_gap": abs_gap,
+                    "rel_gap": rel_gap,
+                    "ratio": _safe_ratio(exio_value, euro_value),
+                    "flag": bool(abs_gap >= min_abs_meur and rel_gap >= rel_threshold),
+                    "severity": _severity(rel_gap, rel_threshold),
+                }
+            )
+
+    frame = pd.DataFrame(cell_rows)
+    if frame.empty:
+        return frame
+    frame = frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
+    eurostat_mass = float(frame["eurostat_value"].abs().sum())
+    abs_gap_mass = float(frame["abs_gap"].sum())
+    frame["eurostat_mass_share"] = frame["eurostat_value"].abs().map(lambda value: _safe_ratio(value, eurostat_mass))
+    frame["abs_gap_share"] = frame["abs_gap"].map(lambda value: _safe_ratio(value, abs_gap_mass))
+    frame["cumulative_abs_gap_share"] = frame["abs_gap"].cumsum().map(lambda value: _safe_ratio(value, abs_gap_mass))
+    return frame
+
+
+def _quality_summary_frame(sector_quality: pd.DataFrame, z_cell_quality: pd.DataFrame) -> pd.DataFrame:
+    summary_frames: list[pd.DataFrame] = []
+    for source_frame, block_names in (
+        (z_cell_quality, ["Z_CELL"]),
+        (sector_quality, ["Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY"]),
+    ):
+        for block in block_names:
+            block_frame = source_frame[source_frame["block"].astype(str).eq(block)].copy()
+            if block_frame.empty:
+                continue
+            eurostat_mass = float(block_frame["eurostat_value"].abs().sum())
+            exio_mapped_mass = float(block_frame["exio_mapped_value"].abs().sum())
+            signed_gap_total = float(block_frame["signed_gap"].sum())
+            absolute_discrepancy_mass = float(block_frame["abs_gap"].sum())
+            flagged = block_frame[block_frame["flag"]].copy()
+            flagged_cell_count = int(len(flagged))
+            total_cell_count = int(len(block_frame))
+            flagged_eurostat_mass = float(flagged["eurostat_value"].abs().sum())
+            flagged_abs_gap = float(flagged["abs_gap"].sum())
+            block_frame = block_frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
+            within_20 = float(block_frame.loc[block_frame["rel_gap"].fillna(0.0).le(0.20), "eurostat_value"].abs().sum())
+            top10_abs_gap = float(block_frame.head(10)["abs_gap"].sum())
+            summary_frames.append(
+                pd.DataFrame(
+                    [
+                        {
+                            "flow": str(block_frame.iloc[0]["flow"]),
+                            "block": block,
+                            "eurostat_mass": eurostat_mass,
+                            "exio_mapped_mass": exio_mapped_mass,
+                            "signed_gap_total": signed_gap_total,
+                            "absolute_discrepancy_mass": absolute_discrepancy_mass,
+                            "wape_vs_eurostat": _safe_ratio(absolute_discrepancy_mass, eurostat_mass),
+                            "matched_mass_share": _safe_ratio(float(np.minimum(block_frame["eurostat_value"].abs(), block_frame["exio_mapped_value"].abs()).sum()), float(np.maximum(block_frame["eurostat_value"].abs(), block_frame["exio_mapped_value"].abs()).sum())),
+                            "share_of_eurostat_mass_within_20pct_gap": _safe_ratio(within_20, eurostat_mass),
+                            "flagged_cell_count": flagged_cell_count,
+                            "total_cell_count": total_cell_count,
+                            "flagged_cell_share": _safe_ratio(flagged_cell_count, total_cell_count),
+                            "flagged_eurostat_mass": flagged_eurostat_mass,
+                            "flagged_eurostat_mass_share": _safe_ratio(flagged_eurostat_mass, eurostat_mass),
+                            "flagged_abs_gap": flagged_abs_gap,
+                            "flagged_abs_gap_share": _safe_ratio(flagged_abs_gap, absolute_discrepancy_mass),
+                            "top10_abs_gap_share": _safe_ratio(top10_abs_gap, absolute_discrepancy_mass),
+                        }
+                    ]
+                )
+            )
+    if not summary_frames:
+        return pd.DataFrame()
+    return pd.concat(summary_frames, ignore_index=True)
+
+
+def _gap_bucket_frame(sector_quality: pd.DataFrame, z_cell_quality: pd.DataFrame) -> pd.DataFrame:
+    combined = pd.concat([sector_quality, z_cell_quality], ignore_index=True, sort=False)
+    if combined.empty:
+        return combined
+
+    bucket_order = {
+        "0–5%": 0,
+        "5–10%": 1,
+        "10–20%": 2,
+        "20–50%": 3,
+        "50–100%": 4,
+        ">100%": 5,
+        "Eurostat zero / EXIO positive": 6,
+        "EXIO zero / Eurostat positive": 7,
+    }
+    combined = combined.copy()
+    combined["bucket"] = combined.apply(lambda row: _quality_bucket_label(float(row["rel_gap"]), float(row["eurostat_value"]), float(row["exio_mapped_value"])), axis=1)
+    rows: list[dict[str, Any]] = []
+    for (flow, block), block_frame in combined.groupby(["flow", "block"], sort=False):
+        total_count = int(len(block_frame))
+        eurostat_mass = float(block_frame["eurostat_value"].abs().sum())
+        abs_gap_mass = float(block_frame["abs_gap"].sum())
+        for bucket, bucket_frame in block_frame.groupby("bucket", sort=False):
+            rows.append(
+                {
+                    "flow": flow,
+                    "block": block,
+                    "bucket": bucket,
+                    "bucket_order": bucket_order.get(bucket, 99),
+                    "cell_count": int(len(bucket_frame)),
+                    "cell_count_share": _safe_ratio(len(bucket_frame), total_count),
+                    "eurostat_mass": float(bucket_frame["eurostat_value"].abs().sum()),
+                    "eurostat_mass_share": _safe_ratio(float(bucket_frame["eurostat_value"].abs().sum()), eurostat_mass),
+                    "abs_gap": float(bucket_frame["abs_gap"].sum()),
+                    "abs_gap_share": _safe_ratio(float(bucket_frame["abs_gap"].sum()), abs_gap_mass),
+                }
+            )
+    frame = pd.DataFrame(rows)
+    if not frame.empty:
+        frame = frame.sort_values(["flow", "block", "bucket_order"], kind="stable").drop(columns=["bucket_order"]).reset_index(drop=True)
+    return frame
+
+
+def _top_discrepancy_contributors_frame(sector_quality: pd.DataFrame, z_cell_quality: pd.DataFrame) -> pd.DataFrame:
+    combined = pd.concat([sector_quality, z_cell_quality], ignore_index=True, sort=False)
+    if combined.empty:
+        return combined
+
+    rows: list[dict[str, Any]] = []
+    for (flow, block), block_frame in combined.groupby(["flow", "block"], sort=False):
+        block_frame = block_frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
+        abs_gap_mass = float(block_frame["abs_gap"].sum())
+        for rank, (_, row) in enumerate(block_frame.head(20).iterrows(), start=1):
+            rows.append(
+                {
+                    "flow": flow,
+                    "block": block,
+                    "rank": rank,
+                    "kind": "cell" if str(block) == "Z_CELL" else "sector",
+                    "metric": row.get("metric", block),
+                    "sector_code": row.get("sector_code", ""),
+                    "sector_label": row.get("sector_label", ""),
+                    "supplier_code": row.get("supplier_code", ""),
+                    "supplier_label": row.get("supplier_label", ""),
+                    "buyer_code": row.get("buyer_code", ""),
+                    "buyer_label": row.get("buyer_label", ""),
+                    "eurostat_value": float(row["eurostat_value"]),
+                    "exio_mapped_value": float(row["exio_mapped_value"]),
+                    "signed_gap": float(row["signed_gap"]),
+                    "abs_gap": float(row["abs_gap"]),
+                    "rel_gap": float(row["rel_gap"]),
+                    "ratio": float(row["ratio"]),
+                    "eurostat_mass_share": float(row.get("eurostat_mass_share", 0.0)),
+                    "abs_gap_share": _safe_ratio(float(row["abs_gap"]), abs_gap_mass),
+                    "cumulative_abs_gap_share": _safe_ratio(float(block_frame.head(rank)["abs_gap"].sum()), abs_gap_mass),
+                    "flag": bool(row.get("flag", False)),
+                    "severity": str(row.get("severity", "")),
+                }
+            )
+    frame = pd.DataFrame(rows)
+    if not frame.empty:
+        frame = frame.sort_values(["flow", "block", "rank"], kind="stable").reset_index(drop=True)
+    return frame
+
+
+def _format_quality_summary_md(quality_summary: pd.DataFrame, bucket_summary: pd.DataFrame) -> str:
+    lines = ["## How much of the concordance agrees?", ""]
+    if quality_summary.empty:
+        lines.append("No quality summary rows were produced.")
+        return "\n".join(lines).rstrip() + "\n"
+
+    display = quality_summary.copy()
+    display["flow"] = display["flow"].astype(str)
+    display["block"] = display["block"].astype(str)
+    for column in [
+        "eurostat_mass",
+        "exio_mapped_mass",
+        "signed_gap_total",
+        "absolute_discrepancy_mass",
+        "wape_vs_eurostat",
+        "matched_mass_share",
+        "share_of_eurostat_mass_within_20pct_gap",
+        "flagged_eurostat_mass",
+        "flagged_eurostat_mass_share",
+        "flagged_abs_gap",
+        "flagged_abs_gap_share",
+        "top10_abs_gap_share",
+    ]:
+        if column in display.columns:
+            formatter = fmt_meur if column.endswith("mass") or column.endswith("gap") and column not in {"wape_vs_eurostat", "matched_mass_share", "share_of_eurostat_mass_within_20pct_gap", "flagged_eurostat_mass_share", "flagged_abs_gap_share", "top10_abs_gap_share"} else None
+    summary_columns = [
+        "flow",
+        "block",
+        "eurostat_mass",
+        "exio_mapped_mass",
+        "absolute_discrepancy_mass",
+        "wape_vs_eurostat",
+        "matched_mass_share",
+        "share_of_eurostat_mass_within_20pct_gap",
+        "flagged_eurostat_mass_share",
+        "top10_abs_gap_share",
+    ]
+    summary_view = display.loc[:, summary_columns].copy()
+    summary_view["eurostat_mass"] = summary_view["eurostat_mass"].map(fmt_meur)
+    summary_view["exio_mapped_mass"] = summary_view["exio_mapped_mass"].map(fmt_meur)
+    summary_view["absolute_discrepancy_mass"] = summary_view["absolute_discrepancy_mass"].map(fmt_meur)
+    summary_view["wape_vs_eurostat"] = summary_view["wape_vs_eurostat"].map(fmt_pct)
+    summary_view["matched_mass_share"] = summary_view["matched_mass_share"].map(fmt_pct)
+    summary_view["share_of_eurostat_mass_within_20pct_gap"] = summary_view["share_of_eurostat_mass_within_20pct_gap"].map(fmt_pct)
+    summary_view["flagged_eurostat_mass_share"] = summary_view["flagged_eurostat_mass_share"].map(fmt_pct)
+    summary_view["top10_abs_gap_share"] = summary_view["top10_abs_gap_share"].map(fmt_pct)
+    lines.append(_markdown_table(summary_view, columns=summary_columns, max_rows=20))
+    lines.extend(["", "### Gap buckets", ""])
+    if bucket_summary.empty:
+        lines.append("No gap bucket rows were produced.")
+    else:
+        bucket_view = bucket_summary.copy()
+        bucket_view["eurostat_mass"] = bucket_view["eurostat_mass"].map(fmt_meur)
+        bucket_view["eurostat_mass_share"] = bucket_view["eurostat_mass_share"].map(fmt_pct)
+        bucket_view["abs_gap"] = bucket_view["abs_gap"].map(fmt_meur)
+        bucket_view["abs_gap_share"] = bucket_view["abs_gap_share"].map(fmt_pct)
+        bucket_view["cell_count_share"] = bucket_view["cell_count_share"].map(fmt_pct)
+        lines.append(_markdown_table(bucket_view, columns=["flow", "block", "bucket", "cell_count", "cell_count_share", "eurostat_mass", "eurostat_mass_share", "abs_gap", "abs_gap_share"], max_rows=200))
+
+    overall = quality_summary[quality_summary["block"].astype(str).isin({"Z_CELL", "Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY"})].copy()
+    if not overall.empty:
+        eurostat_mass = float(overall["eurostat_mass"].sum())
+        within_20 = float(overall["share_of_eurostat_mass_within_20pct_gap"].mul(overall["eurostat_mass"]).sum())
+        flagged_mass = float(overall["flagged_eurostat_mass"].sum())
+        top10_conc = float(overall["top10_abs_gap_share"].mul(overall["absolute_discrepancy_mass"]).sum() / max(float(overall["absolute_discrepancy_mass"].sum()), EPS))
+        agreement_text = "good" if _safe_ratio(within_20, eurostat_mass) >= 0.8 and _safe_ratio(flagged_mass, eurostat_mass) <= 0.2 else "bad"
+        lines.extend([
+            "",
+            f"The concordance is broadly {agreement_text} because {_safe_ratio(within_20, eurostat_mass):.1%} of Eurostat mass sits within 20% gap, flagged Eurostat mass is {_safe_ratio(flagged_mass, eurostat_mass):.1%}, and the top-10 discrepancies capture about {top10_conc:.1%} of total absolute gap.",
+        ])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _paired_cell_display(eurostat_value: object, exio_value: object, signed_gap: object, rel_gap: object) -> str:
+    return "\n".join([
+        f"EU: {fmt_meur(eurostat_value)}",
+        f"EX: {fmt_meur(exio_value)}",
+        f"Δ: {fmt_meur(signed_gap)}",
+        f"gap: {fmt_pct(rel_gap)}",
+    ])
+
+
+def _write_paired_iot_workbook(
+    *,
+    workbook_path: Path,
+    country: str,
+    year: int,
+    quality_summary: pd.DataFrame,
+    sector_quality: pd.DataFrame,
+    top_discrepancies: pd.DataFrame,
+    flows: Mapping[str, FlowAuditRun],
+    eurostat_labels: Mapping[str, str],
+) -> None:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.formatting.rule import CellIsRule
+    from openpyxl.utils import get_column_letter
+    from openpyxl.utils.dataframe import dataframe_to_rows
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+
+    def _append_sheet(frame: pd.DataFrame, sheet_name: str, *, include_index: bool = False) -> None:
+        worksheet = workbook.create_sheet(title=sheet_name)
+        for row in dataframe_to_rows(frame, index=include_index, header=True):
+            worksheet.append(list(row))
+        worksheet.freeze_panes = "A2"
+        for row in worksheet.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+        for column_cells in worksheet.columns:
+            width = 12
+            for cell in column_cells:
+                if cell.value is None:
+                    continue
+                width = min(60, max(width, len(str(cell.value)) + 2))
+            worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = width
+        header_fill = PatternFill("solid", fgColor="D9EAF7")
+        for cell in worksheet[1]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+
+    def _add_numeric_sheet(sheet_name: str, frame: pd.DataFrame) -> None:
+        _append_sheet(frame, sheet_name, include_index=True)
+
+    def _add_rel_sheet(sheet_name: str, frame: pd.DataFrame) -> None:
+        _append_sheet(frame, sheet_name, include_index=True)
+        worksheet = workbook[sheet_name]
+        max_row = worksheet.max_row
+        max_col = worksheet.max_column
+        if max_row >= 2 and max_col >= 2:
+            value_range = f"B2:{get_column_letter(max_col)}{max_row}"
+            worksheet.conditional_formatting.add(value_range, CellIsRule(operator="greaterThan", formula=["0.2"], fill=PatternFill("solid", fgColor="FFF2CC")))
+            worksheet.conditional_formatting.add(value_range, CellIsRule(operator="greaterThan", formula=["0.5"], fill=PatternFill("solid", fgColor="F9CB9C")))
+            worksheet.conditional_formatting.add(value_range, CellIsRule(operator="greaterThan", formula=["1.0"], fill=PatternFill("solid", fgColor="F4CCCC")))
+
+    def _matrix_frame(flow_key: str, value_frame: pd.DataFrame, label: str) -> pd.DataFrame:
+        if value_frame is None or value_frame.empty:
+            return pd.DataFrame()
+        labels = {code: eurostat_labels.get(code, code) for code in sorted(set(value_frame.index.astype(str)).union(set(value_frame.columns.astype(str))))}
+        display = value_frame.copy().reindex(index=sorted(labels), columns=sorted(labels)).fillna(0.0)
+        display.index = [f"{code} — {labels.get(code, code)}" for code in display.index]
+        display.columns = [f"{code} — {labels.get(code, code)}" for code in display.columns]
+        return display
+
+    def _pair_display_matrix(flow_key: str, euro_frame: pd.DataFrame, exio_frame: pd.DataFrame) -> pd.DataFrame:
+        if euro_frame is None or euro_frame.empty:
+            return pd.DataFrame()
+        codes = sorted(set(euro_frame.index.astype(str)).union(set(euro_frame.columns.astype(str)), set(exio_frame.index.astype(str) if exio_frame is not None else []), set(exio_frame.columns.astype(str) if exio_frame is not None else [])))
+        euro_aligned = euro_frame.reindex(index=codes, columns=codes).fillna(0.0) if not euro_frame.empty else pd.DataFrame(0.0, index=codes, columns=codes)
+        exio_aligned = exio_frame.reindex(index=codes, columns=codes).fillna(0.0) if exio_frame is not None and not exio_frame.empty else pd.DataFrame(0.0, index=codes, columns=codes)
+        display = pd.DataFrame(index=[f"{code} — {eurostat_labels.get(code, code)}" for code in codes], columns=[f"{code} — {eurostat_labels.get(code, code)}" for code in codes], dtype=object)
+        for supplier_code in codes:
+            for buyer_code in codes:
+                display.loc[f"{supplier_code} — {eurostat_labels.get(supplier_code, supplier_code)}", f"{buyer_code} — {eurostat_labels.get(buyer_code, buyer_code)}"] = _paired_cell_display(
+                    euro_aligned.loc[supplier_code, buyer_code],
+                    exio_aligned.loc[supplier_code, buyer_code],
+                    exio_aligned.loc[supplier_code, buyer_code] - euro_aligned.loc[supplier_code, buyer_code],
+                    _safe_ratio(abs(exio_aligned.loc[supplier_code, buyer_code] - euro_aligned.loc[supplier_code, buyer_code]), max(abs(euro_aligned.loc[supplier_code, buyer_code]), EPS)),
+                )
+        return display
+
+    def _pair_display_series(flow_key: str, euro_series: pd.Series, exio_series: pd.Series) -> pd.DataFrame:
+        codes = sorted(set(euro_series.index.astype(str)).union(set(exio_series.index.astype(str))))
+        rows = []
+        for code in codes:
+            euro_value = float(euro_series.get(code, 0.0))
+            exio_value = float(exio_series.get(code, 0.0))
+            rows.append(
+                {
+                    "sector_code": code,
+                    "sector_label": eurostat_labels.get(code, code),
+                    "pair_display": _paired_cell_display(euro_value, exio_value, exio_value - euro_value, _safe_ratio(abs(exio_value - euro_value), max(abs(euro_value), EPS))),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def _single_sheet_sheet_name(prefix: str, suffix: str) -> str:
+        return f"{prefix}_{suffix}"
+
+    readme = pd.DataFrame(
+        [
+            {"item": "country", "value": country},
+            {"item": "year", "value": year},
+            {"item": "purpose", "value": "Paired Eurostat vs EXIOBASE concordance workbook."},
+            {"item": "pair_display_format", "value": "EU / EX / Δ / gap"},
+            {"item": "relative_gap_threshold_highlight", "value": ">20%, >50%, >100%"},
+            {"item": "paired sheets", "value": "Cells contain Eurostat and EXIOBASE values, signed gap, and relative gap."},
+        ]
+    )
+    _append_sheet(readme, "README")
+    _append_sheet(quality_summary, "quality_summary")
+    _append_sheet(sector_quality, "sector_quality")
+    _append_sheet(top_discrepancies, "top_discrepancies")
+
+    for flow_key, flow_run in flows.items():
+        flow_prefix = {"domestic": "DOM", "imports": "IMP", "total": "TOTAL"}[flow_key]
+        z_matrix = flow_run.result.eurostat_z if flow_run.result.eurostat_z is not None else pd.DataFrame()
+        mapped_z = flow_run.result.mapped_z if flow_run.result.mapped_z is not None else pd.DataFrame()
+        y_euro = flow_run.result.eurostat_y_total if flow_run.result.eurostat_y_total is not None else pd.Series(dtype="float64")
+        y_exio = flow_run.result.mapped_y if flow_run.result.mapped_y is not None else pd.Series(dtype="float64")
+
+        pair_sheet = _pair_display_matrix(flow_key, z_matrix, mapped_z)
+        _append_sheet(pair_sheet, f"{flow_prefix}_Z_pair_display", include_index=True)
+        _add_numeric_sheet(f"{flow_prefix}_Z_eurostat", z_matrix.reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
+        _add_numeric_sheet(f"{flow_prefix}_Z_exio_mapped", mapped_z.reindex(index=sorted(set(mapped_z.index.astype(str)).union(set(mapped_z.columns.astype(str)))), columns=sorted(set(mapped_z.index.astype(str)).union(set(mapped_z.columns.astype(str))))).fillna(0.0) if not mapped_z.empty else pd.DataFrame())
+        _add_rel_sheet(f"{flow_prefix}_Z_signed_gap", (mapped_z - z_matrix).reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
+        rel_gap_matrix = pd.DataFrame(index=z_matrix.index, columns=z_matrix.columns, dtype="float64") if not z_matrix.empty else pd.DataFrame()
+        if not z_matrix.empty:
+            aligned_euro = z_matrix.reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0)
+            aligned_exio = mapped_z.reindex(index=aligned_euro.index, columns=aligned_euro.columns).fillna(0.0) if not mapped_z.empty else pd.DataFrame(0.0, index=aligned_euro.index, columns=aligned_euro.columns)
+            rel_gap_matrix = pd.DataFrame(index=aligned_euro.index, columns=aligned_euro.columns, dtype="float64")
+            for supplier_code in aligned_euro.index:
+                for buyer_code in aligned_euro.columns:
+                    rel_gap_matrix.loc[supplier_code, buyer_code] = _safe_ratio(abs(float(aligned_exio.loc[supplier_code, buyer_code]) - float(aligned_euro.loc[supplier_code, buyer_code])), max(abs(float(aligned_euro.loc[supplier_code, buyer_code])), EPS))
+        _add_rel_sheet(f"{flow_prefix}_Z_rel_gap", rel_gap_matrix)
+
+        y_pair = _pair_display_series(flow_key, y_euro, y_exio)
+        _append_sheet(y_pair, f"{flow_prefix}_Y_pair_display")
+
+    workbook_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(workbook_path)
+
+
+def _frame_to_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame()
+    return frame.copy()
+
+
 def _build_consolidated_summary_md(
     *,
     country: str,
@@ -639,6 +1193,8 @@ def _build_consolidated_summary_md(
     domestic: FlowAuditRun,
     imports: FlowAuditRun,
     total: FlowAuditRun,
+    quality_summary: pd.DataFrame,
+    bucket_summary: pd.DataFrame,
     reconciliation: pd.DataFrame,
     aggregate_flags: pd.DataFrame,
     z_flags: pd.DataFrame,
@@ -654,15 +1210,24 @@ def _build_consolidated_summary_md(
         out = out.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
         return out.head(n)
 
+    def _format_table(frame: pd.DataFrame, *, rename_map: Mapping[str, str], formatters: Mapping[str, Any], columns: list[str]) -> str:
+        if frame.empty:
+            return "No flagged discrepancies."
+        view = frame.rename(columns=rename_map).copy()
+        for column, formatter in formatters.items():
+            if column in view.columns:
+                view[column] = view[column].map(formatter)
+        return _markdown_table(view, columns=columns, max_rows=10)
+
     lines = [
         f"# Consolidated EXIOBASE–Eurostat Concordance Audit: {country} {year}",
         "",
         "## What was compared",
         "| Flow | EXIOBASE slice | Eurostat table | Output folder |",
         "| --- | --- | --- | --- |",
-        "| Domestic | AT-origin products used by AT | stk_flow=DOM | domestic |",
-        "| Imports | Non-AT-origin products used by AT, foreign origins summed | stk_flow=IMP | imports |",
-        "| Total | All-origin products used by AT | stk_flow=TOTAL | total |",
+        f"| Domestic | {country}-origin products used by {country} | stk_flow=DOM | domestic |",
+        f"| Imports | Non-{country}-origin products used by {country}, foreign origins summed | stk_flow=IMP | imports |",
+        f"| Total | All-origin products used by {country} | stk_flow=TOTAL | total |",
         "",
         "## Important caveat on x-like rows",
         "All x-like rows in these audits are flow-specific total-use proxy comparisons: Z row total + Y total.",
@@ -689,12 +1254,22 @@ def _build_consolidated_summary_md(
     def _agg_table(frame: pd.DataFrame) -> str:
         if frame.empty:
             return "No flagged aggregate discrepancies."
-        return _markdown_table(frame.rename(columns={"human_metric": "Readable metric", "target_display": "Target sector", "exio_mapped_value": "EXIOBASE mapped value, MEUR", "eurostat_value": "Eurostat value, MEUR", "signed_gap": "Difference, MEUR", "rel_gap": "Relative gap", "ratio_exio_to_eurostat": "Ratio", "severity": "Severity", "top_exio_contributors": "Largest EXIOBASE contributors"}), columns=["Readable metric", "Target sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "Difference, MEUR", "Relative gap", "Ratio", "Severity", "Largest EXIOBASE contributors"], max_rows=10)
+        return _format_table(
+            frame,
+            rename_map={"human_metric": "Readable metric", "target_display": "Target sector", "exio_mapped_value": "EXIOBASE mapped value, MEUR", "eurostat_value": "Eurostat value, MEUR", "signed_gap": "Difference, MEUR", "rel_gap": "Relative gap", "ratio_exio_to_eurostat": "Ratio", "severity": "Severity", "top_exio_contributors": "Largest EXIOBASE contributors"},
+            formatters={"EXIOBASE mapped value, MEUR": fmt_meur, "Eurostat value, MEUR": fmt_meur, "Difference, MEUR": fmt_meur, "Relative gap": fmt_pct, "Ratio": fmt_ratio},
+            columns=["Readable metric", "Target sector", "EXIOBASE mapped value, MEUR", "Eurostat value, MEUR", "Difference, MEUR", "Relative gap", "Ratio", "Severity", "Largest EXIOBASE contributors"],
+        )
 
     def _cell_table(frame: pd.DataFrame) -> str:
         if frame.empty:
             return "No flagged Z-cell discrepancies."
-        return _markdown_table(frame.rename(columns={"comparison_display": "Supplier → buyer", "exio_mapped_z": "EXIOBASE mapped flow, MEUR", "eurostat_z": "Eurostat flow, MEUR", "signed_gap": "Difference, MEUR", "rel_gap": "Relative gap", "ratio_exio_to_eurostat": "Ratio", "severity": "Severity", "top_source_subsectors": "Top source subsectors", "top_buyer_subsectors": "Top buyer subsectors"}), columns=["Supplier → buyer", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "Difference, MEUR", "Relative gap", "Ratio", "Severity", "Top source subsectors", "Top buyer subsectors"], max_rows=10)
+        return _format_table(
+            frame,
+            rename_map={"comparison_display": "Supplier → buyer", "exio_mapped_z": "EXIOBASE mapped flow, MEUR", "eurostat_z": "Eurostat flow, MEUR", "signed_gap": "Difference, MEUR", "rel_gap": "Relative gap", "ratio_exio_to_eurostat": "Ratio", "severity": "Severity", "top_source_subsectors": "Top source subsectors", "top_buyer_subsectors": "Top buyer subsectors"},
+            formatters={"EXIOBASE mapped flow, MEUR": fmt_meur, "Eurostat flow, MEUR": fmt_meur, "Difference, MEUR": fmt_meur, "Relative gap": fmt_pct, "Ratio": fmt_ratio},
+            columns=["Supplier → buyer", "EXIOBASE mapped flow, MEUR", "Eurostat flow, MEUR", "Difference, MEUR", "Relative gap", "Ratio", "Severity", "Top source subsectors", "Top buyer subsectors"],
+        )
 
     lines.append(_agg_table(dom_agg))
     lines.extend(["", _cell_table(dom_cell), "", "## Biggest import discrepancies"])
@@ -725,6 +1300,7 @@ def _build_consolidated_summary_md(
         lines.append(_markdown_table(total_only, columns=["kind", "metric", "target_code", "supplier_code", "buyer_code", "flow_classification"], max_rows=20))
     else:
         lines.append("No total-only rows were flagged.")
+    lines.extend(["", _format_quality_summary_md(quality_summary, bucket_summary)])
     lines.extend(["", "## Flow reconciliation problems"])
     recon_flagged = reconciliation[reconciliation["flag"]].copy()
     if not recon_flagged.empty:
@@ -743,22 +1319,34 @@ def write_flow_consolidated_outputs(
     total: FlowAuditRun,
     output_dir: Path,
     eurostat_labels: Mapping[str, str],
+    rel_threshold: float,
+    min_abs_meur: float,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    sector_quality_frames: list[pd.DataFrame] = []
+    z_quality_frames: list[pd.DataFrame] = []
     aggregate_frames: list[pd.DataFrame] = []
-    z_frames: list[pd.DataFrame] = []
+    z_flag_frames: list[pd.DataFrame] = []
     for flow_name, flow_run in (("domestic", domestic), ("imports", imports), ("total", total)):
         agg_frame, cell_frame = _flow_flags_table(flow_run.result, flow=flow_name, eurostat_labels=eurostat_labels)
         aggregate_frames.append(agg_frame)
-        z_frames.append(cell_frame)
+        z_flag_frames.append(cell_frame)
+        sector_quality_frames.append(_quality_sector_frame(flow_name, flow_run.result, eurostat_labels=eurostat_labels))
+        z_quality_frames.append(_quality_z_cell_frame(flow_name, flow_run.result, eurostat_labels=eurostat_labels))
+
     aggregate_flags = pd.concat(aggregate_frames, ignore_index=True) if aggregate_frames else pd.DataFrame()
-    z_flags = pd.concat(z_frames, ignore_index=True) if z_frames else pd.DataFrame()
+    z_flags = pd.concat(z_flag_frames, ignore_index=True) if z_flag_frames else pd.DataFrame()
+    sector_quality = pd.concat([frame for frame in sector_quality_frames if not frame.empty], ignore_index=True) if any(not frame.empty for frame in sector_quality_frames) else pd.DataFrame()
+    z_cell_quality = pd.concat([frame for frame in z_quality_frames if not frame.empty], ignore_index=True) if any(not frame.empty for frame in z_quality_frames) else pd.DataFrame()
+    quality_summary = _quality_summary_frame(sector_quality, z_cell_quality)
+    gap_bucket_summary = _gap_bucket_frame(sector_quality, z_cell_quality)
+    top_discrepancies = _top_discrepancy_contributors_frame(sector_quality, z_cell_quality)
     reconciliation = build_flow_reconciliation(
         domestic=domestic,
         imports=imports,
         total=total,
-        rel_threshold=DEFAULT_REL_THRESHOLD,
-        min_abs_meur=DEFAULT_MIN_ABS_MEUR,
+        rel_threshold=rel_threshold,
+        min_abs_meur=min_abs_meur,
         eurostat_labels=eurostat_labels,
     )
     classification = _flow_classification_frame(
@@ -776,18 +1364,34 @@ def write_flow_consolidated_outputs(
     )
     classification = pd.concat([classification, z_classification], ignore_index=True) if not z_classification.empty else classification
 
+    # Coverage tables used for the quality workbook and summary.
+    sector_quality = sector_quality.sort_values(["flow", "block", "abs_gap"], ascending=[True, True, False], kind="stable").reset_index(drop=True)
+    z_cell_quality = z_cell_quality.sort_values(["flow", "abs_gap"], ascending=[True, False], kind="stable").reset_index(drop=True)
+
     paths = {
         "audit_flow_reconciliation.csv": output_dir / "audit_flow_reconciliation.csv",
         "audit_flow_reconciliation.md": output_dir / "audit_flow_reconciliation.md",
         "audit_consolidated_summary.md": output_dir / "audit_consolidated_summary.md",
+        "audit_quality_summary.csv": output_dir / "audit_quality_summary.csv",
+        "audit_quality_summary.md": output_dir / "audit_quality_summary.md",
         "consolidated_aggregate_flags.csv": output_dir / "consolidated_aggregate_flags.csv",
+        "sector_quality_by_flow.csv": output_dir / "sector_quality_by_flow.csv",
+        "z_cell_quality_by_flow.csv": output_dir / "z_cell_quality_by_flow.csv",
+        "gap_bucket_summary.csv": output_dir / "gap_bucket_summary.csv",
+        "top_discrepancy_contributors.csv": output_dir / "top_discrepancy_contributors.csv",
         "consolidated_z_cell_flags.csv": output_dir / "consolidated_z_cell_flags.csv",
         "consolidated_sector_flow_classification.csv": output_dir / "consolidated_sector_flow_classification.csv",
         "consolidated_reconciliation_flags.csv": output_dir / "consolidated_reconciliation_flags.csv",
+        "paired_iot_exio_vs_eurostat.xlsx": output_dir / f"paired_iot_exio_vs_eurostat_{domestic.result.metadata.get('country', '')}_{domestic.result.metadata.get('year', 0)}.xlsx",
     }
 
     reconciliation.to_csv(paths["audit_flow_reconciliation.csv"], index=False)
-    Path(paths["audit_flow_reconciliation.md"]).write_text(_reconciliation_markdown(reconciliation), encoding="utf-8")
+    quality_summary.to_csv(paths["audit_quality_summary.csv"], index=False)
+    sector_quality.to_csv(paths["sector_quality_by_flow.csv"], index=False)
+    z_cell_quality.to_csv(paths["z_cell_quality_by_flow.csv"], index=False)
+    gap_bucket_summary.to_csv(paths["gap_bucket_summary.csv"], index=False)
+    top_discrepancies.to_csv(paths["top_discrepancy_contributors.csv"], index=False)
+    Path(paths["audit_flow_reconciliation.md"]).write_text(_reconciliation_markdown(reconciliation, str(domestic.result.metadata.get("country", "")), int(domestic.result.metadata.get("year", 0))), encoding="utf-8")
     Path(paths["audit_consolidated_summary.md"]).write_text(
         _build_consolidated_summary_md(
             country=str(domestic.result.metadata.get("country", "")),
@@ -795,6 +1399,8 @@ def write_flow_consolidated_outputs(
             domestic=domestic,
             imports=imports,
             total=total,
+            quality_summary=quality_summary,
+            bucket_summary=gap_bucket_summary,
             reconciliation=reconciliation,
             aggregate_flags=aggregate_flags,
             z_flags=z_flags,
@@ -802,8 +1408,20 @@ def write_flow_consolidated_outputs(
         ),
         encoding="utf-8",
     )
+    Path(paths["audit_quality_summary.md"]).write_text(_format_quality_summary_md(quality_summary, gap_bucket_summary), encoding="utf-8")
     aggregate_flags.to_csv(paths["consolidated_aggregate_flags.csv"], index=False)
     z_flags.to_csv(paths["consolidated_z_cell_flags.csv"], index=False)
     classification.to_csv(paths["consolidated_sector_flow_classification.csv"], index=False)
     reconciliation[reconciliation["flag"]].to_csv(paths["consolidated_reconciliation_flags.csv"], index=False)
+
+    _write_paired_iot_workbook(
+        workbook_path=paths["paired_iot_exio_vs_eurostat.xlsx"],
+        country=str(domestic.result.metadata.get("country", "")),
+        year=int(domestic.result.metadata.get("year", 0)),
+        quality_summary=quality_summary,
+        sector_quality=sector_quality,
+        top_discrepancies=top_discrepancies,
+        flows={"domestic": domestic, "imports": imports, "total": total},
+        eurostat_labels=eurostat_labels,
+    )
     return paths

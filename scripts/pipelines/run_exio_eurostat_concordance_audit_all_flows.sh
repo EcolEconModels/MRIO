@@ -90,8 +90,10 @@ while kill -0 "$audit_pid" 2>/dev/null; do
   sleep "$PROGRESS_HEARTBEAT_SECONDS"
 done
 
+set +e
 wait "$audit_pid"
 status=$?
+set -e
 trap - INT TERM
 printf '[audit] finished exit=%s\n' "$status"
 exit "$status"

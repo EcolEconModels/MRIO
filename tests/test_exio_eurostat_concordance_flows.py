@@ -7,11 +7,14 @@ import pytest
 
 from ecolecon_mrio.concordance_audit_flows import (
     FlowAuditRun,
+    _build_consolidated_summary_md,
+    _flow_classification_frame,
     build_flow_reconciliation,
     build_flow_total_use_proxy,
     resolve_comparison_flows,
     write_flow_consolidated_outputs,
 )
+from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, build_eurostat_atomic_final_demand, select_eurostat_atomic_final_demand_columns
 from ecolecon_mrio.exio_eurostat_concordance_audit import ConcordanceAuditResult, build_concordance_audit, write_concordance_audit_outputs
 
 
@@ -94,6 +97,8 @@ def _make_result(
             "comparison_mode": comparison_mode,
             "exio_flow": exio_flow,
             "eurostat_flow": eurostat_flow,
+            "rel_threshold": 0.20,
+            "min_abs_meur": 1.0,
             "exio_x_is_proxy": True,
             "exio_x_proxy_basis": "Z row total + Y row total for selected EXIO flow slice",
             "eurostat_x_is_proxy": True,
@@ -290,6 +295,8 @@ def test_all_flows_output_structure(tmp_path: Path) -> None:
         total=total,
         output_dir=consolidated,
         eurostat_labels={"CPA_A": "Sector A", "CPA_B": "Sector B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
     )
     for expected in [
         consolidated / "audit_consolidated_summary.md",
@@ -299,6 +306,214 @@ def test_all_flows_output_structure(tmp_path: Path) -> None:
         consolidated / "consolidated_z_cell_flags.csv",
         consolidated / "consolidated_sector_flow_classification.csv",
         consolidated / "consolidated_reconciliation_flags.csv",
+        consolidated / "audit_quality_summary.csv",
+        consolidated / "audit_quality_summary.md",
+        consolidated / "sector_quality_by_flow.csv",
+        consolidated / "z_cell_quality_by_flow.csv",
+        consolidated / "gap_bucket_summary.csv",
+        consolidated / "top_discrepancy_contributors.csv",
+        consolidated / "paired_iot_exio_vs_eurostat_AT_2020.xlsx",
     ]:
         assert expected.exists(), expected
     assert paths["audit_consolidated_summary.md"].exists()
+
+
+def test_quality_summary_metrics_are_computed(tmp_path: Path) -> None:
+    domestic = _make_flow_run("domestic")
+    imports = _make_flow_run("imports")
+    total = _make_flow_run("total")
+    paths = write_flow_consolidated_outputs(
+        domestic=domestic,
+        imports=imports,
+        total=total,
+        output_dir=tmp_path / "consolidated",
+        eurostat_labels={"CPA_A": "Sector A", "CPA_B": "Sector B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    quality = pd.read_csv(paths["audit_quality_summary.csv"])
+    z_cell = quality[(quality["flow"].astype(str).eq("domestic")) & (quality["block"].astype(str).eq("Z_CELL"))].iloc[0]
+    assert z_cell["wape_vs_eurostat"] == pytest.approx(0.0)
+    assert z_cell["matched_mass_share"] == pytest.approx(1.0)
+    assert z_cell["share_of_eurostat_mass_within_20pct_gap"] == pytest.approx(1.0)
+
+
+def test_quality_summary_and_buckets_change_when_values_differ(tmp_path: Path) -> None:
+    domestic = _make_flow_run("domestic", delta=-1.5)
+    imports = _make_flow_run("imports")
+    total = _make_flow_run("total")
+    paths = write_flow_consolidated_outputs(
+        domestic=domestic,
+        imports=imports,
+        total=total,
+        output_dir=tmp_path / "consolidated",
+        eurostat_labels={"CPA_A": "Sector A", "CPA_B": "Sector B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    quality = pd.read_csv(paths["audit_quality_summary.csv"])
+    changed = quality[(quality["flow"].astype(str).eq("domestic")) & (quality["block"].astype(str).eq("Z_CELL"))].iloc[0]
+    assert changed["matched_mass_share"] < 1.0
+    buckets = pd.read_csv(paths["gap_bucket_summary.csv"])
+    assert not buckets.empty
+    assert "EXIO zero / Eurostat positive" in set(buckets["bucket"].astype(str)) or ">100%" in set(buckets["bucket"].astype(str))
+
+
+def test_paired_workbook_contains_expected_sheets_and_pair_text(tmp_path: Path) -> None:
+    domestic = _make_flow_run("domestic")
+    imports = _make_flow_run("imports")
+    total = _make_flow_run("total")
+    paths = write_flow_consolidated_outputs(
+        domestic=domestic,
+        imports=imports,
+        total=total,
+        output_dir=tmp_path / "consolidated",
+        eurostat_labels={"CPA_A": "Sector A", "CPA_B": "Sector B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(paths["paired_iot_exio_vs_eurostat.xlsx"], data_only=True)
+    expected_sheets = {
+        "README",
+        "quality_summary",
+        "sector_quality",
+        "top_discrepancies",
+        "DOM_Z_pair_display",
+        "DOM_Z_eurostat",
+        "DOM_Z_exio_mapped",
+        "DOM_Z_signed_gap",
+        "DOM_Z_rel_gap",
+        "IMP_Z_pair_display",
+        "IMP_Z_eurostat",
+        "IMP_Z_exio_mapped",
+        "IMP_Z_signed_gap",
+        "IMP_Z_rel_gap",
+        "TOTAL_Z_pair_display",
+        "TOTAL_Z_eurostat",
+        "TOTAL_Z_exio_mapped",
+        "TOTAL_Z_signed_gap",
+        "TOTAL_Z_rel_gap",
+        "DOM_Y_pair_display",
+        "IMP_Y_pair_display",
+        "TOTAL_Y_pair_display",
+    }
+    assert expected_sheets.issubset(set(workbook.sheetnames))
+    pair_sheet = workbook["DOM_Z_pair_display"]
+    cell_value = next((cell.value for row in pair_sheet.iter_rows() for cell in row if isinstance(cell.value, str) and "EU:" in cell.value), None)
+    assert isinstance(cell_value, str)
+    assert "EX:" in cell_value
+    assert "Δ:" in cell_value
+    assert "gap:" in cell_value
+
+
+def test_atomic_final_demand_excludes_exports() -> None:
+    parsed = ParsedEurostatIOT(
+        Z=pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"]),
+        Y=pd.DataFrame(
+            {
+                "P3_S13": [10.0, 20.0],
+                "P3_S14": [11.0, 21.0],
+                "P3_S15": [12.0, 22.0],
+                "P51G": [13.0, 23.0],
+                "P52": [14.0, 24.0],
+                "P53": [15.0, 25.0],
+                "P6": [99.0, 199.0],
+            },
+            index=["CPA_A", "CPA_B"],
+        ),
+        meta={},
+    )
+
+    assert select_eurostat_atomic_final_demand_columns(parsed, include_exports=False) == ["P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53"]
+    atomic = build_eurostat_atomic_final_demand(parsed, include_exports=False)
+    assert list(atomic.columns) == ["P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53"]
+    assert "P6" not in atomic.columns
+
+
+def test_consolidated_summary_uses_country_and_numeric_formatting(tmp_path: Path) -> None:
+    domestic = _make_flow_run("domestic")
+    imports = _make_flow_run("imports")
+    total = _make_flow_run("total")
+    for flow in (domestic, imports, total):
+        flow.result.metadata["country"] = "BE"
+        flow.result.metadata["year"] = 2021
+
+    paths = write_flow_consolidated_outputs(
+        domestic=domestic,
+        imports=imports,
+        total=total,
+        output_dir=tmp_path / "consolidated",
+        eurostat_labels={"CPA_A": "Sector A", "CPA_B": "Sector B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+    summary_text = Path(paths["audit_consolidated_summary.md"]).read_text(encoding="utf-8")
+    assert "BE-origin products used by BE" in summary_text
+    assert "20.0" in summary_text
+    assert "50.0%" in summary_text or "100.0%" in summary_text
+    assert "1.00" in summary_text
+
+
+def test_imports_only_labels_are_preserved() -> None:
+    domestic = pd.DataFrame(columns=["metric", "target_code", "target_label", "abs_gap"])
+    imports = pd.DataFrame(
+        [
+            {"metric": "Y_FINAL_DEMAND_TOTAL", "target_code": "CPA_X", "target_label": "Imports label", "abs_gap": 1.0},
+        ]
+    )
+    total = pd.DataFrame(columns=["metric", "target_code", "target_label", "abs_gap"])
+
+    frame = _flow_classification_frame(domestic, imports, total, kind="aggregate")
+    assert frame.loc[0, "target_label"] == "Imports label"
+
+
+def test_shell_wrapper_reports_finish_exit_block() -> None:
+    wrapper_text = Path("/home/agilra/EcolEconModels/MRIO/scripts/pipelines/run_exio_eurostat_concordance_audit_all_flows.sh").read_text(encoding="utf-8")
+    assert "set +e" in wrapper_text
+    assert "wait \"$audit_pid\"" in wrapper_text
+    assert "set -e" in wrapper_text
+
+
+def test_cli_propagates_thresholds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import scripts.run_exio_eurostat_concordance_audit_all_flows as script
+
+    domestic = _make_flow_run("domestic")
+    imports = _make_flow_run("imports")
+    total = _make_flow_run("total")
+
+    def fake_run_single_flow_audit(**kwargs):
+        result = {"domestic": domestic, "imports": imports, "total": total}[kwargs["comparison_mode"]].result
+        result.metadata["country"] = kwargs["country"]
+        result.metadata["year"] = kwargs["year"]
+        return result
+
+    captured: dict[str, object] = {}
+
+    def fake_write_flow_consolidated_outputs(**kwargs):
+        captured.update(kwargs)
+        return {"audit_consolidated_summary.md": tmp_path / "summary.md"}
+
+    monkeypatch.setattr(script, "run_single_flow_audit", fake_run_single_flow_audit)
+    monkeypatch.setattr(script, "write_flow_consolidated_outputs", fake_write_flow_consolidated_outputs)
+    monkeypatch.setattr(script, "load_default_label_maps", lambda _repo_root: ({}, {"CPA_A": "Sector A"}))
+    monkeypatch.setattr(script.argparse.ArgumentParser, "parse_args", lambda self: script.argparse.Namespace(
+        country="BE",
+        year=2021,
+        exio_year=None,
+        mapping_csv=str(tmp_path / "mapping.csv"),
+        output_root=str(tmp_path / "out"),
+        rel_threshold=0.15,
+        min_abs_meur=3.0,
+        identity_mode="diagnostic",
+        eurostat_dataset="naio_10_cp1700",
+        eurostat_unit="MIO_EUR",
+        exio_system="pxp",
+        verbose=False,
+        full_subcomponent_z_scan=False,
+    ))
+
+    assert script.main() == 0
+    assert captured["rel_threshold"] == 0.15
+    assert captured["min_abs_meur"] == 3.0

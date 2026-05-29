@@ -72,6 +72,8 @@ def main() -> int:
         total=runs["total"],
         output_dir=consolidated_dir,
         eurostat_labels=euro_labels,
+        rel_threshold=args.rel_threshold,
+        min_abs_meur=args.min_abs_meur,
     )
     print(f"Wrote consolidated outputs to {consolidated_dir.resolve()}", flush=True)
     return 0
