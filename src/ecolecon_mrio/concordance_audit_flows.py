@@ -537,11 +537,11 @@ def _flow_flags_table(result: ConcordanceAuditResult, *, flow: str, eurostat_lab
 def _flow_classification_frame(domestic: pd.DataFrame, imports: pd.DataFrame, total: pd.DataFrame, *, kind: str) -> pd.DataFrame:
     def _flag_lookup(frame: pd.DataFrame) -> dict[tuple[str, ...], float]:
         lookup: dict[tuple[str, ...], float] = {}
-        for row in frame.itertuples(index=False):
+        for row in frame.to_dict(orient="records"):
             if kind == "aggregate":
-                lookup[(str(row.metric), str(row.target_code))] = float(row.abs_gap)
+                lookup[(str(row.get("metric", "")), str(row.get("target_code", "")))] = float(row.get("abs_gap", 0.0))
             else:
-                lookup[(str(row.metric), str(row.supplier_code), str(row.buyer_code))] = float(row.abs_gap)
+                lookup[(str(row.get("metric", "")), str(row.get("supplier_code", "")), str(row.get("buyer_code", "")))] = float(row.get("abs_gap", 0.0))
         return lookup
 
     rows: list[dict[str, Any]] = []
