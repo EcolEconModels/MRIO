@@ -981,7 +981,6 @@ def _subcomponent_exceeds_aggregate_table(
         "interpretation",
     ]
     for metric, source_values, euro_values in (
-        (x_metric, source_x, eurostat_x),
         (METRIC_Y_FINAL_DEMAND_TOTAL, source_y_total, eurostat_y_total),
         (METRIC_Z_ROW_INTERMEDIATE_SALES, source_row_total, eurostat_row_total),
     ):
@@ -998,6 +997,35 @@ def _subcomponent_exceeds_aggregate_table(
                 rows.append(
                     {
                         "metric": metric,
+                        "target_code": target_code,
+                        "target_label": euro_labels.get(target_code, target_code),
+                        "buyer_code": "",
+                        "buyer_label": "",
+                        "exio_subsector_code": source_code,
+                        "exio_subsector_label": exio_labels.get(source_code, source_code),
+                        "exio_subsector_value": source_value,
+                        "eurostat_aggregate_value": euro_value,
+                        "ratio": _safe_ratio(source_value, euro_value),
+                        "abs_gap": abs_gap,
+                        "severity": _severity(rel_gap, rel_threshold),
+                        "issue_type": "SUBSECTOR_EXCEEDS_AGGREGATE",
+                        "interpretation": f"{source_code} {exio_labels.get(source_code, source_code)} exceeds the Eurostat aggregate for {target_code}.",
+                    }
+                )
+    if x_metric != METRIC_X_OUTPUT_PROXY_TOTAL_USE:
+        for row in mapping_weights.itertuples(index=False):
+            if row.target_code not in eurostat_x.index:
+                continue
+            source_code = str(row.source_code)
+            target_code = str(row.target_code)
+            source_value = float(source_x.get(source_code, 0.0)) * float(row.weight)
+            euro_value = float(eurostat_x.get(target_code, 0.0))
+            abs_gap = abs(source_value - euro_value)
+            rel_gap = _relative_gap(source_value, euro_value)
+            if source_value > euro_value * DEFAULT_SUBCOMPONENT_RATIO and abs_gap >= min_abs_meur and rel_gap >= rel_threshold:
+                rows.append(
+                    {
+                        "metric": x_metric,
                         "target_code": target_code,
                         "target_label": euro_labels.get(target_code, target_code),
                         "buyer_code": "",

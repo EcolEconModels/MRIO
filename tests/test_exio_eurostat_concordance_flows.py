@@ -501,6 +501,11 @@ def test_consolidated_summary_uses_country_and_numeric_formatting(tmp_path: Path
     assert "20.0" in summary_text
     assert "50.0%" in summary_text or "100.0%" in summary_text
     assert "1.00" in summary_text
+    assert "By the selected thresholds" not in summary_text
+    aggregate_flags = pd.read_csv(paths["consolidated_aggregate_flags.csv"])
+    assert f"- Number of aggregate flags in domestic audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('domestic')].shape[0])}" in summary_text
+    assert f"- Number of aggregate flags in imports audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('imports')].shape[0])}" in summary_text
+    assert f"- Number of aggregate flags in total audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('total')].shape[0])}" in summary_text
     quality = pd.read_csv(paths["audit_quality_summary.csv"])
     assert set(quality["block"].astype(str)).issuperset({"Z_ROW_INTERMEDIATE_SALES", "Z_COL_INTERMEDIATE_PURCHASES", "Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY", "Z_CELL"})
 

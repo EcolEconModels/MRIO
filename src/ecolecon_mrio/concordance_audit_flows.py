@@ -731,7 +731,12 @@ def _quality_sector_frame(flow: str, result: ConcordanceAuditResult, *, eurostat
     rel_threshold = float(result.metadata.get("rel_threshold", DEFAULT_REL_THRESHOLD))
     rows: list[dict[str, Any]] = []
     aggregate_frame = result.aggregate_totals.copy()
-    aggregate_frame = aggregate_frame[aggregate_frame["metric"].astype(str).isin({METRIC_Y_FINAL_DEMAND_TOTAL, METRIC_X_OUTPUT_PROXY_TOTAL_USE})].copy()
+    available_metrics = set(aggregate_frame["metric"].astype(str)) if not aggregate_frame.empty else set()
+    total_use_metric = METRIC_TOTAL_USE if METRIC_TOTAL_USE in available_metrics else METRIC_X_OUTPUT_PROXY_TOTAL_USE if METRIC_X_OUTPUT_PROXY_TOTAL_USE in available_metrics else None
+    aggregate_metrics = {METRIC_Y_FINAL_DEMAND_TOTAL}
+    if total_use_metric is not None:
+        aggregate_metrics.add(total_use_metric)
+    aggregate_frame = aggregate_frame[aggregate_frame["metric"].astype(str).isin(aggregate_metrics)].copy()
     if not aggregate_frame.empty:
         for metric, metric_frame in aggregate_frame.groupby(aggregate_frame["metric"].astype(str), sort=False):
             metric_block = _quality_metric_label(metric)
@@ -863,7 +868,7 @@ def _quality_summary_frame(sector_quality: pd.DataFrame, z_cell_quality: pd.Data
             block_frame = source_frame[source_frame["block"].astype(str).eq(block)].copy()
             if block_frame.empty:
                 continue
-            eurostat_mass = float(block_frame["eurostat_value"].abs().sum())
+            eurostat_mass = float(block_frame["eurostat_value"].abs().sum()) if not block_frame.empty else 0.0
             exio_mapped_mass = float(block_frame["exio_mapped_value"].abs().sum())
             signed_gap_total = float(block_frame["signed_gap"].sum())
             absolute_discrepancy_mass = float(block_frame["abs_gap"].sum())
@@ -1033,22 +1038,21 @@ def _format_quality_summary_md(quality_summary: pd.DataFrame, bucket_summary: pd
         bucket_view["cell_count_share"] = bucket_view["cell_count_share"].map(fmt_pct)
         lines.append(_markdown_table(bucket_view, columns=["flow", "block", "bucket", "cell_count", "cell_count_share", "eurostat_mass", "eurostat_mass_share", "abs_gap", "abs_gap_share"], max_rows=200))
 
-    overall = quality_summary.copy()
-    if not overall.empty:
-        eurostat_mass = float(overall["eurostat_mass"].sum())
-        within_20 = float(overall["share_of_eurostat_mass_within_20pct_gap"].mul(overall["eurostat_mass"]).sum())
-        flagged_mass = float(overall["flagged_eurostat_mass"].sum())
-        top10_conc = float(overall["top10_abs_gap_share"].mul(overall["absolute_discrepancy_mass"]).sum() / max(float(overall["absolute_discrepancy_mass"].sum()), EPS))
-        if _safe_ratio(within_20, eurostat_mass) >= 0.8 and _safe_ratio(flagged_mass, eurostat_mass) <= 0.2:
-            agreement_text = "high agreement"
-        elif _safe_ratio(within_20, eurostat_mass) >= 0.5:
-            agreement_text = "moderate agreement"
-        else:
-            agreement_text = "low agreement"
-        lines.extend([
-            "",
-            f"By the selected thresholds, agreement is {agreement_text} because {_safe_ratio(within_20, eurostat_mass):.1%} of Eurostat mass sits within 20% gap, flagged Eurostat mass is {_safe_ratio(flagged_mass, eurostat_mass):.1%}, and the top-10 discrepancies capture about {top10_conc:.1%} of total absolute gap.",
-        ])
+    if not quality_summary.empty:
+        lines.extend(["", "### Agreement by flow and block", ""])
+        for row in quality_summary.itertuples(index=False):
+            within_20_share = float(row.share_of_eurostat_mass_within_20pct_gap)
+            flagged_share = float(row.flagged_eurostat_mass_share)
+            top10_share = float(row.top10_abs_gap_share)
+            if within_20_share >= 0.8 and flagged_share <= 0.2:
+                agreement_text = "high agreement"
+            elif within_20_share >= 0.5:
+                agreement_text = "moderate agreement"
+            else:
+                agreement_text = "low agreement"
+            lines.append(
+                f"- {row.flow} / {row.block}: agreement is {agreement_text} because {within_20_share:.1%} of Eurostat mass sits within 20% gap, flagged Eurostat mass is {flagged_share:.1%}, and the top-10 discrepancies capture about {top10_share:.1%} of total absolute gap."
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -1216,20 +1220,20 @@ def _write_paired_iot_workbook(
         mapped_z = flow_run.result.mapped_z if flow_run.result.mapped_z is not None else pd.DataFrame()
         y_euro = flow_run.result.eurostat_y_total if flow_run.result.eurostat_y_total is not None else pd.Series(dtype="float64")
         y_exio = flow_run.result.mapped_y if flow_run.result.mapped_y is not None else pd.Series(dtype="float64")
+        z_codes = sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)), set(mapped_z.index.astype(str)), set(mapped_z.columns.astype(str))))
+        z_euro_aligned = z_matrix.reindex(index=z_codes, columns=z_codes).fillna(0.0) if not z_matrix.empty else pd.DataFrame(0.0, index=z_codes, columns=z_codes)
+        z_exio_aligned = mapped_z.reindex(index=z_codes, columns=z_codes).fillna(0.0) if not mapped_z.empty else pd.DataFrame(0.0, index=z_codes, columns=z_codes)
 
         pair_sheet = _pair_display_matrix(flow_key, z_matrix, mapped_z)
         _append_sheet(pair_sheet, f"{flow_prefix}_Z_pair_display", include_index=True)
-        _add_numeric_sheet(f"{flow_prefix}_Z_eurostat", z_matrix.reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
-        _add_numeric_sheet(f"{flow_prefix}_Z_exio_mapped", mapped_z.reindex(index=sorted(set(mapped_z.index.astype(str)).union(set(mapped_z.columns.astype(str)))), columns=sorted(set(mapped_z.index.astype(str)).union(set(mapped_z.columns.astype(str))))).fillna(0.0) if not mapped_z.empty else pd.DataFrame())
-        _add_numeric_sheet(f"{flow_prefix}_Z_signed_gap", (mapped_z - z_matrix).reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
-        rel_gap_matrix = pd.DataFrame(index=z_matrix.index, columns=z_matrix.columns, dtype="float64") if not z_matrix.empty else pd.DataFrame()
-        if not z_matrix.empty:
-            aligned_euro = z_matrix.reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0)
-            aligned_exio = mapped_z.reindex(index=aligned_euro.index, columns=aligned_euro.columns).fillna(0.0) if not mapped_z.empty else pd.DataFrame(0.0, index=aligned_euro.index, columns=aligned_euro.columns)
-            rel_gap_matrix = pd.DataFrame(index=aligned_euro.index, columns=aligned_euro.columns, dtype="float64")
-            for supplier_code in aligned_euro.index:
-                for buyer_code in aligned_euro.columns:
-                    rel_gap_matrix.loc[supplier_code, buyer_code] = concordance_rel_gap(aligned_exio.loc[supplier_code, buyer_code], aligned_euro.loc[supplier_code, buyer_code])
+        _add_numeric_sheet(f"{flow_prefix}_Z_eurostat", z_euro_aligned)
+        _add_numeric_sheet(f"{flow_prefix}_Z_exio_mapped", z_exio_aligned)
+        _add_numeric_sheet(f"{flow_prefix}_Z_signed_gap", (z_exio_aligned - z_euro_aligned).fillna(0.0))
+        rel_gap_matrix = pd.DataFrame(index=z_codes, columns=z_codes, dtype="float64") if z_codes else pd.DataFrame()
+        if z_codes:
+            for supplier_code in z_codes:
+                for buyer_code in z_codes:
+                    rel_gap_matrix.loc[supplier_code, buyer_code] = concordance_rel_gap(z_exio_aligned.loc[supplier_code, buyer_code], z_euro_aligned.loc[supplier_code, buyer_code])
         _add_rel_sheet(f"{flow_prefix}_Z_rel_gap", rel_gap_matrix)
 
         y_pair = _pair_display_series(flow_key, y_euro, y_exio)
@@ -1296,9 +1300,9 @@ def _build_consolidated_summary_md(
         "They are not independently observed gross-output comparisons.",
         "",
         "## Executive summary",
-        f"- Number of aggregate flags in domestic audit: {int(domestic.result.aggregate_totals['flag'].sum())}",
-        f"- Number of aggregate flags in imports audit: {int(imports.result.aggregate_totals['flag'].sum())}",
-        f"- Number of aggregate flags in total audit: {int(total.result.aggregate_totals['flag'].sum())}",
+        f"- Number of aggregate flags in domestic audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('domestic')].shape[0])}",
+        f"- Number of aggregate flags in imports audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('imports')].shape[0])}",
+        f"- Number of aggregate flags in total audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('total')].shape[0])}",
         f"- Number of Z-cell flags in domestic audit: {int(domestic.result.z_cell_mismatches['flag'].sum())}",
         f"- Number of Z-cell flags in imports audit: {int(imports.result.z_cell_mismatches['flag'].sum())}",
         f"- Number of Z-cell flags in total audit: {int(total.result.z_cell_mismatches['flag'].sum())}",
