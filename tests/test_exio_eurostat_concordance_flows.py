@@ -15,7 +15,7 @@ from ecolecon_mrio.concordance_audit_flows import (
     write_flow_consolidated_outputs,
 )
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, build_eurostat_atomic_final_demand, select_eurostat_atomic_final_demand_columns
-from ecolecon_mrio.exio_eurostat_concordance_audit import ConcordanceAuditResult, build_concordance_audit, write_concordance_audit_outputs
+from ecolecon_mrio.exio_eurostat_concordance_audit import ConcordanceAuditResult, build_concordance_audit, concordance_rel_gap, write_concordance_audit_outputs
 
 
 def _make_matrix(label: str, values: list[list[float]]) -> pd.DataFrame:
@@ -66,6 +66,34 @@ def _make_result(
                 "severity": "HIGH",
                 "top_exio_contributors": "p2 Sector B: 10.0 (100.0%)",
             },
+            {
+                "metric": "Z_ROW_INTERMEDIATE_SALES",
+                "target_code": "CPA_A",
+                "target_label": "Sector A",
+                "exio_mapped_value": float(mapped_z.loc["CPA_A"].sum()),
+                "eurostat_value": float(eurostat_z.loc["CPA_A"].sum()),
+                "signed_gap": float(mapped_z.loc["CPA_A"].sum() - eurostat_z.loc["CPA_A"].sum()),
+                "abs_gap": abs(float(mapped_z.loc["CPA_A"].sum() - eurostat_z.loc["CPA_A"].sum())),
+                "rel_gap": 0.5,
+                "ratio_exio_to_eurostat": 1.0,
+                "flag": bool(flag_value),
+                "severity": "HIGH",
+                "top_exio_contributors": "p1 Sector A: 10.0 (100.0%)",
+            },
+            {
+                "metric": "Z_COL_INTERMEDIATE_PURCHASES",
+                "target_code": "CPA_B",
+                "target_label": "Sector B",
+                "exio_mapped_value": float(mapped_z["CPA_B"].sum()),
+                "eurostat_value": float(eurostat_z["CPA_B"].sum()),
+                "signed_gap": float(mapped_z["CPA_B"].sum() - eurostat_z["CPA_B"].sum()),
+                "abs_gap": abs(float(mapped_z["CPA_B"].sum() - eurostat_z["CPA_B"].sum())),
+                "rel_gap": 0.5,
+                "ratio_exio_to_eurostat": 1.0,
+                "flag": bool(flag_value),
+                "severity": "HIGH",
+                "top_exio_contributors": "p2 Sector B: 10.0 (100.0%)",
+            },
         ]
     )
     z_cell_mismatches = pd.DataFrame(
@@ -89,6 +117,7 @@ def _make_result(
             }
         ]
     )
+    z_row_col_mismatches = aggregate_totals[aggregate_totals["metric"].astype(str).isin({"Z_ROW_INTERMEDIATE_SALES", "Z_COL_INTERMEDIATE_PURCHASES"})].copy()
     empty = pd.DataFrame()
     return ConcordanceAuditResult(
         metadata={
@@ -110,7 +139,7 @@ def _make_result(
         aggregate_totals=aggregate_totals,
         x_mismatches=aggregate_totals[aggregate_totals["metric"].astype(str).eq("X_OUTPUT_PROXY_TOTAL_USE")].copy(),
         y_mismatches=aggregate_totals[aggregate_totals["metric"].astype(str).eq("Y_FINAL_DEMAND_TOTAL")].copy(),
-        z_row_col_mismatches=empty,
+        z_row_col_mismatches=z_row_col_mismatches,
         z_cell_mismatches=z_cell_mismatches,
         z_cell_drilldown=empty,
         y_drilldown=empty,
@@ -273,6 +302,8 @@ def test_metadata_and_report_text_contain_flow_section(tmp_path: Path) -> None:
     assert result.metadata["comparison_mode"] == "imports"
     assert result.metadata["exio_x_is_proxy"] is True
     assert result.metadata["eurostat_x_is_proxy"] is True
+    assert "X_OUTPUT_PROXY_TOTAL_USE" not in set(result.aggregate_totals["metric"].astype(str))
+    assert "TOTAL_USE_Z_PLUS_Y" in set(result.aggregate_totals["metric"].astype(str))
 
     paths = write_concordance_audit_outputs(result, tmp_path)
     report_text = Path(paths["audit_exio_eurostat_concordance.md"]).read_text(encoding="utf-8")
@@ -354,9 +385,14 @@ def test_quality_summary_and_buckets_change_when_values_differ(tmp_path: Path) -
     quality = pd.read_csv(paths["audit_quality_summary.csv"])
     changed = quality[(quality["flow"].astype(str).eq("domestic")) & (quality["block"].astype(str).eq("Z_CELL"))].iloc[0]
     assert changed["matched_mass_share"] < 1.0
+    z_quality = pd.read_csv(paths["z_cell_quality_by_flow.csv"])
+    quality_row = z_quality[(z_quality["flow"].astype(str).eq("domestic")) & (z_quality["supplier_code"].astype(str).eq("CPA_A")) & (z_quality["buyer_code"].astype(str).eq("CPA_B"))].iloc[0]
+    core_row = domestic.result.z_cell_mismatches.iloc[0]
+    assert bool(quality_row["flag"]) == bool(core_row["flag"])
+    assert quality_row["rel_gap"] == pytest.approx(concordance_rel_gap(float(quality_row["exio_mapped_value"]), float(quality_row["eurostat_value"])))
     buckets = pd.read_csv(paths["gap_bucket_summary.csv"])
     assert not buckets.empty
-    assert "EXIO zero / Eurostat positive" in set(buckets["bucket"].astype(str)) or ">100%" in set(buckets["bucket"].astype(str))
+    assert set(buckets["bucket"].astype(str)).issubset({"0–5%", "5–10%", "10–20%", "20–50%", "50–100%"})
 
 
 def test_paired_workbook_contains_expected_sheets_and_pair_text(tmp_path: Path) -> None:
@@ -398,14 +434,25 @@ def test_paired_workbook_contains_expected_sheets_and_pair_text(tmp_path: Path) 
         "DOM_Y_pair_display",
         "IMP_Y_pair_display",
         "TOTAL_Y_pair_display",
+        "DOM_IOT_pair_display",
+        "IMP_IOT_pair_display",
+        "TOTAL_IOT_pair_display",
     }
     assert expected_sheets.issubset(set(workbook.sheetnames))
+    assert len(workbook["DOM_Z_signed_gap"].conditional_formatting) == 0
+    assert len(workbook["DOM_Z_rel_gap"].conditional_formatting) > 0
     pair_sheet = workbook["DOM_Z_pair_display"]
     cell_value = next((cell.value for row in pair_sheet.iter_rows() for cell in row if isinstance(cell.value, str) and "EU:" in cell.value), None)
     assert isinstance(cell_value, str)
     assert "EX:" in cell_value
     assert "Δ:" in cell_value
     assert "gap:" in cell_value
+    iot_sheet = workbook["DOM_IOT_pair_display"]
+    iot_value = next((cell.value for row in iot_sheet.iter_rows() for cell in row if isinstance(cell.value, str) and "EU:" in cell.value), None)
+    assert isinstance(iot_value, str)
+    assert "EX:" in iot_value
+    assert "Δ:" in iot_value
+    assert "gap:" in iot_value
 
 
 def test_atomic_final_demand_excludes_exports() -> None:
@@ -454,6 +501,8 @@ def test_consolidated_summary_uses_country_and_numeric_formatting(tmp_path: Path
     assert "20.0" in summary_text
     assert "50.0%" in summary_text or "100.0%" in summary_text
     assert "1.00" in summary_text
+    quality = pd.read_csv(paths["audit_quality_summary.csv"])
+    assert set(quality["block"].astype(str)).issuperset({"Z_ROW_INTERMEDIATE_SALES", "Z_COL_INTERMEDIATE_PURCHASES", "Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY", "Z_CELL"})
 
 
 def test_imports_only_labels_are_preserved() -> None:
@@ -470,7 +519,8 @@ def test_imports_only_labels_are_preserved() -> None:
 
 
 def test_shell_wrapper_reports_finish_exit_block() -> None:
-    wrapper_text = Path("/home/agilra/EcolEconModels/MRIO/scripts/pipelines/run_exio_eurostat_concordance_audit_all_flows.sh").read_text(encoding="utf-8")
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_text = (repo_root / "scripts/pipelines/run_exio_eurostat_concordance_audit_all_flows.sh").read_text(encoding="utf-8")
     assert "set +e" in wrapper_text
     assert "wait \"$audit_pid\"" in wrapper_text
     assert "set -e" in wrapper_text

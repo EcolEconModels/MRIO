@@ -26,6 +26,7 @@ from ecolecon_mrio.exio_eurostat_concordance_audit import (
     _markdown_table,
     _severity,
     _severity_rank,
+    concordance_rel_gap,
     fmt_meur,
     fmt_pct,
     fmt_ratio,
@@ -728,42 +729,74 @@ def _safe_ratio(numerator: object, denominator: object) -> float:
 
 def _quality_sector_frame(flow: str, result: ConcordanceAuditResult, *, eurostat_labels: Mapping[str, str]) -> pd.DataFrame:
     rel_threshold = float(result.metadata.get("rel_threshold", DEFAULT_REL_THRESHOLD))
-    frame = result.aggregate_totals.copy()
-    frame = frame[frame["metric"].astype(str).isin({METRIC_Z_ROW_INTERMEDIATE_SALES, METRIC_Z_COL_INTERMEDIATE_PURCHASES, METRIC_Y_FINAL_DEMAND_TOTAL, METRIC_X_OUTPUT_PROXY_TOTAL_USE})].copy()
-    if frame.empty:
-        return frame
-
     rows: list[dict[str, Any]] = []
-    for metric, metric_frame in frame.groupby(frame["metric"].astype(str), sort=False):
-        metric_block = _quality_metric_label(metric)
-        metric_frame = metric_frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
-        eurostat_mass = float(metric_frame["eurostat_value"].abs().sum())
-        abs_gap_mass = float(metric_frame["abs_gap"].sum())
-        cumulative = metric_frame["abs_gap"].cumsum()
-        for position, row in metric_frame.iterrows():
-            abs_gap = float(row["abs_gap"])
-            euro_value = float(row["eurostat_value"])
-            exio_value = float(row["exio_mapped_value"])
-            rows.append(
-                {
-                    "flow": flow,
-                    "block": metric_block,
-                    "sector_code": str(row["target_code"]),
-                    "sector_label": str(row["target_label"]),
-                    "metric": metric_block,
-                    "eurostat_value": euro_value,
-                    "exio_mapped_value": exio_value,
-                    "signed_gap": float(row["signed_gap"]),
-                    "abs_gap": abs_gap,
-                    "rel_gap": float(row["rel_gap"]),
-                    "ratio": float(row["ratio_exio_to_eurostat"]),
-                    "eurostat_mass_share": _safe_ratio(abs(euro_value), eurostat_mass),
-                    "abs_gap_share": _safe_ratio(abs_gap, abs_gap_mass),
-                    "cumulative_abs_gap_share": _safe_ratio(float(cumulative.iloc[position]), abs_gap_mass),
-                    "flag": bool(row["flag"]),
-                    "severity": str(row["severity"]),
-                }
-            )
+    aggregate_frame = result.aggregate_totals.copy()
+    aggregate_frame = aggregate_frame[aggregate_frame["metric"].astype(str).isin({METRIC_Y_FINAL_DEMAND_TOTAL, METRIC_X_OUTPUT_PROXY_TOTAL_USE})].copy()
+    if not aggregate_frame.empty:
+        for metric, metric_frame in aggregate_frame.groupby(aggregate_frame["metric"].astype(str), sort=False):
+            metric_block = _quality_metric_label(metric)
+            metric_frame = metric_frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
+            eurostat_mass = float(metric_frame["eurostat_value"].abs().sum())
+            abs_gap_mass = float(metric_frame["abs_gap"].sum())
+            cumulative = metric_frame["abs_gap"].cumsum()
+            for position, row in metric_frame.iterrows():
+                abs_gap = float(row["abs_gap"])
+                euro_value = float(row["eurostat_value"])
+                exio_value = float(row["exio_mapped_value"])
+                rows.append(
+                    {
+                        "flow": flow,
+                        "block": metric_block,
+                        "sector_code": str(row["target_code"]),
+                        "sector_label": str(row["target_label"]),
+                        "metric": metric_block,
+                        "eurostat_value": euro_value,
+                        "exio_mapped_value": exio_value,
+                        "signed_gap": float(row["signed_gap"]),
+                        "abs_gap": abs_gap,
+                        "rel_gap": float(row["rel_gap"]),
+                        "ratio": float(row["ratio_exio_to_eurostat"]),
+                        "eurostat_mass_share": _safe_ratio(abs(euro_value), eurostat_mass),
+                        "abs_gap_share": _safe_ratio(abs_gap, abs_gap_mass),
+                        "cumulative_abs_gap_share": _safe_ratio(float(cumulative.iloc[position]), abs_gap_mass),
+                        "flag": bool(row["flag"]),
+                        "severity": str(row["severity"]),
+                    }
+                )
+
+    z_row_col_frame = result.z_row_col_mismatches.copy() if result.z_row_col_mismatches is not None else pd.DataFrame()
+    if not z_row_col_frame.empty:
+        z_row_col_frame = z_row_col_frame[z_row_col_frame["metric"].astype(str).isin({METRIC_Z_ROW_INTERMEDIATE_SALES, METRIC_Z_COL_INTERMEDIATE_PURCHASES})].copy()
+        for metric, metric_frame in z_row_col_frame.groupby(z_row_col_frame["metric"].astype(str), sort=False):
+            metric_block = _quality_metric_label(metric)
+            metric_frame = metric_frame.sort_values(["abs_gap", "rel_gap"], ascending=[False, False], kind="stable").reset_index(drop=True)
+            eurostat_mass = float(metric_frame["eurostat_value"].abs().sum())
+            abs_gap_mass = float(metric_frame["abs_gap"].sum())
+            cumulative = metric_frame["abs_gap"].cumsum()
+            for position, row in metric_frame.iterrows():
+                abs_gap = float(row["abs_gap"])
+                euro_value = float(row["eurostat_value"])
+                exio_value = float(row["exio_mapped_value"])
+                rows.append(
+                    {
+                        "flow": flow,
+                        "block": metric_block,
+                        "sector_code": str(row.get("target_code", row.get("supplier_code", row.get("buyer_code", "")))),
+                        "sector_label": str(row.get("target_label", row.get("supplier_label", row.get("buyer_label", "")))),
+                        "metric": metric_block,
+                        "eurostat_value": euro_value,
+                        "exio_mapped_value": exio_value,
+                        "signed_gap": float(row["signed_gap"]),
+                        "abs_gap": abs_gap,
+                        "rel_gap": float(row["rel_gap"]),
+                        "ratio": float(row.get("ratio_exio_to_eurostat", _safe_ratio(exio_value, euro_value))),
+                        "eurostat_mass_share": _safe_ratio(abs(euro_value), eurostat_mass),
+                        "abs_gap_share": _safe_ratio(abs_gap, abs_gap_mass),
+                        "cumulative_abs_gap_share": _safe_ratio(float(cumulative.iloc[position]), abs_gap_mass),
+                        "flag": bool(row["flag"]),
+                        "severity": str(row["severity"]),
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -786,7 +819,8 @@ def _quality_z_cell_frame(flow: str, result: ConcordanceAuditResult, *, eurostat
             euro_value = float(euro_aligned.loc[supplier_code, buyer_code])
             signed_gap = exio_value - euro_value
             abs_gap = abs(signed_gap)
-            rel_gap = _safe_ratio(abs_gap, max(abs(euro_value), EPS))
+            rel_gap = concordance_rel_gap(exio_value, euro_value)
+            flagged = abs_gap >= min_abs_meur and rel_gap >= rel_threshold
             cell_rows.append(
                 {
                     "flow": flow,
@@ -802,7 +836,7 @@ def _quality_z_cell_frame(flow: str, result: ConcordanceAuditResult, *, eurostat
                     "abs_gap": abs_gap,
                     "rel_gap": rel_gap,
                     "ratio": _safe_ratio(exio_value, euro_value),
-                    "flag": bool(abs_gap >= min_abs_meur and rel_gap >= rel_threshold),
+                    "flag": flagged,
                     "severity": _severity(rel_gap, rel_threshold),
                 }
             )
@@ -822,8 +856,8 @@ def _quality_z_cell_frame(flow: str, result: ConcordanceAuditResult, *, eurostat
 def _quality_summary_frame(sector_quality: pd.DataFrame, z_cell_quality: pd.DataFrame) -> pd.DataFrame:
     summary_frames: list[pd.DataFrame] = []
     for source_frame, block_names in (
+        (sector_quality, ["Z_ROW_INTERMEDIATE_SALES", "Z_COL_INTERMEDIATE_PURCHASES", "Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY"]),
         (z_cell_quality, ["Z_CELL"]),
-        (sector_quality, ["Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY"]),
     ):
         for block in block_names:
             block_frame = source_frame[source_frame["block"].astype(str).eq(block)].copy()
@@ -965,22 +999,6 @@ def _format_quality_summary_md(quality_summary: pd.DataFrame, bucket_summary: pd
     display = quality_summary.copy()
     display["flow"] = display["flow"].astype(str)
     display["block"] = display["block"].astype(str)
-    for column in [
-        "eurostat_mass",
-        "exio_mapped_mass",
-        "signed_gap_total",
-        "absolute_discrepancy_mass",
-        "wape_vs_eurostat",
-        "matched_mass_share",
-        "share_of_eurostat_mass_within_20pct_gap",
-        "flagged_eurostat_mass",
-        "flagged_eurostat_mass_share",
-        "flagged_abs_gap",
-        "flagged_abs_gap_share",
-        "top10_abs_gap_share",
-    ]:
-        if column in display.columns:
-            formatter = fmt_meur if column.endswith("mass") or column.endswith("gap") and column not in {"wape_vs_eurostat", "matched_mass_share", "share_of_eurostat_mass_within_20pct_gap", "flagged_eurostat_mass_share", "flagged_abs_gap_share", "top10_abs_gap_share"} else None
     summary_columns = [
         "flow",
         "block",
@@ -1015,16 +1033,21 @@ def _format_quality_summary_md(quality_summary: pd.DataFrame, bucket_summary: pd
         bucket_view["cell_count_share"] = bucket_view["cell_count_share"].map(fmt_pct)
         lines.append(_markdown_table(bucket_view, columns=["flow", "block", "bucket", "cell_count", "cell_count_share", "eurostat_mass", "eurostat_mass_share", "abs_gap", "abs_gap_share"], max_rows=200))
 
-    overall = quality_summary[quality_summary["block"].astype(str).isin({"Z_CELL", "Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY"})].copy()
+    overall = quality_summary.copy()
     if not overall.empty:
         eurostat_mass = float(overall["eurostat_mass"].sum())
         within_20 = float(overall["share_of_eurostat_mass_within_20pct_gap"].mul(overall["eurostat_mass"]).sum())
         flagged_mass = float(overall["flagged_eurostat_mass"].sum())
         top10_conc = float(overall["top10_abs_gap_share"].mul(overall["absolute_discrepancy_mass"]).sum() / max(float(overall["absolute_discrepancy_mass"].sum()), EPS))
-        agreement_text = "good" if _safe_ratio(within_20, eurostat_mass) >= 0.8 and _safe_ratio(flagged_mass, eurostat_mass) <= 0.2 else "bad"
+        if _safe_ratio(within_20, eurostat_mass) >= 0.8 and _safe_ratio(flagged_mass, eurostat_mass) <= 0.2:
+            agreement_text = "high agreement"
+        elif _safe_ratio(within_20, eurostat_mass) >= 0.5:
+            agreement_text = "moderate agreement"
+        else:
+            agreement_text = "low agreement"
         lines.extend([
             "",
-            f"The concordance is broadly {agreement_text} because {_safe_ratio(within_20, eurostat_mass):.1%} of Eurostat mass sits within 20% gap, flagged Eurostat mass is {_safe_ratio(flagged_mass, eurostat_mass):.1%}, and the top-10 discrepancies capture about {top10_conc:.1%} of total absolute gap.",
+            f"By the selected thresholds, agreement is {agreement_text} because {_safe_ratio(within_20, eurostat_mass):.1%} of Eurostat mass sits within 20% gap, flagged Eurostat mass is {_safe_ratio(flagged_mass, eurostat_mass):.1%}, and the top-10 discrepancies capture about {top10_conc:.1%} of total absolute gap.",
         ])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1036,6 +1059,51 @@ def _paired_cell_display(eurostat_value: object, exio_value: object, signed_gap:
         f"Δ: {fmt_meur(signed_gap)}",
         f"gap: {fmt_pct(rel_gap)}",
     ])
+
+
+def _iot_pair_display_frame(
+    *,
+    euro_z: pd.DataFrame,
+    exio_z: pd.DataFrame,
+    euro_y: pd.Series,
+    exio_y: pd.Series,
+    labels: Mapping[str, str],
+) -> pd.DataFrame:
+    codes = sorted(set(euro_z.index.astype(str)).union(set(euro_z.columns.astype(str)), set(exio_z.index.astype(str)), set(exio_z.columns.astype(str)), set(euro_y.index.astype(str)), set(exio_y.index.astype(str))))
+    z_columns = [code for code in codes]
+    display_columns = [f"{code} — {labels.get(code, code)}" for code in z_columns] + ["Y_TOTAL", "TOTAL_USE"]
+    display_index = [f"{code} — {labels.get(code, code)}" for code in codes]
+    euro_z_aligned = euro_z.reindex(index=codes, columns=codes).fillna(0.0) if not euro_z.empty else pd.DataFrame(0.0, index=codes, columns=codes)
+    exio_z_aligned = exio_z.reindex(index=codes, columns=codes).fillna(0.0) if not exio_z.empty else pd.DataFrame(0.0, index=codes, columns=codes)
+    euro_y_aligned = _align_series_to_index(euro_y, codes)
+    exio_y_aligned = _align_series_to_index(exio_y, codes)
+
+    frame = pd.DataFrame(index=display_index, columns=display_columns, dtype=object)
+    for row_code in codes:
+        row_label = f"{row_code} — {labels.get(row_code, row_code)}"
+        euro_row_total = float(euro_z_aligned.loc[row_code].sum() + euro_y_aligned.get(row_code, 0.0))
+        exio_row_total = float(exio_z_aligned.loc[row_code].sum() + exio_y_aligned.get(row_code, 0.0))
+        for col_code in codes:
+            col_label = f"{col_code} — {labels.get(col_code, col_code)}"
+            frame.loc[row_label, col_label] = _paired_cell_display(
+                euro_z_aligned.loc[row_code, col_code],
+                exio_z_aligned.loc[row_code, col_code],
+                float(exio_z_aligned.loc[row_code, col_code]) - float(euro_z_aligned.loc[row_code, col_code]),
+                concordance_rel_gap(exio_z_aligned.loc[row_code, col_code], euro_z_aligned.loc[row_code, col_code]),
+            )
+        frame.loc[row_label, "Y_TOTAL"] = _paired_cell_display(
+            euro_y_aligned.get(row_code, 0.0),
+            exio_y_aligned.get(row_code, 0.0),
+            float(exio_y_aligned.get(row_code, 0.0)) - float(euro_y_aligned.get(row_code, 0.0)),
+            concordance_rel_gap(exio_y_aligned.get(row_code, 0.0), euro_y_aligned.get(row_code, 0.0)),
+        )
+        frame.loc[row_label, "TOTAL_USE"] = _paired_cell_display(
+            euro_row_total,
+            exio_row_total,
+            exio_row_total - euro_row_total,
+            concordance_rel_gap(exio_row_total, euro_row_total),
+        )
+    return frame
 
 
 def _write_paired_iot_workbook(
@@ -1092,15 +1160,6 @@ def _write_paired_iot_workbook(
             worksheet.conditional_formatting.add(value_range, CellIsRule(operator="greaterThan", formula=["0.5"], fill=PatternFill("solid", fgColor="F9CB9C")))
             worksheet.conditional_formatting.add(value_range, CellIsRule(operator="greaterThan", formula=["1.0"], fill=PatternFill("solid", fgColor="F4CCCC")))
 
-    def _matrix_frame(flow_key: str, value_frame: pd.DataFrame, label: str) -> pd.DataFrame:
-        if value_frame is None or value_frame.empty:
-            return pd.DataFrame()
-        labels = {code: eurostat_labels.get(code, code) for code in sorted(set(value_frame.index.astype(str)).union(set(value_frame.columns.astype(str))))}
-        display = value_frame.copy().reindex(index=sorted(labels), columns=sorted(labels)).fillna(0.0)
-        display.index = [f"{code} — {labels.get(code, code)}" for code in display.index]
-        display.columns = [f"{code} — {labels.get(code, code)}" for code in display.columns]
-        return display
-
     def _pair_display_matrix(flow_key: str, euro_frame: pd.DataFrame, exio_frame: pd.DataFrame) -> pd.DataFrame:
         if euro_frame is None or euro_frame.empty:
             return pd.DataFrame()
@@ -1114,7 +1173,7 @@ def _write_paired_iot_workbook(
                     euro_aligned.loc[supplier_code, buyer_code],
                     exio_aligned.loc[supplier_code, buyer_code],
                     exio_aligned.loc[supplier_code, buyer_code] - euro_aligned.loc[supplier_code, buyer_code],
-                    _safe_ratio(abs(exio_aligned.loc[supplier_code, buyer_code] - euro_aligned.loc[supplier_code, buyer_code]), max(abs(euro_aligned.loc[supplier_code, buyer_code]), EPS)),
+                    concordance_rel_gap(exio_aligned.loc[supplier_code, buyer_code], euro_aligned.loc[supplier_code, buyer_code]),
                 )
         return display
 
@@ -1128,7 +1187,7 @@ def _write_paired_iot_workbook(
                 {
                     "sector_code": code,
                     "sector_label": eurostat_labels.get(code, code),
-                    "pair_display": _paired_cell_display(euro_value, exio_value, exio_value - euro_value, _safe_ratio(abs(exio_value - euro_value), max(abs(euro_value), EPS))),
+                    "pair_display": _paired_cell_display(euro_value, exio_value, exio_value - euro_value, concordance_rel_gap(exio_value, euro_value)),
                 }
             )
         return pd.DataFrame(rows)
@@ -1162,7 +1221,7 @@ def _write_paired_iot_workbook(
         _append_sheet(pair_sheet, f"{flow_prefix}_Z_pair_display", include_index=True)
         _add_numeric_sheet(f"{flow_prefix}_Z_eurostat", z_matrix.reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
         _add_numeric_sheet(f"{flow_prefix}_Z_exio_mapped", mapped_z.reindex(index=sorted(set(mapped_z.index.astype(str)).union(set(mapped_z.columns.astype(str)))), columns=sorted(set(mapped_z.index.astype(str)).union(set(mapped_z.columns.astype(str))))).fillna(0.0) if not mapped_z.empty else pd.DataFrame())
-        _add_rel_sheet(f"{flow_prefix}_Z_signed_gap", (mapped_z - z_matrix).reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
+        _add_numeric_sheet(f"{flow_prefix}_Z_signed_gap", (mapped_z - z_matrix).reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0) if not z_matrix.empty else pd.DataFrame())
         rel_gap_matrix = pd.DataFrame(index=z_matrix.index, columns=z_matrix.columns, dtype="float64") if not z_matrix.empty else pd.DataFrame()
         if not z_matrix.empty:
             aligned_euro = z_matrix.reindex(index=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str)))), columns=sorted(set(z_matrix.index.astype(str)).union(set(z_matrix.columns.astype(str))))).fillna(0.0)
@@ -1170,11 +1229,14 @@ def _write_paired_iot_workbook(
             rel_gap_matrix = pd.DataFrame(index=aligned_euro.index, columns=aligned_euro.columns, dtype="float64")
             for supplier_code in aligned_euro.index:
                 for buyer_code in aligned_euro.columns:
-                    rel_gap_matrix.loc[supplier_code, buyer_code] = _safe_ratio(abs(float(aligned_exio.loc[supplier_code, buyer_code]) - float(aligned_euro.loc[supplier_code, buyer_code])), max(abs(float(aligned_euro.loc[supplier_code, buyer_code])), EPS))
+                    rel_gap_matrix.loc[supplier_code, buyer_code] = concordance_rel_gap(aligned_exio.loc[supplier_code, buyer_code], aligned_euro.loc[supplier_code, buyer_code])
         _add_rel_sheet(f"{flow_prefix}_Z_rel_gap", rel_gap_matrix)
 
         y_pair = _pair_display_series(flow_key, y_euro, y_exio)
         _append_sheet(y_pair, f"{flow_prefix}_Y_pair_display")
+
+        iot_pair = _iot_pair_display_frame(euro_z=z_matrix, exio_z=mapped_z, euro_y=y_euro, exio_y=y_exio, labels=eurostat_labels)
+        _append_sheet(iot_pair, f"{flow_prefix}_IOT_pair_display", include_index=True)
 
     workbook_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(workbook_path)

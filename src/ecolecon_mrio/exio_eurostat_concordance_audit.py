@@ -309,6 +309,15 @@ def _relative_gap(a: float, b: float) -> float:
     return abs(a - b) / max(abs(a), abs(b), EPS)
 
 
+def concordance_rel_gap(exio_value: object, eurostat_value: object) -> float:
+    try:
+        exio_numeric = float(exio_value)
+        euro_numeric = float(eurostat_value)
+    except (TypeError, ValueError):
+        return 0.0
+    return abs(exio_numeric - euro_numeric) / max(abs(exio_numeric), abs(euro_numeric), EPS)
+
+
 def _severity(rel_gap: float, rel_threshold: float = DEFAULT_REL_THRESHOLD) -> str:
     if rel_gap >= 1.0:
         return "CRITICAL"
@@ -1122,6 +1131,8 @@ def build_concordance_audit(
     verbose: bool = False,
     full_subcomponent_z_scan: bool = False,
 ) -> ConcordanceAuditResult:
+    metadata = dict(metadata or {})
+
     def _log(message: str) -> None:
         if verbose:
             print(message, flush=True)
@@ -1233,6 +1244,8 @@ def build_concordance_audit(
         rel_threshold=rel_threshold,
         min_abs_meur=min_abs_meur,
     )
+    if bool(metadata.get("exio_x_is_proxy", False)) and bool(metadata.get("eurostat_x_is_proxy", False)) and x_metric == METRIC_X_OUTPUT_PROXY_TOTAL_USE:
+        x_comparison = x_comparison.iloc[0:0].copy()
 
     y_comparison = _aggregate_comparison_table(
         metric=METRIC_Y_FINAL_DEMAND_TOTAL,
