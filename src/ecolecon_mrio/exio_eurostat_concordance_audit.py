@@ -11,8 +11,6 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, select_eurostat_atomic_final_demand_columns
-
 
 DEFAULT_REL_THRESHOLD = 0.20
 DEFAULT_MIN_ABS_MEUR = 5.0
@@ -1402,16 +1400,26 @@ def build_concordance_audit(
         "mapped_exio_source_sectors": mapped_exio_source_sectors,
         "mapped_euro_target_sectors": mapped_euro_target_sectors,
     }
-    selected_final_demand_columns = select_eurostat_atomic_final_demand_columns(ParsedEurostatIOT(Z=eurostat_Z, Y=eurostat_Y, meta={}), include_exports=False)
-    audit_metadata.update(
-        {
-            "eurostat_final_demand_basis": "atomic_final_demand_excluding_exports",
-            "eurostat_exports_included": False,
-            "eurostat_final_demand_columns_available": [str(col) for col in eurostat_Y.columns],
-            "eurostat_final_demand_columns_selected": [str(col) for col in selected_final_demand_columns],
-            "eurostat_final_demand_columns_excluded": [str(col) for col in eurostat_Y.columns if str(col) not in set(selected_final_demand_columns)],
-        }
-    )
+    if metadata and any(key in metadata for key in ("eurostat_final_demand_basis", "eurostat_exports_included", "eurostat_final_demand_columns_available", "eurostat_final_demand_columns_selected", "eurostat_final_demand_columns_excluded")):
+        audit_metadata.update(
+            {
+                "eurostat_final_demand_basis": metadata.get("eurostat_final_demand_basis"),
+                "eurostat_exports_included": metadata.get("eurostat_exports_included"),
+                "eurostat_final_demand_columns_available": list(metadata.get("eurostat_final_demand_columns_available", [])),
+                "eurostat_final_demand_columns_selected": list(metadata.get("eurostat_final_demand_columns_selected", [])),
+                "eurostat_final_demand_columns_excluded": list(metadata.get("eurostat_final_demand_columns_excluded", [])),
+            }
+        )
+    else:
+        audit_metadata.update(
+            {
+                "eurostat_final_demand_basis": "caller_supplied_final_demand",
+                "eurostat_exports_included": None,
+                "eurostat_final_demand_columns_available": [str(col) for col in eurostat_Y.columns],
+                "eurostat_final_demand_columns_selected": [str(col) for col in eurostat_Y.columns],
+                "eurostat_final_demand_columns_excluded": [],
+            }
+        )
 
     subcomponent_exceeds_aggregate = _subcomponent_exceeds_aggregate_table(
         x_metric=x_metric,
@@ -1586,10 +1594,15 @@ def render_concordance_audit_report(
     lines.append("- Values are in million euros unless otherwise stated.")
     lines.append("")
     lines.append(f"Important caveat: if the metric is {human_metric_label(METRIC_X_OUTPUT_PROXY_TOTAL_USE)}, the Eurostat side is inferred from row totals and final demand. Do not interpret it as an independently observed Eurostat gross-output vector.")
+    if bool((mapping_coverage["mapped_targets"].astype(int) > 1).any()) or bool((mapping_coverage.get("large_value_in_ambiguous_mapping", pd.Series(dtype=bool)).astype(bool).any())):
+        lines.append("Warning: multi-target EXIO→Eurostat mappings without explicit weights are normalized equally. Discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement.")
     lines.append("")
 
     _section_heading("## Mapping coverage")
     lines.append(_markdown_table(_human_mapping_coverage_table(mapping_coverage), columns=["EXIOBASE source sector", "Mapped targets", "Mapping weight sum", "Status", "EXIOBASE x, MEUR", "EXIOBASE y total, MEUR", "EXIOBASE Z row total, MEUR", "EXIOBASE Z col total, MEUR", "Reason"], max_rows=20))
+    if bool((mapping_coverage["mapped_targets"].astype(int) > 1).any()) or bool((mapping_coverage.get("large_value_in_ambiguous_mapping", pd.Series(dtype=bool)).astype(bool).any())):
+        lines.append("")
+        lines.append("Warning: multi-target EXIO→Eurostat mappings without explicit weights are normalized equally. Discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement.")
 
     _section_heading("## Internal identities")
     lines.append(_markdown_table(_human_internal_identities_table(internal_identities), columns=["Database", "Sector", "EXIOBASE mapped x, MEUR", "Z row total, MEUR", "Y total, MEUR", "Z + Y, MEUR", "Absolute gap, MEUR", "Relative gap", "Severity", "Status", "Identity mode"], max_rows=20))

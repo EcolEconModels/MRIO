@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 import pandas as pd
 
 from ecolecon_mrio.eurostat_iot import parse_eurostat_iot
@@ -304,9 +303,6 @@ def test_concordance_audit_markdown_is_clean_and_flagged_only(tmp_path):
         min_abs_meur=1.0,
     )
     result.metadata["run_command"] = "PYTHONPATH=src .venv/bin/python scripts/run_exio_eurostat_concordance_audit.py --country AT --year 2020"
-
-    assert result.metadata["eurostat_final_demand_basis"] == "atomic_final_demand_excluding_exports"
-    assert result.metadata["eurostat_exports_included"] is False
     assert isinstance(result.metadata["eurostat_final_demand_columns_selected"], list)
     assert isinstance(result.metadata["eurostat_final_demand_columns_excluded"], list)
 
@@ -433,7 +429,7 @@ def test_parse_eurostat_iot_records_row_and_column_mismatches() -> None:
     assert parsed.meta["identified_industry_columns"] == ["CPA_A", "CPA_B"]
     assert parsed.meta["identified_final_demand_columns"] == ["P3_S13", "P6"]
     assert parsed.meta["row_codes_not_in_intermediate_columns"] == ["CPA_C"]
-    assert parsed.meta["intermediate_columns_not_in_rows"] == ["P3_S13", "P6"]
+    assert parsed.meta["intermediate_columns_not_in_rows"] == []
 
 
 def test_concordance_audit_records_selected_and_excluded_final_demand_columns() -> None:
@@ -486,7 +482,54 @@ def test_concordance_audit_records_selected_and_excluded_final_demand_columns() 
         eurostat_labels={"CPA_A": "A", "CPA_B": "B"},
         rel_threshold=0.20,
         min_abs_meur=1.0,
+        metadata={
+            "eurostat_final_demand_basis": "atomic_final_demand_excluding_exports",
+            "eurostat_exports_included": False,
+            "eurostat_final_demand_columns_available": ["P3_S13", "P3_S14", "P51G", "P52", "P53", "P6"],
+            "eurostat_final_demand_columns_selected": ["P3_S13", "P3_S14", "P51G", "P52", "P53"],
+            "eurostat_final_demand_columns_excluded": ["P6"],
+        },
     )
 
     assert result.metadata["eurostat_final_demand_columns_selected"] == ["P3_S13", "P3_S14", "P51G", "P52", "P53"]
     assert result.metadata["eurostat_final_demand_columns_excluded"] == ["P6"]
+    assert result.metadata["eurostat_final_demand_columns_available"] == ["P3_S13", "P3_S14", "P51G", "P52", "P53", "P6"]
+
+
+def test_concordance_audit_warns_about_equal_split_multi_target_mapping(tmp_path: Path) -> None:
+    from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit, write_concordance_audit_outputs
+
+    exio_Z = pd.DataFrame([[5.0]], index=["p1"], columns=["p1"])
+    exio_Y = pd.DataFrame({"FD": [10.0]}, index=["p1"])
+    exio_x = exio_Z.sum(axis=1) + exio_Y.sum(axis=1)
+    euro_Z = pd.DataFrame([[5.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"FD": [10.0, 0.0]}, index=["CPA_A", "CPA_B"])
+    euro_x = euro_Z.sum(axis=1) + euro_Y.sum(axis=1)
+    mapping = pd.DataFrame(
+        [
+            {"source_code": "p1", "target_code": "CPA_A", "enabled": "1", "source_label": "Sector", "target_label": "Sector A", "weight": 0.5},
+            {"source_code": "p1", "target_code": "CPA_B", "enabled": "1", "source_label": "Sector", "target_label": "Sector B", "weight": 0.5},
+        ]
+    )
+
+    result = build_concordance_audit(
+        country="AT",
+        year=2020,
+        exio_x=exio_x,
+        exio_Z=exio_Z,
+        exio_Y=exio_Y,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        eurostat_x=euro_x,
+        mapping_df=mapping,
+        exio_labels={"p1": "Sector"},
+        eurostat_labels={"CPA_A": "Sector A", "CPA_B": "Sector B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+
+    result.metadata["run_command"] = "PYTHONPATH=src .venv/bin/python scripts/run_exio_eurostat_concordance_audit.py --country AT --year 2020"
+    paths = write_concordance_audit_outputs(result, tmp_path)
+    report_text = Path(paths["audit_exio_eurostat_concordance.md"]).read_text(encoding="utf-8")
+
+    assert "normalized equally" in report_text

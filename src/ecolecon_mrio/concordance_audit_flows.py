@@ -1317,7 +1317,7 @@ def _write_paired_iot_workbook(
         _append_sheet(y_pair, f"{flow_prefix}_Y_pair_display")
 
         sector_totals = _sector_totals_pair_frame(flow_key, z_matrix, mapped_z, y_euro, y_exio)
-        _append_sheet(sector_totals, f"{flow_prefix}_sector_totals_pair", include_index=True)
+        _append_sheet(sector_totals, f"{flow_prefix}_sector_totals_pair", include_index=False)
 
         iot_pair = _iot_pair_display_frame(euro_z=z_matrix, exio_z=mapped_z, euro_y=y_euro, exio_y=y_exio, labels=eurostat_labels)
         _append_sheet(iot_pair, f"{flow_prefix}_IOT_pair_display", include_index=True)
@@ -1345,6 +1345,7 @@ def _build_consolidated_summary_md(
     aggregate_flags: pd.DataFrame,
     z_flags: pd.DataFrame,
     classification: pd.DataFrame,
+    mapping_risk_warning: bool,
 ) -> str:
     def _classification_view(frame: pd.DataFrame) -> pd.DataFrame:
         if frame.empty:
@@ -1427,7 +1428,9 @@ def _build_consolidated_summary_md(
         "All x-like rows in these audits are flow-specific total-use proxy comparisons: Z row total + Y total.",
         "They are not independently observed gross-output comparisons.",
         "",
-        "Eurostat final demand in all three flow audits uses atomic final-demand columns excluding exports, to match the EXIOBASE destination/use-side slice. Therefore TOTAL here means all-origin products used by the selected country, not a production-side total including exports.",
+        EXPORT_EXCLUSION_CAVEAT,
+        "",
+        "Warning: multi-target EXIO→Eurostat mappings without explicit weights are normalized equally. Discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement." if mapping_risk_warning else "",
         "",
         "## Executive summary",
         f"- Number of aggregate flags in domestic audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('domestic')].shape[0])}",
@@ -1538,6 +1541,7 @@ def write_flow_consolidated_outputs(
     quality_summary = _quality_summary_frame(sector_quality, z_cell_quality)
     gap_bucket_summary = _gap_bucket_frame(sector_quality, z_cell_quality)
     top_discrepancies = _top_discrepancy_contributors_frame(sector_quality, z_cell_quality)
+    mapping_risk_warning = bool(any((not flow_run.result.mapping_coverage.empty) and (flow_run.result.mapping_coverage["mapped_targets"].astype(int) > 1).any() for flow_run in (domestic, imports, total)))
     reconciliation = build_flow_reconciliation(
         domestic=domestic,
         imports=imports,
@@ -1602,6 +1606,7 @@ def write_flow_consolidated_outputs(
             aggregate_flags=aggregate_flags,
             z_flags=z_flags,
             classification=classification,
+            mapping_risk_warning=mapping_risk_warning,
         ),
         encoding="utf-8",
     )

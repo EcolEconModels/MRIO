@@ -517,6 +517,7 @@ def test_consolidated_summary_uses_country_and_numeric_formatting(tmp_path: Path
     classification_slice = summary_text.split("## Discrepancies flagged in both domestic and imports", 1)[1].split("## Flow reconciliation problems", 1)[0]
     assert "comparison_display" in classification_slice
     assert "CPA_A — Sector A → CPA_B — Sector B" in classification_slice
+    assert "|  —  |" not in classification_slice
     assert "|  |" not in classification_slice
     quality = pd.read_csv(paths["audit_quality_summary.csv"])
     assert set(quality["block"].astype(str)).issuperset({"Z_ROW_INTERMEDIATE_SALES", "Z_COL_INTERMEDIATE_PURCHASES", "Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY", "Z_CELL"})
