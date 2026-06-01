@@ -484,9 +484,9 @@ def _reconciliation_markdown(frame: pd.DataFrame, country: str, year: int) -> st
         display_rows: list[dict[str, Any]] = []
         for row in flagged.itertuples(index=False):
             if row.metric == METRIC_Z_CELL:
-                sector_display = f"{_display_code_label(row.supplier_code, row.supplier_label)} → {_display_code_label(row.buyer_code, row.buyer_label)}"
+                sector_display = f"{_optional_display_code_label(row.supplier_code, row.supplier_label)} → {_optional_display_code_label(row.buyer_code, row.buyer_label)}"
             else:
-                sector_display = _display_code_label(row.target_code, row.target_label)
+                sector_display = _optional_display_code_label(row.target_code, row.target_label)
             display_rows.append(
                 {
                     "Database": row.database,
@@ -510,6 +510,16 @@ def _reconciliation_markdown(frame: pd.DataFrame, country: str, year: int) -> st
             f"- For imports, EXIOBASE imports are foreign-origin products used by {country}, summed across all non-{country} origins. Partner-origin detail is not retained in this audit.",
     ])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _optional_display_code_label(code: object, label: object) -> str:
+    code_text = str(code).strip()
+    label_text = str(label).strip() if label is not None else ""
+    if not code_text or code_text.lower() == "nan":
+        return ""
+    if not label_text or label_text.lower() == "nan":
+        return code_text
+    return f"{code_text} — {label_text}"
 
 
 def _top_flag_rows(frame: pd.DataFrame, *, sort_cols: list[str], max_rows: int = 10) -> pd.DataFrame:
@@ -1266,6 +1276,54 @@ def _build_consolidated_summary_md(
     z_flags: pd.DataFrame,
     classification: pd.DataFrame,
 ) -> str:
+    def _classification_view(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return frame
+        view = frame.copy()
+        view["metric_display"] = view["metric"].map(human_metric_label)
+        if "target_code" in view.columns:
+            view["target_display"] = view.apply(lambda row: _optional_display_code_label(row.get("target_code", ""), row.get("target_label", "")), axis=1)
+        else:
+            view["target_display"] = ""
+        if "supplier_code" in view.columns:
+            view["supplier_display"] = view.apply(lambda row: _optional_display_code_label(row.get("supplier_code", ""), row.get("supplier_label", "")), axis=1)
+        else:
+            view["supplier_display"] = ""
+        if "buyer_code" in view.columns:
+            view["buyer_display"] = view.apply(lambda row: _optional_display_code_label(row.get("buyer_code", ""), row.get("buyer_label", "")), axis=1)
+        else:
+            view["buyer_display"] = ""
+        view["comparison_display"] = view.apply(
+            lambda row: row["target_display"] if str(row.get("kind", "")) == "aggregate" else f"{row['supplier_display']} → {row['buyer_display']}",
+            axis=1,
+        )
+        return view
+
+    def _reconciliation_view(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return frame
+        display_rows: list[dict[str, Any]] = []
+        for row in frame.itertuples(index=False):
+            if row.metric == METRIC_Z_CELL:
+                sector_display = f"{_optional_display_code_label(row.supplier_code, row.supplier_label)} → {_optional_display_code_label(row.buyer_code, row.buyer_label)}"
+            else:
+                sector_display = _optional_display_code_label(row.target_code, row.target_label)
+            display_rows.append(
+                {
+                    "Database": row.database,
+                    "Readable metric": human_metric_label(str(row.metric)),
+                    "Sector or supplier→buyer pair": sector_display,
+                    "Domestic value, MEUR": fmt_meur(row.domestic_value),
+                    "Imports value, MEUR": fmt_meur(row.imports_value),
+                    "Domestic + imports, MEUR": fmt_meur(row.domestic_plus_imports),
+                    "Total value, MEUR": fmt_meur(row.total_value),
+                    "Difference, MEUR": fmt_meur(row.signed_gap),
+                    "Relative gap, %": fmt_pct(row.rel_gap),
+                    "Interpretation": row.interpretation,
+                }
+            )
+        return pd.DataFrame(display_rows)
+
     def _top(frame: pd.DataFrame, *, flow: str, kind: str, n: int = 10) -> pd.DataFrame:
         if frame.empty:
             return frame
@@ -1298,6 +1356,8 @@ def _build_consolidated_summary_md(
         "## Important caveat on x-like rows",
         "All x-like rows in these audits are flow-specific total-use proxy comparisons: Z row total + Y total.",
         "They are not independently observed gross-output comparisons.",
+        "",
+        "Eurostat final demand in all three flow audits uses atomic final-demand columns excluding exports, to match the EXIOBASE destination/use-side slice. Therefore TOTAL here means all-origin products used by the selected country, not a production-side total including exports.",
         "",
         "## Executive summary",
         f"- Number of aggregate flags in domestic audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('domestic')].shape[0])}",
@@ -1345,41 +1405,25 @@ def _build_consolidated_summary_md(
     lines.extend(["", _cell_table(tot_cell), "", "## Discrepancies flagged in both domestic and imports"])
     both = classification[classification["flow_classification"].astype(str).eq("BOTH_DOMESTIC_AND_IMPORT")].copy()
     if not both.empty:
-        both["metric_display"] = both["metric"].map(human_metric_label)
-        both["target_display"] = both.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
-        both["supplier_display"] = both.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
-        both["buyer_display"] = both.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
-        lines.append(_markdown_table(both, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
+        lines.append(_markdown_table(_classification_view(both), columns=["kind", "metric_display", "comparison_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No rows were flagged in both domestic and imports.")
     lines.extend(["", "## Discrepancies mostly driven by domestic flows"])
     dom_driven = classification[classification["flow_classification"].astype(str).eq("DOMESTIC_DRIVEN")].copy()
     if not dom_driven.empty:
-        dom_driven["metric_display"] = dom_driven["metric"].map(human_metric_label)
-        dom_driven["target_display"] = dom_driven.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
-        dom_driven["supplier_display"] = dom_driven.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
-        dom_driven["buyer_display"] = dom_driven.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
-        lines.append(_markdown_table(dom_driven, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
+        lines.append(_markdown_table(_classification_view(dom_driven), columns=["kind", "metric_display", "comparison_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No domestic-driven rows were flagged.")
     lines.extend(["", "## Discrepancies mostly driven by imports"])
     imp_driven = classification[classification["flow_classification"].astype(str).eq("IMPORT_DRIVEN")].copy()
     if not imp_driven.empty:
-        imp_driven["metric_display"] = imp_driven["metric"].map(human_metric_label)
-        imp_driven["target_display"] = imp_driven.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
-        imp_driven["supplier_display"] = imp_driven.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
-        imp_driven["buyer_display"] = imp_driven.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
-        lines.append(_markdown_table(imp_driven, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
+        lines.append(_markdown_table(_classification_view(imp_driven), columns=["kind", "metric_display", "comparison_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No import-driven rows were flagged.")
     lines.extend(["", "## Total-only discrepancies"])
     total_only = classification[classification["flow_classification"].astype(str).eq("TOTAL_ONLY")].copy()
     if not total_only.empty:
-        total_only["metric_display"] = total_only["metric"].map(human_metric_label)
-        total_only["target_display"] = total_only.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
-        total_only["supplier_display"] = total_only.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
-        total_only["buyer_display"] = total_only.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
-        lines.append(_markdown_table(total_only, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
+        lines.append(_markdown_table(_classification_view(total_only), columns=["kind", "metric_display", "comparison_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No total-only rows were flagged.")
     lines.extend(["", _format_quality_summary_md(quality_summary, bucket_summary)])
@@ -1388,7 +1432,7 @@ def _build_consolidated_summary_md(
     if not recon_flagged.empty:
         recon_flagged["severity_rank"] = recon_flagged["severity"].map(_severity_rank).fillna(-1).astype(int)
         recon_flagged = recon_flagged.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
-        lines.append(_markdown_table(recon_flagged.head(20), columns=["database", "metric", "target_code", "supplier_code", "buyer_code", "domestic_value", "imports_value", "domestic_plus_imports", "total_value", "signed_gap", "rel_gap", "interpretation"], max_rows=20))
+        lines.append(_markdown_table(_reconciliation_view(recon_flagged.head(20)), columns=["Database", "Readable metric", "Sector or supplier→buyer pair", "Domestic value, MEUR", "Imports value, MEUR", "Domestic + imports, MEUR", "Total value, MEUR", "Difference, MEUR", "Relative gap, %", "Interpretation"], max_rows=20))
     else:
         lines.append("No reconciliation mismatches exceeded the selected thresholds.")
     return "\n".join(lines).rstrip() + "\n"

@@ -46,7 +46,8 @@ def main() -> int:
         print("Warning: --full-subcomponent-z-scan enables a slower full Z-cell scan.", flush=True)
 
     resolved_output_dir = Path(args.output_dir) if args.output_dir else REPO_ROOT / "outputs" / "audits" / "exio_eurostat_concordance" / args.country / str(args.year) / comparison_mode
-    run_command = shlex.join(["PYTHONPATH=src", ".venv/bin/python", str(Path(__file__).relative_to(REPO_ROOT)), *sys.argv[1:]])
+    script = str(Path(__file__).relative_to(REPO_ROOT))
+    run_command = "PYTHONPATH=src " + shlex.join([".venv/bin/python", script, *sys.argv[1:]])
 
     run_single_flow_audit(
         country=args.country,

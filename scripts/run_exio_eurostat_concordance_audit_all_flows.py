@@ -39,7 +39,8 @@ def main() -> int:
         ("imports", "imports", "IMP"),
         ("total", "total", "TOTAL"),
     ]
-    run_command = shlex.join(["PYTHONPATH=src", ".venv/bin/python", str(Path(__file__).relative_to(REPO_ROOT)), *sys.argv[1:]])
+    script = str(Path(__file__).relative_to(REPO_ROOT))
+    run_command = "PYTHONPATH=src " + shlex.join([".venv/bin/python", script, *sys.argv[1:]])
 
     runs: dict[str, FlowAuditRun] = {}
     for comparison_mode, exio_flow, eurostat_flow in flow_specs:
