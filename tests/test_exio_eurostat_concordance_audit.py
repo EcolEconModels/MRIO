@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from ecolecon_mrio.eurostat_iot import parse_eurostat_iot
+
 
 def _build_mapping(source_codes: list[str], target_codes: list[str], labels: dict[str, str]) -> pd.DataFrame:
     rows = []
@@ -303,6 +305,11 @@ def test_concordance_audit_markdown_is_clean_and_flagged_only(tmp_path):
     )
     result.metadata["run_command"] = "PYTHONPATH=src .venv/bin/python scripts/run_exio_eurostat_concordance_audit.py --country AT --year 2020"
 
+    assert result.metadata["eurostat_final_demand_basis"] == "atomic_final_demand_excluding_exports"
+    assert result.metadata["eurostat_exports_included"] is False
+    assert isinstance(result.metadata["eurostat_final_demand_columns_selected"], list)
+    assert isinstance(result.metadata["eurostat_final_demand_columns_excluded"], list)
+
     paths = write_concordance_audit_outputs(result, tmp_path)
     report_text = Path(paths["audit_exio_eurostat_concordance.md"]).read_text(encoding="utf-8")
     top_flags_text = Path(paths["audit_top_flags.md"]).read_text(encoding="utf-8")
@@ -398,3 +405,88 @@ def test_write_concordance_audit_outputs_emits_run_script(tmp_path):
     script_text = run_script.read_text(encoding="utf-8")
     assert "--country AT --year 2020" in script_text
     assert script_text.startswith("#!/usr/bin/env bash")
+
+
+def test_parse_eurostat_iot_records_row_and_column_mismatches() -> None:
+    payload = {
+        "id": ["prd_ava", "prd_use"],
+        "size": [3, 4],
+        "dimension": {
+            "prd_ava": {
+                "category": {
+                    "index": {"CPA_A": 0, "CPA_B": 1, "CPA_C": 2},
+                    "label": {"CPA_A": "Sector A", "CPA_B": "Sector B", "CPA_C": "Sector C"},
+                }
+            },
+            "prd_use": {
+                "category": {
+                    "index": {"CPA_A": 0, "CPA_B": 1, "P3_S13": 2, "P6": 3},
+                    "label": {"CPA_A": "Sector A", "CPA_B": "Sector B", "P3_S13": "Households", "P6": "Exports"},
+                }
+            },
+        },
+        "value": {str(i): float(i + 1) for i in range(12)},
+    }
+
+    parsed = parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
+
+    assert parsed.meta["identified_industry_columns"] == ["CPA_A", "CPA_B"]
+    assert parsed.meta["identified_final_demand_columns"] == ["P3_S13", "P6"]
+    assert parsed.meta["row_codes_not_in_intermediate_columns"] == ["CPA_C"]
+    assert parsed.meta["intermediate_columns_not_in_rows"] == ["P3_S13", "P6"]
+
+
+def test_concordance_audit_records_selected_and_excluded_final_demand_columns() -> None:
+    from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit
+
+    source_codes = ["p1", "p2"]
+    target_codes = ["CPA_A", "CPA_B"]
+    labels = {"p1": "A", "p2": "B", "CPA_A": "A", "CPA_B": "B"}
+    mapping = _build_mapping(source_codes, target_codes, labels)
+
+    exio_Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=source_codes, columns=source_codes)
+    exio_Y = pd.DataFrame(
+        {
+            "P3_S13": [10.0, 20.0],
+            "P3_S14": [11.0, 21.0],
+            "P51G": [12.0, 22.0],
+            "P52": [13.0, 23.0],
+            "P53": [14.0, 24.0],
+            "P6": [99.0, 199.0],
+        },
+        index=source_codes,
+    )
+    exio_x = exio_Z.sum(axis=1) + exio_Y.drop(columns=["P6"]).sum(axis=1)
+
+    euro_Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=target_codes, columns=target_codes)
+    euro_Y = pd.DataFrame(
+        {
+            "P3_S13": [10.0, 20.0],
+            "P3_S14": [11.0, 21.0],
+            "P51G": [12.0, 22.0],
+            "P52": [13.0, 23.0],
+            "P53": [14.0, 24.0],
+            "P6": [99.0, 199.0],
+        },
+        index=target_codes,
+    )
+    euro_x = euro_Z.sum(axis=1) + euro_Y.drop(columns=["P6"]).sum(axis=1)
+
+    result = build_concordance_audit(
+        country="AT",
+        year=2020,
+        exio_x=exio_x,
+        exio_Z=exio_Z,
+        exio_Y=exio_Y,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        eurostat_x=euro_x,
+        mapping_df=mapping,
+        exio_labels=labels,
+        eurostat_labels={"CPA_A": "A", "CPA_B": "B"},
+        rel_threshold=0.20,
+        min_abs_meur=1.0,
+    )
+
+    assert result.metadata["eurostat_final_demand_columns_selected"] == ["P3_S13", "P3_S14", "P51G", "P52", "P53"]
+    assert result.metadata["eurostat_final_demand_columns_excluded"] == ["P6"]

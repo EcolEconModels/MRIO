@@ -11,6 +11,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, select_eurostat_atomic_final_demand_columns
+
 
 DEFAULT_REL_THRESHOLD = 0.20
 DEFAULT_MIN_ABS_MEUR = 5.0
@@ -1400,6 +1402,16 @@ def build_concordance_audit(
         "mapped_exio_source_sectors": mapped_exio_source_sectors,
         "mapped_euro_target_sectors": mapped_euro_target_sectors,
     }
+    selected_final_demand_columns = select_eurostat_atomic_final_demand_columns(ParsedEurostatIOT(Z=eurostat_Z, Y=eurostat_Y, meta={}), include_exports=False)
+    audit_metadata.update(
+        {
+            "eurostat_final_demand_basis": "atomic_final_demand_excluding_exports",
+            "eurostat_exports_included": False,
+            "eurostat_final_demand_columns_available": [str(col) for col in eurostat_Y.columns],
+            "eurostat_final_demand_columns_selected": [str(col) for col in selected_final_demand_columns],
+            "eurostat_final_demand_columns_excluded": [str(col) for col in eurostat_Y.columns if str(col) not in set(selected_final_demand_columns)],
+        }
+    )
 
     subcomponent_exceeds_aggregate = _subcomponent_exceeds_aggregate_table(
         x_metric=x_metric,
@@ -1513,6 +1525,24 @@ def render_concordance_audit_report(
         lines.append("- Flow-specific domestic/import/total comparison based on the selected EXIOBASE and Eurostat flow slices.")
     lines.append("- x-like rows in this report are flow-specific total-use proxy comparisons, not independently observed gross-output comparisons.")
     lines.append("- Producer-side EXIOBASE x_region is not used in this audit runner for the flow comparison rows.")
+    lines.append("- Important: Eurostat final demand uses atomic final-demand columns excluding exports. Therefore this audit is destination/use-side: it compares products used by the selected country. TOTAL means domestic + imported products used by the selected country, not a production-side total including exports.")
+    final_demand_available = metadata.get("eurostat_final_demand_columns_available", [])
+    final_demand_selected = metadata.get("eurostat_final_demand_columns_selected", [])
+    final_demand_excluded = metadata.get("eurostat_final_demand_columns_excluded", [])
+    if final_demand_available:
+        lines.append("- Eurostat final-demand columns available: " + ", ".join(map(str, final_demand_available)))
+    if final_demand_selected:
+        lines.append("- Eurostat final-demand columns used: " + ", ".join(map(str, final_demand_selected)))
+    if final_demand_excluded:
+        lines.append("- Eurostat final-demand columns excluded: " + ", ".join(map(str, final_demand_excluded)))
+    row_mismatch = metadata.get("eurostat_row_codes_not_in_intermediate_columns", [])
+    col_mismatch = metadata.get("eurostat_intermediate_columns_not_in_rows", [])
+    if row_mismatch or col_mismatch:
+        lines.append("- Warning: some Eurostat row/column codes were not retained in the intermediate-use block.")
+        if row_mismatch:
+            lines.append("  - Row codes not in intermediate-use columns: " + ", ".join(map(str, row_mismatch)))
+        if col_mismatch:
+            lines.append("  - Column codes not in row set: " + ", ".join(map(str, col_mismatch)))
     lines.append("")
     _section_heading("## Executive interpretation")
     lines.append("The largest mismatches are concentrated in sectors where EXIOBASE and Eurostat allocate flows differently, and in a few supplier→buyer cells where one EXIOBASE subsector dominates the mapped flow.")

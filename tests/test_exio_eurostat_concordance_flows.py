@@ -438,6 +438,9 @@ def test_paired_workbook_contains_expected_sheets_and_pair_text(tmp_path: Path) 
         "DOM_IOT_pair_display",
         "IMP_IOT_pair_display",
         "TOTAL_IOT_pair_display",
+        "DOM_sector_totals_pair",
+        "IMP_sector_totals_pair",
+        "TOTAL_sector_totals_pair",
     }
     assert expected_sheets.issubset(set(workbook.sheetnames))
     assert len(workbook["DOM_Z_signed_gap"].conditional_formatting) == 0
@@ -503,6 +506,7 @@ def test_consolidated_summary_uses_country_and_numeric_formatting(tmp_path: Path
     assert "50.0%" in summary_text or "100.0%" in summary_text
     assert "1.00" in summary_text
     assert "By the selected thresholds" not in summary_text
+    assert "excluding exports" in summary_text
     aggregate_flags = pd.read_csv(paths["consolidated_aggregate_flags.csv"])
     assert f"- Number of aggregate flags in domestic audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('domestic')].shape[0])}" in summary_text
     assert f"- Number of aggregate flags in imports audit: {int(aggregate_flags[aggregate_flags['flow'].astype(str).eq('imports')].shape[0])}" in summary_text
@@ -547,6 +551,7 @@ def test_cli_propagates_thresholds(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     total = _make_flow_run("total")
 
     def fake_run_single_flow_audit(**kwargs):
+        captured["run_command"] = kwargs.get("run_command")
         result = {"domestic": domestic, "imports": imports, "total": total}[kwargs["comparison_mode"]].result
         result.metadata["country"] = kwargs["country"]
         result.metadata["year"] = kwargs["year"]
@@ -580,3 +585,4 @@ def test_cli_propagates_thresholds(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert script.main() == 0
     assert captured["rel_threshold"] == 0.15
     assert captured["min_abs_meur"] == 3.0
+    assert str(captured["run_command"]).startswith("PYTHONPATH=src .venv/bin/python ")

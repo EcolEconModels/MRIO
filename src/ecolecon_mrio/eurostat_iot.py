@@ -424,6 +424,8 @@ def parse_eurostat_iot(
     industries = pd.Index(df.index.astype(str))
     columns = pd.Index(df.columns.astype(str))
     industry_set = set(map(str, industries))
+    row_codes = set(map(str, industries))
+    column_codes = set(map(str, columns))
 
     ind_cols = [c for c in columns if c in industry_set]
     fd_cols = [c for c in columns if c not in industry_set]
@@ -449,6 +451,8 @@ def parse_eurostat_iot(
         "col_dim": col_dim,
         "identified_industry_columns": ind_cols,
         "identified_final_demand_columns": fd_cols,
+        "row_codes_not_in_intermediate_columns": sorted(row_codes - set(ind_cols)),
+        "intermediate_columns_not_in_rows": sorted(column_codes - row_codes),
     }
     return ParsedEurostatIOT(Z=Z, Y=Y, meta=meta)
 

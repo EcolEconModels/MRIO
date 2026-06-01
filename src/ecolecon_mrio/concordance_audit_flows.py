@@ -9,6 +9,7 @@ import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import build_eurostat_atomic_final_demand, download_eurostat_dataset, parse_eurostat_iot, read_eurostat_raw
+from ecolecon_mrio.eurostat_iot import select_eurostat_atomic_final_demand_columns
 from ecolecon_mrio.exio_eurostat_concordance_audit import (
     ConcordanceAuditResult,
     DEFAULT_MIN_ABS_MEUR,
@@ -46,6 +47,12 @@ FLOW_MODE_MAP = {
     "imports": {"exio_flow": "imports", "eurostat_flow": "IMP"},
     "total": {"exio_flow": "total", "eurostat_flow": "TOTAL"},
 }
+
+EXPORT_EXCLUSION_CAVEAT = (
+    "Important: Eurostat final demand uses atomic final-demand columns excluding exports. "
+    "Therefore this audit is destination/use-side: it compares products used by the selected country. "
+    "TOTAL means domestic + imported products used by the selected country, not a production-side total including exports."
+)
 
 
 @dataclass(frozen=True)
@@ -148,6 +155,7 @@ def run_single_flow_audit(
     )
     parsed = parse_eurostat_iot(read_eurostat_raw(euro_dataset_obj.raw_path), row_dim="prd_ava", col_dim="prd_use")
     eurostat_Y_atomic = build_eurostat_atomic_final_demand(parsed, include_exports=False)
+    selected_final_demand_columns = select_eurostat_atomic_final_demand_columns(parsed, include_exports=False)
 
     exio = load_exiobase3_region_slice(
         year=resolved_exio_year,
@@ -182,6 +190,11 @@ def run_single_flow_audit(
             "min_abs_meur": min_abs_meur,
             "eurostat_final_demand_basis": "atomic_final_demand_excluding_exports",
             "eurostat_exports_included": False,
+            "eurostat_final_demand_columns_available": [str(col) for col in parsed.Y.columns],
+            "eurostat_final_demand_columns_selected": [str(col) for col in selected_final_demand_columns],
+            "eurostat_final_demand_columns_excluded": [str(col) for col in parsed.Y.columns if str(col) not in set(selected_final_demand_columns)],
+            "eurostat_row_codes_not_in_intermediate_columns": parsed.meta.get("row_codes_not_in_intermediate_columns", []),
+            "eurostat_intermediate_columns_not_in_rows": parsed.meta.get("intermediate_columns_not_in_rows", []),
             "exio_x_is_proxy": True,
             "exio_x_proxy_basis": "Z row total + Y row total for selected EXIO flow slice",
             "eurostat_x_is_proxy": True,
@@ -507,7 +520,8 @@ def _reconciliation_markdown(frame: pd.DataFrame, country: str, year: int) -> st
     lines.extend([
         "",
         "## Notes",
-            f"- For imports, EXIOBASE imports are foreign-origin products used by {country}, summed across all non-{country} origins. Partner-origin detail is not retained in this audit.",
+        EXPORT_EXCLUSION_CAVEAT,
+        f"- For imports, EXIOBASE imports are foreign-origin products used by {country}, summed across all non-{country} origins. Partner-origin detail is not retained in this audit.",
     ])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -520,6 +534,30 @@ def _optional_display_code_label(code: object, label: object) -> str:
     if not label_text or label_text.lower() == "nan":
         return code_text
     return f"{code_text} — {label_text}"
+
+
+def _reconciliation_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    display_rows: list[dict[str, Any]] = []
+    for row in frame.itertuples(index=False):
+        if row.metric == METRIC_Z_CELL:
+            sector_display = f"{_optional_display_code_label(row.supplier_code, row.supplier_label)} → {_optional_display_code_label(row.buyer_code, row.buyer_label)}"
+        else:
+            sector_display = _optional_display_code_label(row.target_code, row.target_label)
+        display_rows.append(
+            {
+                "Database": row.database,
+                "Readable metric": human_metric_label(str(row.metric)),
+                "Sector or supplier→buyer pair": sector_display,
+                "Domestic value, MEUR": fmt_meur(row.domestic_value),
+                "Imports value, MEUR": fmt_meur(row.imports_value),
+                "Domestic + imports, MEUR": fmt_meur(row.domestic_plus_imports),
+                "Total value, MEUR": fmt_meur(row.total_value),
+                "Difference, MEUR": fmt_meur(row.signed_gap),
+                "Relative gap, %": fmt_pct(row.rel_gap),
+                "Interpretation": row.interpretation,
+            }
+        )
+    return pd.DataFrame(display_rows)
 
 
 def _top_flag_rows(frame: pd.DataFrame, *, sort_cols: list[str], max_rows: int = 10) -> pd.DataFrame:
@@ -1006,7 +1044,7 @@ def _top_discrepancy_contributors_frame(sector_quality: pd.DataFrame, z_cell_qua
 
 
 def _format_quality_summary_md(quality_summary: pd.DataFrame, bucket_summary: pd.DataFrame) -> str:
-    lines = ["## How much of the concordance agrees?", ""]
+    lines = ["## How much of the concordance agrees?", "", EXPORT_EXCLUSION_CAVEAT, "", "These are overlapping diagnostic views; do not sum across blocks as independent error shares.", ""]
     if quality_summary.empty:
         lines.append("No quality summary rows were produced.")
         return "\n".join(lines).rstrip() + "\n"
@@ -1206,6 +1244,34 @@ def _write_paired_iot_workbook(
             )
         return pd.DataFrame(rows)
 
+    def _sector_totals_pair_frame(flow_key: str, euro_z: pd.DataFrame, exio_z: pd.DataFrame, euro_y: pd.Series, exio_y: pd.Series) -> pd.DataFrame:
+        codes = sorted(set(euro_z.index.astype(str)).union(set(euro_z.columns.astype(str)), set(exio_z.index.astype(str)), set(exio_z.columns.astype(str)), set(euro_y.index.astype(str)), set(exio_y.index.astype(str))))
+        euro_z_aligned = euro_z.reindex(index=codes, columns=codes).fillna(0.0) if not euro_z.empty else pd.DataFrame(0.0, index=codes, columns=codes)
+        exio_z_aligned = exio_z.reindex(index=codes, columns=codes).fillna(0.0) if not exio_z.empty else pd.DataFrame(0.0, index=codes, columns=codes)
+        euro_y_aligned = euro_y.reindex(index=codes).fillna(0.0) if not euro_y.empty else pd.Series(0.0, index=codes, dtype="float64")
+        exio_y_aligned = exio_y.reindex(index=codes).fillna(0.0) if not exio_y.empty else pd.Series(0.0, index=codes, dtype="float64")
+        rows: list[dict[str, Any]] = []
+        for code in codes:
+            euro_row = float(euro_z_aligned.loc[code].sum())
+            exio_row = float(exio_z_aligned.loc[code].sum())
+            euro_col = float(euro_z_aligned[code].sum())
+            exio_col = float(exio_z_aligned[code].sum())
+            euro_y_value = float(euro_y_aligned.get(code, 0.0))
+            exio_y_value = float(exio_y_aligned.get(code, 0.0))
+            euro_total = euro_row + euro_y_value
+            exio_total = exio_row + exio_y_value
+            rows.append(
+                {
+                    "sector_code": code,
+                    "sector_label": eurostat_labels.get(code, code),
+                    "Z row pair_display": _paired_cell_display(euro_row, exio_row, exio_row - euro_row, concordance_rel_gap(exio_row, euro_row)),
+                    "Z col pair_display": _paired_cell_display(euro_col, exio_col, exio_col - euro_col, concordance_rel_gap(exio_col, euro_col)),
+                    "Y pair_display": _paired_cell_display(euro_y_value, exio_y_value, exio_y_value - euro_y_value, concordance_rel_gap(exio_y_value, euro_y_value)),
+                    "TOTAL_USE pair_display": _paired_cell_display(euro_total, exio_total, exio_total - euro_total, concordance_rel_gap(exio_total, euro_total)),
+                }
+            )
+        return pd.DataFrame(rows)
+
     def _single_sheet_sheet_name(prefix: str, suffix: str) -> str:
         return f"{prefix}_{suffix}"
 
@@ -1214,6 +1280,7 @@ def _write_paired_iot_workbook(
             {"item": "country", "value": country},
             {"item": "year", "value": year},
             {"item": "purpose", "value": "Paired Eurostat vs EXIOBASE concordance workbook."},
+            {"item": "destination_use_caveat", "value": EXPORT_EXCLUSION_CAVEAT},
             {"item": "pair_display_format", "value": "EU / EX / Δ / gap"},
             {"item": "relative_gap_threshold_highlight", "value": ">20%, >50%, >100%"},
             {"item": "paired sheets", "value": "Cells contain Eurostat and EXIOBASE values, signed gap, and relative gap."},
@@ -1248,6 +1315,9 @@ def _write_paired_iot_workbook(
 
         y_pair = _pair_display_series(flow_key, y_euro, y_exio)
         _append_sheet(y_pair, f"{flow_prefix}_Y_pair_display")
+
+        sector_totals = _sector_totals_pair_frame(flow_key, z_matrix, mapped_z, y_euro, y_exio)
+        _append_sheet(sector_totals, f"{flow_prefix}_sector_totals_pair", include_index=True)
 
         iot_pair = _iot_pair_display_frame(euro_z=z_matrix, exio_z=mapped_z, euro_y=y_euro, exio_y=y_exio, labels=eurostat_labels)
         _append_sheet(iot_pair, f"{flow_prefix}_IOT_pair_display", include_index=True)
@@ -1432,6 +1502,7 @@ def _build_consolidated_summary_md(
     if not recon_flagged.empty:
         recon_flagged["severity_rank"] = recon_flagged["severity"].map(_severity_rank).fillna(-1).astype(int)
         recon_flagged = recon_flagged.sort_values(["severity_rank", "abs_gap", "rel_gap"], ascending=[False, False, False], kind="stable").drop(columns=["severity_rank"])
+        lines.append("TOTAL_USE is a derived check equal to Z row total + final demand. If it fails, inspect Z_ROW_INTERMEDIATE_SALES and Y_FINAL_DEMAND_TOTAL for the same sector.")
         lines.append(_markdown_table(_reconciliation_view(recon_flagged.head(20)), columns=["Database", "Readable metric", "Sector or supplier→buyer pair", "Domestic value, MEUR", "Imports value, MEUR", "Domestic + imports, MEUR", "Total value, MEUR", "Difference, MEUR", "Relative gap, %", "Interpretation"], max_rows=20))
     else:
         lines.append("No reconciliation mismatches exceeded the selected thresholds.")
