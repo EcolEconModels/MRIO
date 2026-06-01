@@ -441,7 +441,7 @@ def build_flow_reconciliation(
             rows.append(
                 _recon_row(
                     database=database,
-                    metric=METRIC_X_OUTPUT_PROXY_TOTAL_USE,
+                    metric=METRIC_TOTAL_USE,
                     target_code=code,
                     target_label=eurostat_labels.get(code, code),
                     domestic_value=float(dom_x_aligned.get(code, 0.0)),
@@ -507,7 +507,7 @@ def _reconciliation_markdown(frame: pd.DataFrame, country: str, year: int) -> st
     lines.extend([
         "",
         "## Notes",
-        "- For imports, EXIOBASE imports are foreign-origin products used by AT, summed across all non-AT origins. Partner-origin detail is not retained in this audit.",
+            f"- For imports, EXIOBASE imports are foreign-origin products used by {country}, summed across all non-{country} origins. Partner-origin detail is not retained in this audit.",
     ])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -684,7 +684,7 @@ def _flow_classification_frame(domestic: pd.DataFrame, imports: pd.DataFrame, to
 
 def _quality_metric_label(metric: str) -> str:
     metric_text = str(metric)
-    if metric_text == METRIC_X_OUTPUT_PROXY_TOTAL_USE:
+    if metric_text in {METRIC_X_OUTPUT_PROXY_TOTAL_USE, METRIC_TOTAL_USE}:
         return "TOTAL_USE_PROXY"
     return metric_text
 
@@ -1345,25 +1345,41 @@ def _build_consolidated_summary_md(
     lines.extend(["", _cell_table(tot_cell), "", "## Discrepancies flagged in both domestic and imports"])
     both = classification[classification["flow_classification"].astype(str).eq("BOTH_DOMESTIC_AND_IMPORT")].copy()
     if not both.empty:
-        lines.append(_markdown_table(both, columns=["kind", "metric", "target_code", "supplier_code", "buyer_code", "flow_classification"], max_rows=20))
+        both["metric_display"] = both["metric"].map(human_metric_label)
+        both["target_display"] = both.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
+        both["supplier_display"] = both.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
+        both["buyer_display"] = both.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
+        lines.append(_markdown_table(both, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No rows were flagged in both domestic and imports.")
     lines.extend(["", "## Discrepancies mostly driven by domestic flows"])
     dom_driven = classification[classification["flow_classification"].astype(str).eq("DOMESTIC_DRIVEN")].copy()
     if not dom_driven.empty:
-        lines.append(_markdown_table(dom_driven, columns=["kind", "metric", "target_code", "supplier_code", "buyer_code", "flow_classification"], max_rows=20))
+        dom_driven["metric_display"] = dom_driven["metric"].map(human_metric_label)
+        dom_driven["target_display"] = dom_driven.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
+        dom_driven["supplier_display"] = dom_driven.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
+        dom_driven["buyer_display"] = dom_driven.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
+        lines.append(_markdown_table(dom_driven, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No domestic-driven rows were flagged.")
     lines.extend(["", "## Discrepancies mostly driven by imports"])
     imp_driven = classification[classification["flow_classification"].astype(str).eq("IMPORT_DRIVEN")].copy()
     if not imp_driven.empty:
-        lines.append(_markdown_table(imp_driven, columns=["kind", "metric", "target_code", "supplier_code", "buyer_code", "flow_classification"], max_rows=20))
+        imp_driven["metric_display"] = imp_driven["metric"].map(human_metric_label)
+        imp_driven["target_display"] = imp_driven.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
+        imp_driven["supplier_display"] = imp_driven.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
+        imp_driven["buyer_display"] = imp_driven.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
+        lines.append(_markdown_table(imp_driven, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No import-driven rows were flagged.")
     lines.extend(["", "## Total-only discrepancies"])
     total_only = classification[classification["flow_classification"].astype(str).eq("TOTAL_ONLY")].copy()
     if not total_only.empty:
-        lines.append(_markdown_table(total_only, columns=["kind", "metric", "target_code", "supplier_code", "buyer_code", "flow_classification"], max_rows=20))
+        total_only["metric_display"] = total_only["metric"].map(human_metric_label)
+        total_only["target_display"] = total_only.apply(lambda row: _display_code_label(row["target_code"], row["target_label"]), axis=1)
+        total_only["supplier_display"] = total_only.apply(lambda row: _display_code_label(row["supplier_code"], row["supplier_label"]), axis=1)
+        total_only["buyer_display"] = total_only.apply(lambda row: _display_code_label(row["buyer_code"], row["buyer_label"]), axis=1)
+        lines.append(_markdown_table(total_only, columns=["kind", "metric_display", "target_display", "supplier_display", "buyer_display", "flow_classification"], max_rows=20))
     else:
         lines.append("No total-only rows were flagged.")
     lines.extend(["", _format_quality_summary_md(quality_summary, bucket_summary)])

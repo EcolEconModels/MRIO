@@ -15,7 +15,7 @@ from ecolecon_mrio.concordance_audit_flows import (
     write_flow_consolidated_outputs,
 )
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, build_eurostat_atomic_final_demand, select_eurostat_atomic_final_demand_columns
-from ecolecon_mrio.exio_eurostat_concordance_audit import ConcordanceAuditResult, build_concordance_audit, concordance_rel_gap, write_concordance_audit_outputs
+from ecolecon_mrio.exio_eurostat_concordance_audit import METRIC_TOTAL_USE, ConcordanceAuditResult, build_concordance_audit, concordance_rel_gap, write_concordance_audit_outputs
 
 
 def _make_matrix(label: str, values: list[list[float]]) -> pd.DataFrame:
@@ -39,7 +39,7 @@ def _make_result(
     aggregate_totals = pd.DataFrame(
         [
             {
-                "metric": "X_OUTPUT_PROXY_TOTAL_USE",
+                "metric": METRIC_TOTAL_USE,
                 "target_code": "CPA_A",
                 "target_label": "Sector A",
                 "exio_mapped_value": float(mapped_x.get("CPA_A", 0.0)),
@@ -137,7 +137,7 @@ def _make_result(
         mapping_coverage=empty,
         internal_identities=empty,
         aggregate_totals=aggregate_totals,
-        x_mismatches=aggregate_totals[aggregate_totals["metric"].astype(str).eq("X_OUTPUT_PROXY_TOTAL_USE")].copy(),
+        x_mismatches=aggregate_totals[aggregate_totals["metric"].astype(str).eq(METRIC_TOTAL_USE)].copy(),
         y_mismatches=aggregate_totals[aggregate_totals["metric"].astype(str).eq("Y_FINAL_DEMAND_TOTAL")].copy(),
         z_row_col_mismatches=z_row_col_mismatches,
         z_cell_mismatches=z_cell_mismatches,
@@ -385,6 +385,7 @@ def test_quality_summary_and_buckets_change_when_values_differ(tmp_path: Path) -
     quality = pd.read_csv(paths["audit_quality_summary.csv"])
     changed = quality[(quality["flow"].astype(str).eq("domestic")) & (quality["block"].astype(str).eq("Z_CELL"))].iloc[0]
     assert changed["matched_mass_share"] < 1.0
+    assert {"Y_FINAL_DEMAND_TOTAL", "TOTAL_USE_PROXY", "Z_ROW_INTERMEDIATE_SALES", "Z_COL_INTERMEDIATE_PURCHASES", "Z_CELL"}.issubset(set(quality["block"].astype(str)))
     z_quality = pd.read_csv(paths["z_cell_quality_by_flow.csv"])
     quality_row = z_quality[(z_quality["flow"].astype(str).eq("domestic")) & (z_quality["supplier_code"].astype(str).eq("CPA_A")) & (z_quality["buyer_code"].astype(str).eq("CPA_B"))].iloc[0]
     core_row = domestic.result.z_cell_mismatches.iloc[0]
