@@ -1,0 +1,27 @@
+source_code,source_label,target_code,target_label,enabled,notes
+EB_C19_COAL,C19 coal/coke component,CPA_C19_COAL,CPA_C19: Coal,True,Energy-Balance-derived split child.
+EB_C19_OIL,C19 oil/refined petroleum component,CPA_C19_OIL,CPA_C19: Oil,True,Energy-Balance-derived split child.
+EB_C19_RESIDUAL,C19 residual refined petroleum/coke output,CPA_C19_OIL,CPA_C19: Oil,True,Parent residual assigned conservatively to CPA_C19 oil/refined petroleum target.
+EB_C20_ADVANCED_BIOGASOLINE,Advanced biogasoline,CPA_C20_ADVANCED_BIOGASOLINE,CPA_C20: Advanced biogasoline,True,Advanced component subtracted from EB pure+blended biogasoline selector.
+EB_C20_CONVENTIONAL_BIOGASOLINE,Conventional biogasoline,CPA_C20_CONVENTIONAL_BIOGASOLINE,CPA_C20: Conventional biogasoline,True,Selector residual after advanced biogasoline subtraction.
+EB_C20_ADVANCED_BIODIESEL,Advanced biodiesel,CPA_C20_ADVANCED_BIODIESEL,CPA_C20: Advanced biodiesel,True,Advanced component subtracted from EB pure+blended biodiesel selector.
+EB_C20_CONVENTIONAL_BIODIESEL,Conventional biodiesel,CPA_C20_CONVENTIONAL_BIODIESEL,CPA_C20: Conventional biodiesel,True,Selector residual after advanced biodiesel subtraction.
+EB_C20_ADVANCED_BIOKEROSENE,Advanced biokerosene,CPA_C20_ADVANCED_BIOKEROSENE,CPA_C20: Advanced biokerosene,True,Advanced component subtracted from EB pure+blended biokerosene selector.
+EB_C20_CONVENTIONAL_BIOKEROSENE,Conventional biokerosene,CPA_C20_CONVENTIONAL_BIOKEROSENE,CPA_C20: Conventional biokerosene,True,Selector residual after advanced biokerosene subtraction.
+EB_C20_ADVANCED_OTHER_LIQUID_BIOFUELS,Advanced other liquid biofuels,CPA_C20_ADVANCED_OTHER_LIQUID_BIOFUELS,CPA_C20: Advanced other liquid biofuels,True,Advanced component subtracted from EB other-liquid-biofuels selector.
+EB_C20_CONVENTIONAL_OTHER_LIQUID_BIOFUELS,Conventional other liquid biofuels,CPA_C20_CONVENTIONAL_OTHER_LIQUID_BIOFUELS,CPA_C20: Conventional other liquid biofuels,True,Selector residual after advanced other liquid biofuel subtraction.
+EB_C20_OTHERS,C20 residual non-biofuel chemicals,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Parent residual for non-biofuel C20 chemicals.
+EB_D_ELECTRICITY_BY_COAL,Electricity by coal,CPA_D_Electricity_by_coal,CPA_D: Electricity by coal,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_GAS,Electricity by gas,CPA_D_Electricity_by_gas,CPA_D: Electricity by gas,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_NUCLEAR,Electricity by nuclear,CPA_D_Electricity_by_nuclear,CPA_D: Electricity by nuclear,True,Required even if value is zero for Austria.
+EB_D_ELECTRICITY_BY_HYDRO,Electricity by hydro,CPA_D_Electricity_by_hydro,CPA_D: Electricity by hydro,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_WIND,Electricity by wind,CPA_D_Electricity_by_wind,CPA_D: Electricity by wind,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_BIOMASS_AND_WASTE,Electricity by biomass and waste,CPA_D_Electricity_by_biomass_and_waste,CPA_D: Electricity by biomass and waste,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_SOLAR_PHOTOVOLTAIC,Electricity by solar photovoltaic,CPA_D_Electricity_by_solar_photovoltaic,CPA_D: Electricity by solar photovoltaic,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_SOLAR_THERMAL,Electricity by solar thermal,CPA_D_Electricity_by_solar_thermal,CPA_D: Electricity by solar thermal,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_BY_TIDE_WAVE_OCEAN,"Electricity by tide, wave, ocean",CPA_D_Electricity_by_tide_wave_ocean,"CPA_D: Electricity by tide, wave, ocean",True,Energy-Balance-derived split child; may be zero.
+EB_D_ELECTRICITY_BY_GEOTHERMAL,Electricity by geothermal,CPA_D_Electricity_by_Geothermal,CPA_D: Electricity by Geothermal,True,Energy-Balance-derived split child.
+EB_D_ELECTRICITY_NEC,Electricity nec,CPA_D_Electricity_nec,CPA_D: Electricity nec,True,Energy-Balance-derived split child.
+EB_D_GAS,Gas supply component,CPA_D_GAS,CPA_D: Gas,True,Energy-Balance-derived split child.
+EB_D_BIOGAS,Biogas/biomethane supply component,CPA_D_BIOGAS,CPA_D: BioGas,True,Energy-Balance-derived split child.
+EB_D_OTHERS,D residual services heat transmission distribution,CPA_D_others,"CPA_D: Electricity, gas, steam and air conditioning_others",True,Parent residual for transmission distribution steam heat and other D services.
