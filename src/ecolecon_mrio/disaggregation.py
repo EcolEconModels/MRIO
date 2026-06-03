@@ -100,17 +100,62 @@ def _outer_share_matrix(row_share: pd.Series, col_share: pd.Series) -> pd.DataFr
     return pd.DataFrame(M, index=row_share.index, columns=col_share.index)
 
 
+def _normalized_reindexed_share(series: pd.Series, labels: Sequence[str], *, name: str) -> pd.Series:
+    share = series.reindex(list(map(str, labels))).fillna(0.0).astype("float64")
+    total = float(share.sum())
+    if not np.isfinite(total) or total <= 0:
+        raise ValueError(f"Cannot use {name}: non-positive/non-finite share sum {total}.")
+    return share / total
+
+
+def _column_share_for(
+    *,
+    row_sector: str,
+    col_sector: str,
+    col_labels: Sequence[str],
+    split_profiles: Mapping[str, SplitProfiles],
+    column_allocator: Mapping[str, Mapping[str, pd.Series]] | None,
+) -> pd.Series:
+    """Return column-child shares for one original supplier row and one buyer sector."""
+    col_labels = list(map(str, col_labels))
+    if col_sector not in split_profiles:
+        return pd.Series([1.0], index=col_labels, dtype="float64")
+
+    prof = split_profiles[col_sector]
+    fallback = _normalized_reindexed_share(
+        prof.intermediate_input_share,
+        col_labels,
+        name=f"intermediate_input_share[{col_sector}]",
+    )
+
+    if column_allocator is None:
+        return fallback
+
+    override = column_allocator.get(str(col_sector), {}).get(str(row_sector))
+    if override is None:
+        return fallback
+
+    override_s = pd.Series(override, dtype="float64").reindex(col_labels).fillna(0.0).astype("float64")
+    total = float(override_s.sum())
+    if not np.isfinite(total) or total <= 0:
+        return fallback
+    return override_s / total
+
+
 def expand_io_tables(
     Z: pd.DataFrame,
     Y: pd.DataFrame,
     *,
     split_profiles: Mapping[str, SplitProfiles],
+    column_allocator: Mapping[str, Mapping[str, pd.Series]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Expand an IO table (Z,Y) by replacing each aggregate sector with its subsectors.
 
-    The expansion is "clean": aggregating the expanded tables back reproduces the
-    original totals (before balancing).
+    There is deliberately only one expansion path. ``column_allocator`` optionally
+    overrides column-child shares for purchases made by split buyer sectors from
+    selected original supplier rows; row splits and final-demand splits still come
+    from ``SplitProfiles``.
     """
     Z = Z.copy()
     Y = Y.copy()
@@ -125,75 +170,62 @@ def expand_io_tables(
         raise ValueError("Y must have the same index as Z.")
 
     sectors_old = list(map(str, Z.index))
-    split_sectors = list(split_profiles.keys())
-
-    missing = [s for s in split_sectors if s not in sectors_old]
+    missing = [s for s in split_profiles.keys() if str(s) not in sectors_old]
     if missing:
         raise ValueError(f"Aggregate sectors not found in Z/Y index: {missing}")
 
     sectors_new: list[str] = []
     for s in sectors_old:
         if s in split_profiles:
-            sectors_new.extend(list(split_profiles[s].subsectors))
+            sectors_new.extend(list(map(str, split_profiles[s].subsectors)))
         else:
             sectors_new.append(s)
 
-    Z0 = pd.DataFrame(0.0, index=sectors_new, columns=sectors_new)
-    Y0 = pd.DataFrame(0.0, index=sectors_new, columns=list(map(str, Y.columns)))
+    Z0 = pd.DataFrame(0.0, index=sectors_new, columns=sectors_new, dtype="float64")
+    Y0 = pd.DataFrame(0.0, index=sectors_new, columns=list(map(str, Y.columns)), dtype="float64")
 
-    unchanged = [s for s in sectors_old if s not in split_profiles]
-    Z0.loc[unchanged, unchanged] = Z.loc[unchanged, unchanged].to_numpy()
-    Y0.loc[unchanged, :] = Y.loc[unchanged, :].to_numpy()
+    for row_sector in sectors_old:
+        if row_sector in split_profiles:
+            row_labels = list(map(str, split_profiles[row_sector].subsectors))
+            row_share = _normalized_reindexed_share(
+                split_profiles[row_sector].intermediate_sales_share,
+                row_labels,
+                name=f"intermediate_sales_share[{row_sector}]",
+            )
+            fd_share = _normalized_reindexed_share(
+                split_profiles[row_sector].final_demand_share,
+                row_labels,
+                name=f"final_demand_share[{row_sector}]",
+            )
+        else:
+            row_labels = [row_sector]
+            row_share = pd.Series([1.0], index=row_labels, dtype="float64")
+            fd_share = pd.Series([1.0], index=row_labels, dtype="float64")
 
-    for agg, prof in split_profiles.items():
-        subs = list(prof.subsectors)
-        # Pre-compute reindexed shares to avoid repeated lookups
-        sales_share = prof.intermediate_sales_share.reindex(subs)
-        input_share = prof.intermediate_input_share.reindex(subs)
-        fd_share = prof.final_demand_share.reindex(subs)
-
-        buyers_unchanged = [s for s in sectors_old if s not in split_profiles]
-        suppliers_unchanged = buyers_unchanged
-
-        # Split sales to unchanged buyers
-        Z_row = Z.loc[agg, buyers_unchanged].astype("float64")
-        if Z_row.sum() != 0:
-            Z0.loc[subs, buyers_unchanged] = np.outer(sales_share.to_numpy(), Z_row.to_numpy())
-
-        # Split purchases from unchanged suppliers
-        Z_col = Z.loc[suppliers_unchanged, agg].astype("float64")
-        if Z_col.sum() != 0:
-            Z0.loc[suppliers_unchanged, subs] = np.outer(Z_col.to_numpy(), input_share.to_numpy())
-
-        # Split within the aggregate block
-        Z_agg_agg = float(Z.loc[agg, agg])
-        if Z_agg_agg != 0:
-            share_mat = _outer_share_matrix(sales_share, input_share)
-            Z0.loc[subs, subs] = Z_agg_agg * share_mat
-
-        # Split final demand row
-        Y_row = Y.loc[agg, :].astype("float64")
-        if Y_row.sum() != 0:
-            Y0.loc[subs, :] = np.outer(fd_share.to_numpy(), Y_row.to_numpy())
-
-    # Split interactions between two different aggregates (if any are being split)
-    for agg_r, prof_r in split_profiles.items():
-        # Pre-compute reindexed shares for row aggregate
-        subs_r = list(prof_r.subsectors)
-        sales_share_r = prof_r.intermediate_sales_share.reindex(subs_r)
-        
-        for agg_c, prof_c in split_profiles.items():
-            if agg_r == agg_c:
+        for col_sector in sectors_old:
+            cell_total = float(Z.loc[row_sector, col_sector])
+            if cell_total == 0.0:
                 continue
-            cell = float(Z.loc[agg_r, agg_c])
-            if cell == 0:
-                continue
-            # Pre-compute reindexed shares for column aggregate
-            subs_c = list(prof_c.subsectors)
-            input_share_c = prof_c.intermediate_input_share.reindex(subs_c)
-            
-            share_mat = _outer_share_matrix(sales_share_r, input_share_c)
-            Z0.loc[subs_r, subs_c] = cell * share_mat
+
+            if col_sector in split_profiles:
+                col_labels = list(map(str, split_profiles[col_sector].subsectors))
+            else:
+                col_labels = [col_sector]
+
+            col_share = _column_share_for(
+                row_sector=row_sector,
+                col_sector=col_sector,
+                col_labels=col_labels,
+                split_profiles=split_profiles,
+                column_allocator=column_allocator,
+            )
+            Z0.loc[row_labels, col_labels] += (
+                np.outer(row_share.to_numpy(dtype="float64"), col_share.to_numpy(dtype="float64")) * cell_total
+            )
+
+        Y_row = Y.loc[row_sector, :].astype("float64")
+        if float(Y_row.sum()) != 0.0:
+            Y0.loc[row_labels, :] += np.outer(fd_share.to_numpy(dtype="float64"), Y_row.to_numpy(dtype="float64"))
 
     return Z0, Y0
 
@@ -204,18 +236,22 @@ def build_targets(
     *,
     split_profiles: Mapping[str, SplitProfiles],
     sectors_new: Sequence[str],
+    Z0: pd.DataFrame | None = None,
+    preserve_expanded_column_targets: bool = False,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
     Build row output targets x and intermediate input targets u for expanded sectors.
 
-    Returns (x_targets, u_targets, fd_col_targets) where fd_col_targets are the
-    final-demand column totals (kept at the original Y columns).
+    If ``preserve_expanded_column_targets`` is true, u targets come from
+    ``Z0.sum(axis=0)``. This is needed when a technology allocator changes
+    child-column totals relative to generic intermediate_input_share.
     """
     x_old = (Z.sum(axis=1) + Y.sum(axis=1)).astype("float64")
     u_old = Z.sum(axis=0).astype("float64")
 
-    x_new = pd.Series(0.0, index=sectors_new)
-    u_new = pd.Series(0.0, index=sectors_new)
+    sectors_new = list(map(str, sectors_new))
+    x_new = pd.Series(0.0, index=sectors_new, dtype="float64")
+    u_new = pd.Series(0.0, index=sectors_new, dtype="float64")
 
     for s in Z.index.astype(str):
         if s not in split_profiles:
@@ -224,9 +260,14 @@ def build_targets(
             continue
 
         prof = split_profiles[s]
-        for sub in prof.subsectors:
+        for sub in map(str, prof.subsectors):
             x_new.loc[sub] = float(x_old.loc[s]) * float(prof.output_share.loc[sub])
             u_new.loc[sub] = float(u_old.loc[s]) * float(prof.intermediate_input_share.loc[sub])
+
+    if preserve_expanded_column_targets:
+        if Z0 is None:
+            raise ValueError("Z0 is required when preserve_expanded_column_targets=True.")
+        u_new = Z0.sum(axis=0).astype("float64").reindex(sectors_new).fillna(0.0).astype("float64")
 
     fd_targets = Y.sum(axis=0).astype("float64")
 
@@ -250,6 +291,7 @@ def disaggregate_and_balance(
     Y: pd.DataFrame,
     *,
     split_profiles: Mapping[str, SplitProfiles],
+    column_allocator: Mapping[str, Mapping[str, pd.Series]] | None = None,
     balancing_scope: str = "local",
     max_iter: int = 50_000,
     tol: float = 1e-10,
@@ -277,16 +319,25 @@ def disaggregate_and_balance(
     Returns:
         DisaggregationResult with balanced tables and optional IOSystem
     """
-    Z0, Y0 = expand_io_tables(Z, Y, split_profiles=split_profiles)
-    x_target, u_target, fd_targets = build_targets(Z, Y, split_profiles=split_profiles, sectors_new=Z0.index)
-
-    M0 = pd.concat([Z0, Y0], axis=1)
-    row_targets = x_target.to_numpy()
-    col_targets = np.concatenate([u_target.to_numpy(), fd_targets.to_numpy()])
+    Z0, Y0 = expand_io_tables(Z, Y, split_profiles=split_profiles, column_allocator=column_allocator)
 
     balancing_scope_n = str(balancing_scope).strip().lower()
     if balancing_scope_n not in {"global", "local"}:
         raise ValueError(f"balancing_scope must be 'local' or 'global', got {balancing_scope!r}.")
+
+    preserve_allocator_column_targets = column_allocator is not None and balancing_scope_n == "local"
+    x_target, u_target, fd_targets = build_targets(
+        Z,
+        Y,
+        split_profiles=split_profiles,
+        sectors_new=Z0.index,
+        Z0=Z0,
+        preserve_expanded_column_targets=preserve_allocator_column_targets,
+    )
+
+    M0 = pd.concat([Z0, Y0], axis=1)
+    row_targets = x_target.to_numpy()
+    col_targets = np.concatenate([u_target.to_numpy(), fd_targets.to_numpy()])
 
     if balancing_scope_n == "global":
         M_bal, stats, method = balance_biproportional(

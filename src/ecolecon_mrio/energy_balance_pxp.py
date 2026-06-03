@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from pathlib import Path
 import warnings
 from typing import Mapping, Sequence
@@ -33,6 +34,7 @@ GWH_PER_MTOE = 11_630.0
 @dataclass(frozen=True)
 class EnergyBalancePxpSplitPlan:
     split_profiles: dict[str, SplitProfiles]
+    column_allocator: dict[str, dict[str, pd.Series]]
     component_values: pd.DataFrame
     split_shares: pd.DataFrame
     selector_residuals: pd.DataFrame
@@ -756,6 +758,210 @@ def build_split_profiles_from_component_values(component_values: pd.DataFrame) -
     return out
 
 
+def _selector_token_matches(row_code: str, row_label: str, token: str) -> bool:
+    """
+    Explicit selector syntax:
+      CPA_C19          exact original sector-code match
+      label:<text>     exact normalized label match
+      prefix:<text>    explicit prefix match
+      regex:<pattern>  regex match against row code or row label
+
+    There is deliberately no implicit prefix matching.
+    """
+    token = _normalize_text(token)
+    if not token:
+        return False
+
+    row_code_n = _normalize_text(row_code).casefold()
+    row_label_n = _normalize_text(row_label).casefold()
+
+    if token.startswith("label:"):
+        wanted = _normalize_text(token[len("label:") :]).casefold()
+        return row_label_n == wanted
+    if token.startswith("prefix:"):
+        wanted = _normalize_text(token[len("prefix:") :]).casefold()
+        return row_code_n.startswith(wanted) or row_label_n.startswith(wanted)
+    if token.startswith("regex:"):
+        pattern = token[len("regex:") :]
+        return re.search(pattern, row_code, flags=re.IGNORECASE) is not None or re.search(
+            pattern, row_label, flags=re.IGNORECASE
+        ) is not None
+
+    return row_code_n == token.casefold()
+
+
+def _selector_matches(row_code: str, row_label: str, selector: str) -> bool:
+    return any(_selector_token_matches(row_code, row_label, token) for token in _split_tokens(selector))
+
+
+def _validate_supplier_selectors_against_original_rows(
+    technology_frame: pd.DataFrame,
+    *,
+    original_row_codes: set[str],
+) -> None:
+    invalid: list[str] = []
+    active = technology_frame.loc[technology_frame["enabled"]].copy()
+    for row in active.itertuples(index=False):
+        for token in _split_tokens(row.supplier_selector):
+            if token.startswith(("label:", "prefix:", "regex:")):
+                continue
+            if token not in original_row_codes:
+                invalid.append(f"{row.parent_code}:{row.buyer_split_code}:{token}")
+
+    if invalid:
+        raise ValueError(
+            "Technology supplier_selector contains bare tokens that are not original Eurostat sector rows. "
+            "Use only original row codes, or explicit label:/prefix:/regex: selectors. "
+            f"Examples: {invalid[:20]!r}"
+        )
+
+
+def build_column_allocator(
+    Z: pd.DataFrame,
+    technology_frame: pd.DataFrame,
+    *,
+    split_profiles: Mapping[str, SplitProfiles],
+    row_code_to_label: Mapping[str, str] | None = None,
+) -> tuple[dict[str, dict[str, pd.Series]], dict[str, pd.DataFrame]]:
+    """Build supplier-specific child-column shares from the technology CSV."""
+    allocator: dict[str, dict[str, pd.Series]] = {}
+    matches_rows: list[dict[str, object]] = []
+    fallback_rows: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+
+    enabled = technology_frame.loc[
+        technology_frame["enabled"] & technology_frame["apply_to"].astype(str).str.upper().eq("Z_COLUMNS")
+    ].copy()
+
+    empty = {
+        "column_allocator_matches": pd.DataFrame(),
+        "column_allocator_fallbacks": pd.DataFrame(),
+        "column_allocator_summary": pd.DataFrame(),
+    }
+    if enabled.empty:
+        return allocator, empty
+
+    Z = Z.copy()
+    Z.index = Z.index.astype(str)
+    Z.columns = Z.columns.astype(str)
+    original_row_codes = set(map(str, Z.index))
+    _validate_supplier_selectors_against_original_rows(enabled, original_row_codes=original_row_codes)
+
+    row_code_to_label = {str(k): str(v) for k, v in (row_code_to_label or {}).items()}
+
+    for parent_code, parent_group in enabled.groupby("parent_code", sort=False):
+        parent_code = str(parent_code)
+        prof = split_profiles.get(parent_code)
+        if prof is None:
+            continue
+
+        child_labels = list(map(str, prof.subsectors))
+        fallback_share = prof.intermediate_input_share.reindex(child_labels).fillna(0.0).astype("float64")
+        fallback_total = float(fallback_share.sum())
+        if fallback_total <= 0:
+            raise ValueError(f"Non-positive intermediate_input_share for parent {parent_code!r}.")
+        fallback_share = fallback_share / fallback_total
+
+        parent_matches = 0
+        parent_fallbacks = 0
+        matched_value = 0.0
+        fallback_value = 0.0
+        parent_total = 0.0
+
+        for supplier_row in Z.index.astype(str):
+            supplier_label = row_code_to_label.get(str(supplier_row), str(supplier_row))
+            original_cell_value = float(Z.loc[supplier_row, parent_code]) if parent_code in Z.columns else 0.0
+            row_contrib = pd.Series(0.0, index=child_labels, dtype="float64")
+            matched_rules: list[str] = []
+            matched_selectors: list[str] = []
+
+            for tech_row in parent_group.itertuples(index=False):
+                if not _selector_matches(str(supplier_row), supplier_label, tech_row.supplier_selector):
+                    continue
+                buyer_tokens = [token for token in _split_tokens(tech_row.buyer_split_code) if token in child_labels]
+                if not buyer_tokens:
+                    continue
+                weight = float(tech_row.allocation_weight)
+                if not np.isfinite(weight) or weight <= 0:
+                    weight = 1.0
+
+                if str(tech_row.rule) == "equal_split":
+                    base = pd.Series(1.0, index=buyer_tokens, dtype="float64")
+                else:
+                    base = fallback_share.reindex(buyer_tokens).fillna(0.0).astype("float64")
+                    if float(base.sum()) <= 0:
+                        base = pd.Series(1.0, index=buyer_tokens, dtype="float64")
+                base = base / float(base.sum())
+                contrib = pd.Series(0.0, index=child_labels, dtype="float64")
+                contrib.loc[buyer_tokens] = weight * base
+                row_contrib = row_contrib.add(contrib, fill_value=0.0)
+                matched_rules.append(str(tech_row.rule))
+                matched_selectors.append(str(tech_row.supplier_selector))
+
+            if matched_rules:
+                total = float(row_contrib.sum())
+                if total <= 0:
+                    row_contrib = fallback_share.copy()
+                    allocation_method = "matched_but_zero_weight_child_share_fallback"
+                else:
+                    row_contrib = row_contrib / total
+                    allocation_method = "technology_rule"
+                allocator.setdefault(parent_code, {})[str(supplier_row)] = row_contrib.astype("float64")
+                parent_matches += 1
+                matched_value += original_cell_value
+                matches_rows.append(
+                    {
+                        "parent_code": parent_code,
+                        "supplier_row": str(supplier_row),
+                        "supplier_label": supplier_label,
+                        "supplier_selector": "|".join(matched_selectors),
+                        "buyer_split_code": "|".join(map(str, row_contrib.index[row_contrib > 0])),
+                        "original_cell_value": original_cell_value,
+                        "allocation_method": allocation_method,
+                        "matched_rule": "|".join(matched_rules),
+                        "allocation_vector_json": row_contrib.to_json(),
+                    }
+                )
+            else:
+                allocator.setdefault(parent_code, {})[str(supplier_row)] = fallback_share.copy()
+                parent_fallbacks += 1
+                fallback_value += original_cell_value
+                if original_cell_value != 0.0:
+                    fallback_rows.append(
+                        {
+                            "parent_code": parent_code,
+                            "supplier_row": str(supplier_row),
+                            "supplier_label": supplier_label,
+                            "supplier_selector": "",
+                            "buyer_split_code": "|".join(child_labels),
+                            "original_cell_value": original_cell_value,
+                            "allocation_method": "child_share_fallback",
+                            "matched_rule": "fallback",
+                            "allocation_vector_json": fallback_share.to_json(),
+                        }
+                    )
+            parent_total += original_cell_value
+
+        summary_rows.append(
+            {
+                "parent_code": parent_code,
+                "n_supplier_rows": int(len(Z.index)),
+                "n_matched_supplier_rows": int(parent_matches),
+                "n_fallback_supplier_rows": int(parent_fallbacks),
+                "original_cell_value_sum": float(parent_total),
+                "matched_cell_value_sum": float(matched_value),
+                "fallback_cell_value_sum": float(fallback_value),
+            }
+        )
+
+    diagnostics = {
+        "column_allocator_matches": pd.DataFrame(matches_rows),
+        "column_allocator_fallbacks": pd.DataFrame(fallback_rows),
+        "column_allocator_summary": pd.DataFrame(summary_rows),
+    }
+    return allocator, diagnostics
+
+
 def compile_energy_balance_pxp_split_plan(
     *,
     Z: pd.DataFrame,
@@ -800,10 +1006,16 @@ def compile_energy_balance_pxp_split_plan(
         tol=tol,
     )
     split_profiles = build_split_profiles_from_component_values(component_values)
+    column_allocator, column_allocator_diagnostics = build_column_allocator(
+        Z,
+        technology_frame,
+        split_profiles=split_profiles,
+    )
     reaggregation_mapping = _validate_reaggregation_frame(split_frame, reaggregation_frame)
     diagnostics = {
         "missing_or_zero_selectors": missing_or_zero,
         "quantity_lookup": quantity_table,
+        **column_allocator_diagnostics,
         "validation_summary": pd.DataFrame(
             [
                 {
@@ -813,13 +1025,14 @@ def compile_energy_balance_pxp_split_plan(
                     "placeholder_prices": ",".join(
                         resolved_prices.loc[resolved_prices["status"].astype(str).eq("placeholder_to_replace"), "price_code"].astype(str).tolist()
                     ),
-                    "technology_allocator_status": "validated_not_applied_in_phase2_baseline",
+                    "technology_allocator_status": "applied_with_child_share_fallback",
                 }
             ]
         ),
     }
     return EnergyBalancePxpSplitPlan(
         split_profiles=split_profiles,
+        column_allocator=column_allocator,
         component_values=component_values,
         split_shares=split_shares,
         selector_residuals=selector_residuals,
@@ -844,6 +1057,7 @@ def run_energy_balance_pxp_split(
         Z,
         Y,
         split_profiles=plan.split_profiles,
+        column_allocator=plan.column_allocator,
         balancing_scope=balancing_scope,
         max_iter=max_iter,
         tol=tol,

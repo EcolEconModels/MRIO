@@ -113,7 +113,7 @@ def _tech_frame() -> pd.DataFrame:
                 "buyer_split_code": "EB_C20_ADVANCED_BIODIESEL|EB_C20_CONVENTIONAL_BIODIESEL",
                 "buyer_split_label": "biofuels",
                 "supplier_selector_system": "target_or_sector_code",
-                "supplier_selector": "CPA_A01|CPA_C20",
+                "supplier_selector": "CPA_C20|CPA_C20",
                 "allocation_weight": 1.0,
                 "apply_to": "Z_columns",
                 "rule": "biofuel_feedstock_column_allocation",
