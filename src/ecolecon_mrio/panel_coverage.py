@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 import json
 import time
 from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
 
-from .data import load_mrio
+from .data import load_mrio, load_mrio_matrices
 
 ValidatorFn = Callable[[int, Any, pd.Series], Mapping[str, Any]]
 
@@ -74,6 +75,37 @@ def _normalize_validator_result(raw: Mapping[str, Any] | None) -> tuple[str, str
     return status, reason, payload
 
 
+
+def _coverage_load_mrio(dataset: str, year: int, **kwargs):
+    """Coverage loader dispatch. EXIOBASE uses the zip-stream matrix API, not full pymrio."""
+    if str(dataset).strip().lower() == "exiobase":
+        matrix_kwargs = {
+            key: kwargs[key]
+            for key in [
+                "force_download",
+                "data_root",
+                "verbose",
+                "allow_download_missing",
+                "resume_downloads",
+                "show_download_progress",
+                "download_chunk_mb",
+                "download_timeout_seconds",
+                "download_retries",
+                "delete_source_zip_after_parse",
+            ]
+            if key in kwargs
+        }
+        A, x, y, basis_index, metadata = load_mrio_matrices(int(year), calc_all=False, exio_system="pxp", **matrix_kwargs)
+        mrio = SimpleNamespace(
+            A=A,
+            x=pd.Series(x).reindex(basis_index),
+            Y=pd.DataFrame({"final_demand": pd.Series(y).reindex(basis_index)}, index=basis_index),
+            y=pd.Series(y).reindex(basis_index),
+            metadata=dict(metadata),
+        )
+        return mrio, mrio.y
+    return load_mrio(dataset=dataset, year=int(year), **kwargs)
+
 def attempt_mrio_year(
     dataset: str,
     year: int,
@@ -109,7 +141,7 @@ def attempt_mrio_year(
     }
 
     try:
-        mrio, y_full = load_mrio(
+        mrio, y_full = _coverage_load_mrio(
             dataset=dataset,
             year=int(year),
             force_download=force_download,
