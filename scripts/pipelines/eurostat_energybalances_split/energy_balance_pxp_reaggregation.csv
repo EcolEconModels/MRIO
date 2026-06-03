@@ -22,6 +22,6 @@ EB_D_ELECTRICITY_BY_SOLAR_THERMAL,Electricity by solar thermal,CPA_D_Electricity
 EB_D_ELECTRICITY_BY_TIDE_WAVE_OCEAN,"Electricity by tide, wave, ocean",CPA_D_Electricity_by_tide_wave_ocean,"CPA_D: Electricity by tide, wave, ocean",True,Energy-Balance-derived split child; may be zero.
 EB_D_ELECTRICITY_BY_GEOTHERMAL,Electricity by geothermal,CPA_D_Electricity_by_Geothermal,CPA_D: Electricity by Geothermal,True,Energy-Balance-derived split child.
 EB_D_ELECTRICITY_NEC,Electricity nec,CPA_D_Electricity_nec,CPA_D: Electricity nec,True,Energy-Balance-derived split child.
-EB_D_GAS,Gas supply component,CPA_D_GAS,CPA_D: Gas,True,Energy-Balance-derived split child.
-EB_D_BIOGAS,Biogas/biomethane supply component,CPA_D_BIOGAS,CPA_D: BioGas,True,Energy-Balance-derived split child.
-EB_D_OTHERS,D residual services heat transmission distribution,CPA_D_others,"CPA_D: Electricity, gas, steam and air conditioning_others",True,Parent residual for transmission distribution steam heat and other D services.
+EB_D_GAS,Gas supply component,CPA_D_GAS,CPA_D: Gas,False,Disabled until defensible EB gas-supply output selector is chosen.
+EB_D_BIOGAS,Biogas/biomethane supply component,CPA_D_BIOGAS,CPA_D: BioGas,False,Disabled until defensible EB biogas-supply output selector is chosen.
+EB_D_OTHERS,D residual services heat transmission distribution,CPA_D_others,"CPA_D: Electricity, gas, steam and air conditioning_others",True,Parent residual for gas supply/transmission distribution steam heat and other D services.
