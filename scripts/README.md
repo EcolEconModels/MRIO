@@ -191,3 +191,14 @@ bash scripts/pipelines/at_2021_energy_balance_pxp.sh
 Default outputs are written under `outputs/AT_2021_energy_balance_pxp/`, with
 plan-level diagnostics in `plan_diagnostics/` and per-flow matrices in
 `stk_flow=DOM/`, `stk_flow=IMP/`, and `stk_flow=TOTAL/`.
+
+
+### Validate Energy Balance pxp outputs
+
+After running `scripts/pipelines/at_2021_energy_balance_pxp.sh`, validate the output directory with:
+
+```bash
+.venv/bin/python scripts/validate_energy_balance_pxp_outputs.py   --outdir outputs/AT_2021_energy_balance_pxp   --flows DOM,IMP,TOTAL   --require-reaggregated   --write-summary outputs/AT_2021_energy_balance_pxp/validation_summary.csv
+```
+
+The validator checks plan diagnostics, split/reaggregated matrix label consistency, `x = Z 1 + Y 1`, `A = Z / x`, absence of duplicated plan diagnostics in flow folders, and absence of `EB_*` children after reaggregation.
