@@ -252,6 +252,31 @@ def test_dictionary_loader_requires_provenance(tmp_path: Path) -> None:
         load_energy_balance_dictionary_frame(path)
 
 
+
+def test_zero_selector_total_allowed_for_derived_rows() -> None:
+    resolved = build_price_resolution(_prices_frame())
+    quantity_table = _quantity_table(0.0)
+
+    components, shares, selector_residuals, parent_residuals, missing = build_energy_balance_component_values(
+        _split_frame(),
+        resolved_prices=resolved,
+        quantity_lookup=quantity_table,
+        parent_output_by_code={"CPA_C20": 1000.0},
+    )
+
+    assert set(components["child_code"]) == {
+        "EB_C20_ADVANCED_BIODIESEL",
+        "EB_C20_CONVENTIONAL_BIODIESEL",
+        "EB_C20_OTHERS",
+    }
+    assert float(components.loc[components["child_code"].eq("EB_C20_ADVANCED_BIODIESEL"), "quantity_GWh"].iloc[0]) == 0.0
+    assert float(components.loc[components["child_code"].eq("EB_C20_CONVENTIONAL_BIODIESEL"), "quantity_GWh"].iloc[0]) == 0.0
+    assert float(components.loc[components["child_code"].eq("EB_C20_OTHERS"), "value_MEUR"].iloc[0]) == 1000.0
+    assert np.isclose(float(shares["child_share"].sum()), 1.0)
+    assert not selector_residuals.empty
+    assert not parent_residuals.empty
+
+
 def test_build_quantity_lookup_uses_explicit_selectors(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_loader(**kwargs):
         assert kwargs["dataset"] == "nrg_bal_c"

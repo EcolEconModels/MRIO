@@ -526,7 +526,12 @@ def build_energy_balance_pxp_quantity_lookup(
     records: list[dict[str, object]] = []
     for row in active.sort_values(["parent_code", "order"], kind="stable").itertuples(index=False):
         quantity, source_note = _sum_quantity_for_row(row, tables)
-        if quantity == 0.0 and not bool(row.allow_zero):
+        # Zero selector totals are legitimate for derived rows such as
+        # advanced_external_quantity and selector_residual: the downstream
+        # component builder caps advanced quantities at the selector total and
+        # computes conventional residuals as zero.  Only direct measured
+        # energy_quantity rows use allow_zero as a hard zero guard.
+        if quantity == 0.0 and not bool(row.allow_zero) and str(row.component_kind) == "energy_quantity":
             raise ValueError(
                 f"Zero or missing quantity for {row.child_code!r} is not allowed. "
                 f"selector={row.eb_product_selector!r}, flow={row.eb_flow_selector!r}."
