@@ -202,3 +202,49 @@ After running `scripts/pipelines/at_2021_energy_balance_pxp.sh`, validate the ou
 ```
 
 The validator checks plan diagnostics, split/reaggregated matrix label consistency, `x = Z 1 + Y 1`, `A = Z / x`, absence of duplicated plan diagnostics in flow folders, and absence of `EB_*` children after reaggregation.
+
+### Final Eurostat Energy Balance pxp split/reaggregation run
+
+The canonical final run for the Energy-Balance-based Eurostat pxp split/reaggregation is:
+
+```bash
+bash scripts/pipelines/run_at_2021_energy_balance_pxp_outputs.sh
+```
+
+By default this uses cached Eurostat data under `data/eurostat`, the committed EB mapping recipe under
+`scripts/pipelines/eurostat_energybalances_split/`, the official metadata-derived dictionary at
+`scripts/mappings/eurostat_energy_balances_dictionary.csv`, and writes outputs to:
+
+```text
+outputs/AT_2021_energy_balance_pxp/
+```
+
+The runner calls `scripts/split_eurostat_iot_by_energy_balances.py`, compiles the split plan once from the
+`TOTAL` table, applies the same split plan to `DOM`, `IMP`, and `TOTAL`, writes both split and reaggregated
+systems, and validates the output tree with `scripts/validate_energy_balance_pxp_outputs.py`.
+
+Important outputs:
+
+```text
+outputs/AT_2021_energy_balance_pxp/plan_diagnostics/
+outputs/AT_2021_energy_balance_pxp/stk_flow=DOM/Z_split.csv
+outputs/AT_2021_energy_balance_pxp/stk_flow=DOM/Z_reaggregated.csv
+outputs/AT_2021_energy_balance_pxp/stk_flow=IMP/Z_split.csv
+outputs/AT_2021_energy_balance_pxp/stk_flow=IMP/Z_reaggregated.csv
+outputs/AT_2021_energy_balance_pxp/stk_flow=TOTAL/Z_split.csv
+outputs/AT_2021_energy_balance_pxp/stk_flow=TOTAL/Z_reaggregated.csv
+outputs/AT_2021_energy_balance_pxp/run_summary.csv
+outputs/AT_2021_energy_balance_pxp/validation_summary.csv
+```
+
+Useful overrides:
+
+```bash
+OUTDIR=/tmp/AT_2021_energy_balance_pxp_smoke \
+STORAGE_FOLDER=data/eurostat \
+WRITE_SFC_WORKBOOK=0 \
+bash scripts/pipelines/run_at_2021_energy_balance_pxp_outputs.sh
+```
+
+Do not use the known-bad earlier implementation commits on `main` for this pipeline. The clean implementation lives on
+`energy-balance-pxp-clean` and should replace `main` after validation.
