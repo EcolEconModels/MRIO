@@ -392,8 +392,6 @@ def load_mrio_panel(
                 download_retries=download_retries,
                 delete_source_zip_after_parse=False,
                 exio_system="pxp",
-                cache_matrices=False,
-                read_existing_cache=False,
             )
             mrio = _make_sparse_exio_mrio_like(A=A, x=x, y=y, basis_index=basis_index, metadata=metadata)
             panel[int(year)] = (mrio, _series_from_any(y))

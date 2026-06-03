@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import io
-import json
 import numpy as np
 import os
 import time
@@ -12,7 +11,7 @@ from typing import Any, Tuple
 
 import pandas as pd
 import pymrio
-from scipy.sparse import csr_matrix, diags, load_npz, save_npz
+from scipy.sparse import csr_matrix
 from pymrio.tools.iodownloader import EXIOBASE3_CONFIG, HEADERS, MRIOMetaData, _get_url_datafiles
 
 from ecolecon_mrio.download_utils import DownloadSpec, download_file_resumable, zip_contains_member
@@ -59,122 +58,6 @@ def resolve_exiobase_cache_paths(
         "data_dir": data_dir,
         "zip": data_dir / f"IOT_{int(year)}_{system}.zip",
     }
-
-
-def resolve_exiobase_matrix_cache_paths(
-    year: int,
-    *,
-    system: str = "pxp",
-    data_root: str | Path | None = None,
-) -> dict[str, Path]:
-    """Return the compact EXIOBASE matrix-cache paths used by :func:`load_mrio_matrices`."""
-    system = str(system).strip().lower()
-    if system not in {"pxp", "ixi"}:
-        raise ValueError(f"Unsupported exiobase system '{system}'. Use 'pxp' or 'ixi'.")
-    data_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
-    cache_dir = data_dir / f"matrix_cache_{int(year)}_{system}"
-    return {
-        "data_dir": data_dir,
-        "matrix_cache_dir": cache_dir,
-        "Z": cache_dir / "Z.npz",
-        "x": cache_dir / "x.pkl.gz",
-        "y": cache_dir / "y.pkl.gz",
-        "index": cache_dir / "index.csv.gz",
-        "metadata": cache_dir / "metadata.json",
-        "zip": data_dir / f"IOT_{int(year)}_{system}.zip",
-    }
-
-
-def _coerce_series_like(values: Any, *, index: pd.Index | None = None, name: str | None = None) -> pd.Series:
-    if isinstance(values, pd.Series):
-        series = values.copy()
-    elif isinstance(values, pd.DataFrame):
-        if values.shape[1] == 1:
-            series = values.iloc[:, 0].copy()
-        else:
-            series = values.sum(axis=1)
-    else:
-        series = pd.Series(values)
-    series = pd.to_numeric(series, errors="coerce").fillna(0.0).astype(float)
-    if index is not None:
-        series = pd.to_numeric(pd.Series(series).reindex(index), errors="coerce").fillna(0.0).astype(float)
-    if name is not None:
-        series.name = name
-    return series
-
-
-def _exio_index_frame(index: pd.Index) -> pd.DataFrame:
-    if not isinstance(index, pd.MultiIndex):
-        raise ValueError("Expected EXIOBASE matrices to use a MultiIndex basis index.")
-    index_frame = index.to_frame(index=False)
-    if index_frame.shape[1] < 2:
-        raise ValueError("Expected EXIOBASE basis index to have at least two levels.")
-    index_frame = index_frame.iloc[:, :2].copy()
-    index_frame.columns = ["region", "sector"]
-    return index_frame.astype(str)
-
-
-def _exio_index_from_frame(index_frame: pd.DataFrame) -> pd.MultiIndex:
-    required = {"region", "sector"}
-    if not required.issubset(index_frame.columns):
-        raise ValueError("Matrix cache index.csv.gz must contain region and sector columns.")
-    frame = index_frame.loc[:, ["region", "sector"]].copy().astype(str)
-    return pd.MultiIndex.from_frame(frame, names=["region", "sector"])
-
-
-def _save_exio_matrix_cache(
-    *,
-    cache_dir: Path,
-    Z: csr_matrix,
-    x: pd.Series,
-    y: pd.Series,
-    index: pd.MultiIndex,
-    metadata: dict[str, Any],
-    verbose: bool = False,
-) -> None:
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    save_npz(cache_dir / "Z.npz", Z, compressed=True)
-    x = _coerce_series_like(x, index=index, name=x.name or "x")
-    y = _coerce_series_like(y, index=index, name=y.name or "y")
-    x.to_pickle(cache_dir / "x.pkl.gz", compression="gzip")
-    y.to_pickle(cache_dir / "y.pkl.gz", compression="gzip")
-    _exio_index_frame(index).to_csv(cache_dir / "index.csv.gz", index=False, compression="gzip")
-    (cache_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
-    if verbose:
-        print(f"Saved EXIOBASE matrix cache to {cache_dir}")
-
-
-def _load_exio_matrix_cache(
-    *,
-    cache_dir: Path,
-) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    z_path = cache_dir / "Z.npz"
-    x_path = cache_dir / "x.pkl.gz"
-    y_path = cache_dir / "y.pkl.gz"
-    index_path = cache_dir / "index.csv.gz"
-    metadata_path = cache_dir / "metadata.json"
-
-    matrix = load_npz(z_path).tocsr().astype(float)
-    x = _coerce_series_like(pd.read_pickle(x_path)).astype(float)
-    y = _coerce_series_like(pd.read_pickle(y_path)).astype(float)
-    index_frame = pd.read_csv(index_path)
-    basis_index = _exio_index_from_frame(index_frame)
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-
-    if matrix.shape != (len(basis_index), len(basis_index)):
-        raise ValueError(f"Matrix cache shape mismatch: matrix.shape={matrix.shape}, index={len(basis_index)}")
-    if len(x) != len(basis_index) or len(y) != len(basis_index):
-        raise ValueError("Matrix cache vectors do not match the basis index length.")
-    if tuple(metadata.get("matrix_shape", [])) != tuple(int(v) for v in matrix.shape):
-        raise ValueError("Matrix cache metadata does not match the cached matrix shape.")
-    if int(metadata.get("nnz", -1)) != int(matrix.nnz):
-        raise ValueError("Matrix cache metadata does not match the cached matrix nnz.")
-
-    x = x.reindex(basis_index).astype(float)
-    y = y.reindex(basis_index).astype(float)
-    inv_x = (1.0 / x.replace(0.0, pd.NA)).fillna(0.0).astype(float)
-    A = (matrix @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
-    return A, x, y, basis_index, metadata
 
 
 def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
@@ -714,12 +597,13 @@ def load_mrio_matrices(
     system = str(exio_system).strip().lower()
     if system not in {"pxp", "ixi"}:
         raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
+    _ = read_existing_cache  # deprecated no-op: zip-stream loading never reads derived matrix caches.
     if cache_matrices:
         raise ValueError("EXIOBASE matrix cache writes are disabled; only the source zip may be cached.")
     if delete_source_zip_after_parse:
         raise ValueError("delete_source_zip_after_parse=True is disabled; the EXIOBASE source zip must be retained.")
 
-    paths = resolve_exiobase_matrix_cache_paths(int(year), system=system, data_root=data_root)
+    paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
     data_dir = paths["data_dir"]
     data_dir.mkdir(parents=True, exist_ok=True)
     zip_path = ensure_exiobase_year_zip(

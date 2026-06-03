@@ -14,7 +14,6 @@ from .data import (
     ensure_exiobase_year_zip,
     resolve_exiobase_year_dir,
     resolve_exiobase_cache_paths,
-    resolve_exiobase_matrix_cache_paths,
 )
 load_MRIO_matrices = load_mrio_matrices
 from .decomposition import decompose_slack_change
@@ -155,7 +154,6 @@ __all__ = [
     "ensure_exiobase_year_zip",
     "resolve_exiobase_year_dir",
     "resolve_exiobase_cache_paths",
-    "resolve_exiobase_matrix_cache_paths",
     "load_mrio_panel",
     "PanelDiagnostics",
     "compute_viability_panel",
