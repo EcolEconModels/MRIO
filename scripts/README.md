@@ -177,3 +177,17 @@ dataset,dimension,code,label,description,provenance_source
 
 Do not hand-type Energy Balance code labels in active mapping files. Use official Eurostat SDMX metadata via this generated dictionary.
 
+### Run the Eurostat Energy Balances pxp split path
+
+This wrapper uses the official Energy Balance dictionary and the committed split,
+reaggregation, technology, and price recipes under
+`scripts/pipelines/eurostat_energybalances_split/`. It does not generate selector
+quantities in shell; quantity lookup is handled by the Python split-plan module.
+
+```bash
+bash scripts/pipelines/at_2021_energy_balance_pxp.sh
+```
+
+Default outputs are written under `outputs/AT_2021_energy_balance_pxp/`, with
+plan-level diagnostics in `plan_diagnostics/` and per-flow matrices in
+`stk_flow=DOM/`, `stk_flow=IMP/`, and `stk_flow=TOTAL/`.

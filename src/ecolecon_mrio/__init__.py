@@ -137,6 +137,17 @@ from .mapping_csv import (
     validate_mapping_weights,
 )
 
+from .energy_balance_pxp import (
+    compile_energy_balance_pxp_split_plan,
+    load_energy_balance_dictionary_frame,
+    load_energy_balance_pxp_input_technology_frame,
+    load_energy_balance_pxp_prices_frame,
+    load_energy_balance_pxp_reaggregation_frame,
+    load_energy_balance_pxp_split_frame,
+    run_energy_balance_pxp_split,
+    write_energy_balance_pxp_diagnostics,
+)
+
 __all__ = [
     "load_mrio",
     "load_mrio_matrices",
@@ -235,3 +246,14 @@ __all__ = [
     "validate_mapping_weights",
     "flatten_exio_sectors_from_mapping",
 ]
+
+__all__.extend([
+    "compile_energy_balance_pxp_split_plan",
+    "load_energy_balance_dictionary_frame",
+    "load_energy_balance_pxp_input_technology_frame",
+    "load_energy_balance_pxp_prices_frame",
+    "load_energy_balance_pxp_reaggregation_frame",
+    "load_energy_balance_pxp_split_frame",
+    "run_energy_balance_pxp_split",
+    "write_energy_balance_pxp_diagnostics",
+])
