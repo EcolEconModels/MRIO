@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 from types import SimpleNamespace
 import io
@@ -463,6 +464,46 @@ def compute_viability_panel(
     if low_memory_full_basis_mode and lp_working_set_n_effective is None:
         lp_working_set_n_effective = int(low_memory_n)
 
+    panel_union_mode = mode in {"panel_union_zero_pad_top_n", "panel_union_zero_pad", "panel_union_top_n"}
+    panel_union_index: pd.Index | None = None
+    if panel_union_mode:
+        # Build one stable panel-wide universe before the per-year loop. Missing
+        # year-sector entries are zero-padded below. This keeps all x/A/y/state
+        # objects on the same index, which is what the mode name promises.
+        x_panel: dict[int, pd.Series] = {}
+        union_index = pd.Index([], dtype=object)
+        for y_key, (mrio_obj, _unused_y) in sorted(panel.items(), key=lambda item: int(item[0])):
+            sx = _series_from_any(mrio_obj.x).astype(float)
+            x_panel[int(y_key)] = sx
+            union_index = union_index.union(pd.Index(sx.index))
+        if union_index.empty:
+            raise ValueError("panel_union_zero_pad_top_n requested but the panel has no output index.")
+        score_frame = pd.DataFrame(
+            {
+                int(y_key): pd.to_numeric(sx.reindex(union_index), errors="coerce").fillna(0.0).astype(float)
+                for y_key, sx in x_panel.items()
+            },
+            index=union_index,
+        )
+        mean_scores = score_frame.mean(axis=1).sort_values(ascending=False, kind="mergesort")
+        selected_by_score = pd.Index(mean_scores.index[: max(1, int(n_sel))])
+        panel_union_index = _preserve_index_order(union_index, selected_by_score)
+        selected = pd.Series(False, index=union_index, dtype=bool)
+        selected.loc[panel_union_index] = True
+        ranks = pd.Series(range(1, len(mean_scores) + 1), index=mean_scores.index, dtype=int)
+        sector_universe_manifest = pd.DataFrame(
+            {
+                "sector": [str(idx) for idx in union_index],
+                "score": mean_scores.reindex(union_index).fillna(0.0).to_numpy(dtype=float),
+                "years_present": (score_frame.reindex(union_index).fillna(0.0) != 0.0).sum(axis=1).to_numpy(dtype=float),
+                "selected": selected.to_numpy(dtype=bool),
+                "rank": ranks.reindex(union_index).fillna(0).astype(int).to_numpy(dtype=int),
+                "sector_universe_mode": "panel_union_zero_pad_top_n",
+                "sector_universe_n": int(len(panel_union_index)),
+                "year": "panel",
+            }
+        )
+
     for year in sorted(panel.keys()):
         mrio, _yfull = panel[year]
         t_year = time.time()
@@ -472,19 +513,44 @@ def compute_viability_panel(
                 f"rss={float(_rss_mb()):.1f}MB",
                 flush=True,
             )
-        x_raw = _series_from_any(mrio.x)
-        y_raw = _series_from_any(_yfull).reindex(x_raw.index).fillna(0.0)
-        x_full = x_raw.astype(float)
-        y_full = y_raw.astype(float)
-        top_idx = x_full.index.copy()
+        x_raw = _series_from_any(mrio.x).astype(float)
+        raw_idx = pd.Index(x_raw.index)
+        y_raw = _series_from_any(_yfull).reindex(raw_idx).fillna(0.0).astype(float)
+        if panel_union_mode:
+            if panel_union_index is None:
+                raise RuntimeError("panel_union_index was not initialized.")
+            top_idx = pd.Index(panel_union_index)
+            x_full = x_raw.reindex(top_idx).fillna(0.0).astype(float)
+            y_full = y_raw.reindex(top_idx).fillna(0.0).astype(float)
+        else:
+            x_full = x_raw.astype(float)
+            y_full = y_raw.astype(float)
+            top_idx = x_full.index.copy()
         A_src = getattr(mrio, "A")
         if issparse(A_src):
-            A_year = csr_matrix(A_src, dtype=float)
-            A_year.eliminate_zeros()
-            if A_year.shape != (len(top_idx), len(top_idx)):
-                raise ValueError(f"Sparse A shape {A_year.shape} does not match output basis length {len(top_idx)}.")
+            A_raw = csr_matrix(A_src, dtype=float)
+            A_raw.eliminate_zeros()
+            if A_raw.shape != (len(raw_idx), len(raw_idx)):
+                raise ValueError(f"Sparse A shape {A_raw.shape} does not match raw output basis length {len(raw_idx)}.")
+            if panel_union_mode:
+                raw_positions = raw_idx.get_indexer(top_idx)
+                present = np.flatnonzero(raw_positions >= 0)
+                if present.size:
+                    selected_raw = raw_positions[present]
+                    sub = A_raw[selected_raw, :][:, selected_raw].tocoo()
+                    A_year = csr_matrix(
+                        (sub.data, (present[sub.row], present[sub.col])),
+                        shape=(len(top_idx), len(top_idx)),
+                        dtype=float,
+                    )
+                else:
+                    A_year = csr_matrix((len(top_idx), len(top_idx)), dtype=float)
+                A_year.eliminate_zeros()
+            else:
+                A_year = A_raw
         else:
-            A_year = _coerce_square(A_src, top_idx)
+            A_raw = _coerce_square(A_src, raw_idx)
+            A_year = _coerce_square(A_raw, top_idx) if panel_union_mode else A_raw
         if full_basis_mode:
             basis_scores = pd.to_numeric(x_full, errors="coerce").fillna(0.0).astype(float)
             denom = float(basis_scores.sum())
