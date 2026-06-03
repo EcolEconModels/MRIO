@@ -671,55 +671,12 @@ def load_mrio(
         y_full = mrio.Y[y_cols].sum(axis=1)
 
     else:
-        # Exiobase
-        system = str(exio_system).strip().lower()
-        if system not in {"pxp", "ixi"}:
-            raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
-        cache_mode = str(os.environ.get("MRIO_EXIO_FULL_CACHE", exio_full_cache)).strip().lower()
-        if cache_mode != "none":
-            raise ValueError(
-                "EXIOBASE full IOSystem pickle/text caching has been removed. "
-                "Use load_mrio_matrices() for compact sparse A/x/y loading from the source zip."
-            )
-        if delete_source_zip_after_parse and verbose:
-            print("Ignoring delete_source_zip_after_parse=True: EXIOBASE source zips are never deleted.")
-        if exio_save_text_cache and verbose:
-            print("Ignoring exio_save_text_cache=True: parsed EXIOBASE text caches are disabled.")
+        raise RuntimeError(
+            "Full EXIOBASE IOSystem loading via load_mrio(dataset='exiobase') is disabled. "
+            "Use load_mrio_matrices() / eigenmode sparse loaders so only the source zip is cached "
+            "and A/x/Y are streamed directly from the zip."
+        )
 
-        data_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
-        data_dir.mkdir(parents=True, exist_ok=True)
-        if verbose:
-            print(f"Ensuring EXIOBASE 3 data for {year} ({system}) in {data_dir}...")
-
-        paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
-        lock_path = data_dir / f".exiobase_{int(year)}_{system}.lock"
-        with _exclusive_cache_lock(
-            lock_path,
-            label=f"EXIOBASE {int(year)} {system}",
-            verbose=verbose,
-        ):
-            zip_path = ensure_exiobase_year_zip(
-                year=int(year),
-                data_dir=paths["data_dir"],
-                system=system,
-                force_download=force_download,
-                allow_download_missing=allow_download_missing,
-                resume_downloads=resume_downloads,
-                show_download_progress=show_download_progress,
-                download_chunk_mb=download_chunk_mb,
-                download_timeout_seconds=download_timeout_seconds,
-                download_retries=download_retries,
-                verbose=verbose,
-            )
-            if verbose:
-                print(f"Parsing EXIOBASE zip {zip_path} without full IOSystem cache writes...")
-            mrio = pymrio.parse_exiobase3(zip_path)
-
-        _validate_exiobase_system(mrio, system)
-
-        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-        y_full = mrio.Y[y_cols].sum(axis=1)
-    
     # Ensure Ghosh is calculated
     if calc_all and getattr(mrio, "G", None) is None:
         if verbose:
@@ -747,65 +704,27 @@ def load_mrio_matrices(
     cache_matrices: bool = False,
     read_existing_cache: bool = False,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load a compact EXIOBASE matrix cache for matrix-only workflows.
+    """Load EXIOBASE matrices directly from the source zip, without derived caches.
 
-    Returns
-    -------
-    A : scipy.sparse.csr_matrix
-        Technical-coefficient matrix.
-    x : pandas.Series
-        Output vector indexed by the EXIO basis index.
-    y : pandas.Series
-        Final-demand vector indexed by the EXIO basis index.
-    index : pandas.MultiIndex
-        Basis index with ``region`` and ``sector`` levels.
-    metadata : dict
-        Cache metadata describing what is stored and what is not.
-
-    Notes
-    -----
-    Set ``cache_matrices=False`` to parse the source zip without writing a
-    compact ``Z/x/y`` cache. With ``read_existing_cache=True`` this still uses
-    an existing compact cache when one is already present, but it will not
-    create a new one. This is the lowest-disk mode for short matrix-only runs.
+    This is the zip-only, sparse, low-disk loader used by eigenmode workflows.
+    It reads only x.txt, A.txt, and Y.txt from the EXIOBASE zip and returns a
+    sparse technical-coefficient matrix plus x/y vectors. It never writes
+    fast pickles, parsed text caches, compact matrix caches, or deletes the zip.
     """
     system = str(exio_system).strip().lower()
     if system not in {"pxp", "ixi"}:
         raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
+    if cache_matrices:
+        raise ValueError("EXIOBASE matrix cache writes are disabled; only the source zip may be cached.")
+    if delete_source_zip_after_parse:
+        raise ValueError("delete_source_zip_after_parse=True is disabled; the EXIOBASE source zip must be retained.")
 
     paths = resolve_exiobase_matrix_cache_paths(int(year), system=system, data_root=data_root)
     data_dir = paths["data_dir"]
     data_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir = paths["matrix_cache_dir"]
-    if cache_matrices:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-    if force_download and cache_matrices and cache_dir.exists():
-        ts = int(time.time())
-        cache_dir.rename(data_dir / f"{cache_dir.name}.forced.{ts}")
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-    if read_existing_cache and not force_download:
-        try:
-            A, x, y, basis_index, metadata = _load_exio_matrix_cache(cache_dir=cache_dir)
-            metadata = dict(metadata)
-            metadata["cache_status"] = "hit"
-            metadata["cache_dir"] = str(cache_dir)
-            return A, x, y, basis_index, metadata
-        except FileNotFoundError:
-            pass
-        except Exception as exc:
-            ts = int(time.time())
-            try:
-                cache_dir.rename(data_dir / f"{cache_dir.name}.invalid.{ts}")
-            except Exception:
-                pass
-            if verbose:
-                print(f"Warning: failed matrix-cache load ({type(exc).__name__}: {exc}); rebuilding from EXIOBASE zip.")
-
     zip_path = ensure_exiobase_year_zip(
         year=int(year),
-        data_dir=paths["data_dir"],
+        data_dir=data_dir,
         system=system,
         force_download=force_download,
         allow_download_missing=allow_download_missing,
@@ -818,79 +737,20 @@ def load_mrio_matrices(
     )
 
     if verbose:
-        print(f"Parsing EXIOBASE zip {zip_path} for matrix cache ...")
-    if not cache_matrices:
-        A_direct, x_direct, y_direct, basis_index_direct, metadata_direct = _load_exio_matrices_direct_from_zip(zip_path)
-        metadata_direct = dict(metadata_direct)
-        metadata_direct["system"] = system
-        metadata_direct["year"] = int(year)
-        metadata_direct["cache_dir"] = str(cache_dir)
-        if delete_source_zip_after_parse:
-            try:
-                zip_path.unlink(missing_ok=True)
-                if verbose:
-                    print(f"Deleted EXIOBASE source zip after successful direct matrix load: {zip_path}")
-            except Exception as exc:
-                if verbose:
-                    print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
-        if calc_all and verbose:
-            print("calc_all is ignored for load_mrio_matrices(); the compact cache stores matrices only.")
-        return A_direct, x_direct, y_direct, basis_index_direct, metadata_direct
-
-    mrio = pymrio.parse_exiobase3(zip_path)
-    _validate_exiobase_system(mrio, system)
-
-    Z = pd.DataFrame(mrio.Z).astype(float)
-    Y = pd.DataFrame(mrio.Y).astype(float)
-    basis_index = Z.index if isinstance(Z.index, pd.MultiIndex) else pd.Index(Z.index)
-    if not isinstance(basis_index, pd.MultiIndex):
-        raise ValueError("Expected EXIOBASE Z to have a MultiIndex basis index.")
-    if not isinstance(Y.index, pd.MultiIndex) or not isinstance(Y.columns, pd.MultiIndex):
-        raise ValueError("Expected EXIOBASE Y to have MultiIndex rows and columns.")
-
-    x = getattr(mrio, "x", None)
-    x_series = _coerce_series_like(x, index=basis_index, name="x") if x is not None else None
-    if x_series is None or x_series.empty or float(x_series.abs().sum()) == 0.0:
-        x_from_r = pd.DataFrame(mrio.Z).astype(float).sum(axis=1) + pd.DataFrame(mrio.Y).astype(float).sum(axis=1)
-        x_series = _coerce_series_like(x_from_r, index=basis_index, name="x")
-
-    y_cols = [c for c in Y.columns if "EXP" not in str(c)]
-    y_series = Y[y_cols].sum(axis=1).astype(float)
-    y_series = _coerce_series_like(y_series, index=basis_index, name="y")
-
-    Z_df = pd.DataFrame(Z, copy=False).reindex(index=basis_index, columns=basis_index).fillna(0.0).astype(float)
-    Z_csr = csr_matrix(Z_df.to_numpy(dtype=float))
-
-    density = float(Z_csr.nnz) / float(Z_csr.shape[0] * Z_csr.shape[1]) if Z_csr.shape[0] and Z_csr.shape[1] else 0.0
-    inv_x = (1.0 / x_series.replace(0.0, pd.NA)).fillna(0.0).astype(float)
-    A_csr = (Z_csr @ diags(inv_x.to_numpy(dtype=float), format="csr")).tocsr()
-
-    metadata = {
-        "cache_kind": "exiobase_matrix",
-        "cache_status": "rebuilt" if cache_matrices else "parsed_no_cache_write",
-        "system": system,
-        "year": int(year),
-        "matrix_shape": [int(Z_csr.shape[0]), int(Z_csr.shape[1])],
-        "nnz": int(Z_csr.nnz),
-        "density": float(density),
-        "stored_objects": ["Z", "x", "y", "index"],
-        "not_stored_objects": ["A", "full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "extensions"],
-        "source_zip": str(zip_path),
-        "cache_dir": str(cache_dir),
-        "index_columns": ["region", "sector"],
-        "cache_matrices": bool(cache_matrices),
-    }
-    if cache_matrices:
-        _save_exio_matrix_cache(cache_dir=cache_dir, Z=Z_csr, x=x_series, y=y_series, index=basis_index, metadata=metadata, verbose=verbose)
-        metadata["cache_status"] = "rebuilt_returned_direct"
-    if delete_source_zip_after_parse:
-        try:
-            zip_path.unlink(missing_ok=True)
-            if verbose:
-                print(f"Deleted EXIOBASE source zip after successful matrix-cache validation: {zip_path}")
-        except Exception as exc:
-            if verbose:
-                print(f"Warning: failed to delete EXIOBASE source zip {zip_path}: {exc}")
+        print(f"Streaming EXIOBASE x/A/Y directly from {zip_path} (zip-only, no derived cache writes) ...")
+    A_direct, x_direct, y_direct, basis_index_direct, metadata_direct = _load_exio_matrices_direct_from_zip(zip_path)
+    metadata_direct = dict(metadata_direct)
+    metadata_direct.update(
+        {
+            "system": system,
+            "year": int(year),
+            "cache_status": "streamed_direct_from_zip",
+            "zip_only_cache": True,
+            "cache_matrices": False,
+            "source_zip_retained": True,
+        }
+    )
     if calc_all and verbose:
-        print("calc_all is ignored for load_mrio_matrices(); the compact cache stores matrices only.")
-    return A_csr, x_series, y_series, basis_index, metadata
+        print("calc_all is ignored for load_mrio_matrices(); sparse A/x/y are returned directly.")
+    return A_direct, x_direct, y_direct, basis_index_direct, metadata_direct
+
