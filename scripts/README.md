@@ -157,3 +157,23 @@ The fuels pipeline no longer needs a workbook to author mapping CSVs. The split 
 - The checked-in helper CSVs under `scripts/pipelines/` are the source of truth for split and reaggregation pipeline runs. If you manually tweak them, rerun the affected pipelines directly rather than regenerating them as part of the workflow.
 - The IO split step uses EXIOBASE producer-side output for mapping diagnostics and emissions intensity denominators, but destination-side use slices for the actual split profiles. Those are distinct objects and should not be conflated.
 - The PostGrowth model consumes the exported workbooks directly; it no longer redoes the brown/green split inside R.
+
+### Eurostat Energy Balance dictionary
+
+The Energy Balance pxp split pipeline must validate all `nrg_bal` and `siec` selectors against an official metadata-derived dictionary:
+
+```bash
+.venv/bin/python scripts/build_eurostat_energy_balance_dictionary.py \
+  --geo AT \
+  --year 2021 \
+  --out scripts/mappings/eurostat_energy_balances_dictionary.csv
+```
+
+The generated file has schema:
+
+```text
+dataset,dimension,code,label,description,provenance_source
+```
+
+Do not hand-type Energy Balance code labels in active mapping files. Use official Eurostat SDMX metadata via this generated dictionary.
+

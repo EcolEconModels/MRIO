@@ -836,3 +836,133 @@ def validate_energy_balance_closure(
                 + ", ".join(heat_bad["Category"].astype(str).head(5).tolist())
             )
         raise ValueError("; ".join(msg))
+
+
+def build_eurostat_energy_balance_dictionary(
+    *,
+    geo: str,
+    time: int,
+    storage_folder: str | Path | None = None,
+    force_download: bool = False,
+    force_reparse: bool = False,
+) -> pd.DataFrame:
+    """
+    Build an official Eurostat Energy Balance dictionary from SDMX metadata.
+
+    Output schema:
+      dataset, dimension, code, label, description, provenance_source
+
+    The labels come from the Eurostat metadata returned by the existing loader.
+    Do not hand-type Energy Balance code labels in mapping files.
+    """
+    rows: list[dict[str, str]] = []
+
+    requests = [
+        # nrg_bal_c: fetch all nrg_bal labels using TOTAL SIEC.
+        {
+            "dataset": DEFAULT_ENERGY_BALANCE_DATASET,
+            "nrg_bal": None,
+            "siec": ["TOTAL"],
+        },
+        # nrg_bal_c: fetch SIEC labels using a common production row.
+        {
+            "dataset": DEFAULT_ENERGY_BALANCE_DATASET,
+            "nrg_bal": ["NRG_PR_E"],
+            "siec": None,
+        },
+        # nrg_bal_peh: fetch all available electricity/heat production rows.
+        {
+            "dataset": DEFAULT_ELECTRICITY_HEAT_MIX_DATASET,
+            "nrg_bal": None,
+            "siec": ["TOTAL"],
+        },
+        # nrg_bal_peh: fetch detailed SIEC labels using gross electricity production.
+        {
+            "dataset": DEFAULT_ELECTRICITY_HEAT_MIX_DATASET,
+            "nrg_bal": ["GEP"],
+            "siec": None,
+        },
+    ]
+
+    for req in requests:
+        dataset = str(req["dataset"])
+        try:
+            _df, meta = load_eurostat_energy_balance_slice(
+                geo=geo,
+                time=time,
+                nrg_bal=req["nrg_bal"],
+                siec=req["siec"],
+                unit="GWH",
+                freq="A",
+                dataset=dataset,
+                storage_folder=storage_folder,
+                force_download=force_download,
+                force_reparse=force_reparse,
+            )
+        except Exception as exc:  # pragma: no cover - exercised only by real Eurostat/cache failures
+            raise RuntimeError(
+                f"Could not build Energy Balance dictionary from dataset={dataset!r}, request={req!r}"
+            ) from exc
+
+        dims = meta.get("dimensions", {}) or {}
+        for dimension in ("nrg_bal", "siec"):
+            values = dims.get(dimension, {}) or {}
+            if not isinstance(values, dict):
+                continue
+            for code, label in values.items():
+                code_s = str(code).strip()
+                label_s = str(label).strip()
+                if not code_s or not label_s:
+                    continue
+                rows.append(
+                    {
+                        "dataset": dataset,
+                        "dimension": dimension,
+                        "code": code_s,
+                        "label": label_s,
+                        "description": label_s,
+                        "provenance_source": f"Eurostat SDMX metadata:{dataset}:{dimension}",
+                    }
+                )
+
+    required = ["dataset", "dimension", "code", "label", "description", "provenance_source"]
+    out = pd.DataFrame(rows, columns=required)
+    if out.empty:
+        raise ValueError("Generated Energy Balance dictionary is empty; check Eurostat metadata availability.")
+
+    out = out.drop_duplicates(subset=["dataset", "dimension", "code"], keep="first")
+    out = out.sort_values(["dataset", "dimension", "code"], kind="stable").reset_index(drop=True)
+
+    for col in required:
+        if out[col].astype(str).str.strip().eq("").any():
+            raise ValueError(f"Generated Energy Balance dictionary has blank {col!r} values.")
+
+    dupes = out.duplicated(subset=["dataset", "dimension", "code"], keep=False)
+    if dupes.any():
+        sample = out.loc[dupes, ["dataset", "dimension", "code"]].head(20).to_dict("records")
+        raise ValueError(f"Generated Energy Balance dictionary has duplicate rows: {sample!r}")
+
+    return out.loc[:, required]
+
+
+def write_eurostat_energy_balance_dictionary_csv(
+    path: str | Path,
+    *,
+    geo: str,
+    time: int,
+    storage_folder: str | Path | None = None,
+    force_download: bool = False,
+    force_reparse: bool = False,
+) -> pd.DataFrame:
+    out = build_eurostat_energy_balance_dictionary(
+        geo=geo,
+        time=time,
+        storage_folder=storage_folder,
+        force_download=force_download,
+        force_reparse=force_reparse,
+    )
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(path, index=False)
+    return out
+

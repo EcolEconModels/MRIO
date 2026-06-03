@@ -1,0 +1,300 @@
+dataset,dimension,code,label,description,provenance_source
+nrg_bal_c,nrg_bal,AFC,Available for final consumption,Available for final consumption,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,DL,Distribution losses,Distribution losses,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,EXP,Exports,Exports,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_E,Final consumption - energy use,Final consumption - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_CON_E,Final consumption - industry sector - construction - energy use,Final consumption - industry sector - construction - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_CPC_E,Final consumption - industry sector - chemical and petrochemical - energy use,Final consumption - industry sector - chemical and petrochemical - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_E,Final consumption - industry sector - energy use,Final consumption - industry sector - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_FBT_E,"Final consumption - industry sector - food, beverages and tobacco - energy use","Final consumption - industry sector - food, beverages and tobacco - energy use",Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_IS_E,Final consumption - industry sector - iron and steel - energy use,Final consumption - industry sector - iron and steel - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_MAC_E,Final consumption - industry sector - machinery - energy use,Final consumption - industry sector - machinery - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_MQ_E,Final consumption - industry sector - mining and quarrying - energy use,Final consumption - industry sector - mining and quarrying - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_NE,Final consumption - industry sector - non-energy use,Final consumption - industry sector - non-energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_NFM_E,Final consumption - industry sector - non-ferrous metals - energy use,Final consumption - industry sector - non-ferrous metals - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_NMM_E,Final consumption - industry sector - non-metallic minerals - energy use,Final consumption - industry sector - non-metallic minerals - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_NSP_E,Final consumption - industry sector - not elsewhere specified - energy use,Final consumption - industry sector - not elsewhere specified - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_PPP_E,"Final consumption - industry sector - paper, pulp and printing - energy use","Final consumption - industry sector - paper, pulp and printing - energy use",Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_TE_E,Final consumption - industry sector - transport equipment - energy use,Final consumption - industry sector - transport equipment - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_TL_E,Final consumption - industry sector - textile and leather - energy use,Final consumption - industry sector - textile and leather - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_IND_WP_E,Final consumption - industry sector - wood and wood products - energy use,Final consumption - industry sector - wood and wood products - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_NE,Final consumption - non-energy use,Final consumption - non-energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_AF_E,Final consumption - other sectors - agriculture and forestry - energy use,Final consumption - other sectors - agriculture and forestry - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_CP_E,Final consumption - other sectors - commercial and public services - energy use,Final consumption - other sectors - commercial and public services - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_E,Final consumption - other sectors - energy use,Final consumption - other sectors - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_FISH_E,Final consumption - other sectors - fishing - energy use,Final consumption - other sectors - fishing - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_HH_E,Final consumption - other sectors - households - energy use,Final consumption - other sectors - households - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_NE,Final consumption - other sectors - non-energy use,Final consumption - other sectors - non-energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_OTH_NSP_E,Final consumption - other sectors - not elsewhere specified - energy use,Final consumption - other sectors - not elsewhere specified - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_DAVI_E,Final consumption - transport sector - domestic aviation - energy use,Final consumption - transport sector - domestic aviation - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_DNAVI_E,Final consumption - transport sector - domestic navigation - energy use,Final consumption - transport sector - domestic navigation - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_E,Final consumption - transport sector - energy use,Final consumption - transport sector - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_NE,Final consumption - transport sector - non-energy use,Final consumption - transport sector - non-energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_NSP_E,Final consumption - transport sector - not elsewhere specified - energy use,Final consumption - transport sector - not elsewhere specified - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_PIPE_E,Final consumption - transport sector - pipeline transport - energy use,Final consumption - transport sector - pipeline transport - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_RAIL_E,Final consumption - transport sector - rail - energy use,Final consumption - transport sector - rail - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FC_TRA_ROAD_E,Final consumption - transport sector - road - energy use,Final consumption - transport sector - road - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FEC2020-2030,Final energy consumption (Europe 2020-2030),Final energy consumption (Europe 2020-2030),Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,FEC_EED,Final energy consumption - Energy Efficiency Directive,Final energy consumption - Energy Efficiency Directive,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GAE,Gross available energy,Gross available energy,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GEP,Gross electricity production,Gross electricity production,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GEP_APCHP,Gross electricity production - autoproducer combined heat and power,Gross electricity production - autoproducer combined heat and power,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GEP_APE,Gross electricity production - autoproducer electricity only,Gross electricity production - autoproducer electricity only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GEP_MAPCHP,Gross electricity production - main activity producer combined heat and power,Gross electricity production - main activity producer combined heat and power,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GEP_MAPE,Gross electricity production - main activity producer electricity only,Gross electricity production - main activity producer electricity only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GHP,Gross heat production,Gross heat production,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GHP_APCHP,Gross heat production - autoproducer combined heat and power,Gross heat production - autoproducer combined heat and power,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GHP_APH,Gross heat production - autoproducer heat only,Gross heat production - autoproducer heat only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GHP_MAPCHP,Gross heat production - main activity producer combined heat and power,Gross heat production - main activity producer combined heat and power,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GHP_MAPH,Gross heat production - main activity producer heat only,Gross heat production - main activity producer heat only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GIC,Gross inland consumption,Gross inland consumption,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GIC2020-2030,Gross inland consumption (Europe 2020-2030),Gross inland consumption (Europe 2020-2030),Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,GIC_EED,Gross inland consumption - Energy Efficiency Directive,Gross inland consumption - Energy Efficiency Directive,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,IMP,Imports,Imports,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,INTAVI,International aviation,International aviation,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,INTMARB,International maritime bunkers,International maritime bunkers,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRGSUP,Total energy supply,Total energy supply,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_BF_E,Energy sector - blast furnaces - energy use,Energy sector - blast furnaces - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_BIOG_E,Energy sector - gasification plants for biogas - energy use,Energy sector - gasification plants for biogas - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_BKBPB_E,Energy sector - brown coal briquettes and peat briquettes plants - energy use,Energy sector - brown coal briquettes and peat briquettes plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_CL_E,Energy sector - coal liquefaction plants - energy use,Energy sector - coal liquefaction plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_CM_E,Energy sector - coal mines - energy use,Energy sector - coal mines - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_CO_E,Energy sector - coke ovens - energy use,Energy sector - coke ovens - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_CPP_E,Energy sector - charcoal production plants - energy use,Energy sector - charcoal production plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_E,Energy sector - energy use,Energy sector - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_EHG_E,Energy sector - electricity and heat generation - energy use,Energy sector - electricity and heat generation - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_GTL_E,Energy sector - gas-to-liquids plants - energy use,Energy sector - gas-to-liquids plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_GW_E,Energy sector - gas works - energy use,Energy sector - gas works - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_LNG_E,Energy sector - liquefaction and regasification plants (LNG) - energy use,Energy sector - liquefaction and regasification plants (LNG) - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_NE,Energy sector - non-energy use,Energy sector - non-energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_NI_E,Energy sector - nuclear industry - energy use,Energy sector - nuclear industry - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_NSP_E,Energy sector - not elsewhere specified - energy use,Energy sector - not elsewhere specified - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_OIL_NG_E,Energy sector - oil and natural gas extraction plants - energy use,Energy sector - oil and natural gas extraction plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_PF_E,Energy sector - patent fuel plants - energy use,Energy sector - patent fuel plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,NRG_PR_E,Energy sector - petroleum refineries (oil refineries) - energy use,Energy sector - petroleum refineries (oil refineries) - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,PEC2020-2030,Primary energy consumption (Europe 2020-2030),Primary energy consumption (Europe 2020-2030),Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,PEC_EED,Primary energy consumption - Energy Efficiency Directive,Primary energy consumption - Energy Efficiency Directive,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,PPRD,Primary production,Primary production,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,RCV_RCY,Recovered and recycled products,Recovered and recycled products,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,STATDIFF,Statistical differences,Statistical differences,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,STK_CHG,Change in stock,Change in stock,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_BF_E,Transformation input - blast furnaces - energy use,Transformation input - blast furnaces - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_BKBPB_E,Transformation input - brown coal briquettes and peat briquettes plants - energy use,Transformation input - brown coal briquettes and peat briquettes plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_BNG_E,Transformation input - for blending with natural gas - energy use,Transformation input - for blending with natural gas - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_CL_E,Transformation input - coal liquefaction plants - energy use,Transformation input - coal liquefaction plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_CO_E,Transformation input - coke ovens - energy use,Transformation input - coke ovens - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_CPP_E,Transformation input - charcoal production plants - energy use,Transformation input - charcoal production plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_E,Transformation input - energy use,Transformation input - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_APCHP_E,Transformation input - electricity and heat generation - autoproducer combined heat and power - energy use,Transformation input - electricity and heat generation - autoproducer combined heat and power - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_APE_E,Transformation input - electricity and heat generation - autoproducer electricity only - energy use,Transformation input - electricity and heat generation - autoproducer electricity only - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_APH_E,Transformation input - electricity and heat generation - autoproducer heat only - energy use,Transformation input - electricity and heat generation - autoproducer heat only - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_CB,Transformation input - electricity and heat generation - charging batteries,Transformation input - electricity and heat generation - charging batteries,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_DHEP,Transformation input - electricity and heat generation - derived heat for electricity production,Transformation input - electricity and heat generation - derived heat for electricity production,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_E,Transformation input - electricity and heat generation - energy use,Transformation input - electricity and heat generation - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_EB,Transformation input - electricity and heat generation - electric boilers,Transformation input - electricity and heat generation - electric boilers,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_EDHP,Transformation input - electricity and heat generation - electrically driven heat pumps,Transformation input - electricity and heat generation - electrically driven heat pumps,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_EPS,Transformation input - electricity and heat generation - electricity for pumped storage,Transformation input - electricity and heat generation - electricity for pumped storage,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_MAPCHP_E,Transformation input - electricity and heat generation - main activity producer combined heat and power - energy use,Transformation input - electricity and heat generation - main activity producer combined heat and power - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_MAPE_E,Transformation input - electricity and heat generation - main activity producer electricity only - energy use,Transformation input - electricity and heat generation - main activity producer electricity only - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_EHG_MAPH_E,Transformation input - electricity and heat generation - main activity producer heat only - energy use,Transformation input - electricity and heat generation - main activity producer heat only - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_GTL_E,Transformation input - gas-to-liquids plants - energy use,Transformation input - gas-to-liquids plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_GW_E,Transformation input - gas works - energy use,Transformation input - gas works - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_LBB_E,Transformation input - liquid biofuels blended - energy use,Transformation input - liquid biofuels blended - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_NE,Transformation input - non-energy use,Transformation input - non-energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_NRG_FC_IND_NE,"Transformation input, energy sector and final consumption in industry sector - non-energy use","Transformation input, energy sector and final consumption in industry sector - non-energy use",Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_NSP_E,Transformation input - not elsewhere specified - energy use,Transformation input - not elsewhere specified - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_PF_E,Transformation input - patent fuel plants - energy use,Transformation input - patent fuel plants - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_BPI_E,Transformation input - refineries and petrochemical industry - backflows from petrochemical industry - energy use,Transformation input - refineries and petrochemical industry - backflows from petrochemical industry - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_DU_E,Transformation input - refineries and petrochemical industry - direct use - energy use,Transformation input - refineries and petrochemical industry - direct use - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_E,Transformation input - refineries and petrochemical industry - energy use,Transformation input - refineries and petrochemical industry - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_IT_E,Transformation input - refineries and petrochemical industry - interproduct transfers - energy use,Transformation input - refineries and petrochemical industry - interproduct transfers - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_PII_E,Transformation input - refineries and petrochemical industry - petrochemical industry intake - energy use,Transformation input - refineries and petrochemical industry - petrochemical industry intake - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_PT_E,Transformation input - refineries and petrochemical industry - products transferred - energy use,Transformation input - refineries and petrochemical industry - products transferred - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TI_RPI_RI_E,Transformation input - refineries and petrochemical industry - refinery intake - energy use,Transformation input - refineries and petrochemical industry - refinery intake - energy use,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO,Transformation output,Transformation output,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_BF,Transformation output - blast furnaces,Transformation output - blast furnaces,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_BKBPB,Transformation output - brown coal briquettes and peat briquettes plants,Transformation output - brown coal briquettes and peat briquettes plants,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_BNG,Transformation output - blended in natural gas,Transformation output - blended in natural gas,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_CL,Transformation output - coal liquefaction plants,Transformation output - coal liquefaction plants,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_CO,Transformation output - coke ovens,Transformation output - coke ovens,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_CPP,Transformation output - charcoal production plants,Transformation output - charcoal production plants,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG,Transformation output - electricity and heat generation,Transformation output - electricity and heat generation,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_APCHP,Transformation output - electricity and heat generation - autoproducer combined heat and power,Transformation output - electricity and heat generation - autoproducer combined heat and power,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_APE,Transformation output - electricity and heat generation - autoproducer electricity only,Transformation output - electricity and heat generation - autoproducer electricity only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_APH,Transformation output - electricity and heat generation - autoproducer heat only,Transformation output - electricity and heat generation - autoproducer heat only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_EB,Transformation output - electricity and heat generation - electric boilers,Transformation output - electricity and heat generation - electric boilers,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_EDHP,Transformation output - electricity and heat generation - electrically driven heat pumps,Transformation output - electricity and heat generation - electrically driven heat pumps,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_MAPCHP,Transformation output - electricity and heat generation - main activity producer combined heat and power,Transformation output - electricity and heat generation - main activity producer combined heat and power,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_MAPE,Transformation output - electricity and heat generation - main activity producer electricity only,Transformation output - electricity and heat generation - main activity producer electricity only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_MAPH,Transformation output - electricity and heat generation - main activity producer heat only,Transformation output - electricity and heat generation - main activity producer heat only,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_OTH,Transformation output - electricity and heat generation - other sources,Transformation output - electricity and heat generation - other sources,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_EHG_PH,Transformation output - electricity and heat generation - pumped hydro,Transformation output - electricity and heat generation - pumped hydro,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_GTL,Transformation output - gas-to-liquids plants,Transformation output - gas-to-liquids plants,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_GW,Transformation output - gas works,Transformation output - gas works,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_LBB,Transformation output - liquid biofuels blended,Transformation output - liquid biofuels blended,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_NSP,Transformation output - not elsewhere specified,Transformation output - not elsewhere specified,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_PF,Transformation output - patent fuel plants,Transformation output - patent fuel plants,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI,Transformation output - refineries and petrochemical industry,Transformation output - refineries and petrochemical industry,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI_BKFLOW,Transformation output - refineries and petrochemical industry - backflows,Transformation output - refineries and petrochemical industry - backflows,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI_IT,Transformation output - refineries and petrochemical industry - interproduct transfers,Transformation output - refineries and petrochemical industry - interproduct transfers,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI_PIR,Transformation output - refineries and petrochemical industry - petrochemical industry returns,Transformation output - refineries and petrochemical industry - petrochemical industry returns,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI_PPR,Transformation output - refineries and petrochemical industry - primary product receipts,Transformation output - refineries and petrochemical industry - primary product receipts,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI_PT,Transformation output - refineries and petrochemical industry - products transferred,Transformation output - refineries and petrochemical industry - products transferred,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,nrg_bal,TO_RPI_RO,Transformation output - refineries and petrochemical industry - refinery output,Transformation output - refineries and petrochemical industry - refinery output,Eurostat SDMX metadata:nrg_bal_c:nrg_bal
+nrg_bal_c,siec,BIOE,Bioenergy,Bioenergy,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0000X0350-0370,Solid fossil fuels,Solid fossil fuels,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0110,Anthracite,Anthracite,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0121,Coking coal,Coking coal,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0129,Other bituminous coal,Other bituminous coal,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0210,Sub-bituminous coal,Sub-bituminous coal,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0220,Lignite,Lignite,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0311,Coke oven coke,Coke oven coke,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0312,Gas coke,Gas coke,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0320,Patent fuel,Patent fuel,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0330,Brown coal briquettes,Brown coal briquettes,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0340,Coal tar,Coal tar,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0350,Coke oven gas,Coke oven gas,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0350-0370,Manufactured gases,Manufactured gases,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0360,Gas works gas,Gas works gas,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0371,Blast furnace gas,Blast furnace gas,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,C0379,Other recovered gases,Other recovered gases,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,E7000,Electricity,Electricity,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,FE,Fossil energy,Fossil energy,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,G3000,Natural gas,Natural gas,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,H8000,Heat,Heat,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,N900H,Nuclear heat,Nuclear heat,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4000XBIO,Oil and petroleum products (excluding biofuel portion),Oil and petroleum products (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4100_TOT,Crude oil,Crude oil,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4200,Natural gas liquids,Natural gas liquids,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4300,Refinery feedstocks,Refinery feedstocks,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4400X4410,Additives and oxygenates (excluding biofuel portion),Additives and oxygenates (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4500,Other hydrocarbons,Other hydrocarbons,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4610,Refinery gas,Refinery gas,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4620,Ethane,Ethane,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4630,Liquefied petroleum gases,Liquefied petroleum gases,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4640,Naphtha,Naphtha,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4651,Aviation gasoline,Aviation gasoline,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4652XR5210B,Motor gasoline (excluding biofuel portion),Motor gasoline (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4653,Gasoline-type jet fuel,Gasoline-type jet fuel,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4661XR5230B,Kerosene-type jet fuel (excluding biofuel portion),Kerosene-type jet fuel (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4669,Other kerosene,Other kerosene,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4671XR5220B,Gas oil and diesel oil (excluding biofuel portion),Gas oil and diesel oil (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4680,Fuel oil,Fuel oil,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4691,White spirit and special boiling point industrial spirits,White spirit and special boiling point industrial spirits,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4692,Lubricants,Lubricants,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4693,Paraffin waxes,Paraffin waxes,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4694,Petroleum coke,Petroleum coke,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4695,Bitumen,Bitumen,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,O4699,Other oil products n.e.c.,Other oil products n.e.c.,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,P1000,Peat and peat products,Peat and peat products,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,P1100,Peat,Peat,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,P1200,Peat products,Peat products,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5110-5150_W6000RI,Primary solid biofuels,Primary solid biofuels,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5160,Charcoal,Charcoal,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5210B,Blended biogasoline,Blended biogasoline,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5210P,Pure biogasoline,Pure biogasoline,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5220B,Blended biodiesels,Blended biodiesels,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5220P,Pure biodiesels,Pure biodiesels,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5230B,Blended bio jet kerosene,Blended bio jet kerosene,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5230P,Pure bio jet kerosene,Pure bio jet kerosene,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5290,Other liquid biofuels,Other liquid biofuels,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,R5300,Biogases,Biogases,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA000,Renewables and biofuels,Renewables and biofuels,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA100,Hydro,Hydro,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA200,Geothermal,Geothermal,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA300,Wind,Wind,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA410,Solar thermal,Solar thermal,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA420,Solar photovoltaic,Solar photovoltaic,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA500,"Tide, wave, ocean","Tide, wave, ocean",Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,RA600,Ambient heat (heat pumps),Ambient heat (heat pumps),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,S2000,Oil shale and oil sands,Oil shale and oil sands,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,TOTAL,Total,Total,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,W6100,Industrial waste (non-renewable),Industrial waste (non-renewable),Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,W6100_6220,Non-renewable waste,Non-renewable waste,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,W6210,Renewable municipal waste,Renewable municipal waste,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_c,siec,W6220,Non-renewable municipal waste,Non-renewable municipal waste,Eurostat SDMX metadata:nrg_bal_c:siec
+nrg_bal_peh,nrg_bal,GEP,Gross electricity production,Gross electricity production,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GEP_APCHP,Gross electricity production - autoproducer combined heat and power,Gross electricity production - autoproducer combined heat and power,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GEP_APE,Gross electricity production - autoproducer electricity only,Gross electricity production - autoproducer electricity only,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GEP_MAPCHP,Gross electricity production - main activity producer combined heat and power,Gross electricity production - main activity producer combined heat and power,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GEP_MAPE,Gross electricity production - main activity producer electricity only,Gross electricity production - main activity producer electricity only,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GHP,Gross heat production,Gross heat production,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GHP_APCHP,Gross heat production - autoproducer combined heat and power,Gross heat production - autoproducer combined heat and power,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GHP_APH,Gross heat production - autoproducer heat only,Gross heat production - autoproducer heat only,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GHP_MAPCHP,Gross heat production - main activity producer combined heat and power,Gross heat production - main activity producer combined heat and power,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,nrg_bal,GHP_MAPH,Gross heat production - main activity producer heat only,Gross heat production - main activity producer heat only,Eurostat SDMX metadata:nrg_bal_peh:nrg_bal
+nrg_bal_peh,siec,BA100,Batteries,Batteries,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,BIOE,Bioenergy,Bioenergy,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0000X0350-0370,Solid fossil fuels,Solid fossil fuels,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0110,Anthracite,Anthracite,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0121,Coking coal,Coking coal,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0129,Other bituminous coal,Other bituminous coal,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0210,Sub-bituminous coal,Sub-bituminous coal,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0220,Lignite,Lignite,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0311,Coke oven coke,Coke oven coke,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0312,Gas coke,Gas coke,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0320,Patent fuel,Patent fuel,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0330,Brown coal briquettes,Brown coal briquettes,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0340,Coal tar,Coal tar,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0350,Coke oven gas,Coke oven gas,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0350-0370,Manufactured gases,Manufactured gases,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0360,Gas works gas,Gas works gas,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0371,Blast furnace gas,Blast furnace gas,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,C0379,Other recovered gases,Other recovered gases,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,E7000,Electricity,Electricity,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,FE,Fossil energy,Fossil energy,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,G3000,Natural gas,Natural gas,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,H8000,Heat,Heat,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,N900H,Nuclear heat,Nuclear heat,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4000XBIO,Oil and petroleum products (excluding biofuel portion),Oil and petroleum products (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4100_TOT,Crude oil,Crude oil,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4200,Natural gas liquids,Natural gas liquids,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4300,Refinery feedstocks,Refinery feedstocks,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4400X4410,Additives and oxygenates (excluding biofuel portion),Additives and oxygenates (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4500,Other hydrocarbons,Other hydrocarbons,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4610,Refinery gas,Refinery gas,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4620,Ethane,Ethane,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4630,Liquefied petroleum gases,Liquefied petroleum gases,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4640,Naphtha,Naphtha,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4651,Aviation gasoline,Aviation gasoline,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4652XR5210B,Motor gasoline (excluding biofuel portion),Motor gasoline (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4653,Gasoline-type jet fuel,Gasoline-type jet fuel,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4661XR5230B,Kerosene-type jet fuel (excluding biofuel portion),Kerosene-type jet fuel (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4669,Other kerosene,Other kerosene,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4671XR5220B,Gas oil and diesel oil (excluding biofuel portion),Gas oil and diesel oil (excluding biofuel portion),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4680,Fuel oil,Fuel oil,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4691,White spirit and special boiling point industrial spirits,White spirit and special boiling point industrial spirits,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4692,Lubricants,Lubricants,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4693,Paraffin waxes,Paraffin waxes,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4694,Petroleum coke,Petroleum coke,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4695,Bitumen,Bitumen,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,O4699,Other oil products n.e.c.,Other oil products n.e.c.,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,P1000,Peat and peat products,Peat and peat products,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,P1100,Peat,Peat,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,P1200,Peat products,Peat products,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5110-5150_W6000RI,Primary solid biofuels,Primary solid biofuels,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5160,Charcoal,Charcoal,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5210B,Blended biogasoline,Blended biogasoline,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5210P,Pure biogasoline,Pure biogasoline,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5220B,Blended biodiesels,Blended biodiesels,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5220P,Pure biodiesels,Pure biodiesels,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5230B,Blended bio jet kerosene,Blended bio jet kerosene,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5230P,Pure bio jet kerosene,Pure bio jet kerosene,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5290,Other liquid biofuels,Other liquid biofuels,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,R5300,Biogases,Biogases,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA000,Renewables and biofuels,Renewables and biofuels,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA100,Hydro,Hydro,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA130,Pumped hydro power,Pumped hydro power,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA200,Geothermal,Geothermal,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA300,Wind,Wind,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA410,Solar thermal,Solar thermal,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA420,Solar photovoltaic,Solar photovoltaic,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA500,"Tide, wave, ocean","Tide, wave, ocean",Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,RA600,Ambient heat (heat pumps),Ambient heat (heat pumps),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,S2000,Oil shale and oil sands,Oil shale and oil sands,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,TOTAL,Total,Total,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,W6100,Industrial waste (non-renewable),Industrial waste (non-renewable),Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,W6100_6220,Non-renewable waste,Non-renewable waste,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,W6210,Renewable municipal waste,Renewable municipal waste,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,W6220,Non-renewable municipal waste,Non-renewable municipal waste,Eurostat SDMX metadata:nrg_bal_peh:siec
+nrg_bal_peh,siec,X9900,Other fuels n.e.c.,Other fuels n.e.c.,Eurostat SDMX metadata:nrg_bal_peh:siec
