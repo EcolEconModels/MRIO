@@ -60,8 +60,26 @@ def resolve_exiobase_cache_paths(
     }
 
 
+
+def _open_exio_zip_member(zf: zipfile.ZipFile, member_name: str):
+    """Open an EXIOBASE text member by basename, allowing root or nested zip layouts."""
+    wanted = str(member_name).strip()
+    names = zf.namelist()
+    if wanted in names:
+        return zf.open(wanted)
+    matches = [name for name in names if Path(name).name == wanted]
+    if not matches:
+        lower = wanted.lower()
+        matches = [name for name in names if Path(name).name.lower() == lower]
+    if not matches:
+        shown = ", ".join(sorted(Path(name).name for name in names)[:30])
+        raise FileNotFoundError(f"EXIOBASE zip is missing {wanted!r}; available basenames include: {shown}")
+    if len(matches) > 1:
+        matches = sorted(matches, key=lambda name: (name.count("/"), len(name), name))
+    return zf.open(matches[0])
+
 def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
-    with zipfile.ZipFile(zip_path) as zf, zf.open("x.txt") as fh:
+    with zipfile.ZipFile(zip_path) as zf, _open_exio_zip_member(zf, "x.txt") as fh:
         frame = pd.read_csv(fh, sep="\t")
     required = {"region", "sector"}
     if not required.issubset(frame.columns):
@@ -90,57 +108,66 @@ def _numeric_tail_from_exio_line(line: str) -> np.ndarray:
     return np.fromstring(rest.replace("\t", " "), sep=" ", dtype=float)
 
 
-def _read_exio_A_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> csr_matrix:
+def _read_exio_square_text_sparse_from_zip(
+    zip_path: Path,
+    *,
+    member_name: str,
+    basis_index: pd.MultiIndex,
+) -> csr_matrix:
+    """Read an EXIOBASE square text matrix as CSR without materializing a dense DataFrame."""
     n = len(basis_index)
     counts = np.zeros(int(n), dtype=np.int64)
-    with zipfile.ZipFile(zip_path) as zf, zf.open("A.txt") as raw:
+    with zipfile.ZipFile(zip_path) as zf, _open_exio_zip_member(zf, member_name) as raw:
         fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-        column_index = _exio_text_header_index(fh, table_name="A.txt")
+        column_index = _exio_text_header_index(fh, table_name=member_name)
         if not column_index.equals(basis_index):
-            raise ValueError("EXIOBASE A.txt column labels do not match x.txt basis order.")
+            raise ValueError(f"EXIOBASE {member_name} column labels do not match x.txt basis order.")
         rows_seen = 0
         for row_idx, line in enumerate(fh):
             if row_idx >= n:
                 break
             try:
-                region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                region, sector, _rest = line.rstrip("
+").split("	", 2)
             except ValueError:
-                raise ValueError(f"EXIOBASE A.txt malformed row at position {row_idx}") from None
+                raise ValueError(f"EXIOBASE {member_name} malformed row at position {row_idx}") from None
             expected = basis_index[row_idx]
             if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
                 raise ValueError(
-                    "EXIOBASE A.txt row labels do not match x.txt basis order: "
+                    f"EXIOBASE {member_name} row labels do not match x.txt basis order: "
                     f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
                 )
             vals = _numeric_tail_from_exio_line(line)
             if vals.size != n:
-                raise ValueError(f"EXIOBASE A.txt row width mismatch at row {row_idx}: got {vals.size}, expected {n}.")
+                raise ValueError(f"EXIOBASE {member_name} row width mismatch at row {row_idx}: got {vals.size}, expected {n}.")
             counts[row_idx] = int(np.count_nonzero(vals))
             rows_seen += 1
         if rows_seen != n:
-            raise ValueError(f"EXIOBASE A.txt row count mismatch: got {rows_seen}, expected {n}.")
+            raise ValueError(f"EXIOBASE {member_name} row count mismatch: got {rows_seen}, expected {n}.")
+
     indptr = np.empty(int(n) + 1, dtype=np.int64)
     indptr[0] = 0
     np.cumsum(counts, out=indptr[1:])
     nnz = int(indptr[-1])
     indices = np.empty(nnz, dtype=np.int32)
     data = np.empty(nnz, dtype=float)
-    with zipfile.ZipFile(zip_path) as zf, zf.open("A.txt") as raw:
+    with zipfile.ZipFile(zip_path) as zf, _open_exio_zip_member(zf, member_name) as raw:
         fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-        column_index = _exio_text_header_index(fh, table_name="A.txt")
+        column_index = _exio_text_header_index(fh, table_name=member_name)
         if not column_index.equals(basis_index):
-            raise ValueError("EXIOBASE A.txt column labels do not match x.txt basis order.")
+            raise ValueError(f"EXIOBASE {member_name} column labels do not match x.txt basis order.")
         for row_idx, line in enumerate(fh):
             if row_idx >= n:
                 break
             try:
-                region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                region, sector, _rest = line.rstrip("
+").split("	", 2)
             except ValueError:
-                raise ValueError(f"EXIOBASE A.txt malformed row at position {row_idx}") from None
+                raise ValueError(f"EXIOBASE {member_name} malformed row at position {row_idx}") from None
             expected = basis_index[row_idx]
             if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
                 raise ValueError(
-                    "EXIOBASE A.txt row labels do not match x.txt basis order: "
+                    f"EXIOBASE {member_name} row labels do not match x.txt basis order: "
                     f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
                 )
             vals = _numeric_tail_from_exio_line(line)
@@ -149,14 +176,41 @@ def _read_exio_A_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
             stop = int(indptr[row_idx + 1])
             indices[start:stop] = nz.astype(np.int32, copy=False)
             data[start:stop] = vals[nz]
-    A = csr_matrix((data, indices, indptr), shape=(int(n), int(n)))
+    mat = csr_matrix((data, indices, indptr), shape=(int(n), int(n)))
+    mat.eliminate_zeros()
+    return mat
+
+
+def _read_exio_Z_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> csr_matrix:
+    return _read_exio_square_text_sparse_from_zip(zip_path, member_name="Z.txt", basis_index=basis_index)
+
+
+def _compute_A_from_Z_and_x(Z: csr_matrix, x: pd.Series, *, zero_tol: float = 1.0e-12) -> csr_matrix:
+    """Compute technical coefficients A_ij = Z_ij / x_j by sparse column scaling."""
+    x_vals = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    if Z.shape != (len(x_vals), len(x_vals)):
+        raise ValueError(f"Z shape {Z.shape} is incompatible with output vector length {len(x_vals)}")
+    positive = np.isfinite(x_vals) & (x_vals > float(zero_tol))
+    if not positive.all():
+        zero_cols = np.flatnonzero(~positive)
+        if zero_cols.size:
+            col_abs = np.asarray(abs(Z[:, zero_cols]).sum(axis=0)).ravel()
+            bad = zero_cols[col_abs > float(zero_tol)]
+            if bad.size:
+                raise ValueError(
+                    "Cannot compute A from Z/x: nonzero intermediate inputs are recorded for zero-output columns; "
+                    f"first bad column positions={bad[:10].tolist()}"
+                )
+    inv_x = np.zeros_like(x_vals, dtype=float)
+    inv_x[positive] = 1.0 / x_vals[positive]
+    A = Z.multiply(inv_x.reshape(1, -1)).tocsr()
     A.eliminate_zeros()
     return A
 
 
 def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> pd.Series:
     n = len(basis_index)
-    with zipfile.ZipFile(zip_path) as zf, zf.open("Y.txt") as raw:
+    with zipfile.ZipFile(zip_path) as zf, _open_exio_zip_member(zf, "Y.txt") as raw:
         fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
         _regions = next(fh).rstrip("\n\r").split("\t")[2:]
         categories = next(fh).rstrip("\n\r").split("\t")[2:]
@@ -184,21 +238,24 @@ def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
 
 def _load_exio_matrices_direct_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
     x, basis_index = _read_exio_x_from_zip(zip_path)
-    A = _read_exio_A_direct_from_zip(zip_path, basis_index=basis_index)
+    Z = _read_exio_Z_direct_from_zip(zip_path, basis_index=basis_index)
+    A = _compute_A_from_Z_and_x(Z, x)
     y = _read_exio_y_direct_from_zip(zip_path, basis_index=basis_index)
     density = float(A.nnz) / float(A.shape[0] * A.shape[1]) if A.shape[0] and A.shape[1] else 0.0
     metadata = {
-        "cache_kind": "exiobase_matrix",
-        "cache_status": "parsed_direct_from_zip_no_cache_write",
-        "matrix_source": "A.txt",
+        "cache_kind": "exiobase_zip_stream",
+        "cache_status": "parsed_Z_x_Y_direct_from_zip_no_cache_write",
+        "matrix_source": "Z.txt divided by x.txt column outputs",
         "matrix_shape": [int(A.shape[0]), int(A.shape[1])],
         "nnz": int(A.nnz),
         "density": density,
         "stored_objects": [],
-        "not_stored_objects": ["Z", "full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "extensions"],
+        "not_stored_objects": ["A.txt", "full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "matrix_cache", "extensions_cache"],
         "source_zip": str(zip_path),
         "index_columns": ["region", "sector"],
         "cache_matrices": False,
+        "A_formula": "A_ij = Z_ij / x_j",
+        "A_computed_from": ["Z.txt", "x.txt"],
     }
     return A, x, y, basis_index, metadata
 
@@ -590,8 +647,8 @@ def load_mrio_matrices(
     """Load EXIOBASE matrices directly from the source zip, without derived caches.
 
     This is the zip-only, sparse, low-disk loader used by eigenmode workflows.
-    It reads only x.txt, A.txt, and Y.txt from the EXIOBASE zip and returns a
-    sparse technical-coefficient matrix plus x/y vectors. It never writes
+    It reads only x.txt, Z.txt, and Y.txt from the EXIOBASE zip, computes
+    sparse technical coefficients as A_ij = Z_ij / x_j, and returns A/x/y. It never writes
     fast pickles, parsed text caches, compact matrix caches, or deletes the zip.
     """
     system = str(exio_system).strip().lower()
@@ -621,7 +678,7 @@ def load_mrio_matrices(
     )
 
     if verbose:
-        print(f"Streaming EXIOBASE x/A/Y directly from {zip_path} (zip-only, no derived cache writes) ...")
+        print(f"Streaming EXIOBASE x/Z/Y directly from {zip_path} (zip-only, no derived cache writes) ...")
     A_direct, x_direct, y_direct, basis_index_direct, metadata_direct = _load_exio_matrices_direct_from_zip(zip_path)
     metadata_direct = dict(metadata_direct)
     metadata_direct.update(
