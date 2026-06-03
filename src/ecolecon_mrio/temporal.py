@@ -344,6 +344,27 @@ def _read_exio_extension_table_from_zip(zip_path: str | Path, table_path: str, b
             try:
                 out[col_pos] = float(txt)
             except ValueError as exc:
+                # If the first apparent data field is non-numeric while all
+                # remaining fields are numeric/blank, this is almost certainly a
+                # two-label EXIO extension row with too few numeric cells, not a
+                # genuine numeric conversion problem. Report it as a width
+                # mismatch so malformed short rows are diagnosed correctly.
+                if col_pos == 0 and len(fields) == expected and expected > 1:
+                    tail_parseable = True
+                    for tail_raw in fields[1:]:
+                        tail_txt = str(tail_raw).strip()
+                        if tail_txt == "" or tail_txt.lower() in {"na", "n/a", "nan", "null", "none"}:
+                            continue
+                        try:
+                            float(tail_txt)
+                        except ValueError:
+                            tail_parseable = False
+                            break
+                    if tail_parseable:
+                        raise ValueError(
+                            f"Extension table {table_path} row {row_pos} data-field width mismatch: "
+                            f"got {len(fields) - 1}, expected {expected}."
+                        ) from exc
                 raise ValueError(
                     f"Extension table {table_path} row {row_pos} column {col_pos} "
                     f"contains non-numeric value {raw_value!r}."
