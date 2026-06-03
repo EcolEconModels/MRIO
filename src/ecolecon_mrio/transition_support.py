@@ -4,6 +4,7 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix, issparse
 
 
 def normalize_productive_certificate_vector(
@@ -173,13 +174,30 @@ def max_demand_nonnegative_step(
     direction: pd.Series,
 ) -> float:
     r"""Largest absolute step such that \(y + s(I-A)d \ge 0\) componentwise."""
-    A_df = pd.DataFrame(A).copy()
-    idx = pd.Index(A_df.index, dtype=object)
-    A_df = A_df.reindex(index=idx, columns=idx).fillna(0.0).astype(float)
-    y_ser = pd.to_numeric(pd.Series(y_obs).reindex(idx), errors="coerce").fillna(0.0).astype(float)
-    d_ser = pd.to_numeric(pd.Series(direction).reindex(idx), errors="coerce").fillna(0.0).astype(float)
-    I_minus_A = pd.DataFrame(np.eye(len(idx)), index=idx, columns=idx) - A_df
-    delta_y_unit = pd.to_numeric(I_minus_A.dot(d_ser), errors="coerce").fillna(0.0).astype(float)
+    if issparse(A):
+        A_sparse = csr_matrix(A, dtype=float)
+        idx = pd.RangeIndex(A_sparse.shape[0])
+        if hasattr(A, "index"):
+            idx = pd.Index(getattr(A, "index"), dtype=object)
+        y_ser = pd.to_numeric(pd.Series(y_obs).reindex(idx), errors="coerce").fillna(0.0).astype(float)
+        d_ser = pd.to_numeric(pd.Series(direction).reindex(idx), errors="coerce").fillna(0.0).astype(float)
+        d_values = d_ser.to_numpy(dtype=float)
+        delta_y_unit = pd.Series(d_values - A_sparse.dot(d_values), index=idx, dtype=float)
+    elif isinstance(A, pd.DataFrame) and all(isinstance(dtype, pd.SparseDtype) for dtype in A.dtypes):
+        A_sparse = A.sparse.to_coo().tocsr().astype(float)
+        idx = pd.Index(A.index, dtype=object)
+        y_ser = pd.to_numeric(pd.Series(y_obs).reindex(idx), errors="coerce").fillna(0.0).astype(float)
+        d_ser = pd.to_numeric(pd.Series(direction).reindex(idx), errors="coerce").fillna(0.0).astype(float)
+        d_values = d_ser.to_numpy(dtype=float)
+        delta_y_unit = pd.Series(d_values - A_sparse.dot(d_values), index=idx, dtype=float)
+    else:
+        A_df = pd.DataFrame(A).copy()
+        idx = pd.Index(A_df.index, dtype=object)
+        A_df = A_df.reindex(index=idx, columns=idx).fillna(0.0).astype(float)
+        y_ser = pd.to_numeric(pd.Series(y_obs).reindex(idx), errors="coerce").fillna(0.0).astype(float)
+        d_ser = pd.to_numeric(pd.Series(direction).reindex(idx), errors="coerce").fillna(0.0).astype(float)
+        I_minus_A = pd.DataFrame(np.eye(len(idx)), index=idx, columns=idx) - A_df
+        delta_y_unit = pd.to_numeric(I_minus_A.dot(d_ser), errors="coerce").fillna(0.0).astype(float)
     neg_mask = delta_y_unit < 0.0
     if not bool(neg_mask.any()):
         return np.inf

@@ -176,6 +176,19 @@ def principal_growth_panel(
             require_generalized=require_generalized,
             year=year,
         )
+        basis_index = x_by_year[year].index
+        if not res.q.index.equals(basis_index) or not res.p.index.equals(basis_index):
+            q = pd.to_numeric(res.q.reindex(basis_index), errors="coerce").fillna(0.0).astype(float)
+            p = pd.to_numeric(res.p.reindex(basis_index), errors="coerce").fillna(0.0).astype(float)
+            res = PrincipalDirectionResult(
+                year=res.year,
+                alpha=res.alpha,
+                q=q,
+                p=p,
+                method=res.method,
+                fallback_used=res.fallback_used,
+                pf_metadata=res.pf_metadata,
+            )
         if year_result_callback is not None:
             year_result_callback(int(year), res)
         results[year] = res

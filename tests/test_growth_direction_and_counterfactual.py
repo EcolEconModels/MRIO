@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix
 
 from ecolecon_mrio.counterfactual import run_panel_scenarios
 from ecolecon_mrio.diagnostics import calc_tech_slack
@@ -62,6 +63,24 @@ def test_rotation_metric_bounds():
     rot = pairs["theta_forward"].dropna()
     if not rot.empty:
         assert ((rot >= 0.0) & (rot <= np.pi)).all()
+
+
+def test_principal_growth_panel_preserves_multiindex_basis_for_sparse_a():
+    idx = pd.MultiIndex.from_tuples([("r1", "s1"), ("r1", "s2")], names=["region", "sector"])
+    x_by_year = {
+        2020: pd.Series([100.0, 50.0], index=idx, dtype=float),
+        2021: pd.Series([102.0, 50.5], index=idx, dtype=float),
+    }
+    dense_a = np.array([[0.2, 0.1], [0.05, 0.15]], dtype=float)
+    A_by_year = {2020: csr_matrix(dense_a), 2021: csr_matrix(dense_a * 1.01)}
+
+    summary, pairs, results = principal_growth_panel(x_by_year, A_by_year, None)
+
+    assert len(summary) == 2
+    assert len(pairs) == 1
+    assert isinstance(results[2020].q.index, pd.MultiIndex)
+    assert results[2020].q.index.equals(idx)
+    assert results[2020].p.index.equals(idx)
 
 
 def test_noop_scenario_identity():
