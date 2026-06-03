@@ -56,6 +56,16 @@ def _matrix_nonzero_stats(values: np.ndarray) -> tuple[int, float]:
     return nnz, density
 
 
+
+def _matrix_to_csr_and_labels(matrix: Any, index: pd.Index | None = None) -> tuple[csr_matrix, pd.Index, pd.Index]:
+    if issparse(matrix):
+        values = csr_matrix(matrix, dtype=float)
+        row_index = index if index is not None else getattr(matrix, "index", pd.RangeIndex(values.shape[0]))
+        col_index = index if index is not None else getattr(matrix, "columns", pd.RangeIndex(values.shape[1]))
+        return values, pd.Index(row_index), pd.Index(col_index)
+    frame = pd.DataFrame(matrix, copy=False)
+    return csr_matrix(frame.to_numpy(dtype=float, copy=False)), pd.Index(frame.index), pd.Index(frame.columns)
+
 def _spectral_radius_method_hint(values: np.ndarray) -> str:
     n = int(values.shape[0])
     nnz, density = _matrix_nonzero_stats(values)
@@ -94,16 +104,16 @@ def _spectral_radius_from_values(values: np.ndarray, *, tol: float = 1e-10) -> t
     return rho, f"dense_eigvals nnz={nnz} density={density:.4f}"
 
 
-def calc_spectral_radius(matrix: pd.DataFrame) -> float:
-    values = matrix.to_numpy(dtype=float)
-    method = _spectral_radius_method_hint(values)
-    _diag_print(
-        f"spectral radius start shape={matrix.shape} method={method} rss={_rss_mb():.1f}MB"
-    )
+def calc_spectral_radius(matrix: Any) -> float:
+    values, _row_index, _col_index = _matrix_to_csr_and_labels(matrix)
+    nnz = int(values.nnz)
+    density = float(nnz / (values.shape[0] * values.shape[1])) if values.shape[0] and values.shape[1] else float("nan")
+    method = f"sparse_csr nnz={nnz} density={density:.4f}"
+    _diag_print(f"spectral radius start shape={values.shape} method={method} rss={_rss_mb():.1f}MB")
     t0 = time.time()
-    rho, method = _spectral_radius_from_values(values)
+    rho = _spectral_radius_from_sparse(values)
     _diag_print(
-        f"spectral radius done shape={matrix.shape} rho={rho:.6g} method={method} "
+        f"spectral radius done shape={values.shape} rho={rho:.6g} method={method} "
         f"elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
     )
     return rho
@@ -122,12 +132,42 @@ def calc_tech_slack(matrix: pd.DataFrame) -> tuple[float, float]:
 
 
 def calc_coefficient_diagnostics(
-    matrix: pd.DataFrame,
+    matrix: Any,
     *,
     tol: float = 1e-12,
     upper_bound: float = 1.0,
 ) -> dict[str, float]:
-    """Compute local coefficient diagnostics (complementary to spectral metrics)."""
+    """Compute local coefficient diagnostics without densifying sparse EXIO matrices."""
+    if issparse(matrix):
+        A = csr_matrix(matrix, dtype=float)
+        n_total = int(A.shape[0] * A.shape[1])
+        if n_total == 0:
+            return {
+                "a_min": np.nan,
+                "a_max": np.nan,
+                "share_neg": np.nan,
+                "share_gt_upper": np.nan,
+                "share_zero_or_near_zero": np.nan,
+                "upper_margin_min": np.nan,
+                "col_sum_max": np.nan,
+                "row_sum_max": np.nan,
+            }
+        data = A.data.astype(float, copy=False)
+        explicit_nnz = int(data.size)
+        implicit_zeros = int(n_total - explicit_nnz)
+        a_min = float(min(0.0, float(data.min()) if data.size else 0.0))
+        a_max = float(max(0.0, float(data.max()) if data.size else 0.0))
+        near_zero_data = int(np.count_nonzero(data <= tol)) if data.size else 0
+        return {
+            "a_min": a_min,
+            "a_max": a_max,
+            "share_neg": float(np.count_nonzero(data < -tol) / n_total) if n_total else np.nan,
+            "share_gt_upper": float(np.count_nonzero(data > (float(upper_bound) + tol)) / n_total) if n_total else np.nan,
+            "share_zero_or_near_zero": float((implicit_zeros + near_zero_data) / n_total) if n_total else np.nan,
+            "upper_margin_min": float(float(upper_bound) - a_max),
+            "col_sum_max": float(np.asarray(A.sum(axis=0)).reshape(-1).max()) if A.shape[1] else np.nan,
+            "row_sum_max": float(np.asarray(A.sum(axis=1)).reshape(-1).max()) if A.shape[0] else np.nan,
+        }
     A = pd.DataFrame(matrix, copy=True).astype(float)
     values = A.to_numpy(dtype=float)
     if values.size == 0:
@@ -141,7 +181,6 @@ def calc_coefficient_diagnostics(
             "col_sum_max": np.nan,
             "row_sum_max": np.nan,
         }
-
     a_min = float(np.min(values))
     a_max = float(np.max(values))
     return {
@@ -319,12 +358,13 @@ def _dominant_block_indices(values: csr_matrix, tol: float) -> tuple[np.ndarray,
 
 
 def calc_pf_eigenvectors(
-    matrix: pd.DataFrame,
+    matrix: Any,
     *,
     return_metadata: bool = False,
     tol: float = 1e-10,
+    index: pd.Index | None = None,
 ) -> tuple[pd.Series, pd.Series, float] | tuple[pd.Series, pd.Series, float, dict[str, Any]]:
-    values = csr_matrix(matrix.to_numpy(dtype=float, copy=False))
+    values, row_index, col_index = _matrix_to_csr_and_labels(matrix, index=index)
     if values.nnz and np.min(values.data) < -tol:
         raise ValueError("PF diagnostics require a nonnegative matrix.")
 
@@ -395,8 +435,8 @@ def calc_pf_eigenvectors(
         raise ValueError("PF eigenvectors cannot be normalized (nonpositive inner product).")
     u_block = u_block / norm
 
-    u_full = pd.Series(0.0, index=matrix.index, dtype=float)
-    v_full = pd.Series(0.0, index=matrix.columns, dtype=float)
+    u_full = pd.Series(0.0, index=row_index, dtype=float)
+    v_full = pd.Series(0.0, index=col_index, dtype=float)
     u_full.iloc[block_idx] = u_block
     v_full.iloc[block_idx] = v_block
 

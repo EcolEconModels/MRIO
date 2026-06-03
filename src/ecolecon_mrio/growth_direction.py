@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 from scipy import linalg
+from scipy.sparse import csr_matrix, issparse
 
 from .diagnostics import calc_pf_eigenvectors
 
@@ -56,16 +57,28 @@ def principal_growth_direction(
     For a generalized activity formulation, solve B q = alpha A q with q >= 0.
     If B is omitted, fallback is B = I, equivalent to alpha = 1 / rho(A).
     """
-    A_mat = pd.DataFrame(A, copy=True)
-    if A_mat.shape[0] != A_mat.shape[1]:
-        raise ValueError("A must be square.")
-    if np.any(A_mat.values < -1e-12):
-        raise ValueError("A must be nonnegative for von Neumann/PF diagnostics.")
+    if issparse(A):
+        A_sparse = csr_matrix(A, dtype=float)
+        row_index = pd.Index(getattr(A, "index", pd.RangeIndex(A_sparse.shape[0])))
+        col_index = pd.Index(getattr(A, "columns", pd.RangeIndex(A_sparse.shape[1])))
+        if A_sparse.shape[0] != A_sparse.shape[1]:
+            raise ValueError("A must be square.")
+        if A_sparse.nnz and float(A_sparse.data.min()) < -1e-12:
+            raise ValueError("A must be nonnegative for von Neumann/PF diagnostics.")
+        A_mat = None
+    else:
+        A_mat = pd.DataFrame(A, copy=True)
+        row_index = pd.Index(A_mat.index)
+        col_index = pd.Index(A_mat.columns)
+        if A_mat.shape[0] != A_mat.shape[1]:
+            raise ValueError("A must be square.")
+        if np.any(A_mat.values < -1e-12):
+            raise ValueError("A must be nonnegative for von Neumann/PF diagnostics.")
 
     if B is None:
         if require_generalized:
             raise ValueError("Generalized mode requested but B is missing.")
-        u, v, rho, pf_meta = calc_pf_eigenvectors(A_mat, return_metadata=True)
+        u, v, rho, pf_meta = calc_pf_eigenvectors(A_sparse if issparse(A) else A_mat, return_metadata=True, index=col_index)
         alpha = float(1.0 / rho) if rho > 0 else np.inf
         q = v / float(v.sum())
         p = u / float(u.sum()) if float(u.sum()) > 0 else u
@@ -79,6 +92,8 @@ def principal_growth_direction(
             pf_metadata=pf_meta,
         )
 
+    if A_mat is None:
+        raise ValueError("Generalized B/A eigensolve is not supported for sparse A; use B=None/PF fallback.")
     B_mat = pd.DataFrame(B, copy=True).reindex(index=A_mat.index, columns=A_mat.columns)
     if B_mat.isna().values.any():
         raise ValueError("B must align with A indices/columns.")

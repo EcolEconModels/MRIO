@@ -5,7 +5,10 @@ from __future__ import annotations
 import gc
 from dataclasses import dataclass
 from typing import Any, Mapping
+from types import SimpleNamespace
+import io
 import time
+import zipfile
 
 import numpy as np
 import pandas as pd
@@ -13,7 +16,7 @@ from scipy.sparse import csr_matrix, eye as sparse_eye, issparse
 from scipy.sparse.linalg import spsolve
 
 from .constraints import build_constraints_with_context
-from .data import load_mrio
+from .data import load_mrio, load_mrio_matrices
 from .diagnostics import (
     aggregate_diagnostics_from_pf_vectors,
     calc_boundary_slack,
@@ -256,6 +259,101 @@ def _solve_with_optional_relaxation(
     raise RuntimeError("Safe-and-just LP infeasible even after relaxation ladder.")
 
 
+
+def _find_exio_extension_member(zf: zipfile.ZipFile, table_path: str) -> str:
+    parts = [p for p in str(table_path or "").split(".") if p]
+    if len(parts) >= 2:
+        ext = parts[0]
+        table = parts[-1]
+        suffixes = [
+            f"/{ext}/{table}.txt",
+            f"{ext}/{table}.txt",
+            f"/{ext}_{table}.txt",
+            f"{ext}_{table}.txt",
+        ]
+    else:
+        table = parts[0] if parts else "F"
+        suffixes = [f"/{table}.txt", f"{table}.txt"]
+    names = zf.namelist()
+    for suffix in suffixes:
+        matches = [name for name in names if name.endswith(suffix)]
+        if matches:
+            return sorted(matches, key=len)[0]
+    raise FileNotFoundError(f"Could not locate EXIOBASE extension table {table_path!r} in zip.")
+
+
+def _read_exio_extension_table_from_zip(zip_path: str | Path, table_path: str, basis_index: pd.MultiIndex) -> pd.DataFrame:
+    """Read one EXIOBASE extension table directly from the zip.
+
+    The paper constraints currently need air_emissions.F row 0. We still read
+    the full extension table because it is small relative to A/Z and avoids a
+    full pymrio IOSystem parse.
+    """
+    zip_path = Path(zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        member = _find_exio_extension_member(zf, table_path)
+        with zf.open(member) as raw:
+            fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+            regions = next(fh).rstrip("\n\r").split("\t")[2:]
+            sectors = next(fh).rstrip("\n\r").split("\t")[2:]
+            # Third header line is units/categories in EXIO text files.
+            next(fh)
+            columns = pd.MultiIndex.from_arrays([regions, sectors], names=["region", "sector"])
+            rows: list[str] = []
+            values: list[np.ndarray] = []
+            for row_pos, line in enumerate(fh):
+                try:
+                    row_label_1, row_label_2, rest = line.rstrip("\n\r").split("\t", 2)
+                except ValueError:
+                    continue
+                vals = np.fromstring(rest.replace("\t", " "), sep=" ", dtype=float)
+                if vals.size != len(columns):
+                    raise ValueError(
+                        f"Extension table {table_path} row {row_pos} width mismatch: "
+                        f"got {vals.size}, expected {len(columns)}."
+                    )
+                label = str(row_label_1) if str(row_label_1).strip() else f"row_{row_pos}"
+                if str(row_label_2).strip():
+                    label = f"{label} | {row_label_2}"
+                rows.append(label)
+                values.append(vals)
+    if not values:
+        raise ValueError(f"Extension table {table_path} in {zip_path} has no data rows.")
+    frame = pd.DataFrame(np.vstack(values), index=pd.Index(rows, name="extension_row"), columns=columns)
+    return frame.reindex(columns=basis_index).fillna(0.0).astype(float)
+
+
+def _make_sparse_exio_mrio_like(
+    *,
+    A: csr_matrix,
+    x: pd.Series,
+    y: pd.Series,
+    basis_index: pd.MultiIndex,
+    metadata: Mapping[str, Any],
+) -> Any:
+    """Create the minimal object shape needed by temporal diagnostics/constraints."""
+    A_csr = csr_matrix(A, dtype=float)
+    A_csr.eliminate_zeros()
+    # scipy sparse matrices allow arbitrary attributes; keep index metadata close.
+    A_csr.index = basis_index  # type: ignore[attr-defined]
+    A_csr.columns = basis_index  # type: ignore[attr-defined]
+    x = pd.to_numeric(pd.Series(x).reindex(basis_index), errors="coerce").fillna(0.0).astype(float)
+    y = pd.to_numeric(pd.Series(y).reindex(basis_index), errors="coerce").fillna(0.0).astype(float)
+    obj = SimpleNamespace()
+    obj.A = A_csr
+    obj.x = x
+    obj.Y = pd.DataFrame({"final_demand": y}, index=basis_index)
+    obj.y = y
+    obj.metadata = dict(metadata or {})
+    source_zip = obj.metadata.get("source_zip")
+    if source_zip:
+        try:
+            air_f = _read_exio_extension_table_from_zip(source_zip, "air_emissions.F", basis_index)
+            obj.air_emissions = SimpleNamespace(F=air_f)
+        except FileNotFoundError:
+            obj.air_emissions = SimpleNamespace(F=pd.DataFrame(columns=basis_index))
+    return obj
+
 def load_mrio_panel(
     dataset: str,
     years: list[int],
@@ -279,24 +377,45 @@ def load_mrio_panel(
         t0 = time.time()
         if verbose:
             print(f"[MRIO] loading {dataset} year={year} ({i}/{len(years)})...", flush=True)
-        mrio, y_full = load_mrio(
-            dataset=dataset,
-            year=year,
-            force_download=force_download,
-            data_root=data_root,
-            calc_all=calc_all,
-            include_ghosh=include_ghosh,
-            verbose=verbose,
-            allow_download_missing=allow_download_missing,
-            resume_downloads=resume_downloads,
-            show_download_progress=show_download_progress,
-            download_chunk_mb=download_chunk_mb,
-            download_timeout_seconds=download_timeout_seconds,
-            download_retries=download_retries,
-            delete_source_zip_after_parse=delete_source_zip_after_parse,
-            exio_full_cache=exio_full_cache,
-        )
-        panel[int(year)] = (mrio, _series_from_any(y_full))
+        if str(dataset).strip().lower() == "exiobase":
+            A, x, y, basis_index, metadata = load_mrio_matrices(
+                int(year),
+                force_download=force_download,
+                data_root=data_root,
+                calc_all=False,
+                verbose=verbose,
+                allow_download_missing=allow_download_missing,
+                resume_downloads=resume_downloads,
+                show_download_progress=show_download_progress,
+                download_chunk_mb=download_chunk_mb,
+                download_timeout_seconds=download_timeout_seconds,
+                download_retries=download_retries,
+                delete_source_zip_after_parse=False,
+                exio_system="pxp",
+                cache_matrices=False,
+                read_existing_cache=False,
+            )
+            mrio = _make_sparse_exio_mrio_like(A=A, x=x, y=y, basis_index=basis_index, metadata=metadata)
+            panel[int(year)] = (mrio, _series_from_any(y))
+        else:
+            mrio, y_full = load_mrio(
+                dataset=dataset,
+                year=year,
+                force_download=force_download,
+                data_root=data_root,
+                calc_all=calc_all,
+                include_ghosh=include_ghosh,
+                verbose=verbose,
+                allow_download_missing=allow_download_missing,
+                resume_downloads=resume_downloads,
+                show_download_progress=show_download_progress,
+                download_chunk_mb=download_chunk_mb,
+                download_timeout_seconds=download_timeout_seconds,
+                download_retries=download_retries,
+                delete_source_zip_after_parse=delete_source_zip_after_parse,
+                exio_full_cache=exio_full_cache,
+            )
+            panel[int(year)] = (mrio, _series_from_any(y_full))
         if verbose:
             print(f"[MRIO] loaded {dataset} year={year} ({i}/{len(years)}) in {time.time()-t0:.1f}s", flush=True)
     return panel
@@ -360,10 +479,15 @@ def compute_viability_panel(
         x_full = x_raw.astype(float)
         y_full = y_raw.astype(float)
         top_idx = x_full.index.copy()
+        A_src = getattr(mrio, "A")
+        if issparse(A_src):
+            A_year = csr_matrix(A_src, dtype=float)
+            A_year.eliminate_zeros()
+            if A_year.shape != (len(top_idx), len(top_idx)):
+                raise ValueError(f"Sparse A shape {A_year.shape} does not match output basis length {len(top_idx)}.")
+        else:
+            A_year = _coerce_square(A_src, top_idx)
         if full_basis_mode:
-            A_year = pd.DataFrame(mrio.A, copy=False)
-            if not A_year.index.equals(top_idx) or not A_year.columns.equals(top_idx):
-                A_year = _coerce_square(A_year, top_idx)
             basis_scores = pd.to_numeric(x_full, errors="coerce").fillna(0.0).astype(float)
             denom = float(basis_scores.sum())
             if denom > 0:
@@ -381,8 +505,6 @@ def compute_viability_panel(
                 }
             )
             sector_universe_parts.append(manifest)
-        else:
-            A_year = _coerce_square(mrio.A, top_idx)
         x_work = x_full
         y_work = y_full
         A_work = A_year
@@ -394,7 +516,7 @@ def compute_viability_panel(
         )
 
         t_pf = time.time()
-        pf_left, pf_right, rho, pf_meta = calc_pf_eigenvectors(A_work, return_metadata=True)
+        pf_left, pf_right, rho, pf_meta = calc_pf_eigenvectors(A_work, return_metadata=True, index=top_idx)
         tech_slack = max(0.0, 1.0 - rho)
         if progress_emit_stdout:
             print(
@@ -506,7 +628,7 @@ def compute_viability_panel(
                 }
             )
         x_by_year[int(year)] = x_full.astype(float)
-        A_by_year[int(year)] = pd.DataFrame(mrio.A, copy=False).reindex(index=x_full.index, columns=x_full.index).fillna(0.0).astype(float)
+        A_by_year[int(year)] = A_year.copy() if issparse(A_year) else pd.DataFrame(A_year, copy=False).reindex(index=x_full.index, columns=x_full.index).fillna(0.0).astype(float)
         B_by_year[int(year)] = None
         state_by_year[int(year)] = {
             "A": A_by_year[int(year)],
