@@ -10,6 +10,17 @@
 .venv/bin/python scripts/my_script.py
 ```
 
+
+## EXIO sparse loading and strict MultiIndex contract
+
+> [!IMPORTANT]
+> EXIOBASE loaders and diagnostics must obey `docs/exio_sparse_multiindex_contract.md`.
+
+- `load_mrio_matrices()` reads `x.txt`, `Z.txt`, and `Y.txt` from the source zip and derives sparse `A`; it must not require `A.txt`.
+- Returned EXIO vectors use `pd.MultiIndex(names=["region", "sector"])`.
+- Sparse EXIO matrices may carry `.index` and `.columns` metadata; diagnostics must not densify EXIO-scale CSR matrices.
+- Preserve tab fields when parsing EXIO extension tables; do not use whitespace parsing that drops blank numeric cells.
+
 ## Git Safety
 > [!IMPORTANT]
 > Do **NOT** run `git commit`, `git reset`, `git rebase`, or `git push` unless the user explicitly requests it.
