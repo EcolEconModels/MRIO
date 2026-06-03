@@ -284,45 +284,125 @@ def _find_exio_extension_member(zf: zipfile.ZipFile, table_path: str) -> str:
 
 
 def _read_exio_extension_table_from_zip(zip_path: str | Path, table_path: str, basis_index: pd.MultiIndex) -> pd.DataFrame:
-    """Read one EXIOBASE extension table directly from the zip.
+    """Read one EXIOBASE extension table directly from the source zip.
 
-    The paper constraints currently need air_emissions.F row 0. We still read
-    the full extension table because it is small relative to A/Z and avoids a
-    full pymrio IOSystem parse.
+    EXIOBASE extension tables are tab-separated text files with a few metadata
+    columns followed by region-sector columns.  Some official files use one row
+    label column while some table readers assume two.  Some rows also contain
+    blank numeric cells.  Do not parse the numeric tail with ``np.fromstring``:
+    it silently drops empty tab fields and then reports a false width mismatch.
+
+    This reader therefore:
+    - infers the header offset from the column labels and the requested basis;
+    - infers each data-row offset from the tab-field count;
+    - treats blank/NA numeric cells as zero;
+    - reindexes to the already audited EXIO basis from x/Z/Y.
     """
     zip_path = Path(zip_path)
+
+    def _clean_fields(line: str) -> list[str]:
+        # Keep internal and trailing blank tab fields; only remove line endings.
+        return line.rstrip("\n\r").split("\t")
+
+    def _choose_header_offset(header_regions: list[str], header_sectors: list[str]) -> tuple[pd.MultiIndex, int]:
+        basis = pd.MultiIndex.from_tuples(list(basis_index), names=["region", "sector"])
+        offsets = [2, 1, 0, 3]
+        length_candidates: list[tuple[pd.MultiIndex, int]] = []
+        for offset in offsets:
+            if len(header_regions) < offset or len(header_sectors) < offset:
+                continue
+            regions = [str(x) for x in header_regions[offset:]]
+            sectors = [str(x) for x in header_sectors[offset:]]
+            if len(regions) != len(sectors) or len(regions) != len(basis):
+                continue
+            cols = pd.MultiIndex.from_arrays([regions, sectors], names=["region", "sector"])
+            if cols.equals(basis):
+                return cols, offset
+            length_candidates.append((cols, offset))
+        if length_candidates:
+            # Keep going with length-consistent labels and let the final reindex
+            # expose any unmatched columns as zeros.  This is safer than loading
+            # a full pymrio IOSystem and still preserves zip-only semantics.
+            return length_candidates[0]
+        raise ValueError(
+            f"Extension table {table_path} column-header length mismatch for basis length {len(basis)}: "
+            f"region header fields={len(header_regions)}, sector header fields={len(header_sectors)}."
+        )
+
+    def _parse_numeric_fields(fields: list[str], *, row_pos: int, expected: int) -> np.ndarray:
+        if len(fields) != expected:
+            raise ValueError(
+                f"Extension table {table_path} row {row_pos} data-field width mismatch: "
+                f"got {len(fields)}, expected {expected}."
+            )
+        out = np.zeros(expected, dtype=float)
+        for col_pos, raw_value in enumerate(fields):
+            txt = str(raw_value).strip()
+            if txt == "" or txt.lower() in {"na", "n/a", "nan", "null", "none"}:
+                out[col_pos] = 0.0
+                continue
+            try:
+                out[col_pos] = float(txt)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Extension table {table_path} row {row_pos} column {col_pos} "
+                    f"contains non-numeric value {raw_value!r}."
+                ) from exc
+        return out
+
+    def _split_data_row(fields: list[str], *, row_pos: int, expected: int, header_offset: int) -> tuple[list[str], list[str]]:
+        # Try the inferred header offset first, then the common EXIO alternatives.
+        offsets: list[int] = []
+        for candidate in [header_offset, 2, 1, 0, 3]:
+            if candidate not in offsets:
+                offsets.append(candidate)
+        for offset in offsets:
+            if len(fields) < offset:
+                continue
+            data = fields[offset:]
+            if len(data) == expected:
+                return fields[:offset], data
+            if len(data) > expected and all(str(x).strip() == "" for x in data[expected:]):
+                return fields[:offset], data[:expected]
+        raise ValueError(
+            f"Extension table {table_path} row {row_pos} tab-field width mismatch: "
+            f"raw_fields={len(fields)}, expected_data_fields={expected}, tried_label_offsets={offsets}."
+        )
+
     with zipfile.ZipFile(zip_path) as zf:
         member = _find_exio_extension_member(zf, table_path)
         with zf.open(member) as raw:
             fh = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-            regions = next(fh).rstrip("\n\r").split("\t")[2:]
-            sectors = next(fh).rstrip("\n\r").split("\t")[2:]
-            # Third header line is units/categories in EXIO text files.
-            next(fh)
-            columns = pd.MultiIndex.from_arrays([regions, sectors], names=["region", "sector"])
+            try:
+                header_regions = _clean_fields(next(fh))
+                header_sectors = _clean_fields(next(fh))
+                # Third header line is units/categories in EXIO text files.
+                next(fh)
+            except StopIteration as exc:
+                raise ValueError(f"Extension table {table_path} in {zip_path} has incomplete headers.") from exc
+            columns, header_offset = _choose_header_offset(header_regions, header_sectors)
+            expected = len(columns)
             rows: list[str] = []
             values: list[np.ndarray] = []
             for row_pos, line in enumerate(fh):
-                try:
-                    row_label_1, row_label_2, rest = line.rstrip("\n\r").split("\t", 2)
-                except ValueError:
+                fields = _clean_fields(line)
+                if not fields or not any(str(x).strip() for x in fields):
                     continue
-                vals = np.fromstring(rest.replace("\t", " "), sep=" ", dtype=float)
-                if vals.size != len(columns):
-                    raise ValueError(
-                        f"Extension table {table_path} row {row_pos} width mismatch: "
-                        f"got {vals.size}, expected {len(columns)}."
-                    )
-                label = str(row_label_1) if str(row_label_1).strip() else f"row_{row_pos}"
-                if str(row_label_2).strip():
-                    label = f"{label} | {row_label_2}"
+                label_fields, data_fields = _split_data_row(
+                    fields,
+                    row_pos=row_pos,
+                    expected=expected,
+                    header_offset=header_offset,
+                )
+                vals = _parse_numeric_fields(data_fields, row_pos=row_pos, expected=expected)
+                labels = [str(x).strip() for x in label_fields if str(x).strip()]
+                label = " | ".join(labels) if labels else f"row_{row_pos}"
                 rows.append(label)
                 values.append(vals)
     if not values:
         raise ValueError(f"Extension table {table_path} in {zip_path} has no data rows.")
     frame = pd.DataFrame(np.vstack(values), index=pd.Index(rows, name="extension_row"), columns=columns)
     return frame.reindex(columns=basis_index).fillna(0.0).astype(float)
-
 
 def _make_sparse_exio_mrio_like(
     *,
