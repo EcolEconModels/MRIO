@@ -53,3 +53,9 @@ EXIO extension tables read from zip may have header and blank-field quirks. Pars
 ## Compatibility
 
 Legacy outputs may encode labels as stringified tuples. New MRIO APIs should not produce those labels as authoritative alignment keys.
+
+## Low-RAM zip-stream rule
+
+See `docs/exio_lowram_zip_stream_contract.md`.
+
+The raw source zip is the only default durable EXIO cache. Load only the requested source tables, derive sparse `A` from `Z` and `x`, and avoid dense conversions of full-basis EXIO matrices.

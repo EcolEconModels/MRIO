@@ -21,6 +21,19 @@
 - Sparse EXIO matrices may carry `.index` and `.columns` metadata; diagnostics must not densify EXIO-scale CSR matrices.
 - Preserve tab fields when parsing EXIO extension tables; do not use whitespace parsing that drops blank numeric cells.
 
+
+## EXIO low-RAM zip-stream contract
+
+> [!IMPORTANT]
+> EXIOBASE loaders and diagnostics must obey `docs/exio_lowram_zip_stream_contract.md` and `docs/exio_sparse_multiindex_contract.md`.
+
+- The raw EXIOBASE source zip is the only default durable data cache.
+- Load only requested zip members; do not parse a full `pymrio.IOSystem` for table-level needs.
+- Derive sparse `A` from `Z.txt` and `x.txt`; do not require or create `A.txt`.
+- Do not write full-object pickle caches, extracted text caches, or derived matrix caches by default.
+- Keep full-basis EXIO matrices sparse and avoid dense conversions.
+- Release large temporary arrays and matrices promptly in long-running year loops.
+
 ## Git Safety
 > [!IMPORTANT]
 > Do **NOT** run `git commit`, `git reset`, `git rebase`, or `git push` unless the user explicitly requests it.
