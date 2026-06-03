@@ -77,3 +77,40 @@ pd.MultiIndex(names=["region", "sector"])
 ```
 
 `x`, `y`, sparse `A.index`, and sparse `A.columns` should all align to that same basis.
+
+## Disk-space and derived-cache policy
+
+The MRIO repo must not create large derived EXIOBASE caches by default. The raw source zip is the only default durable cache:
+
+```text
+data/exiobase3_YYYY/IOT_YYYY_pxp.zip
+data/exiobase3_YYYY/IOT_YYYY_ixi.zip
+```
+
+Default EXIO loaders must not write:
+
+- full `pymrio.IOSystem` pickle caches;
+- extracted text-cache directories;
+- generated `A.txt`;
+- generated `Z.npz`, `A.npz`, `x.npz`, `y.npz`;
+- parquet/feather equivalents of `Z`, `A`, `x`, or `y`;
+- hidden matrix-cache directories.
+
+Development-only caches are permitted only behind explicit opt-in flags. Such flags must:
+
+1. default to off;
+2. state expected disk use;
+3. write under an ignored scratch/development path;
+4. never be used by production paper profiles;
+5. be safely deletable without changing scientific results;
+6. have cleanup instructions.
+
+Do not remove source zips during cleanup. They avoid expensive redownloads and are the authoritative input.
+
+Suggested inspection command before cleanup:
+
+```bash
+find data -type f \( -name '*.pkl' -o -name '*.pickle' -o -name '*.npz' -o -name 'A.txt' \) -print
+```
+
+Inspect the list before deleting. Keep all `IOT_*_pxp.zip` and `IOT_*_ixi.zip` files.

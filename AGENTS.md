@@ -34,6 +34,15 @@
 - Keep full-basis EXIO matrices sparse and avoid dense conversions.
 - Release large temporary arrays and matrices promptly in long-running year loops.
 
+## Disk-space cache policy
+
+> [!IMPORTANT]
+> The raw EXIOBASE source zip is the only default durable EXIO cache. Do not write full `pymrio` pickles, extracted text caches, generated `A.txt`, or persistent `Z/A/x/y` matrix caches by default.
+
+- Optional development caches must be explicit opt-in, ignored by git, and deleted after the experiment.
+- Production loaders read only required zip members and derive sparse `A` from `Z` and `x`.
+- Never delete `IOT_*_pxp.zip` or `IOT_*_ixi.zip` unless the user explicitly requests a redownload.
+
 ## Git Safety
 > [!IMPORTANT]
 > Do **NOT** run `git commit`, `git reset`, `git rebase`, or `git push` unless the user explicitly requests it.
