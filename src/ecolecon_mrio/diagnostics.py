@@ -524,10 +524,58 @@ def partial_sum_convergence(matrix: pd.DataFrame, max_iter: int = 12) -> pd.Data
     return pd.DataFrame(sums)
 
 
+
+def _align_lp_A_sparse(A: Any, x_index: pd.Index) -> csr_matrix:
+    """Return technical matrix as CSR in exactly ``x_index`` order.
+
+    ``load_mrio_panel(dataset='exiobase')`` now keeps EXIOBASE ``A`` sparse to
+    avoid materializing a 9800 x 9800 dense DataFrame.  The LP code therefore
+    must not assume pandas ``.index``/``.values`` attributes.  If sparse matrix
+    labels are present, they must already match ``x_index``; if labels are
+    absent, the matrix order is treated as the caller-provided ``x`` order.
+    Dense/DataFrame inputs retain the old reindex-and-fill behavior.
+    """
+
+    idx = pd.Index(x_index)
+    n = int(len(idx))
+    if issparse(A):
+        mat = csr_matrix(A, dtype=float)
+        if mat.shape != (n, n):
+            raise ValueError(
+                "Technical coefficient matrix must be square and match x: "
+                f"A_shape={mat.shape}, len_x={n}."
+            )
+        for attr_name, axis_name in [("index", "row"), ("columns", "column")]:
+            labels = getattr(A, attr_name, None)
+            if labels is None:
+                continue
+            labels_idx = pd.Index(labels)
+            if len(labels_idx) != n:
+                raise ValueError(
+                    f"Sparse A {axis_name} labels have length {len(labels_idx)}, expected {n}."
+                )
+            if not labels_idx.equals(idx):
+                raise ValueError(
+                    f"Sparse A {axis_name} labels do not match x.index. "
+                    "Reindex the sparse matrix before calling solve_safe_just_lp."
+                )
+        mat.eliminate_zeros()
+        return mat
+
+    frame = pd.DataFrame(A, copy=False)
+    if frame.shape != (n, n):
+        raise ValueError(
+            "Technical coefficient matrix must be square and match x: "
+            f"A_shape={frame.shape}, len_x={n}."
+        )
+    if not pd.Index(frame.index).equals(idx) or not pd.Index(frame.columns).equals(idx):
+        frame = frame.reindex(index=idx, columns=idx).fillna(0.0)
+    return csr_matrix(frame.to_numpy(dtype=float, copy=False))
+
 def solve_safe_just_lp(
     x: pd.Series,
     y: pd.Series,
-    A: pd.DataFrame,
+    A: Any,
     E: pd.DataFrame,
     S: pd.DataFrame,
     e_bar: pd.Series,
@@ -542,12 +590,12 @@ def solve_safe_just_lp(
     working_set_role_masks: Mapping[str, pd.Series] | None = None,
     working_set_role_mix: Mapping[str, float] | None = None,
 ) -> SafeJustResult:
-    n = len(x)
-    if not (A.shape[0] == A.shape[1] == n):
-        raise ValueError("Technical coefficient matrix must be square and match x.")
-    if not all(index == x.index[i] for i, index in enumerate(A.index)):
-        A = A.reindex(index=x.index, columns=x.index)
-    x_base = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).astype(float).reindex(x.index).fillna(0.0)
+    x_index = pd.Index(x.index)
+    n = int(len(x_index))
+    A_sparse_full = _align_lp_A_sparse(A, x_index)
+    x = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).astype(float).reindex(x_index).fillna(0.0)
+    y = pd.to_numeric(pd.Series(y), errors="coerce").fillna(0.0).astype(float).reindex(x_index).fillna(0.0)
+    x_base = x.copy()
     active_index = _select_lp_working_set_index(
         x_base,
         working_set_n=working_set_n,
@@ -564,7 +612,8 @@ def solve_safe_just_lp(
     )
     t0 = time.time()
     if not use_working_set:
-        A_sparse = csr_matrix(A.values)
+        A_sparse = A_sparse_full
+        A_sparse_full = None
         me = int(E.shape[0])
         ms = int(S.shape[0])
         base_objective = np.concatenate(
@@ -647,7 +696,8 @@ def solve_safe_just_lp(
         k = int(len(active_pos))
         if k <= 0:
             raise ValueError("Working-set LP requires at least one active sector.")
-        A_sparse = csr_matrix(A.values)
+        A_sparse = A_sparse_full
+        A_sparse_full = None
         E_sparse = csr_matrix(E.reindex(columns=x.index).values)
         S_sparse = csr_matrix(S.reindex(columns=x.index).values)
         base_prod_rhs = -y.reindex(x.index).fillna(0.0).to_numpy(dtype=float) - (
