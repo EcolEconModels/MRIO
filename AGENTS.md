@@ -1,43 +1,19 @@
 # AI Agent Instructions
 
-## Mandatory patch-script workflow
+<!-- ecolecon-agent-memory-patch-template-single-source -->
+## Shell patch-script invariant
 
-<!-- patch-script-template-must-read-2026-06-07 -->
-Before producing any shell patch script, agents must read and follow
-`../ecolecon-agent-memory/prompt-templates/patch-script-task.md`.  This is mandatory for every `.sh` patch-script
-deliverable, even when the user does not explicitly mention the template.
+> [!IMPORTANT]
+> Before producing or editing any `.sh` patch script, agents must read the single
+> source of truth in repository `ecolecon-agent-memory` at
+> `prompt-templates/patch-script-task.md`. From this repo, read it via
+> `../ecolecon-agent-memory/prompt-templates/patch-script-task.md`. If that file is missing or unreadable, stop and report
+> that the patch-script template could not be found.
 
-For EcolEconModels patch scripts, use `/home/agilra/EcolEconModels/MRIO/.venv/bin/python`
-unless the user explicitly overrides it.  The script must be provided as a
-download link, not pasted into chat, and the user-facing command must assume the
-script was downloaded to `tmp/` in the relevant repo.  Patch scripts must support
-an explicit `--commit` option; when commits are requested, show the run command
-with `--commit`.
-
+Do not duplicate the patch-script rules in this `AGENTS.md` or in repo-local
+patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
 
 ## Environment Configuration
-
-
-<!-- ecolecon-patch-script-template-must-read -->
-## Shell patch-script tasks — must-read durable template
-
-> [!IMPORTANT]
-> Before producing any `.sh` patch script, read
-> `../ecolecon-agent-memory/prompt-templates/patch-script-task.md`.  The user
-> expects a downloadable script, not an inline script body.
-
-- Give the run command from the repository root as `bash tmp/<script>.sh --commit` when committing is requested; do not tell the user to `cd tmp` first.
-- Every patch script must support an explicit `--commit` option; without it, scripts may validate and stage intended files but must not commit.
-- Use `/home/agilra/EcolEconModels/MRIO/.venv/bin/python` for EcolEconModels Python validation unless the user explicitly overrides it.
-- Stage only intended files, run validation, show status/diff summaries, and commit with a detailed message only when `--commit` is passed.
-> [!IMPORTANT]
-> **ALWAYS** use the Python interpreter located in the local virtual environment: `.venv/bin/python`.
-> Do NOT use `python` or `python3` directly from the path, as it may not have the required dependencies installed.
-
-### Execution Example
-```bash
-.venv/bin/python scripts/my_script.py
-```
 
 
 ## EXIO sparse loading and strict MultiIndex contract
@@ -105,20 +81,3 @@ Run Ruff `F401/F821`, Pyright, focused tests, and `git diff --check`; then check
 Pylance in VS Code for the changed files.
 
 <!-- ecol-econ-shell-patch-must-read-start -->
-## MUST READ before shell patch scripts
-
-Before producing any shell patch-script response for this repo, every agent must read and follow `../ecolecon-agent-memory/prompt-templates/patch-script-task.md`. This shared template is the highest-priority source of truth for patch-script delivery, validation, staging, and commit behavior.
-
-The required user command format is from the repository root, not from inside `tmp/`:
-
-```bash
-bash tmp/<script-name>.sh
-bash tmp/<script-name>.sh --commit
-```
-
-Do not paste the script body in chat when a downloadable shell script is requested. Provide only the download link, the `bash tmp/...` command, and a short note.
-
-All EcolEconModels patch scripts must support `--commit`. Without `--commit`, they must not commit. With `--commit`, they may commit only intended staged files and must exit without committing if there are no changes.
-
-Use `/home/agilra/EcolEconModels/MRIO/.venv/bin/python` for Python patching and validation unless the user explicitly overrides it.
-<!-- ecol-econ-shell-patch-must-read-end -->
