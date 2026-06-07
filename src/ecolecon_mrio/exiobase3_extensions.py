@@ -5,6 +5,7 @@ from functools import lru_cache
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Iterable, Literal, Sequence
+import csv
 import zipfile
 
 import numpy as np
@@ -134,6 +135,166 @@ def read_extension_units(container: str | Path, *, extension: str) -> pd.Series:
 
 
 
+
+
+def _select_extension_row_label(
+    labels: Sequence[str],
+    *,
+    exact_priority: Sequence[str],
+    keywords: Sequence[str],
+) -> str:
+    """Choose one EXIOBASE extension stressor row using explicit priority.
+
+    The analysis_v2 direct-CO2 calculation needs a single stressor row from
+    ``emissions/F.txt``.  Historical analysis code used the exact row
+    ``CO2 - combustion - air`` when available, so exact-priority matches are
+    tried before broader keyword matches.  This function returns the label only;
+    the row reader then streams the matching values without loading the whole
+    extension object or requiring ``unit.txt``.
+    """
+    available = [str(label) for label in labels]
+    by_lower = {label.lower(): label for label in available}
+    for candidate in exact_priority:
+        hit = by_lower.get(str(candidate).lower())
+        if hit is not None:
+            return hit
+    lowered_keywords = [str(keyword).lower() for keyword in keywords if str(keyword).strip()]
+    for label in available:
+        lowered_label = label.lower()
+        if any(keyword in lowered_label for keyword in lowered_keywords):
+            return label
+    raise KeyError(
+        "Could not find extension row matching "
+        f"exact_priority={list(exact_priority)} or keywords={list(keywords)}; "
+        f"first available labels={available[:10]}"
+    )
+
+
+def load_exiobase3_extension_row(
+    container: str | Path,
+    *,
+    extension: str,
+    kind: MatrixKind = "F",
+    exact_priority: Sequence[str] = (),
+    keywords: Sequence[str] = (),
+    region: str | None = None,
+) -> pd.Series:
+    """Stream one row from an EXIOBASE extension matrix.
+
+    This is the low-memory API analysis scripts should use when they need one
+    stressor, such as direct CO2 from ``emissions/F.txt``.  It deliberately does
+    not call :func:`read_extension_units`, because several source zips contain
+    ``F.txt`` but not ``unit.txt``.  Units are irrelevant for this API: callers
+    request a named row and receive the numeric row aligned to the same
+    ``(region, sector)`` MultiIndex as the corresponding extension matrix.
+    """
+    ctype, cpath = _resolve_container(container)
+    rel = f"{extension}/{kind}.txt"
+
+    def _open() -> TextIOWrapper:
+        if ctype == "zip":
+            zf = zipfile.ZipFile(cpath, "r")
+            try:
+                raw = zf.open(rel, "r")
+            except Exception:
+                zf.close()
+                raise
+            wrapper = TextIOWrapper(raw, encoding="utf-8", newline="")
+            original_close = wrapper.close
+
+            def _close_with_zip() -> None:
+                try:
+                    original_close()
+                finally:
+                    zf.close()
+
+            wrapper.close = _close_with_zip  # type: ignore[method-assign]
+            return wrapper
+        return (cpath / rel).open("r", encoding="utf-8", newline="")
+
+    with _open() as fh:
+        h1, h2, _h3 = _read_header_lines(fh)
+        keep = [i for i in range(1, len(h1)) if region is None or h1[i] == region]
+        if not keep:
+            raise ValueError(f"No columns matched region={region!r} in {rel}")
+        labels_seen: list[str] = []
+        stored_rows: dict[str, list[str]] = {}
+        reader = csv.reader(fh, delimiter="\t")
+        for row in reader:
+            if not row:
+                continue
+            label = str(row[0])
+            labels_seen.append(label)
+            lowered = label.lower()
+            exact_hit = any(lowered == str(candidate).lower() for candidate in exact_priority)
+            keyword_hit = any(str(keyword).lower() in lowered for keyword in keywords)
+            if exact_hit or keyword_hit:
+                stored_rows[label] = row
+        chosen = _select_extension_row_label(labels_seen, exact_priority=exact_priority, keywords=keywords)
+        selected_row = stored_rows.get(chosen)
+        if selected_row is None:
+            raise KeyError(f"Selected row {chosen!r} was not retained while streaming {rel}")
+        values = [float(selected_row[i]) for i in keep]
+        region_codes = [h1[i] for i in keep]
+        sector_labels = [h2[i] for i in keep]
+        index = pd.MultiIndex.from_arrays([region_codes, sector_labels], names=["region", "sector"])
+        out = pd.Series(values, index=index, dtype="float64")
+        out.name = chosen
+        return out
+
+
+def load_exiobase3_extension_row_for_year(
+    year: int,
+    *,
+    extension: str,
+    kind: MatrixKind = "F",
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    exact_priority: Sequence[str] = (),
+    keywords: Sequence[str] = (),
+    region: str | None = None,
+    force_download: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = "10.5281/zenodo.3583070",
+    verbose: bool = False,
+) -> pd.Series:
+    """Load one EXIOBASE extension row from the standard yearly source zip.
+
+    This is the MRIO-owned API boundary for analysis scripts that need one
+    extension stressor.  It keeps source-zip discovery/download policy in the
+    MRIO repo and returns only the requested row, avoiding full extension loads.
+    """
+    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_year_dir
+
+    year_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
+    year_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = ensure_exiobase_year_zip(
+        int(year),
+        data_dir=year_dir,
+        system=str(system),
+        force_download=force_download,
+        allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads,
+        show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb,
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+        doi=str(doi),
+        verbose=verbose,
+    )
+    return load_exiobase3_extension_row(
+        zip_path,
+        extension=str(extension),
+        kind=kind,
+        exact_priority=exact_priority,
+        keywords=keywords,
+        region=region,
+    )
 
 def load_exiobase3_extension_for_year(
     year: int,

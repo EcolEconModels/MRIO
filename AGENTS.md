@@ -66,3 +66,11 @@ Follow `../ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md` 
 Follow the durable coding rules in  for scientific code documentation.  In particular, scientific analysis code needs file/function/class/attribute documentation and line/block comments for every scientifically relevant loop, branch, indexing step, normalization, projection, edge-case guard, and output write.
 
 Follow  before producing or committing Python patches.  Patch scripts must run py_compile, focused tests, Ruff when available, Pyright when available, and no-suppression/static guardrails so Pylance/Ruff errors such as unused imports, undefined names, and unknown external imports are not handed to the user.
+
+## Cross-repo Python analysis validation
+
+Before handing over Python patch scripts, follow the durable guidance in
+`ecolecon-agent-memory/coding/pylance-compliant-python.md` and
+`ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`.
+Run Ruff `F401/F821`, Pyright, focused tests, and `git diff --check`; then check
+Pylance in VS Code for the changed files.
