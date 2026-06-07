@@ -60,3 +60,9 @@
 ## Resource-bounded/resumable MRIO analyses
 
 Follow `../ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md` for progress diagnostics, 4 GB default memory discipline, source-zip-only cache discipline, sparse/streaming loading, and manifest-based resumability.  Local application notes are in `docs/ai/resource_bounded_resumable_analysis.md`.
+
+## EcolEcon durable coding rules
+
+Follow the durable coding rules in  for scientific code documentation.  In particular, scientific analysis code needs file/function/class/attribute documentation and line/block comments for every scientifically relevant loop, branch, indexing step, normalization, projection, edge-case guard, and output write.
+
+Follow  before producing or committing Python patches.  Patch scripts must run py_compile, focused tests, Ruff when available, Pyright when available, and no-suppression/static guardrails so Pylance/Ruff errors such as unused imports, undefined names, and unknown external imports are not handed to the user.

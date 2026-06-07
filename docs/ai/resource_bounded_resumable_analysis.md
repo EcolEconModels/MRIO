@@ -1,7 +1,8 @@
-# Resource-bounded and resumable MRIO analysis policy
+# MRIO resource and resumability policy
 
-The durable source of truth is in the sibling memory repo:
+This repo follows `../ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`.
 
-- `../ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`
-
-MRIO loaders and downstream scripts should keep the source `.zip` as the durable cache, avoid full-object pickles/dense matrix caches by default, read only task-relevant archive members, use sparse/vector computations, print progress diagnostics, and support manifest-based resumability for time-consuming outputs.
+MRIO-facing analysis code should retain source ZIPs, avoid unnecessary full
+parsed-object pickle caches, stream/read only required matrices and extension
+rows, prefer sparse representations, print progress ticks, and use manifest-based
+resumability for time-consuming derived tables.
