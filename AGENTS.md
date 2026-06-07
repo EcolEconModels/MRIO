@@ -13,9 +13,6 @@
 Do not duplicate the patch-script rules in this `AGENTS.md` or in repo-local
 patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
 
-## Environment Configuration
-
-
 ## EXIO sparse loading and strict MultiIndex contract
 
 > [!IMPORTANT]
@@ -25,7 +22,6 @@ patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
 - Returned EXIO vectors use `pd.MultiIndex(names=["region", "sector"])`.
 - Sparse EXIO matrices may carry `.index` and `.columns` metadata; diagnostics must not densify EXIO-scale CSR matrices.
 - Preserve tab fields when parsing EXIO extension tables; do not use whitespace parsing that drops blank numeric cells.
-
 
 ## EXIO low-RAM zip-stream contract
 
@@ -79,5 +75,3 @@ Before handing over Python patch scripts, follow the durable guidance in
 `ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`.
 Run Ruff `F401/F821`, Pyright, focused tests, and `git diff --check`; then check
 Pylance in VS Code for the changed files.
-
-<!-- ecol-econ-shell-patch-must-read-start -->
