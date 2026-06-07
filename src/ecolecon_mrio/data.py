@@ -122,6 +122,97 @@ def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
     return pd.Series(x.to_numpy(dtype=float), index=basis_index, name="x"), basis_index
 
 
+
+def load_exiobase3_output_for_year(
+    year: int,
+    *,
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    force_download: bool = False,
+    allow_download_missing: bool = False,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = "10.5281/zenodo.3583070",
+    verbose: bool = False,
+) -> tuple[pd.Series, pd.MultiIndex, dict[str, Any]]:
+    """Load only EXIOBASE ``x.txt`` for one year.
+
+    Basis compilation and observed-output projection need only the annual
+    monetary output vector ``x_t`` and its canonical ``(region, sector)`` index.
+    They do not need ``Z.txt``, ``Y.txt``, sparse ``A``, Leontief inverses, Ghosh
+    objects, a full pymrio ``IOSystem``, or any derived matrix cache.  This public
+    MRIO boundary keeps source-zip discovery/download policy in MRIO while
+    reading exactly the one source member needed by those analysis stages.
+    """
+
+    # Normalize the requested EXIOBASE IO system before any file path is built;
+    # pxp and ixi have different sector bases and must never be silently mixed.
+    system_clean = str(system).strip().lower()
+
+    # Reject unsupported systems loudly because a wrong system changes the
+    # region-sector index and therefore all downstream basis/projection rows.
+    if system_clean not in {"pxp", "ixi"}:
+        raise ValueError(f"Unsupported exiobase system '{system}'. Use 'pxp' or 'ixi'.")
+
+    # Resolve the standard MRIO source-zip path without exposing zip internals to
+    # downstream analysis repos.
+    paths = resolve_exiobase_cache_paths(int(year), system=system_clean, data_root=data_root)
+
+    # Ensure the year directory exists; the only durable data cache created or
+    # reused by this function is the raw EXIOBASE source zip in that directory.
+    data_dir = paths["data_dir"]
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Locate or optionally download the raw IOT zip.  This call validates the zip
+    # container but does not parse a full pymrio object or write derived caches.
+    zip_path = ensure_exiobase_year_zip(
+        int(year),
+        data_dir=data_dir,
+        system=system_clean,
+        force_download=force_download,
+        allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads,
+        show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb,
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+        doi=str(doi),
+        verbose=verbose,
+    )
+
+    # Read only x.txt.  This is the critical low-RAM step: no Z/Y streaming and no
+    # A derivation happen in stages that only need the output vector or index.
+    x, basis_index = _read_exio_x_from_zip(zip_path)
+
+    # Return explicit metadata so callers and manifests can audit that this was
+    # an x-only source-zip read rather than a full-object or matrix-cache load.
+    metadata: dict[str, Any] = {
+        "cache_kind": "exiobase_zip_stream_x_only",
+        "cache_status": "read_x_direct_from_zip_no_cache_write",
+        "source_zip": str(zip_path),
+        "system": system_clean,
+        "year": int(year),
+        "index_columns": ["region", "sector"],
+        "stored_objects": [],
+        "not_stored_objects": [
+            "Z",
+            "A",
+            "Y",
+            "full_pymrio_iosystem",
+            "fast_pickle",
+            "text_cache_dir",
+            "matrix_npz_cache",
+        ],
+        "source_zip_retained": True,
+    }
+
+    # The output vector carries the authoritative MultiIndex used by analysis_v2;
+    # the metadata documents the source path and cache policy for reproducibility.
+    return x, basis_index, metadata
+
 def _exio_text_header_index(fh: io.TextIOBase, *, table_name: str) -> pd.MultiIndex:
     regions = next(fh).rstrip("\n\r").split("\t")[2:]
     sectors = next(fh).rstrip("\n\r").split("\t")[2:]
@@ -470,14 +561,14 @@ def load_mrio(
     """
     Load MRIO data using native pymrio download and parsing capabilities.
     Returns the mrio system and the calculated final demand vector y.
-    
+
     Parameters
     ----------
     dataset : str
         One of "test", "oecd", "wiod", "exiobase".
     year : int
         Year of analysis.
-        
+
     Returns
     -------
     mrio : pymrio.IOSystem
@@ -504,39 +595,39 @@ def load_mrio(
         # OECD 2016 edition covers 1995-2011.
         # We target the 2018 edition for year 2010 as it's a common replication point.
         # If year is outside 2005-2015, we might need a different version.
-        
+
         # Pymrio defaults: version='v2021' (which uses 5-year bundles).
         # We explicitly request v2018 for individual year handling flexibility or simplicity if applicable.
         # Or we use v2021 if that's what the user has.
         # Based on file listing (ICIO2023), it seems user has v2021 (published 2023 maybe).
-        
+
         # Let's try standard behavior:
         # If we want 2010, we can try detecting what's available or just ask pymrio to handle it.
-        
+
         root = Path(data_root) if data_root is not None else default_data_root()
         data_dir = root / f"oecd_icio_{year}"
         if not data_dir.exists():
             data_dir.mkdir(parents=True)
-            
+
         if verbose:
             print(f"Ensuring OECD data for {year} in {data_dir}...")
 
         # Avoid unnecessary network calls: only invoke pymrio's downloader when data
         # is missing (or the caller explicitly forces refresh).
         existing_archives = sorted(list(data_dir.glob("*.zip")))
-        
+
         # Note: download_oecd verifies existence internally.
         # We specify version='v2018' to ensure we get the yearly files expected for 2010 replication if possible,
         # or stick to the simple API.
         # However, 2020 paper used 2010 data from Eurostat. OECD is the fallback.
         # Let's use the 'v2018' version logic which is stable for 2010.
-        
+
         if force_download or not existing_archives:
             pymrio.download_oecd(storage_folder=data_dir, years=[year], version="v2018")
 
         # parser looks for files in the specific path
         mrio = pymrio.parse_oecd(path=data_dir, year=year)
-        
+
         # Filter for Y columns that are not exports (if needed, or just sum)
         # OECD columns usually: "AUS_HFCE", etc.
         # Exports might be "AUS_EXP".
@@ -640,7 +731,7 @@ def load_mrio(
         # Pass the specific file path to avoid pymrio's ambiguous directory scan.
         mrio = pymrio.parse_wiod(path=wiot_path, year=year)
         mrio.save(cache_path)
-        
+
         y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
         y_full = mrio.Y[y_cols].sum(axis=1)
 
@@ -656,7 +747,7 @@ def load_mrio(
         if verbose:
             print("Computing MRIO derived matrices (calc_all)...")
         mrio.calc_all(include_ghosh=include_ghosh)
-        
+
     return mrio, y_full
 
 
