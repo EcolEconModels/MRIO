@@ -56,3 +56,7 @@
 ## Mapping Source Of Truth
 - Split and reaggregation helper CSVs live under `scripts/pipelines/` and are the single source of truth.
 - Do not mirror those helper CSVs into `scripts/mappings/` or maintain parallel checked-in copies.
+
+## Resource-bounded/resumable MRIO analyses
+
+Follow `../ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md` for progress diagnostics, 4 GB default memory discipline, source-zip-only cache discipline, sparse/streaming loading, and manifest-based resumability.  Local application notes are in `docs/ai/resource_bounded_resumable_analysis.md`.
