@@ -17,6 +17,27 @@ from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
 MatrixKind = Literal["F", "F_Y"]
 
 
+
+
+@dataclass(frozen=True)
+class ExtensionRowResult:
+    """One streamed EXIOBASE extension row plus unit metadata.
+
+    The numeric row remains a pandas Series indexed by ``MultiIndex(region,
+    sector)``.  Unit handling is deliberately limited to exposing the source unit
+    label for reporting; no unit conversion is attempted here.
+    """
+
+    year: int | None
+    values: pd.Series
+    stressor: str
+    unit: str
+    unit_source: str
+    extension: str
+    kind: str
+    metadata: dict[str, object]
+
+
 @dataclass(frozen=True)
 class ExioExtension:
     name: str
@@ -295,6 +316,142 @@ def load_exiobase3_extension_row_for_year(
         keywords=keywords,
         region=region,
     )
+
+
+def load_exiobase3_extension_row_with_unit(
+    container: str | Path,
+    *,
+    extension: str,
+    kind: MatrixKind = "F",
+    exact_priority: Sequence[str] = (),
+    keywords: Sequence[str] = (),
+    region: str | None = None,
+    unit_override: str | None = None,
+    require_unit: bool = True,
+) -> ExtensionRowResult:
+    """Stream one extension row and attach its unit label when available.
+
+    This combines the existing low-memory row reader with ``read_extension_units``.
+    It is still row-level and zip-stream friendly: the full extension matrix is
+    not materialized.  If a source archive lacks ``unit.txt``, callers may provide
+    an explicit override; otherwise ``require_unit=True`` fails loudly so figure
+    tables do not report dimensionless emissions by accident.
+    """
+
+    row = load_exiobase3_extension_row(
+        container,
+        extension=str(extension),
+        kind=kind,
+        exact_priority=exact_priority,
+        keywords=keywords,
+        region=region,
+    )
+    stressor = str(row.name)
+    if unit_override is not None and str(unit_override).strip():
+        unit = str(unit_override).strip()
+        unit_source = "explicit_override"
+    else:
+        try:
+            units = read_extension_units(container, extension=str(extension))
+            unit_value = units.get(stressor)
+        except Exception as exc:
+            if require_unit:
+                raise ValueError(
+                    f"Could not read unit metadata for extension={extension!r}, stressor={stressor!r}"
+                ) from exc
+            unit_value = None
+        if unit_value is None or str(unit_value).strip() == "":
+            if require_unit:
+                raise ValueError(
+                    f"No unit metadata for extension={extension!r}, stressor={stressor!r}; "
+                    "pass unit_override=... only if the unit has been verified externally."
+                )
+            unit = ""
+            unit_source = "missing_unit_allowed"
+        else:
+            unit = str(unit_value).strip()
+            unit_source = f"{extension}/unit.txt"
+    return ExtensionRowResult(
+        year=None,
+        values=row,
+        stressor=stressor,
+        unit=unit,
+        unit_source=unit_source,
+        extension=str(extension),
+        kind=str(kind),
+        metadata={
+            "container": str(container),
+            "region": region,
+            "row_index_names": list(row.index.names) if isinstance(row.index, pd.MultiIndex) else [row.index.name],
+        },
+    )
+
+
+def load_exiobase3_extension_row_with_unit_for_year(
+    year: int,
+    *,
+    extension: str,
+    kind: MatrixKind = "F",
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    exact_priority: Sequence[str] = (),
+    keywords: Sequence[str] = (),
+    region: str | None = None,
+    force_download: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = "10.5281/zenodo.3583070",
+    unit_override: str | None = None,
+    require_unit: bool = True,
+    verbose: bool = False,
+) -> ExtensionRowResult:
+    """Load one yearly EXIOBASE extension row together with unit metadata."""
+
+    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_year_dir
+
+    year_dir = resolve_exiobase_year_dir(int(year), data_root=data_root)
+    year_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = ensure_exiobase_year_zip(
+        int(year),
+        data_dir=year_dir,
+        system=str(system),
+        force_download=force_download,
+        allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads,
+        show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb,
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+        doi=str(doi),
+        verbose=verbose,
+    )
+    result = load_exiobase3_extension_row_with_unit(
+        zip_path,
+        extension=str(extension),
+        kind=kind,
+        exact_priority=exact_priority,
+        keywords=keywords,
+        region=region,
+        unit_override=unit_override,
+        require_unit=require_unit,
+    )
+    metadata = dict(result.metadata)
+    metadata.update({"year": int(year), "system": str(system), "source_zip": str(zip_path)})
+    return ExtensionRowResult(
+        year=int(year),
+        values=result.values,
+        stressor=result.stressor,
+        unit=result.unit,
+        unit_source=result.unit_source,
+        extension=result.extension,
+        kind=result.kind,
+        metadata=metadata,
+    )
+
 
 def load_exiobase3_extension_for_year(
     year: int,

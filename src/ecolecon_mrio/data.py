@@ -16,6 +16,7 @@ from pymrio.tools.iodownloader import EXIOBASE3_CONFIG, HEADERS, MRIOMetaData, _
 
 from ecolecon_mrio.download_utils import DownloadSpec, download_file_resumable, zip_contains_member
 from ecolecon_mrio.wiod16 import load_wiod16
+from ecolecon_mrio.mrio_sda import UnitMetadata
 
 
 def default_data_root() -> Path:
@@ -59,6 +60,28 @@ def resolve_exiobase_cache_paths(
         "zip": data_dir / f"IOT_{int(year)}_{system}.zip",
     }
 
+
+
+def exiobase3_monetary_unit(
+    *,
+    system: str = "pxp",
+    override: str | None = None,
+) -> UnitMetadata:
+    """Return EXIOBASE monetary table unit metadata for reporting.
+
+    EXIOBASE monetary IOT files are conventionally interpreted in million euros
+    in this project.  The helper is intentionally modest: it exposes the unit and
+    provenance needed by downstream CSV outputs without introducing conversion or
+    symbolic unit algebra.  Use ``override`` only when a caller has externally
+    verified a different monetary unit for a specific dataset extract.
+    """
+
+    if override is not None and str(override).strip():
+        return UnitMetadata(unit=str(override).strip(), unit_source="explicit_override")
+    system_clean = str(system).strip().lower()
+    if system_clean not in {"pxp", "ixi"}:
+        raise ValueError(f"Unsupported exiobase system {system!r}. Use 'pxp' or 'ixi'.")
+    return UnitMetadata(unit="MEUR", unit_source="exiobase3_monetary_table_convention")
 
 
 def _open_exio_zip_member(zf: zipfile.ZipFile, member_name: str):
@@ -819,4 +842,3 @@ def load_mrio_matrices(
     if calc_all and verbose:
         print("calc_all is ignored for load_mrio_matrices(); sparse A/x/y are returned directly.")
     return A_direct, x_direct, y_direct, basis_index_direct, metadata_direct
-

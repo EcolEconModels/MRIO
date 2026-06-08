@@ -75,3 +75,10 @@ Before handing over Python patch scripts, follow the durable guidance in
 `ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`.
 Run Ruff `F401/F821`, Pyright, focused tests, and `git diff --check`; then check
 Pylance in VS Code for the changed files.
+
+## MRIO index and strict SDA API contract
+
+For MRIO index/SDA API rules, see `docs/mrio_index_and_sda_contract.md`. New
+vector-returning APIs must preserve `MultiIndex(region, sector)` labels and must
+not stringify sector keys. Strict SDA pair APIs must raise if a requested forward
+or backward polar solve fails.

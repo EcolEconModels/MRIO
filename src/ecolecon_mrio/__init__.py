@@ -15,6 +15,7 @@ from .data import (
     resolve_exiobase_year_dir,
     resolve_exiobase_cache_paths,
 )
+from .data import exiobase3_monetary_unit
 load_MRIO_matrices = load_mrio_matrices
 from .decomposition import decompose_slack_change
 from .diagnostics import (
@@ -67,6 +68,13 @@ from .plotting import (
     plot_layered_pyramid,
 )
 from .temporal import PanelDiagnostics, compute_output_change_decomposition, compute_viability_panel, load_mrio_panel
+from .mrio_sda import (
+    OutputSdaPairResult,
+    UnitMetadata,
+    compute_output_sda_pair_result,
+    require_region_sector_multiindex,
+    require_same_unit_string,
+)
 from .transition import classify_transition_years, principal_direction_index
 from .transition_support import (
     benchmark_step_for_emissions_cut,
@@ -121,7 +129,12 @@ from .inverse_primitives import (
 )
 
 from .clustering import sector_clustering
-from .exiobase3_extensions import load_exiobase3_extension_for_year
+from .exiobase3_extensions import (
+    ExtensionRowResult,
+    load_exiobase3_extension_for_year,
+    load_exiobase3_extension_row_with_unit,
+    load_exiobase3_extension_row_with_unit_for_year,
+)
 from .mapping_csv import (
     MAPPING_CSV_COLUMNS,
     flatten_exio_sectors_from_mapping,
@@ -244,6 +257,18 @@ __all__ = [
     "validate_mapping_weights",
     "flatten_exio_sectors_from_mapping",
 ]
+
+__all__.extend([
+    "OutputSdaPairResult",
+    "UnitMetadata",
+    "compute_output_sda_pair_result",
+    "require_region_sector_multiindex",
+    "require_same_unit_string",
+    "exiobase3_monetary_unit",
+    "ExtensionRowResult",
+    "load_exiobase3_extension_row_with_unit",
+    "load_exiobase3_extension_row_with_unit_for_year",
+])
 
 __all__.extend([
     "compile_energy_balance_pxp_split_plan",
