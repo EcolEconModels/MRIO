@@ -33,6 +33,14 @@ def test_require_region_sector_multiindex_rejects_wrong_names() -> None:
         require_region_sector_multiindex(bad)
 
 
+def test_require_region_sector_multiindex_rejects_duplicates() -> None:
+    duplicate = pd.MultiIndex.from_tuples(
+        [("R1", "s1"), ("R1", "s1")], names=["region", "sector"]
+    )
+    with pytest.raises(ValueError, match="unique"):
+        require_region_sector_multiindex(duplicate)
+
+
 def test_average_polar_sda_preserves_index_and_identity() -> None:
     index = _idx()
     A0 = csr_matrix([[0.10, 0.02], [0.03, 0.12]], dtype=float)
@@ -68,6 +76,8 @@ def test_average_polar_sda_preserves_index_and_identity() -> None:
     reconstructed = result.sda_intermediate_delta + result.sda_demand_delta + result.sda_residual
     pd.testing.assert_series_equal(result.observed_output_delta, reconstructed, check_names=False)
     assert result.residual_l2 == pytest.approx(float(np.linalg.norm(result.sda_residual.to_numpy(dtype=float))))
+    assert result.residual_l2 < 1.0e-10
+    assert result.residual_share_l2 < 1.0e-10
     assert result.monetary_unit == "MEUR"
     assert result.metadata["identity_mode"] == "average_polar_forward_backward"
 
@@ -146,3 +156,52 @@ def test_forward_only_does_not_attempt_backward_solve() -> None:
         average_identities=False,
     )
     assert result.metadata["identity_mode"] == "forward_only"
+
+def test_strict_sda_rejects_nonfinite_vectors() -> None:
+    index = _idx()
+    A0 = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    A1 = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    x0 = _series([1.0, 2.0], index, "x0")
+    x1 = _series([1.5, 2.5], index, "x1")
+    y0 = _series([1.0, np.nan], index, "y0")
+    y1 = _series([1.2, 2.3], index, "y1")
+
+    with pytest.raises(ValueError, match="y_start"):
+        compute_output_sda_pair_result(
+            start_year=2000,
+            end_year=2001,
+            A_start=A0,
+            A_end=A1,
+            x_start=x0,
+            x_end=x1,
+            y_start=y0,
+            y_end=y1,
+            index=index,
+            monetary_unit="MEUR",
+            monetary_unit_source="test_fixture",
+        )
+
+
+def test_strict_sda_rejects_nonfinite_sparse_matrix_data() -> None:
+    index = _idx()
+    A0 = csr_matrix([[0.0, np.nan], [0.0, 0.0]], dtype=float)
+    A1 = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    x0 = _series([1.0, 2.0], index, "x0")
+    x1 = _series([1.5, 2.5], index, "x1")
+    y0 = _series([1.0, 2.0], index, "y0")
+    y1 = _series([1.2, 2.3], index, "y1")
+
+    with pytest.raises(ValueError, match="A_start"):
+        compute_output_sda_pair_result(
+            start_year=2000,
+            end_year=2001,
+            A_start=A0,
+            A_end=A1,
+            x_start=x0,
+            x_end=x1,
+            y_start=y0,
+            y_end=y1,
+            index=index,
+            monetary_unit="MEUR",
+            monetary_unit_source="test_fixture",
+        )

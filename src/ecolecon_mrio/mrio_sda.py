@@ -65,21 +65,25 @@ class OutputSdaPairResult:
     metadata: dict[str, Any]
 
 
+
 def require_region_sector_multiindex(index: pd.Index) -> pd.MultiIndex:
     """Return ``index`` only if it is the canonical MRIO region-sector index.
 
     The transition-analysis repos align basis memberships, output vectors, SDA
     components, and extension rows by ``(region, sector)`` labels.  Accepting a
-    flat index or stringified tuples would make it too easy to silently misalign
-    scientific quantities.  Single-region datasets should still use a two-level
-    index, for example ``region='TEST'`` and ``sector='s1'``.
+    flat index, duplicate labels, or stringified tuples would make it too easy to
+    silently misalign scientific quantities.  Single-region datasets should still
+    use a two-level index, for example ``region='TEST'`` and ``sector='s1'``.
     """
 
     if not isinstance(index, pd.MultiIndex):
         raise TypeError("MRIO index must be a pandas MultiIndex with levels ['region', 'sector'].")
     if list(index.names) != ["region", "sector"]:
         raise ValueError(f"MRIO MultiIndex names must be ['region', 'sector'], got {list(index.names)!r}.")
+    if not index.is_unique:
+        raise ValueError("MRIO MultiIndex must contain unique (region, sector) labels.")
     return index
+
 
 
 def require_same_unit_string(unit_a: str, unit_b: str, *, context: str) -> str:
@@ -100,20 +104,58 @@ def require_same_unit_string(unit_a: str, unit_b: str, *, context: str) -> str:
     return left
 
 
+
+
+def _ensure_finite_array(values: np.ndarray, *, name: str) -> np.ndarray:
+    """Return ``values`` only if every numeric entry is finite.
+
+    The strict SDA API is paper-facing: missing, NaN, infinite, or non-numeric
+    data must fail loudly instead of being silently reinterpreted as zero output,
+    zero demand, or zero technical coefficients.
+    """
+
+    arr = np.asarray(values, dtype=float)
+    bad_mask = ~np.isfinite(arr)
+    if bool(bad_mask.any()):
+        bad_count = int(bad_mask.sum())
+        raise ValueError(f"{name} contains {bad_count} non-finite or non-numeric value(s).")
+    return arr
+
+
+
+
+
 def _strict_float_series(values: pd.Series, *, index: pd.MultiIndex, name: str) -> pd.Series:
-    """Validate and coerce one vector without hiding index mismatches.
+    """Validate and coerce one vector without hiding index or data errors.
 
     ``load_mrio_matrices`` returns pandas Series already indexed by the canonical
-    EXIO basis.  Reindexing with fill values inside the SDA function would hide a
-    scientific error, so this helper requires exact label equality before numeric
-    coercion.
+    EXIO basis.  Reindexing or filling missing values inside the strict SDA
+    function would hide a scientific error, so this helper requires exact label
+    equality and finite numeric entries before returning a float Series.
     """
 
     if not isinstance(values, pd.Series):
         raise TypeError(f"{name} must be a pandas Series, got {type(values)!r}")
     if not values.index.equals(index):
         raise ValueError(f"{name} index does not match the supplied canonical MRIO index.")
-    return pd.to_numeric(values, errors="coerce").fillna(0.0).astype(float)
+    try:
+        numeric = values.astype("float64", copy=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} contains non-numeric value(s).") from exc
+    arr = np.asarray(numeric, dtype=float)
+    bad_mask = ~np.isfinite(arr)
+    if bool(bad_mask.any()):
+        bad_positions = np.flatnonzero(bad_mask)
+        bad_labels = [repr(values.index[int(pos)]) for pos in bad_positions[:5]]
+        suffix = "" if int(bad_mask.sum()) <= 5 else "; first bad labels shown"
+        raise ValueError(
+            f"{name} contains {int(bad_mask.sum())} non-finite or non-numeric value(s)"
+            f" at labels {bad_labels}{suffix}."
+        )
+    return pd.Series(arr, index=index, name=values.name, dtype=float)
+
+
+
 
 
 def _strict_csr_matrix(values: Any, *, index: pd.MultiIndex, name: str) -> csr_matrix:
@@ -121,7 +163,8 @@ def _strict_csr_matrix(values: Any, *, index: pd.MultiIndex, name: str) -> csr_m
 
     Sparse matrices are accepted by shape because SciPy CSR matrices do not carry
     pandas labels.  DataFrames are checked by row and column labels before being
-    converted.  The function never densifies sparse inputs.
+    converted.  Non-finite matrix entries fail loudly; silently mapping malformed
+    coefficients to zero would corrupt the SDA components.
     """
 
     n = len(index)
@@ -129,14 +172,19 @@ def _strict_csr_matrix(values: Any, *, index: pd.MultiIndex, name: str) -> csr_m
         matrix = values.tocsr().astype(float)
         if matrix.shape != (n, n):
             raise ValueError(f"{name} shape {matrix.shape!r} does not match index length {n}.")
+        if matrix.data.size:
+            _ensure_finite_array(matrix.data, name=f"{name}.data")
         return matrix
     if isinstance(values, pd.DataFrame):
         if not values.index.equals(index) or not values.columns.equals(index):
             raise ValueError(f"{name} DataFrame row/column labels must match the canonical MRIO index.")
-        return csr_matrix(values.to_numpy(dtype=float))
+        numeric = values.apply(pd.to_numeric, errors="coerce")
+        array = _ensure_finite_array(numeric.to_numpy(dtype=float), name=name)
+        return csr_matrix(array)
     array = np.asarray(values, dtype=float)
     if array.shape != (n, n):
         raise ValueError(f"{name} array shape {array.shape!r} does not match index length {n}.")
+    array = _ensure_finite_array(array, name=name)
     return csr_matrix(array)
 
 

@@ -20,6 +20,14 @@ def _write_extension_zip(path: Path, *, include_unit: bool = True) -> None:
             "CO2 - combustion - air\t1.5\t2.5\n"
             "Other stressor\t3.0\t4.0\n",
         )
+        zf.writestr(
+            "emissions/F_Y.txt",
+            "\tAT\tAT\n"
+            "\tHouseholds\tGovernment\n"
+            "\t\t\n"
+            "CO2 - combustion - air\t0.5\t0.7\n"
+            "Other stressor\t1.0\t1.2\n",
+        )
         if include_unit:
             zf.writestr(
                 "emissions/unit.txt",
@@ -52,6 +60,21 @@ def test_extension_row_with_unit_reads_unit_txt(tmp_path: Path) -> None:
     assert list(result.values.index.names) == ["region", "sector"]
     assert result.values.loc[("AT", "sector_a")] == pytest.approx(1.5)
 
+
+
+def test_extension_row_with_unit_f_y_uses_final_demand_category_index(tmp_path: Path) -> None:
+    archive = tmp_path / "extension_f_y.zip"
+    _write_extension_zip(archive)
+    result = load_exiobase3_extension_row_with_unit(
+        archive,
+        extension="emissions",
+        kind="F_Y",
+        exact_priority=("CO2 - combustion - air",),
+    )
+    assert result.stressor == "CO2 - combustion - air"
+    assert list(result.values.index.names) == ["region", "final_demand_category"]
+    assert result.values.loc[("AT", "Households")] == pytest.approx(0.5)
+    assert result.metadata["row_index_names"] == ["region", "final_demand_category"]
 
 def test_extension_row_with_unit_override_when_unit_file_missing(tmp_path: Path) -> None:
     archive = tmp_path / "extension_missing_unit.zip"

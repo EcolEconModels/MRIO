@@ -19,13 +19,27 @@ MatrixKind = Literal["F", "F_Y"]
 
 
 
+
+
+def _extension_column_label_level_name(kind: MatrixKind) -> str:
+    """Return the second column-index level name for an EXIOBASE extension kind."""
+
+    kind_clean = str(kind)
+    if kind_clean == "F":
+        return "sector"
+    if kind_clean == "F_Y":
+        return "final_demand_category"
+    raise ValueError(f"Unsupported extension matrix kind: {kind!r}")
+
+
 @dataclass(frozen=True)
 class ExtensionRowResult:
     """One streamed EXIOBASE extension row plus unit metadata.
 
-    The numeric row remains a pandas Series indexed by ``MultiIndex(region,
-    sector)``.  Unit handling is deliberately limited to exposing the source unit
-    label for reporting; no unit conversion is attempted here.
+    The numeric row remains a pandas Series indexed by a two-level MultiIndex.
+    For ``F`` rows the second level is ``sector``; for ``F_Y`` rows it is
+    ``final_demand_category``.  Unit handling is deliberately limited to exposing
+    the source unit label for reporting; no unit conversion is attempted here.
     """
 
     year: int | None
@@ -46,13 +60,21 @@ class ExioExtension:
     F_Y: pd.DataFrame | None
 
 
+
 def _exio_code_to_name_lookup(system: str = "pxp") -> dict[str, str]:
     concordance = load_pymrio_exio3_sectors(system=system).sectors
+    required = {"ExioCode", "ExioName"}
+    missing = required.difference(set(concordance.columns))
+    if missing:
+        raise ValueError(f"EXIO sector concordance missing expected columns: {sorted(missing)}")
+    codes = concordance["ExioCode"].astype(str)
+    names = concordance["ExioName"].astype(str)
     return {
-        str(row.ExioCode): str(row.ExioName)
-        for row in concordance.itertuples(index=False)
-        if str(row.ExioCode).strip() != "" and str(row.ExioName).strip() != ""
+        code: name
+        for code, name in zip(codes, names, strict=False)
+        if code.strip() != "" and name.strip() != ""
     }
+
 
 
 def _open_text_from_zip(zf: zipfile.ZipFile, member: str) -> TextIOWrapper:
@@ -126,7 +148,7 @@ def _read_extension_matrix(
         )
 
     # Set consistent MultiIndex column names
-    label_level_name = str(h2[0]).strip() or "label"
+    label_level_name = _extension_column_label_level_name(kind)
     region_codes = [h1[i] for i in keep]
     labels = [h2[i] for i in keep]
     df.columns = pd.MultiIndex.from_arrays(
@@ -258,7 +280,8 @@ def load_exiobase3_extension_row(
         values = [float(selected_row[i]) for i in keep]
         region_codes = [h1[i] for i in keep]
         sector_labels = [h2[i] for i in keep]
-        index = pd.MultiIndex.from_arrays([region_codes, sector_labels], names=["region", "sector"])
+        label_level_name = _extension_column_label_level_name(kind)
+        index = pd.MultiIndex.from_arrays([region_codes, sector_labels], names=["region", label_level_name])
         out = pd.Series(values, index=index, dtype="float64")
         out.name = chosen
         return out
@@ -502,6 +525,7 @@ def load_exiobase3_extension_for_year(
         cache_dir=cache_dir,
     )
 
+
 @lru_cache(maxsize=32)
 def load_exiobase3_extension(
     container: str | Path,
@@ -524,12 +548,18 @@ def load_exiobase3_extension(
         cache_root.mkdir(parents=True, exist_ok=True)
         return cache_root / f"exioext_{extension}_{name}_{tag}.pkl"
 
+    def _read_cached_frame(path: Path, *, label: str) -> pd.DataFrame:
+        obj = pd.read_pickle(path)
+        if not isinstance(obj, pd.DataFrame):
+            raise TypeError(f"Cached EXIOBASE extension {label} is not a DataFrame: {path}")
+        return obj
+
     unit = read_extension_units(container, extension=extension)
 
-    F = None
+    F: pd.DataFrame | None = None
     f_path = _pkl("F")
     if f_path is not None and f_path.exists():
-        F = pd.read_pickle(f_path)
+        F = _read_cached_frame(f_path, label="F")
     else:
         try:
             F = _read_extension_matrix(container, extension=extension, kind="F", region=region)
@@ -538,10 +568,10 @@ def load_exiobase3_extension(
         if f_path is not None and F is not None:
             F.to_pickle(f_path)
 
-    F_Y = None
+    F_Y: pd.DataFrame | None = None
     fy_path = _pkl("F_Y")
     if fy_path is not None and fy_path.exists():
-        F_Y = pd.read_pickle(fy_path)
+        F_Y = _read_cached_frame(fy_path, label="F_Y")
     else:
         try:
             F_Y = _read_extension_matrix(container, extension=extension, kind="F_Y", region=region)
@@ -551,6 +581,7 @@ def load_exiobase3_extension(
             F_Y.to_pickle(fy_path)
 
     return ExioExtension(name=extension, unit=unit, F=F, F_Y=F_Y)
+
 
 
 def _select_rows_by_keywords(index: Iterable[str], keywords: Sequence[str]) -> list[str]:
@@ -759,7 +790,13 @@ def extract_final_demand_emissions_and_intensity(
     """
     monetary_final_demand = monetary_final_demand.copy()
     monetary_final_demand.index = monetary_final_demand.index.astype(str)
-    monetary_final_demand = pd.to_numeric(monetary_final_demand, errors="coerce")
+    numeric_final_demand = pd.to_numeric(monetary_final_demand, errors="coerce")
+    monetary_final_demand = pd.Series(
+        numeric_final_demand,
+        index=monetary_final_demand.index,
+        name=monetary_final_demand.name,
+        dtype="float64",
+    )
 
     ext_obj = load_exiobase3_extension(
         container, extension=str(extension), region=str(region), cache_dir=cache_dir
