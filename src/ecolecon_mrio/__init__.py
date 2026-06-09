@@ -71,9 +71,15 @@ from .plotting import (
 from .temporal import PanelDiagnostics, compute_output_change_decomposition, compute_viability_panel, load_mrio_panel
 from .mrio_sda import (
     OutputSdaPairResult,
+    MrioYearState,
     UnitMetadata,
+    clear_mrio_year_state_cache,
     compute_output_sda_pair_result,
     compute_output_sda_pair_result_from_mrio_years_lowmem,
+    compute_output_sda_pair_result_from_mrio_years_reuse,
+    compute_output_sda_pair_result_from_states,
+    iter_output_sda_pair_results_from_mrio_years,
+    load_mrio_year_state,
     require_region_sector_multiindex,
     require_same_unit_string,
 )
@@ -174,6 +180,12 @@ __all__ = [
     "compute_viability_panel",
     "compute_output_change_decomposition",
     "compute_output_sda_pair_result_from_mrio_years_lowmem",
+    "load_mrio_year_state",
+    "iter_output_sda_pair_results_from_mrio_years",
+    "compute_output_sda_pair_result_from_states",
+    "compute_output_sda_pair_result_from_mrio_years_reuse",
+    "clear_mrio_year_state_cache",
+    "MrioYearState",
     "decompose_slack_change",
     "PrincipalDirectionResult",
     "principal_growth_direction",

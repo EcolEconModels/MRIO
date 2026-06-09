@@ -15,6 +15,7 @@ identity cannot be solved.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 import gc
 from pathlib import Path
@@ -39,6 +40,28 @@ class UnitMetadata:
 
     unit: str
     unit_source: str
+
+
+
+
+@dataclass(frozen=True, slots=True)
+class MrioYearState:
+    """Loaded sparse MRIO state for one year.
+
+    The object intentionally stores the sparse technical-coefficient matrix and
+    the two monetary vectors needed for output SDA, but never stores a Leontief
+    inverse or solver factorization.  Panel callers can keep a rolling window of
+    these states so each EXIOBASE source zip is parsed once per run.
+    """
+
+    year: int
+    A: csr_matrix
+    x: pd.Series
+    y: pd.Series
+    index: pd.MultiIndex
+    monetary_unit: str
+    monetary_unit_source: str
+    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -460,6 +483,283 @@ def _build_output_sda_result(
         metadata=metadata,
     )
 
+
+
+def load_mrio_year_state(
+    year: int,
+    *,
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    allow_download_missing: bool = False,
+    verbose: bool = False,
+    monetary_unit: str | None = None,
+    monetary_unit_source: str | None = None,
+) -> MrioYearState:
+    """Load one MRIO year once as sparse ``A`` plus aligned ``x``/``y`` vectors.
+
+    This is the reusable state boundary for panel SDA runs.  It streams the
+    source zip through the existing sparse loader, derives ``A`` from ``Z`` and
+    ``x``, then returns a compact year state.  It does not form or store an
+    explicit Leontief inverse, factorization, raw ``Z`` matrix, or derived cache.
+    """
+
+    from ecolecon_mrio.data import exiobase3_monetary_unit
+
+    unit = str(monetary_unit).strip() if monetary_unit is not None else ""
+    unit_source = str(monetary_unit_source).strip() if monetary_unit_source is not None else ""
+    if not unit:
+        unit_metadata = exiobase3_monetary_unit(system=str(system))
+        unit = str(unit_metadata.unit).strip()
+        if not unit_source:
+            unit_source = str(unit_metadata.unit_source).strip()
+    if not unit_source:
+        unit_source = "explicit_monetary_unit_argument"
+
+    A, x, y, index, metadata = _load_sda_year_matrices(
+        int(year),
+        system=str(system),
+        data_root=data_root,
+        allow_download_missing=bool(allow_download_missing),
+        verbose=bool(verbose),
+    )
+    return MrioYearState(
+        year=int(year),
+        A=A,
+        x=x,
+        y=y,
+        index=index,
+        monetary_unit=unit,
+        monetary_unit_source=unit_source,
+        metadata={
+            **dict(metadata or {}),
+            "year_state_api": "load_mrio_year_state",
+            "forms_explicit_leontief_inverse": False,
+            "stores_solver_factorization": False,
+        },
+    )
+
+
+def compute_output_sda_pair_result_from_states(
+    start: MrioYearState,
+    end: MrioYearState,
+    *,
+    average_identities: bool = True,
+) -> OutputSdaPairResult:
+    """Compute strict average-polar SDA from two already-loaded year states."""
+
+    if not start.index.equals(end.index):
+        raise ValueError("MRIO year-state indexes do not match")
+    unit = require_same_unit_string(
+        start.monetary_unit,
+        end.monetary_unit,
+        context="MRIO year-state monetary units",
+    )
+    source = start.monetary_unit_source
+    if end.monetary_unit_source != source:
+        source = f"{source}; {end.monetary_unit_source}"
+    result = compute_output_sda_pair_result(
+        start_year=start.year,
+        end_year=end.year,
+        A_start=start.A,
+        A_end=end.A,
+        x_start=start.x,
+        x_end=end.x,
+        y_start=start.y,
+        y_end=end.y,
+        index=start.index,
+        monetary_unit=unit,
+        monetary_unit_source=source,
+        average_identities=bool(average_identities),
+    )
+    result.metadata.update(
+        {
+            "input_api": "MrioYearState",
+            "year_state_reuse": True,
+            "low_memory_matrix_reload": False,
+            "forms_explicit_leontief_inverse": False,
+            "forms_sparse_delta_A": False,
+            "start_metadata": start.metadata,
+            "end_metadata": end.metadata,
+        }
+    )
+    return result
+
+
+def iter_output_sda_pair_results_from_mrio_years(
+    *,
+    years: Sequence[int],
+    pairs: str = "adjacent_plus_full",
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    allow_download_missing: bool = False,
+    average_identities: bool = True,
+    verbose: bool = False,
+    monetary_unit: str | None = None,
+    monetary_unit_source: str | None = None,
+) -> Iterator[OutputSdaPairResult]:
+    """Yield SDA pair results while loading each requested year at most once.
+
+    ``pairs='adjacent'`` keeps only the previous and current year states.
+    ``pairs='adjacent_plus_full'`` additionally pins the first year state so the
+    full-span pair can be emitted after the adjacent pairs without reparsing that
+    first source zip.
+    """
+
+    clean_years = [int(year) for year in years]
+    if len(clean_years) < 2:
+        raise ValueError("At least two years are required for panel SDA")
+    if len(set(clean_years)) != len(clean_years):
+        raise ValueError(f"Panel SDA years must be unique, got {clean_years!r}")
+    if pairs not in {"adjacent", "adjacent_plus_full"}:
+        raise ValueError("pairs must be 'adjacent' or 'adjacent_plus_full'")
+
+    previous = load_mrio_year_state(
+        clean_years[0],
+        system=system,
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=verbose,
+        monetary_unit=monetary_unit,
+        monetary_unit_source=monetary_unit_source,
+    )
+    first = previous if pairs == "adjacent_plus_full" else None
+    for year in clean_years[1:]:
+        current = load_mrio_year_state(
+            year,
+            system=system,
+            data_root=data_root,
+            allow_download_missing=allow_download_missing,
+            verbose=verbose,
+            monetary_unit=monetary_unit,
+            monetary_unit_source=monetary_unit_source,
+        )
+        yield compute_output_sda_pair_result_from_states(
+            previous,
+            current,
+            average_identities=average_identities,
+        )
+        previous = current
+
+    if first is not None and first.year != previous.year and len(clean_years) > 2:
+        yield compute_output_sda_pair_result_from_states(
+            first,
+            previous,
+            average_identities=average_identities,
+        )
+
+
+_YEAR_STATE_CACHE: dict[tuple[int, str, str, bool, str, str], MrioYearState] = {}
+
+
+def clear_mrio_year_state_cache() -> None:
+    """Clear the module-level year-state cache used by the compatibility API."""
+
+    _YEAR_STATE_CACHE.clear()
+
+
+def _year_state_cache_key(
+    *,
+    year: int,
+    system: str,
+    data_root: str | Path | None,
+    allow_download_missing: bool,
+    monetary_unit: str | None,
+    monetary_unit_source: str | None,
+) -> tuple[int, str, str, bool, str, str]:
+    root_key = "" if data_root is None else str(Path(data_root).expanduser())
+    return (
+        int(year),
+        str(system).strip().lower(),
+        root_key,
+        bool(allow_download_missing),
+        "" if monetary_unit is None else str(monetary_unit).strip(),
+        "" if monetary_unit_source is None else str(monetary_unit_source).strip(),
+    )
+
+
+def _cached_mrio_year_state(
+    year: int,
+    *,
+    system: str,
+    data_root: str | Path | None,
+    allow_download_missing: bool,
+    verbose: bool,
+    monetary_unit: str | None,
+    monetary_unit_source: str | None,
+) -> MrioYearState:
+    key = _year_state_cache_key(
+        year=year,
+        system=system,
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        monetary_unit=monetary_unit,
+        monetary_unit_source=monetary_unit_source,
+    )
+    state = _YEAR_STATE_CACHE.get(key)
+    if state is None:
+        state = load_mrio_year_state(
+            year,
+            system=system,
+            data_root=data_root,
+            allow_download_missing=allow_download_missing,
+            verbose=verbose,
+            monetary_unit=monetary_unit,
+            monetary_unit_source=monetary_unit_source,
+        )
+        _YEAR_STATE_CACHE[key] = state
+    return state
+
+
+def compute_output_sda_pair_result_from_mrio_years_reuse(
+    *,
+    start_year: int,
+    end_year: int,
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    allow_download_missing: bool = False,
+    average_identities: bool = True,
+    verbose: bool = False,
+    monetary_unit: str | None = None,
+    monetary_unit_source: str | None = None,
+) -> OutputSdaPairResult:
+    """Pair-compatible API that reuses loaded year states within one process.
+
+    This preserves the old pair-call shape used by analysis scripts but avoids
+    reparsing a year from the EXIOBASE zip when adjacent pair calls share an
+    endpoint.  For a fully controlled rolling-memory pass, prefer
+    ``iter_output_sda_pair_results_from_mrio_years``.
+    """
+
+    start = _cached_mrio_year_state(
+        int(start_year),
+        system=system,
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=verbose,
+        monetary_unit=monetary_unit,
+        monetary_unit_source=monetary_unit_source,
+    )
+    end = _cached_mrio_year_state(
+        int(end_year),
+        system=system,
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=verbose,
+        monetary_unit=monetary_unit,
+        monetary_unit_source=monetary_unit_source,
+    )
+    result = compute_output_sda_pair_result_from_states(
+        start,
+        end,
+        average_identities=average_identities,
+    )
+    result.metadata.update(
+        {
+            "compatibility_api": "compute_output_sda_pair_result_from_mrio_years_reuse",
+            "year_state_cache_size": len(_YEAR_STATE_CACHE),
+        }
+    )
+    return result
 
 def compute_output_sda_pair_result_from_mrio_years_lowmem(
     *,

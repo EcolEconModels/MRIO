@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -7,7 +8,7 @@ import os
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Tuple, cast
 
 import pandas as pd
 import pymrio
@@ -141,7 +142,8 @@ def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
         frame.loc[:, ["region", "sector"]].astype(str),
         names=["region", "sector"],
     )
-    x = pd.to_numeric(frame[value_col], errors="coerce").fillna(0.0).astype(float)
+    x_numeric = cast(pd.Series, pd.to_numeric(frame[value_col], errors="coerce"))
+    x = x_numeric.fillna(0.0).astype(float)
     return pd.Series(x.to_numpy(dtype=float), index=basis_index, name="x"), basis_index
 
 
@@ -339,12 +341,15 @@ def _derive_A_from_Z_and_x(Z: csr_matrix, x: pd.Series, *, basis_index: pd.Multi
     This is column scaling by the buyer-sector output vector. Zero-output columns
     are mapped to zero coefficients to avoid infinities.
     """
-    x_aligned = pd.to_numeric(pd.Series(x).reindex(basis_index), errors="coerce").fillna(0.0)
+    x_numeric = cast(pd.Series, pd.to_numeric(pd.Series(x).reindex(basis_index), errors="coerce"))
+    x_aligned = x_numeric.fillna(0.0)
     x_values = x_aligned.to_numpy(dtype=float)
     inv_x = np.zeros_like(x_values, dtype=float)
     np.divide(1.0, x_values, out=inv_x, where=np.isfinite(x_values) & (x_values != 0.0))
 
-    A = Z.copy().astype(float).tocsr()
+    # Reuse the just-parsed sparse Z storage as A; the caller never needs raw Z
+    # after this point, and avoiding Z.copy() cuts load-time sparse peak memory.
+    A = Z.astype(float, copy=False).tocsr()
     if A.nnz:
         A.data *= inv_x[A.indices]
     A.eliminate_zeros()
