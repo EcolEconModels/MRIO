@@ -214,8 +214,18 @@ def test_lowmem_year_api_matches_loaded_matrix_api(monkeypatch: pytest.MonkeyPat
     A1 = csr_matrix([[0.11, 0.01], [0.04, 0.10]], dtype=float)
     y0 = _series([10.0, 7.0], index, "y0")
     y1 = _series([11.0, 8.5], index, "y1")
-    x0 = pd.Series(spsolve(sparse_eye(2, format="csr") - A0, y0.to_numpy(dtype=float)), index=index, dtype=float, name="x0")
-    x1 = pd.Series(spsolve(sparse_eye(2, format="csr") - A1, y1.to_numpy(dtype=float)), index=index, dtype=float, name="x1")
+    x0 = pd.Series(
+        spsolve(sparse_eye(2, format="csr") - A0, y0.to_numpy(dtype=float)),
+        index=index,
+        dtype=float,
+        name="x0",
+    )
+    x1 = pd.Series(
+        spsolve(sparse_eye(2, format="csr") - A1, y1.to_numpy(dtype=float)),
+        index=index,
+        dtype=float,
+        name="x1",
+    )
     records = {
         2000: (A0, x0, y0, index, {"year": 2000}),
         2001: (A1, x1, y1, index, {"year": 2001}),
@@ -240,11 +250,13 @@ def test_lowmem_year_api_matches_loaded_matrix_api(monkeypatch: pytest.MonkeyPat
         monetary_unit="MEUR",
         monetary_unit_source="test_fixture",
     )
+    progress_events: list[str] = []
     actual = compute_output_sda_pair_result_from_mrio_years_lowmem(
         start_year=2000,
         end_year=2001,
         data_root="unused",
         allow_download_missing=False,
+        progress_callback=progress_events.append,
     )
 
     pd.testing.assert_series_equal(actual.observed_output_delta, expected.observed_output_delta)
@@ -256,4 +268,8 @@ def test_lowmem_year_api_matches_loaded_matrix_api(monkeypatch: pytest.MonkeyPat
     assert actual.metadata["low_memory_matrix_reload"] is True
     assert actual.metadata["forms_explicit_leontief_inverse"] is False
     assert actual.metadata["forms_sparse_delta_A"] is False
-    assert load_order == [2000, 2001, 2000, 2001]
+    assert actual.metadata["matrix_load_count"] == 3
+    assert load_order == [2000, 2001, 2000]
+    assert any("loading start year" in event for event in progress_events)
+    assert any("solving forward components" in event for event in progress_events)
+    assert any("solving backward components" in event for event in progress_events)

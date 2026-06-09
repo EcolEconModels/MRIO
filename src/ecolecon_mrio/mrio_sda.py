@@ -470,45 +470,64 @@ def compute_output_sda_pair_result_from_mrio_years_lowmem(
     allow_download_missing: bool = False,
     average_identities: bool = True,
     verbose: bool = False,
+    progress_callback: Any | None = None,
     monetary_unit: str | None = None,
     monetary_unit_source: str | None = None,
 ) -> OutputSdaPairResult:
-    """Compute exact average-polar SDA while holding at most one year's A matrix.
+    """Compute exact SDA while holding at most one year's sparse A matrix.
 
-    The loaded-matrix API is convenient for small tests but forces callers to hold
-    ``A_start`` and ``A_end`` simultaneously.  This zip-stream API owns the load
-    order instead: it stores only vectors such as ``A_t x_s`` between passes,
-    solves both RHS columns for a given year in one factorization, and returns the
-    same compact ``OutputSdaPairResult`` as the loaded-matrix API.  It never forms
-    the explicit Leontief inverse and never writes derived matrix caches.
+    The old loaded-matrix API is convenient for small tests but forces callers to
+    hold ``A_start`` and ``A_end`` simultaneously.  This EXIOBASE year-streaming
+    helper owns the load order.  For average-polar SDA it reads start, end, and
+    start again: the first start pass obtains ``x_start``/``y_start`` and
+    ``A_start x_start``; the end pass obtains ``x_end``/``y_end``, computes
+    ``A_end x_start``/``A_end x_end``, and solves the forward components; the
+    final start pass computes ``A_start x_end`` and solves the backward
+    components.  Forward-only SDA needs only the first two passes.  The helper
+    never forms an explicit Leontief inverse and never materializes a sparse
+    ``delta_A`` matrix.
     """
 
     from ecolecon_mrio.data import exiobase3_monetary_unit
 
+    def _progress(message: str) -> None:
+        if callable(progress_callback):
+            progress_callback(message)
+
     unit = str(monetary_unit).strip() if monetary_unit is not None else ""
     unit_source = str(monetary_unit_source).strip() if monetary_unit_source is not None else ""
-    if not unit:
+    if not unit or not unit_source:
         unit_metadata = exiobase3_monetary_unit(system=str(system))
-        unit = str(unit_metadata.unit).strip()
+        if not unit:
+            unit = str(unit_metadata.unit).strip()
         if not unit_source:
             unit_source = str(unit_metadata.unit_source).strip()
+    if not unit:
+        raise ValueError("monetary_unit metadata resolved to an empty string")
     if not unit_source:
-        unit_source = "explicit_monetary_unit_argument"
+        raise ValueError("monetary_unit_source metadata resolved to an empty string")
 
-    # First pass over start year captures x0/y0/index and immediately drops A0.
+    start = int(start_year)
+    end = int(end_year)
+    average = bool(average_identities)
+
+    _progress(f"MRIO low-memory SDA {start}-{end}: loading start year {start} for x/y and A_start*x_start")
     A0, x0, y0, idx, metadata0 = _load_sda_year_matrices(
-        int(start_year),
+        start,
         system=str(system),
         data_root=data_root,
         allow_download_missing=allow_download_missing,
         verbose=bool(verbose),
     )
+    x0_values = x0.to_numpy(dtype=float)
+    A0_x0 = A0.dot(x0_values)
+    _progress(f"MRIO low-memory SDA {start}-{end}: computed A_start*x_start; releasing first start-year matrix")
     del A0
     gc.collect()
 
-    # First pass over end year captures x1/y1 and A1*x products needed later.
+    _progress(f"MRIO low-memory SDA {start}-{end}: loading end year {end} for x/y, A_end matvecs, and forward solve")
     A1, x1, y1, idx1, metadata1 = _load_sda_year_matrices(
-        int(end_year),
+        end,
         system=str(system),
         data_root=data_root,
         allow_download_missing=allow_download_missing,
@@ -516,52 +535,12 @@ def compute_output_sda_pair_result_from_mrio_years_lowmem(
     )
     if not idx1.equals(idx):
         raise ValueError("MRIO start/end year indexes do not match for low-memory SDA")
-    x0_values = x0.to_numpy(dtype=float)
     x1_values = x1.to_numpy(dtype=float)
-    A1_x0 = A1.dot(x0_values)
-    A1_x1 = A1.dot(x1_values) if average_identities else None
-    del A1
-    gc.collect()
-
-    # Second pass over start year computes A0*x products and backward solves.
-    A0, _x0_reload, _y0_reload, idx0_reload, _metadata0_reload = _load_sda_year_matrices(
-        int(start_year),
-        system=str(system),
-        data_root=data_root,
-        allow_download_missing=allow_download_missing,
-        verbose=bool(verbose),
-    )
-    if not idx0_reload.equals(idx):
-        raise ValueError("MRIO start-year index changed between low-memory SDA passes")
     delta_y = (y1 - y0).to_numpy(dtype=float)
-    delta_A_x0 = A1_x0 - A0.dot(x0_values)
-    if average_identities:
-        if A1_x1 is None:
-            raise RuntimeError("Missing A1*x1 vector for average-polar SDA")
-        delta_A_x1 = A1_x1 - A0.dot(x1_values)
-        backward_solution = _solve_sparse_leontief_many(
-            "backward components",
-            A0,
-            np.column_stack((delta_A_x1, delta_y)),
-        )
-        backward_intermediate = backward_solution[:, 0]
-        backward_demand = backward_solution[:, 1]
-    else:
-        backward_intermediate = None
-        backward_demand = None
-    del A0
-    gc.collect()
-
-    # Second pass over end year solves forward components without holding A0.
-    A1, _x1_reload, _y1_reload, idx1_reload, _metadata1_reload = _load_sda_year_matrices(
-        int(end_year),
-        system=str(system),
-        data_root=data_root,
-        allow_download_missing=allow_download_missing,
-        verbose=bool(verbose),
-    )
-    if not idx1_reload.equals(idx):
-        raise ValueError("MRIO end-year index changed between low-memory SDA passes")
+    A1_x0 = A1.dot(x0_values)
+    delta_A_x0 = A1_x0 - A0_x0
+    A1_x1 = A1.dot(x1_values) if average else None
+    _progress(f"MRIO low-memory SDA {start}-{end}: solving forward components with one end-year factorization")
     forward_solution = _solve_sparse_leontief_many(
         "forward components",
         A1,
@@ -569,23 +548,55 @@ def compute_output_sda_pair_result_from_mrio_years_lowmem(
     )
     forward_intermediate = forward_solution[:, 0]
     forward_demand = forward_solution[:, 1]
-    del A1
+    _progress(f"MRIO low-memory SDA {start}-{end}: forward solve complete; releasing end-year matrix")
+    del A1, A1_x0, delta_A_x0
     gc.collect()
 
-    if average_identities:
-        if backward_intermediate is None or backward_demand is None:
-            raise RuntimeError("Missing backward components for average-polar SDA")
+    if average:
+        if A1_x1 is None:
+            raise RuntimeError("Missing A_end*x_end vector for average-polar SDA")
+        _progress(f"MRIO low-memory SDA {start}-{end}: reloading start year {start} for A_start*x_end and backward solve")
+        A0, _x0_reload, _y0_reload, idx0_reload, _metadata0_reload = _load_sda_year_matrices(
+            start,
+            system=str(system),
+            data_root=data_root,
+            allow_download_missing=allow_download_missing,
+            verbose=bool(verbose),
+        )
+        if not idx0_reload.equals(idx):
+            raise ValueError("MRIO start-year index changed between low-memory SDA passes")
+        delta_A_x1 = A1_x1 - A0.dot(x1_values)
+        _progress(f"MRIO low-memory SDA {start}-{end}: solving backward components with one start-year factorization")
+        backward_solution = _solve_sparse_leontief_many(
+            "backward components",
+            A0,
+            np.column_stack((delta_A_x1, delta_y)),
+        )
+        backward_intermediate = backward_solution[:, 0]
+        backward_demand = backward_solution[:, 1]
+        _progress(f"MRIO low-memory SDA {start}-{end}: backward solve complete; releasing reloaded start-year matrix")
+        del A0, A1_x1, delta_A_x1
+        gc.collect()
         intermediate_values = 0.5 * (forward_intermediate + backward_intermediate)
         demand_values = 0.5 * (forward_demand + backward_demand)
         identity_mode = "average_polar_forward_backward"
+        matrix_load_order = [
+            f"{start}:x_y_and_A_start_x_start",
+            f"{end}:x_y_A_end_matvecs_and_forward_solve",
+            f"{start}:A_start_x_end_and_backward_solve",
+        ]
     else:
         intermediate_values = forward_intermediate
         demand_values = forward_demand
         identity_mode = "forward_only"
+        matrix_load_order = [
+            f"{start}:x_y_and_A_start_x_start",
+            f"{end}:x_y_A_end_matvecs_and_forward_solve",
+        ]
 
     return _build_output_sda_result(
-        start_year=int(start_year),
-        end_year=int(end_year),
+        start_year=start,
+        end_year=end,
         index=idx,
         x_start=x0,
         x_end=x1,
@@ -594,15 +605,11 @@ def compute_output_sda_pair_result_from_mrio_years_lowmem(
         monetary_unit=unit,
         monetary_unit_source=unit_source,
         identity_mode=identity_mode,
-        average_identities=average_identities,
+        average_identities=average,
         metadata_extra={
             "start_metadata": metadata0,
             "end_metadata": metadata1,
-            "matrix_load_order": [
-                f"{int(start_year)}:vectors_then_drop_A",
-                f"{int(end_year)}:A1_matvecs_then_drop_A",
-                f"{int(start_year)}:A0_matvecs_and_backward_solve",
-                f"{int(end_year)}:forward_solve",
-            ],
+            "matrix_load_order": matrix_load_order,
+            "matrix_load_count": len(matrix_load_order),
         },
     )
