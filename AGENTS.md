@@ -6,9 +6,7 @@
 > [!IMPORTANT]
 > Before producing or editing any `.sh` patch script, agents must read the single
 > source of truth in repository `ecolecon-agent-memory` at
-> `prompt-templates/patch-script-task.md`. From this repo, read it via
-> `../ecolecon-agent-memory/prompt-templates/patch-script-task.md`. If that file is missing or unreadable, stop and report
-> that the patch-script template could not be found.
+> `prompt-templates/patch-script-task.md`. If that file is missing or unreadable, stop and report that the patch-script template could not be found and fail.
 
 Do not duplicate the patch-script rules in this `AGENTS.md` or in repo-local
 patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
