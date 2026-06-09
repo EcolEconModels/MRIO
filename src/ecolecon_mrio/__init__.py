@@ -1,3 +1,4 @@
+# ruff: noqa: F401
 """
 Reusable tools for MRIO-based inverted pyramid analysis.
 
@@ -72,6 +73,7 @@ from .mrio_sda import (
     OutputSdaPairResult,
     UnitMetadata,
     compute_output_sda_pair_result,
+    compute_output_sda_pair_result_from_mrio_years_lowmem,
     require_region_sector_multiindex,
     require_same_unit_string,
 )
@@ -171,6 +173,7 @@ __all__ = [
     "PanelDiagnostics",
     "compute_viability_panel",
     "compute_output_change_decomposition",
+    "compute_output_sda_pair_result_from_mrio_years_lowmem",
     "decompose_slack_change",
     "PrincipalDirectionResult",
     "principal_growth_direction",

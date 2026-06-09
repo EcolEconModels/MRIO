@@ -16,6 +16,8 @@ identity cannot be solved.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import gc
+from pathlib import Path
 from typing import Any
 import warnings
 
@@ -188,20 +190,47 @@ def _strict_csr_matrix(values: Any, *, index: pd.MultiIndex, name: str) -> csr_m
     return csr_matrix(array)
 
 
-def _solve_sparse_leontief(label: str, A: csr_matrix, rhs: np.ndarray) -> np.ndarray:
-    """Solve ``(I - A) z = rhs`` and convert singular warnings into errors."""
+def _solve_sparse_leontief_many(label: str, A: csr_matrix, rhs: np.ndarray) -> np.ndarray:
+    """Solve ``(I - A) Z = RHS`` once for one or more right-hand sides.
+
+    SciPy/SuperLU factorization is the memory-expensive step.  Passing both SDA
+    right-hand sides for a given year in one dense ``(n, k)`` array lets SciPy
+    reuse one factorization instead of refactorizing the same Leontief matrix for
+    the intermediate-use and demand components separately.  This still does not
+    form or store the explicit Leontief inverse, which would usually be dense.
+    """
+
+    rhs_array = np.asarray(rhs, dtype=float)
+    if rhs_array.ndim == 1:
+        rhs_matrix = rhs_array.reshape((-1, 1))
+    elif rhs_array.ndim == 2:
+        rhs_matrix = rhs_array
+    else:
+        raise ValueError(f"{label} RHS must be one- or two-dimensional, got shape {rhs_array.shape!r}")
+    if rhs_matrix.shape[0] != A.shape[0]:
+        raise ValueError(f"{label} RHS length {rhs_matrix.shape[0]} does not match matrix shape {A.shape!r}")
+    if not np.isfinite(rhs_matrix).all():
+        raise ValueError(f"{label} RHS contains non-finite values")
 
     system = sparse_eye(A.shape[0], format="csr", dtype=float) - A
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
-            solution = spsolve(system, rhs)
+            solution = spsolve(system, rhs_matrix)
     except Exception as exc:  # pragma: no cover - exact SciPy exception varies
         raise RuntimeError(f"{label} sparse Leontief solve failed") from exc
     out = np.asarray(solution, dtype=float)
-    if out.shape != rhs.shape or not np.isfinite(out).all():
+    if rhs_matrix.shape[1] == 1 and out.ndim == 1:
+        out = out.reshape((-1, 1))
+    if out.shape != rhs_matrix.shape or not np.isfinite(out).all():
         raise RuntimeError(f"{label} sparse Leontief solve returned non-finite values")
     return out
+
+
+def _solve_sparse_leontief(label: str, A: csr_matrix, rhs: np.ndarray) -> np.ndarray:
+    """Solve one Leontief RHS through the multi-RHS implementation."""
+
+    return _solve_sparse_leontief_many(label, A, rhs)[:, 0]
 
 
 def compute_output_sda_pair_result(
@@ -250,27 +279,34 @@ def compute_output_sda_pair_result(
     # loader API rather than this output-change decomposition function.
     A0 = _strict_csr_matrix(A_start, index=idx, name="A_start")
     A1 = _strict_csr_matrix(A_end, index=idx, name="A_end")
-    delta_A = A1 - A0
+    x0_values = x0.to_numpy(dtype=float)
+    x1_values = x1.to_numpy(dtype=float)
     delta_y = (y1 - y0).to_numpy(dtype=float)
 
-    # Forward polar form: end-year Leontief inverse premultiplies both ΔA and Δy.
-    forward_intermediate = _solve_sparse_leontief(
-        "forward intermediate-use component",
+    # Only the products ΔA x_t are needed.  Avoid materializing a third sparse
+    # matrix ``delta_A = A1 - A0`` and solve both RHS columns for each Leontief
+    # system together so SuperLU factorizes each year at most once.
+    delta_A_x0 = A1.dot(x0_values) - A0.dot(x0_values)
+    delta_A_x1 = A1.dot(x1_values) - A0.dot(x1_values)
+    forward_solution = _solve_sparse_leontief_many(
+        "forward components",
         A1,
-        delta_A.dot(x0.to_numpy(dtype=float)),
+        np.column_stack((delta_A_x0, delta_y)),
     )
-    forward_demand = _solve_sparse_leontief("forward demand component", A1, delta_y)
+    forward_intermediate = forward_solution[:, 0]
+    forward_demand = forward_solution[:, 1]
 
     if average_identities:
         # Backward polar form: start-year Leontief inverse.  This must also solve
         # successfully; otherwise the average-polar SDA requested by the caller is
         # not available and the scientific result should not be silently degraded.
-        backward_intermediate = _solve_sparse_leontief(
-            "backward intermediate-use component",
+        backward_solution = _solve_sparse_leontief_many(
+            "backward components",
             A0,
-            delta_A.dot(x1.to_numpy(dtype=float)),
+            np.column_stack((delta_A_x1, delta_y)),
         )
-        backward_demand = _solve_sparse_leontief("backward demand component", A0, delta_y)
+        backward_intermediate = backward_solution[:, 0]
+        backward_demand = backward_solution[:, 1]
         intermediate_values = 0.5 * (forward_intermediate + backward_intermediate)
         demand_values = 0.5 * (forward_demand + backward_demand)
         identity_mode = "average_polar_forward_backward"
@@ -314,6 +350,259 @@ def compute_output_sda_pair_result(
                 "sda_intermediate_delta",
                 "sda_demand_delta",
                 "sda_residual",
+            ],
+        },
+    )
+
+
+def _load_sda_year_matrices(
+    year: int,
+    *,
+    system: str,
+    data_root: str | Path | None,
+    allow_download_missing: bool,
+    verbose: bool,
+) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
+    """Load one EXIOBASE year as sparse A plus checked x/y vectors for SDA.
+
+    The helper still streams from the source zip through ``load_mrio_matrices``
+    and keeps derived cache reads/writes disabled.
+    """
+
+    from ecolecon_mrio.data import load_mrio_matrices
+
+    A, x, y, index, metadata = load_mrio_matrices(
+        int(year),
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        exio_system=str(system),
+        verbose=bool(verbose),
+        cache_matrices=False,
+        read_existing_cache=False,
+        delete_source_zip_after_parse=False,
+    )
+    idx = require_region_sector_multiindex(index)
+    x_series = x if isinstance(x, pd.Series) else pd.Series(x, index=idx)
+    y_series = y if isinstance(y, pd.Series) else pd.Series(y, index=idx)
+    return (
+        _strict_csr_matrix(A, index=idx, name=f"A_{int(year)}"),
+        _strict_float_series(x_series, index=idx, name=f"x_{int(year)}"),
+        _strict_float_series(y_series, index=idx, name=f"y_{int(year)}"),
+        idx,
+        dict(metadata or {}),
+    )
+
+
+def _build_output_sda_result(
+    *,
+    start_year: int,
+    end_year: int,
+    index: pd.MultiIndex,
+    x_start: pd.Series,
+    x_end: pd.Series,
+    intermediate_values: np.ndarray,
+    demand_values: np.ndarray,
+    monetary_unit: str,
+    monetary_unit_source: str,
+    identity_mode: str,
+    average_identities: bool,
+    metadata_extra: dict[str, Any] | None = None,
+) -> OutputSdaPairResult:
+    """Construct the compact SDA result after low-memory solves finish."""
+
+    unit = str(monetary_unit).strip()
+    unit_source = str(monetary_unit_source).strip()
+    if not unit:
+        raise ValueError("monetary_unit must be a non-empty string")
+    if not unit_source:
+        raise ValueError("monetary_unit_source must be a non-empty string")
+    observed = (x_end - x_start).astype(float)
+    intermediate = pd.Series(intermediate_values, index=index, dtype=float, name="sda_intermediate_delta")
+    demand = pd.Series(demand_values, index=index, dtype=float, name="sda_demand_delta")
+    residual = (observed - intermediate - demand).astype(float)
+    residual.name = "sda_residual"
+    residual_arr = residual.to_numpy(dtype=float)
+    observed_norm = float(np.linalg.norm(observed.to_numpy(dtype=float), ord=2))
+    residual_l2 = float(np.linalg.norm(residual_arr, ord=2))
+    residual_linf = float(np.linalg.norm(residual_arr, ord=np.inf)) if residual_arr.size else 0.0
+    residual_share_l2 = float(residual_l2 / observed_norm) if observed_norm > 0.0 else 0.0
+    metadata: dict[str, Any] = {
+        "identity_mode": identity_mode,
+        "average_identities": bool(average_identities),
+        "index_columns": ["region", "sector"],
+        "stores_large_matrices": False,
+        "low_memory_matrix_reload": True,
+        "forms_explicit_leontief_inverse": False,
+        "forms_sparse_delta_A": False,
+        "rhs_columns_per_factorization": 2,
+        "returned_vectors": [
+            "observed_output_delta",
+            "sda_intermediate_delta",
+            "sda_demand_delta",
+            "sda_residual",
+        ],
+    }
+    if metadata_extra:
+        metadata.update(metadata_extra)
+    return OutputSdaPairResult(
+        start_year=int(start_year),
+        end_year=int(end_year),
+        index=index,
+        observed_output_delta=observed.rename("observed_output_delta"),
+        sda_intermediate_delta=intermediate,
+        sda_demand_delta=demand,
+        sda_residual=residual,
+        monetary_unit=unit,
+        monetary_unit_source=unit_source,
+        residual_l2=residual_l2,
+        residual_linf=residual_linf,
+        residual_share_l2=residual_share_l2,
+        metadata=metadata,
+    )
+
+
+def compute_output_sda_pair_result_from_mrio_years_lowmem(
+    *,
+    start_year: int,
+    end_year: int,
+    system: str = "pxp",
+    data_root: str | Path | None = None,
+    allow_download_missing: bool = False,
+    average_identities: bool = True,
+    verbose: bool = False,
+    monetary_unit: str | None = None,
+    monetary_unit_source: str | None = None,
+) -> OutputSdaPairResult:
+    """Compute exact average-polar SDA while holding at most one year's A matrix.
+
+    The loaded-matrix API is convenient for small tests but forces callers to hold
+    ``A_start`` and ``A_end`` simultaneously.  This zip-stream API owns the load
+    order instead: it stores only vectors such as ``A_t x_s`` between passes,
+    solves both RHS columns for a given year in one factorization, and returns the
+    same compact ``OutputSdaPairResult`` as the loaded-matrix API.  It never forms
+    the explicit Leontief inverse and never writes derived matrix caches.
+    """
+
+    from ecolecon_mrio.data import exiobase3_monetary_unit
+
+    unit = str(monetary_unit).strip() if monetary_unit is not None else ""
+    unit_source = str(monetary_unit_source).strip() if monetary_unit_source is not None else ""
+    if not unit:
+        unit_metadata = exiobase3_monetary_unit(system=str(system))
+        unit = str(unit_metadata.unit).strip()
+        if not unit_source:
+            unit_source = str(unit_metadata.unit_source).strip()
+    if not unit_source:
+        unit_source = "explicit_monetary_unit_argument"
+
+    # First pass over start year captures x0/y0/index and immediately drops A0.
+    A0, x0, y0, idx, metadata0 = _load_sda_year_matrices(
+        int(start_year),
+        system=str(system),
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=bool(verbose),
+    )
+    del A0
+    gc.collect()
+
+    # First pass over end year captures x1/y1 and A1*x products needed later.
+    A1, x1, y1, idx1, metadata1 = _load_sda_year_matrices(
+        int(end_year),
+        system=str(system),
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=bool(verbose),
+    )
+    if not idx1.equals(idx):
+        raise ValueError("MRIO start/end year indexes do not match for low-memory SDA")
+    x0_values = x0.to_numpy(dtype=float)
+    x1_values = x1.to_numpy(dtype=float)
+    A1_x0 = A1.dot(x0_values)
+    A1_x1 = A1.dot(x1_values) if average_identities else None
+    del A1
+    gc.collect()
+
+    # Second pass over start year computes A0*x products and backward solves.
+    A0, _x0_reload, _y0_reload, idx0_reload, _metadata0_reload = _load_sda_year_matrices(
+        int(start_year),
+        system=str(system),
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=bool(verbose),
+    )
+    if not idx0_reload.equals(idx):
+        raise ValueError("MRIO start-year index changed between low-memory SDA passes")
+    delta_y = (y1 - y0).to_numpy(dtype=float)
+    delta_A_x0 = A1_x0 - A0.dot(x0_values)
+    if average_identities:
+        if A1_x1 is None:
+            raise RuntimeError("Missing A1*x1 vector for average-polar SDA")
+        delta_A_x1 = A1_x1 - A0.dot(x1_values)
+        backward_solution = _solve_sparse_leontief_many(
+            "backward components",
+            A0,
+            np.column_stack((delta_A_x1, delta_y)),
+        )
+        backward_intermediate = backward_solution[:, 0]
+        backward_demand = backward_solution[:, 1]
+    else:
+        backward_intermediate = None
+        backward_demand = None
+    del A0
+    gc.collect()
+
+    # Second pass over end year solves forward components without holding A0.
+    A1, _x1_reload, _y1_reload, idx1_reload, _metadata1_reload = _load_sda_year_matrices(
+        int(end_year),
+        system=str(system),
+        data_root=data_root,
+        allow_download_missing=allow_download_missing,
+        verbose=bool(verbose),
+    )
+    if not idx1_reload.equals(idx):
+        raise ValueError("MRIO end-year index changed between low-memory SDA passes")
+    forward_solution = _solve_sparse_leontief_many(
+        "forward components",
+        A1,
+        np.column_stack((delta_A_x0, delta_y)),
+    )
+    forward_intermediate = forward_solution[:, 0]
+    forward_demand = forward_solution[:, 1]
+    del A1
+    gc.collect()
+
+    if average_identities:
+        if backward_intermediate is None or backward_demand is None:
+            raise RuntimeError("Missing backward components for average-polar SDA")
+        intermediate_values = 0.5 * (forward_intermediate + backward_intermediate)
+        demand_values = 0.5 * (forward_demand + backward_demand)
+        identity_mode = "average_polar_forward_backward"
+    else:
+        intermediate_values = forward_intermediate
+        demand_values = forward_demand
+        identity_mode = "forward_only"
+
+    return _build_output_sda_result(
+        start_year=int(start_year),
+        end_year=int(end_year),
+        index=idx,
+        x_start=x0,
+        x_end=x1,
+        intermediate_values=intermediate_values,
+        demand_values=demand_values,
+        monetary_unit=unit,
+        monetary_unit_source=unit_source,
+        identity_mode=identity_mode,
+        average_identities=average_identities,
+        metadata_extra={
+            "start_metadata": metadata0,
+            "end_metadata": metadata1,
+            "matrix_load_order": [
+                f"{int(start_year)}:vectors_then_drop_A",
+                f"{int(end_year)}:A1_matvecs_then_drop_A",
+                f"{int(start_year)}:A0_matvecs_and_backward_solve",
+                f"{int(end_year)}:forward_solve",
             ],
         },
     )
