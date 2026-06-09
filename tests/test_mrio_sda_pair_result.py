@@ -9,7 +9,6 @@ from scipy.sparse.linalg import spsolve
 from ecolecon_mrio.mrio_sda import (
     clear_mrio_year_state_cache,
     compute_output_sda_pair_result,
-    compute_output_sda_pair_result_from_mrio_years_lowmem,
     compute_output_sda_pair_result_from_mrio_years_reuse,
     iter_output_sda_pair_results_from_mrio_years,
     require_region_sector_multiindex,
@@ -210,72 +209,6 @@ def test_strict_sda_rejects_nonfinite_sparse_matrix_data() -> None:
             monetary_unit_source="test_fixture",
         )
 
-
-def test_lowmem_year_api_matches_loaded_matrix_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    index = _idx()
-    A0 = csr_matrix([[0.10, 0.02], [0.03, 0.12]], dtype=float)
-    A1 = csr_matrix([[0.11, 0.01], [0.04, 0.10]], dtype=float)
-    y0 = _series([10.0, 7.0], index, "y0")
-    y1 = _series([11.0, 8.5], index, "y1")
-    x0 = pd.Series(
-        spsolve(sparse_eye(2, format="csr") - A0, y0.to_numpy(dtype=float)),
-        index=index,
-        dtype=float,
-        name="x0",
-    )
-    x1 = pd.Series(
-        spsolve(sparse_eye(2, format="csr") - A1, y1.to_numpy(dtype=float)),
-        index=index,
-        dtype=float,
-        name="x1",
-    )
-    records = {
-        2000: (A0, x0, y0, index, {"year": 2000}),
-        2001: (A1, x1, y1, index, {"year": 2001}),
-    }
-    load_order: list[int] = []
-
-    def fake_load_mrio_matrices(year: int, **_kwargs: object):
-        load_order.append(int(year))
-        return records[int(year)]
-
-    monkeypatch.setattr("ecolecon_mrio.data.load_mrio_matrices", fake_load_mrio_matrices)
-    expected = compute_output_sda_pair_result(
-        start_year=2000,
-        end_year=2001,
-        A_start=A0,
-        A_end=A1,
-        x_start=x0,
-        x_end=x1,
-        y_start=y0,
-        y_end=y1,
-        index=index,
-        monetary_unit="MEUR",
-        monetary_unit_source="test_fixture",
-    )
-    progress_events: list[str] = []
-    actual = compute_output_sda_pair_result_from_mrio_years_lowmem(
-        start_year=2000,
-        end_year=2001,
-        data_root="unused",
-        allow_download_missing=False,
-        progress_callback=progress_events.append,
-    )
-
-    pd.testing.assert_series_equal(actual.observed_output_delta, expected.observed_output_delta)
-    pd.testing.assert_series_equal(actual.sda_intermediate_delta, expected.sda_intermediate_delta)
-    pd.testing.assert_series_equal(actual.sda_demand_delta, expected.sda_demand_delta)
-    assert actual.residual_l2 == pytest.approx(expected.residual_l2)
-    assert actual.monetary_unit == "MEUR"
-    assert actual.monetary_unit_source == "exiobase3_monetary_table_convention"
-    assert actual.metadata["low_memory_matrix_reload"] is True
-    assert actual.metadata["forms_explicit_leontief_inverse"] is False
-    assert actual.metadata["forms_sparse_delta_A"] is False
-    assert actual.metadata["matrix_load_count"] == 3
-    assert load_order == [2000, 2001, 2000]
-    assert any("loading start year" in event for event in progress_events)
-    assert any("solving forward components" in event for event in progress_events)
-    assert any("solving backward components" in event for event in progress_events)
 
 def test_reuse_year_api_loads_each_year_once_for_adjacent_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     index = _idx()
