@@ -43,16 +43,19 @@ patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
 - Never delete `IOT_*_pxp.zip` or `IOT_*_ixi.zip` unless the user explicitly requests a redownload.
 
 ## Git Safety
+>
 > [!IMPORTANT]
 > Do **NOT** run `git commit`, `git reset`, `git rebase`, or `git push` unless the user explicitly requests it.
 
 ## Project Structure
+
 - `src/`: Core library code (`ecolecon_mrio`)
 - `scripts/`: Replication and analysis scripts
 - `tests/`: Unit tests
 - `.venv/`: Local virtual environment (Primary Python)
 
 ## Mapping Source Of Truth
+
 - Split and reaggregation helper CSVs live under `scripts/pipelines/` and are the single source of truth.
 - Do not mirror those helper CSVs into `scripts/mappings/` or maintain parallel checked-in copies.
 
