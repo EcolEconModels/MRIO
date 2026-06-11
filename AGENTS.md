@@ -3,10 +3,9 @@
 <!-- ecolecon-agent-memory-patch-template-single-source -->
 ## Shell patch-script invariant
 
-> [!IMPORTANT]
-> Before producing or editing any `.sh` patch script, agents must read the single
-> source of truth in repository `ecolecon-agent-memory` at
-> `prompt-templates/patch-script-task.md`. If that file is missing or unreadable, stop and report that the patch-script template could not be found and fail.
+[!IMPORTANT]
+Before producing or editing any `.sh` patch script, agents must read fully and follow the single source of truth in repository `ecolecon-agent-memory` at
+`prompt-templates/patch-script-task.md`. If not, stop and report to user, and do not produce a .sh script.
 
 Do not duplicate the patch-script rules in this `AGENTS.md` or in repo-local
 patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
@@ -74,7 +73,7 @@ Follow `../ecolecon-agent-memory/coding/pylance-compliant-python.md` before prod
 Before handing over Python patch scripts, follow the durable guidance in
 `ecolecon-agent-memory/coding/pylance-compliant-python.md` and
 `ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`.
-Run Ruff `F401/F821`, Pyright, focused tests, and `git diff --check`; then check
+Run Ruff `F401/F821`, Pyright if available with typeCheckingMode "standard" not "strict", focused tests, and `git diff --check`; then check
 Pylance in VS Code for the changed files.
 
 ## MRIO index and strict SDA API contract
