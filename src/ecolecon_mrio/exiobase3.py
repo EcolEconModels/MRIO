@@ -1,12 +1,15 @@
+# pyright: reportMissingImports=false
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, cast
 
 import pandas as pd
 
 from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
+from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
 
 try:
     import pymrio
@@ -78,10 +81,16 @@ def _compute_region_output_from_mrio(*, Z: pd.DataFrame, Y: pd.DataFrame, region
 
 def _exio_label_to_code_lookup(system: str) -> dict[str, str]:
     concordance = load_pymrio_exio3_sectors(system=system).sectors
+    required = {"ExioCode", "ExioName"}
+    missing = required.difference(set(concordance.columns))
+    if missing:
+        raise ValueError(f"EXIO sector concordance missing expected columns: {sorted(missing)}")
+    codes = concordance["ExioCode"].astype(str)
+    names = concordance["ExioName"].astype(str)
     return {
-        str(row.ExioName): str(row.ExioCode)
-        for row in concordance.itertuples(index=False)
-        if str(row.ExioName).strip() != "" and str(row.ExioCode).strip() != ""
+        name: code
+        for code, name in zip(codes, names, strict=False)
+        if code.strip() != "" and name.strip() != ""
     }
 
 
@@ -149,8 +158,10 @@ def build_exio_region_use_slice_from_mrio(
     else:
         Z_use, Y_use = Z_tot, Y_tot
 
+    Z_use = cast(pd.DataFrame, Z_use)
+    Y_use = cast(pd.DataFrame, Y_use)
     sectors = pd.Index(Z_use.index.astype(str))
-    x_output = _compute_region_output_from_mrio(Z=Z, Y=Y, region=region).reindex(sectors).astype("float64")
+    x_output = cast(pd.Series, _compute_region_output_from_mrio(Z=Z, Y=Y, region=region).reindex(sectors)).astype("float64")
 
     return ExioRegionSlice(
         year=year,
@@ -212,6 +223,7 @@ def load_exiobase3_region_slice(
     force_download: bool = False,
     force_rebuild_slice: bool = False,
     cache_root: str | Path | None = None,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     verbose: bool = False,
 ) -> ExioRegionSlice:
     """
@@ -242,16 +254,26 @@ def load_exiobase3_region_slice(
     x_path = slice_dir / "x_region.pkl"
     meta_path = slice_dir / "meta.json"
 
-    from ecolecon_mrio.data import resolve_exiobase_cache_paths
+    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_cache_paths
 
     exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
-    source_zip = exio_paths["zip"]
+    data_dir = exio_paths["data_dir"]
+    data_dir.mkdir(parents=True, exist_ok=True)
+    source_zip = ensure_exiobase_year_zip(
+        year,
+        data_dir=data_dir,
+        system=system,
+        force_download=force_download,
+        allow_download_missing=True,
+        doi=str(doi),
+        verbose=verbose,
+    )
 
     if not force_rebuild_slice and z_path.exists() and y_path.exists():
         if verbose:
             print(f"Loading cached EXIOBASE region slice from {slice_dir} [flow={flow_norm}] ...")
-        Z_use = pd.read_pickle(z_path)
-        Y_use = pd.read_pickle(y_path)
+        Z_use = cast(pd.DataFrame, pd.read_pickle(z_path))
+        Y_use = cast(pd.DataFrame, pd.read_pickle(y_path))
         label_to_code = _exio_label_to_code_lookup(system)
         Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code)
         Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
@@ -339,7 +361,16 @@ def load_exiobase3_region_slice(
     slice_obj.Y_region.to_pickle(y_path)
     slice_obj.x_region.to_pickle(x_path)
     meta_path.write_text(
-        f'{{"year":{year},"system":"{system}","region":"{region}","flow":"{flow_norm}"}}',
+        json.dumps(
+            {
+                "year": int(year),
+                "system": str(system),
+                "region": str(region),
+                "flow": flow_norm,
+                "exio_doi": str(doi),
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return slice_obj
@@ -353,6 +384,7 @@ def load_exiobase3_region_slices(
     force_download: bool = False,
     force_rebuild_slice: bool = False,
     cache_root: str | Path | None = None,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
 ) -> dict[str, ExioRegionSlice]:
     """
     Load (and cache) multiple region slices, ensuring the full MRIO is loaded at most once.
@@ -385,10 +417,19 @@ def load_exiobase3_region_slices(
                 missing_any = True
                 break
 
-    from ecolecon_mrio.data import resolve_exiobase_cache_paths
+    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_cache_paths
 
     exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
-    source_zip = exio_paths["zip"]
+    data_dir = exio_paths["data_dir"]
+    data_dir.mkdir(parents=True, exist_ok=True)
+    source_zip = ensure_exiobase_year_zip(
+        year,
+        data_dir=data_dir,
+        system=system,
+        force_download=force_download,
+        allow_download_missing=True,
+        doi=str(doi),
+    )
 
     if missing_any:
         mrio = load_exiobase3(
@@ -417,7 +458,16 @@ def load_exiobase3_region_slices(
             Y_r.to_pickle(y_path)
             x_r.to_pickle(x_path)
             meta_path.write_text(
-                f'{{"year":{year},"system":"{system}","region":"{r}"}}', encoding="utf-8"
+                json.dumps(
+                    {
+                        "year": int(year),
+                        "system": str(system),
+                        "region": str(r),
+                        "exio_doi": str(doi),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
             )
 
     out: dict[str, ExioRegionSlice] = {}
@@ -429,6 +479,7 @@ def load_exiobase3_region_slices(
             force_download=force_download,
             force_rebuild_slice=False,
             cache_root=cache_root,
+            doi=doi,
         )
     return out
 

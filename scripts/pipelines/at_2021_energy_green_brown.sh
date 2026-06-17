@@ -16,6 +16,7 @@ set -euo pipefail
 #   OUT_AGG=outputs/AT_2021_energy_green_brown_flows_with_source
 #   EXIO_YEAR=2020
 #   EXIO_REGION=AT
+#   EXIO_DOI=10.5281/zenodo.20051562
 #   EUROSTAT_TIME=2021
 #   EUROSTAT_GEO=AT
 #   MAPPING_CONSISTENCY_RTOL=0.2
@@ -32,6 +33,7 @@ fi
 
 EXIO_YEAR="${EXIO_YEAR:-2020}"
 EXIO_REGION="${EXIO_REGION:-AT}"
+EXIO_DOI="${EXIO_DOI:-10.5281/zenodo.20051562}"
 EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
 
@@ -76,6 +78,7 @@ CONSISTENCY_ARGS=(
   --eurostat-stk-flow-dim stk_flow \
   --eurostat-stk-flows "$STK_FLOWS_JSON" \
   --exio-year "$EXIO_YEAR" --exio-region "$EXIO_REGION" \
+  --exio-doi "$EXIO_DOI" \
   --exio-mapping-csv "$MAP_EXIO_TO_EUROSTAT" \
   --require-mapping-coverage --coverage-tol 0 \
   --balancing-scope local \

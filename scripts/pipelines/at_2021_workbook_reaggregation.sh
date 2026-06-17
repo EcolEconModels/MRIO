@@ -23,6 +23,7 @@ EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
 EXIO_YEAR="${EXIO_YEAR:-2020}"
 EXIO_REGION="${EXIO_REGION:-$EUROSTAT_GEO}"
+EXIO_DOI="${EXIO_DOI:-10.5281/zenodo.20051562}"
 MAPPING_CONSISTENCY_RTOL="${MAPPING_CONSISTENCY_RTOL:-0.2}"
 MAPPING_CONSISTENCY_ATOL="${MAPPING_CONSISTENCY_ATOL:-1e-6}"
 EXPECTED_REAGG_SECTORS="${EXPECTED_REAGG_SECTORS:-}"
@@ -83,6 +84,7 @@ set -x
   --eurostat-stk-flow-dim stk_flow \
   --eurostat-stk-flows "$STK_FLOWS_JSON" \
   --exio-year "$EXIO_YEAR" --exio-region "$EXIO_REGION" \
+  --exio-doi "$EXIO_DOI" \
   --exio-mapping-csv "$SPLIT_MAPPING_CSV" \
   --require-mapping-coverage --coverage-tol 0 \
   --balancing-scope local \

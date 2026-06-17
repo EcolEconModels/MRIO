@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
+from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
 
 
 MatrixKind = Literal["F", "F_Y"]
@@ -304,7 +305,7 @@ def load_exiobase3_extension_row_for_year(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
-    doi: str = "10.5281/zenodo.3583070",
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     verbose: bool = False,
 ) -> pd.Series:
     """Load one EXIOBASE extension row from the standard yearly source zip.
@@ -427,7 +428,7 @@ def load_exiobase3_extension_row_with_unit_for_year(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
-    doi: str = "10.5281/zenodo.3583070",
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     unit_override: str | None = None,
     require_unit: bool = True,
     verbose: bool = False,
@@ -463,7 +464,14 @@ def load_exiobase3_extension_row_with_unit_for_year(
         require_unit=require_unit,
     )
     metadata = dict(result.metadata)
-    metadata.update({"year": int(year), "system": str(system), "source_zip": str(zip_path)})
+    metadata.update(
+        {
+            "year": int(year),
+            "system": str(system),
+            "source_zip": str(zip_path),
+            "exio_doi": str(doi),
+        }
+    )
     return ExtensionRowResult(
         year=int(year),
         values=result.values,
@@ -490,7 +498,7 @@ def load_exiobase3_extension_for_year(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
-    doi: str = "10.5281/zenodo.3583070",
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     cache_dir: str | Path | None = None,
     verbose: bool = False,
 ) -> ExioExtension:

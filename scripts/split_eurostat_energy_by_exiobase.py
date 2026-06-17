@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import time
 import re
+from collections.abc import Iterable as IterableABC
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, cast
 
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.data import default_data_root
+from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI, default_data_root
 from ecolecon_mrio.exio_share_split import (
     load_local_iot,
     split_iot_using_exiobase_shares,
@@ -19,16 +20,20 @@ from ecolecon_mrio.exio_share_split import (
     map_exio_value_per_physical_input,
     map_exio_emission_intensity,
 )
-from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
+from ecolecon_mrio.exiobase3 import ExioRegionSlice, load_exiobase3_region_slice
 from ecolecon_mrio.exiobase3_extensions import (
     extract_emissions_and_intensity as extract_exio_emissions_and_intensity,
     extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
 )
-from ecolecon_mrio.eurostat_iot import build_eurostat_product_use_reference, load_eurostat_iot, load_eurostat_iot_variants
+from ecolecon_mrio.eurostat_iot import (
+    ParsedEurostatIOT,
+    build_eurostat_product_use_reference,
+    load_eurostat_iot,
+    load_eurostat_iot_variants,
+)
 from ecolecon_mrio.canonical_mapping_csv import read_canonical_split_mapping
 from ecolecon_mrio.mapping_csv import (
     flatten_exio_sectors_from_mapping,
-    load_split_mapping_frame,
     load_weighted_mapping_frame,
     read_split_mapping,
     read_weighted_mapping,
@@ -202,6 +207,18 @@ def _read_exio_to_eurostat_mapping_with_notes(
     return mapping, condensed_notes
 
 
+
+def _eurostat_output_reference_from_frames(
+    eurostat_Z: pd.DataFrame,
+    eurostat_Y: pd.DataFrame,
+) -> pd.Series:
+    """Build the Eurostat product-use output reference from in-memory Z/Y frames."""
+    parsed = ParsedEurostatIOT(Z=eurostat_Z, Y=eurostat_Y, meta={})
+    reference_raw = build_eurostat_product_use_reference(parsed)
+    reference = cast(pd.Series, pd.to_numeric(reference_raw, errors="coerce")).fillna(0.0).astype("float64")
+    reference.index = reference.index.astype(str)
+    return reference
+
 def _assert_mapping_integrity(
     *,
     sector_mapping: dict[str, dict[str, float]],
@@ -210,14 +227,7 @@ def _assert_mapping_integrity(
     required_target_codes: Sequence[str] | None = None,
     label: str,
 ) -> None:
-    class _Parsed:
-        def __init__(self, Z: pd.DataFrame, Y: pd.DataFrame) -> None:
-            self.Z = Z
-            self.Y = Y
-
-    euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
-    euro_x.index = euro_x.index.astype(str)
-    euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
+    euro_x = _eurostat_output_reference_from_frames(eurostat_Z, eurostat_Y)
     if required_target_codes is None:
         required_target_codes = tuple(map(str, euro_x.index))
     required_codes = [str(code) for code in required_target_codes if str(code).strip() != ""]
@@ -241,16 +251,10 @@ def _build_output_consistency_frame(
     eurostat_Y: pd.DataFrame,
     exio_slice: object,
 ) -> tuple[pd.DataFrame, float, float]:
-    class _Parsed:
-        def __init__(self, Z: pd.DataFrame, Y: pd.DataFrame) -> None:
-            self.Z = Z
-            self.Y = Y
+    euro_x = _eurostat_output_reference_from_frames(eurostat_Z, eurostat_Y)
 
-    euro_x = build_eurostat_product_use_reference(_Parsed(eurostat_Z, eurostat_Y)).astype("float64")
-    euro_x.index = euro_x.index.astype(str)
-    euro_x = pd.to_numeric(euro_x, errors="coerce").fillna(0.0)
-
-    exio_out = pd.to_numeric(getattr(exio_slice, "x_region"), errors="coerce").fillna(0.0).astype("float64")
+    exio_raw = getattr(exio_slice, "x_region")
+    exio_out = cast(pd.Series, pd.to_numeric(exio_raw, errors="coerce")).fillna(0.0).astype("float64")
     exio_out.index = exio_out.index.astype(str)
 
     mapped_rows: list[dict[str, float | str | bool]] = []
@@ -338,10 +342,10 @@ def _should_check_output(flow_value: object, eurostat_year: int | None, exio_yea
     if eurostat_year is None:
         return False
     return int(exio_year) == int(eurostat_year)
-    
+
 def _aggregate_exio_emissions_to_eurostat(
     exio_emissions: pd.DataFrame,
-    sector_to_exio_sectors: dict[str, list[str]] | dict[str, dict[str, list[str]]],
+    sector_to_exio_sectors: dict[str, list[str]] | dict[str, dict[str, list[str]]] | dict[str, dict[str, float]],
 ) -> pd.DataFrame:
     from ecolecon_mrio.sector_intensity import aggregate_intensity_by_mapping
 
@@ -421,6 +425,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     p.add_argument("--exio-year", type=int, default=2020)
     p.add_argument("--exio-region", default="AT")
+    p.add_argument(
+        "--exio-doi",
+        default=DEFAULT_EXIOBASE3_DOI,
+        help="EXIOBASE Zenodo DOI or doi.org URL used for source zip discovery/download.",
+    )
     p.add_argument(
         "--exio-share-flow",
         default="auto",
@@ -573,15 +582,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     extract_co2 = not args.no_exio_co2_intensity
     co2_extension = str(args.co2_extension)
     co2_keywords = tuple(json.loads(args.co2_stressor_keywords))
-    full_sector_mapping = None
-    full_sector_notes = None
-    full_sector_mapping_csv = args.exio_to_eurostat_mapping_csv
+    full_sector_mapping: dict[str, dict[str, float]] | None = None
+    full_sector_notes: dict[str, str] | None = None
+    full_sector_mapping_csv: str | None = args.exio_to_eurostat_mapping_csv
     qp_cache_dir = (
         data_root / f"exiobase3_{args.exio_year}" / "slices" / args.exio_region / "pxp" / "extensions"
     )
 
     if args.dump_exio_sectors_csv is not None or args.write_mapping_template_csv is not None:
         _vprint(args.verbose, "Calling: load_exiobase3_region_slice(...)")
+        doi=args.exio_doi,
         t = _Timer()
         exio_slice = load_exiobase3_region_slice(
             year=args.exio_year,
@@ -589,6 +599,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             system="pxp",
             flow="domestic",
             cache_root=data_root,
+            doi=args.exio_doi,
             verbose=args.verbose,
         )
         _vprint(args.verbose, f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)")
@@ -656,7 +667,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         else:
                             out.extend(list(map(str, inner)))
                     return list(dict.fromkeys(out))
-                return list(map(str, values))
+                if isinstance(values, IterableABC) and not isinstance(values, (str, bytes)):
+                    return list(map(str, values))
+                raise TypeError(f"Expected iterable EXIO members, got {type(values).__name__}")
 
             coverage_expected_exio = {
                 str(aggregate): _flatten(members)
@@ -668,6 +681,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else (args.sector_19, args.sector_35)
     )
 
+    base_filters: dict[str, object] = {}
     eurostat_year = None
     if args.eurostat_dataset:
         if not (args.eurostat_filters and args.eurostat_row_dim and args.eurostat_col_dim):
@@ -709,12 +723,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     target_output_by_code=total_reference,
                 )
 
-            exio_slices: dict[str, object] = {}
+            exio_slices: dict[str, ExioRegionSlice] = {}
             for flow in flows:
                 exio_flow = _exio_flow_for_eurostat_flow_value(flow)
                 if exio_flow in exio_slices:
                     continue
                 _vprint(args.verbose, f"Calling: load_exiobase3_region_slice(..., flow={exio_flow})")
+                doi=args.exio_doi,
                 t = _Timer()
                 exio_slices[exio_flow] = load_exiobase3_region_slice(
                     year=args.exio_year,
@@ -722,10 +737,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     system="pxp",
                     flow=exio_flow,
                     cache_root=data_root,
+                    doi=args.exio_doi,
                     verbose=args.verbose,
                 )
                 _vprint(args.verbose, f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)")
 
+            assert outdir is not None
             for flow, parsed in variants.items():
                 flow_dir = outdir / f"{args.eurostat_stk_flow_dim}={flow}"
                 flow_dir.mkdir(parents=True, exist_ok=True)
@@ -795,13 +812,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     extra_info={
                         "variant_dim": args.eurostat_stk_flow_dim,
                         "variant_value": flow,
+                        "exio_doi": args.exio_doi,
                     },
                 )
                 if res.exio_quantity_and_price is not None:
                     out = flow_dir / "exio_quantity_and_price.csv"
                     res.exio_quantity_and_price.to_csv(out, index=False)
                     _vprint(args.verbose, f"Wrote: {out.resolve()}")
-                    
+
                     # Compute and output disaggregated sector values per physical input
                     mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
                     disagg_values = map_exio_value_per_physical_input(
@@ -890,9 +908,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
                         if full_sector_notes is not None and not eurostat_co2.empty:
                             eurostat_co2 = eurostat_co2.copy()
-                            eurostat_co2["mapping_notes"] = eurostat_co2["aggregated_sector"].map(
-                                full_sector_notes
-                            ).fillna("")
+                            eurostat_co2["mapping_notes"] = [
+                                full_sector_notes.get(str(sector), "")
+                                for sector in eurostat_co2["aggregated_sector"].astype(str)
+                            ]
                         if not eurostat_co2.empty:
                             out = flow_dir / "eurostat_sector_co2_intensity.csv"
                             eurostat_co2.to_csv(out, index=False)
@@ -945,6 +964,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             system="pxp",
             flow=exio_flow_single,
             cache_root=data_root,
+            doi=args.exio_doi,
             verbose=args.verbose,
         ),
         sector_to_exio_sectors=sector_to_exio_sectors,
@@ -962,12 +982,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
     assert outdir is not None
-    write_split_core_outputs(res, outdir, verbose=args.verbose)
+    write_split_core_outputs(
+        res,
+        outdir,
+        verbose=args.verbose,
+        extra_info={"exio_doi": args.exio_doi},
+    )
     if res.exio_quantity_and_price is not None:
         out = outdir / "exio_quantity_and_price_proxies.csv"
         res.exio_quantity_and_price.to_csv(out, index=False)
         _vprint(args.verbose, f"Wrote: {out.resolve()}")
-        
+
         # Compute and output disaggregated sector values per physical input
         mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
         disagg_values = map_exio_value_per_physical_input(
@@ -989,6 +1014,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             system="pxp",
             flow=exio_flow_single,
             cache_root=data_root,
+            doi=args.exio_doi,
             verbose=args.verbose,
         )
         _assert_mapping_integrity(
@@ -1039,6 +1065,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 system="pxp",
                 flow=exio_flow_single,
                 cache_root=data_root,
+                doi=args.exio_doi,
                 verbose=args.verbose,
             )
         exio_out = exio_slice_single.x_region.astype("float64")
@@ -1077,6 +1104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 system="pxp",
                 flow=exio_flow_single,
                 cache_root=data_root,
+                doi=args.exio_doi,
                 verbose=args.verbose,
             )
         available = set(map(str, exio_slice_single.sectors))

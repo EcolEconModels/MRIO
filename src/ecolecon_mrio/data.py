@@ -20,6 +20,12 @@ from ecolecon_mrio.wiod16 import load_wiod16
 from ecolecon_mrio.mrio_sda import UnitMetadata
 
 
+# Default EXIOBASE source DOI used for new downloads. Cache paths are
+# intentionally unchanged in this patch; the DOI controls only source
+# discovery/download and provenance metadata.
+DEFAULT_EXIOBASE3_DOI = "10.5281/zenodo.20051562"
+
+
 def default_data_root() -> Path:
     """
     Return the default data root directory for caches (Eurostat/EXIOBASE/etc.).
@@ -160,7 +166,7 @@ def load_exiobase3_output_for_year(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
-    doi: str = "10.5281/zenodo.3583070",
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     verbose: bool = False,
 ) -> tuple[pd.Series, pd.MultiIndex, dict[str, Any]]:
     """Load only EXIOBASE ``x.txt`` for one year.
@@ -220,6 +226,7 @@ def load_exiobase3_output_for_year(
         "source_zip": str(zip_path),
         "system": system_clean,
         "year": int(year),
+        "exio_doi": _normalize_exiobase_doi(doi),
         "index_columns": ["region", "sector"],
         "stored_objects": [],
         "not_stored_objects": [
@@ -413,11 +420,46 @@ def _load_exio_matrices_direct_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.
     return A, x, y, basis_index, metadata
 
 
-def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = "10.5281/zenodo.3583070") -> str:
+
+
+def _normalize_exiobase_doi(doi: str | None = None) -> str:
+    """Return a bare DOI token, accepting either a DOI or a doi.org URL."""
+    raw = str(doi if doi is not None and str(doi).strip() else DEFAULT_EXIOBASE3_DOI).strip()
+    lowered = raw.casefold()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+        if lowered.startswith(prefix.casefold()):
+            raw = raw[len(prefix):].strip()
+            break
+    return raw.rstrip("/")
+
+
+def _zenodo_record_id_from_doi(doi: str) -> str | None:
+    doi_clean = _normalize_exiobase_doi(doi)
+    marker = "zenodo."
+    lowered = doi_clean.casefold()
+    pos = lowered.find(marker)
+    if pos < 0:
+        return None
+    tail = doi_clean[pos + len(marker):]
+    digits: list[str] = []
+    for char in tail:
+        if char.isdigit():
+            digits.append(char)
+        else:
+            break
+    return "".join(digits) or None
+
+
+def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = DEFAULT_EXIOBASE3_DOI) -> str:
+    doi_clean = _normalize_exiobase_doi(doi)
     year_token = f"IOT_{int(year)}_{system}.zip"
-    fallback_url = f"https://zenodo.org/records/15689391/files/{year_token}"
+    record_id = _zenodo_record_id_from_doi(doi_clean)
+    if record_id is None:
+        fallback_url = f"https://doi.org/{doi_clean}"
+    else:
+        fallback_url = f"https://zenodo.org/records/{record_id}/files/{year_token}"
     cfg = dict(EXIOBASE3_CONFIG)
-    cfg["url_db_view"] = "https://doi.org/" + str(doi)
+    cfg["url_db_view"] = "https://doi.org/" + doi_clean
     try:
         exio_web_content = _get_url_datafiles(**cfg)
     except Exception:
@@ -426,7 +468,6 @@ def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = "10.5281/z
         if year_token in url:
             return url
     return fallback_url
-
 
 def ensure_exiobase_year_zip(
     year: int,
@@ -440,9 +481,10 @@ def ensure_exiobase_year_zip(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
-    doi: str = "10.5281/zenodo.3583070",
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     verbose: bool = False,
 ) -> Path:
+    doi_clean = _normalize_exiobase_doi(doi)
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     zip_path = data_dir / f"IOT_{int(year)}_{system}.zip"
@@ -461,7 +503,7 @@ def ensure_exiobase_year_zip(
     if not allow_download_missing:
         raise FileNotFoundError(f"EXIOBASE zip not found in local cache and downloads are disabled: {zip_path}")
 
-    url = _resolve_exiobase3_url(int(year), system=system, doi=doi)
+    url = _resolve_exiobase3_url(int(year), system=system, doi=doi_clean)
     if verbose:
         print(f"EXIOBASE zip not found at {zip_path}; downloading {url} ...")
 
@@ -470,7 +512,7 @@ def ensure_exiobase_year_zip(
         description="Download log of EXIOBASE3",
         name="EXIO3",
         system=str(system),
-        version=str(doi),
+        version=doi_clean,
     )
 
     spec = DownloadSpec(
@@ -792,6 +834,7 @@ def load_mrio_matrices(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
     delete_source_zip_after_parse: bool = False,
     exio_system: str = "pxp",
     cache_matrices: bool = False,
@@ -827,6 +870,7 @@ def load_mrio_matrices(
         download_chunk_mb=download_chunk_mb,
         download_timeout_seconds=download_timeout_seconds,
         download_retries=download_retries,
+        doi=str(doi),
         verbose=verbose,
     )
 
@@ -838,6 +882,7 @@ def load_mrio_matrices(
         {
             "system": system,
             "year": int(year),
+            "exio_doi": _normalize_exiobase_doi(doi),
             "cache_status": "streamed_direct_from_zip",
             "zip_only_cache": True,
             "cache_matrices": False,
