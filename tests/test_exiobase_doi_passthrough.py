@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import ast
 import inspect
+import zipfile
 from pathlib import Path
 
+import pytest
 from ecolecon_mrio import data
 from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
 
@@ -49,3 +51,64 @@ def test_split_script_forwards_exio_doi_to_all_region_slice_calls() -> None:
     assert calls
     missing = [node.lineno for node in calls if not any(kw.arg == "doi" for kw in node.keywords)]
     assert missing == []
+
+
+
+def _write_minimal_exio_zip(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("file_parameters.json", "{}")
+
+
+def test_existing_exiobase_zip_requires_matching_download_log_doi(tmp_path: Path) -> None:
+    data_dir = tmp_path / "exiobase3_2020"
+    zip_path = data_dir / "IOT_2020_pxp.zip"
+    _write_minimal_exio_zip(zip_path)
+    (data_dir / "download_log.json").write_text(
+        '{"version": "https://doi.org/10.5281/zenodo.20051562"}\n',
+        encoding="utf-8",
+    )
+
+    out = data.ensure_exiobase_year_zip(
+        2020,
+        data_dir=data_dir,
+        system="pxp",
+        allow_download_missing=False,
+        doi="10.5281/zenodo.20051562",
+    )
+
+    assert out == zip_path
+
+
+def test_existing_exiobase_zip_rejects_mismatched_download_log_doi(tmp_path: Path) -> None:
+    data_dir = tmp_path / "exiobase3_2020"
+    zip_path = data_dir / "IOT_2020_pxp.zip"
+    _write_minimal_exio_zip(zip_path)
+    (data_dir / "download_log.json").write_text(
+        '{"version": "10.5281/zenodo.3583070"}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="DOI/version mismatch"):
+        data.ensure_exiobase_year_zip(
+            2020,
+            data_dir=data_dir,
+            system="pxp",
+            allow_download_missing=False,
+            doi="10.5281/zenodo.20051562",
+        )
+
+
+def test_existing_exiobase_zip_rejects_missing_download_log_doi(tmp_path: Path) -> None:
+    data_dir = tmp_path / "exiobase3_2020"
+    zip_path = data_dir / "IOT_2020_pxp.zip"
+    _write_minimal_exio_zip(zip_path)
+
+    with pytest.raises(FileNotFoundError, match="no readable download_log.json DOI/version"):
+        data.ensure_exiobase_year_zip(
+            2020,
+            data_dir=data_dir,
+            system="pxp",
+            allow_download_missing=False,
+            doi="10.5281/zenodo.20051562",
+        )

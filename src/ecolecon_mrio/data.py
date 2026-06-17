@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import io
+import json
 import numpy as np
 import os
+import re
 import time
 import zipfile
 from pathlib import Path
@@ -450,6 +452,133 @@ def _zenodo_record_id_from_doi(doi: str) -> str | None:
     return "".join(digits) or None
 
 
+
+
+def _doi_token_from_text(value: object) -> str | None:
+    """Extract a Zenodo DOI token from arbitrary download-log text."""
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"10\.5281/zenodo\.\d+", text, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return _normalize_exiobase_doi(match.group(0))
+
+
+def _collect_exiobase_doi_tokens(value: Any) -> list[str]:
+    """Return DOI-like version tokens found in pymrio download-log JSON."""
+    tokens: list[str] = []
+    if isinstance(value, dict):
+        # Prefer explicit version/DOI-style fields, but recurse through the log
+        # because pymrio metadata schemas can vary across releases.
+        preferred_keys = {"version", "doi", "source_doi", "exio_doi"}
+        for key, child in value.items():
+            if str(key).casefold() in preferred_keys:
+                token = _doi_token_from_text(child)
+                if token is not None:
+                    tokens.append(token)
+        for child in value.values():
+            tokens.extend(_collect_exiobase_doi_tokens(child))
+    elif isinstance(value, list):
+        for child in value:
+            tokens.extend(_collect_exiobase_doi_tokens(child))
+    elif isinstance(value, (str, int, float)):
+        token = _doi_token_from_text(value)
+        if token is not None:
+            tokens.append(token)
+    return list(dict.fromkeys(tokens))
+
+
+def _exiobase_download_log_candidates(data_dir: str | Path) -> list[Path]:
+    """Candidate pymrio download-log paths, with download_log.json first."""
+    root = Path(data_dir)
+    candidates: list[Path] = [root / "download_log.json"]
+    candidates.extend(sorted(root.glob("*download*log*.json")))
+    candidates.extend(sorted(root.glob("*metadata*.json")))
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        if path not in seen:
+            out.append(path)
+            seen.add(path)
+    return out
+
+
+def _read_exiobase_download_log_doi(data_dir: str | Path) -> tuple[str | None, Path | None]:
+    """Read the recorded EXIOBASE DOI/version from the existing download log."""
+    for path in _exiobase_download_log_candidates(data_dir):
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        tokens = _collect_exiobase_doi_tokens(payload)
+        if tokens:
+            return tokens[0], path
+    return None, None
+
+
+def _write_exiobase_download_log_json(
+    *,
+    data_dir: str | Path,
+    year: int,
+    system: str,
+    doi: str,
+    url: str,
+    zip_path: str | Path,
+) -> None:
+    """Ensure download_log.json carries the DOI used to create the cached zip."""
+    root = Path(data_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    log_path = root / "download_log.json"
+    doi_clean = _normalize_exiobase_doi(doi)
+    payload: dict[str, Any] = {}
+    if log_path.exists():
+        try:
+            loaded = json.loads(log_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload.update(loaded)
+        except Exception:
+            payload["previous_log_unparseable"] = True
+    payload.update(
+        {
+            "name": payload.get("name", "EXIO3"),
+            "system": str(system),
+            "year": int(year),
+            "version": doi_clean,
+            "doi": doi_clean,
+            "url": str(url),
+            "source_zip": Path(zip_path).name,
+        }
+    )
+    log_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _validate_existing_exiobase_zip_doi(
+    *,
+    zip_path: str | Path,
+    data_dir: str | Path,
+    requested_doi: str,
+) -> None:
+    """Fail loudly if an existing EXIOBASE zip lacks matching DOI provenance."""
+    requested_clean = _normalize_exiobase_doi(requested_doi)
+    recorded_doi, log_path = _read_exiobase_download_log_doi(data_dir)
+    if recorded_doi is None:
+        checked = ", ".join(str(p) for p in _exiobase_download_log_candidates(data_dir))
+        raise FileNotFoundError(
+            "Existing EXIOBASE zip found, but no readable download_log.json DOI/version provenance was found. "
+            f"Zip: {zip_path}. Requested DOI: {requested_clean}. Checked: {checked}. "
+            "Use force_download=True / --exio-force-download to replace the cached zip."
+        )
+    recorded_clean = _normalize_exiobase_doi(recorded_doi)
+    if recorded_clean != requested_clean:
+        raise ValueError(
+            "Existing EXIOBASE zip DOI/version mismatch. "
+            f"Zip: {zip_path}. Requested DOI: {requested_clean}. Recorded DOI: {recorded_clean}. "
+            f"Download log: {log_path}. Use force_download=True / --exio-force-download to replace the cached zip."
+        )
+
 def _resolve_exiobase3_url(year: int, system: str = "pxp", doi: str = DEFAULT_EXIOBASE3_DOI) -> str:
     doi_clean = _normalize_exiobase_doi(doi)
     year_token = f"IOT_{int(year)}_{system}.zip"
@@ -498,6 +627,11 @@ def ensure_exiobase_year_zip(
         zip_path.rename(data_dir / f"IOT_{int(year)}_{system}.zip.corrupt.{ts}")
 
     if zip_path.exists():
+        _validate_existing_exiobase_zip_doi(
+            zip_path=zip_path,
+            data_dir=data_dir,
+            requested_doi=doi_clean,
+        )
         return zip_path
 
     if not allow_download_missing:
@@ -538,6 +672,14 @@ def ensure_exiobase_year_zip(
     else:
         downlog._add_fileio(f"Downloaded {url} to {zip_path.name}")
     downlog.save()
+    _write_exiobase_download_log_json(
+        data_dir=data_dir,
+        year=int(year),
+        system=str(system),
+        doi=doi_clean,
+        url=url,
+        zip_path=zip_path,
+    )
     return zip_path
 
 
