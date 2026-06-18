@@ -12,6 +12,8 @@ from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import (
     load_mrio,
     load_mrio_matrices,
+    load_mrio_matrix_result,
+    MrioMatrixResult,
     ensure_exiobase_year_zip,
     resolve_exiobase_year_dir,
     resolve_exiobase_cache_paths,
@@ -167,6 +169,8 @@ from .energy_balance_pxp import (
 __all__ = [
     "load_mrio",
     "load_mrio_matrices",
+    "load_mrio_matrix_result",
+    "MrioMatrixResult",
     "load_MRIO_matrices",
     "ensure_exiobase_year_zip",
     "resolve_exiobase_year_dir",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import io
 import json
 import numpy as np
@@ -26,6 +27,27 @@ from ecolecon_mrio.mrio_sda import UnitMetadata
 # intentionally unchanged in this patch; the DOI controls only source
 # discovery/download and provenance metadata.
 DEFAULT_EXIOBASE3_DOI = "10.5281/zenodo.20051562"
+
+
+@dataclass(frozen=True)
+class MrioMatrixResult:
+    """Structured result for direct MRIO matrix reads.
+
+    Phase 3 keeps this EXIOBASE-backed and zip-streamed while making the
+    requested matrix and final-demand shape explicit.  ``load_mrio_matrices``
+    remains the backward-compatible tuple wrapper around this result.
+    """
+
+    year: int
+    dataset: str
+    system: str
+    source_zip: Path
+    A: csr_matrix | None
+    Z: csr_matrix | None
+    x: pd.Series
+    y: pd.Series | pd.DataFrame | None
+    basis_index: pd.MultiIndex
+    metadata: dict[str, Any]
 
 
 def default_data_root() -> Path:
@@ -396,6 +418,49 @@ def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
             if rows_seen != n:
                 raise ValueError(f"EXIOBASE Y.txt row count mismatch: got {rows_seen}, expected {n}.")
     return pd.Series(y_vals, index=basis_index, name="y", dtype=float)
+
+
+def _read_exio_Y_matrix_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> pd.DataFrame:
+    """Read EXIOBASE Y.txt as a dense final-demand matrix when explicitly requested."""
+    n = len(basis_index)
+    with zipfile.ZipFile(zip_path) as zf:
+        with _open_exio_zip_text(zf, "Y.txt") as fh:
+            regions = next(fh).rstrip("\n\r").split("\t")[2:]
+            categories = next(fh).rstrip("\n\r").split("\t")[2:]
+            next(fh)
+            if len(regions) != len(categories):
+                raise ValueError(
+                    "EXIOBASE Y.txt column-header length mismatch: "
+                    f"regions={len(regions)}, categories={len(categories)}."
+                )
+            columns = pd.MultiIndex.from_arrays([regions, categories], names=["region", "category"])
+            rows: list[np.ndarray] = []
+            rows_seen = 0
+            for row_idx, line in enumerate(fh):
+                if row_idx >= n:
+                    break
+                try:
+                    region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                except ValueError:
+                    raise ValueError(f"EXIOBASE Y.txt malformed row at position {row_idx}") from None
+                expected = basis_index[row_idx]
+                if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
+                    raise ValueError(
+                        "EXIOBASE Y.txt row labels do not match x.txt basis order: "
+                        f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
+                    )
+                vals = _numeric_tail_from_exio_line(line)
+                if vals.size != len(columns):
+                    raise ValueError(
+                        f"EXIOBASE Y.txt row width mismatch at row {row_idx}: "
+                        f"got {vals.size}, expected {len(columns)}."
+                    )
+                rows.append(vals)
+                rows_seen += 1
+            if rows_seen != n:
+                raise ValueError(f"EXIOBASE Y.txt row count mismatch: got {rows_seen}, expected {n}.")
+    data = np.vstack(rows) if rows else np.empty((0, len(columns)), dtype=float)
+    return pd.DataFrame(data, index=basis_index, columns=columns, dtype="float64")
 
 
 def _load_exio_matrices_direct_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
@@ -963,9 +1028,107 @@ def load_mrio(
     return mrio, y_full
 
 
-def load_mrio_matrices(
+def _normalize_exio_matrix_request(matrix: str) -> str:
+    matrix_norm = str(matrix).strip().lower()
+    if matrix_norm in {"a", "technical", "technical_coefficients"}:
+        return "A"
+    if matrix_norm in {"z", "transactions", "intermediate"}:
+        return "Z"
+    if matrix_norm in {"both", "a+z", "z+a"}:
+        return "both"
+    raise ValueError("matrix must be one of: 'A', 'Z', or 'both'.")
+
+
+def _normalize_final_demand_request(final_demand: str) -> str:
+    final_demand_norm = str(final_demand).strip().lower()
+    if final_demand_norm in {"summed", "sum", "vector", "y"}:
+        return "summed"
+    if final_demand_norm in {"matrix", "full", "Y".lower()}:
+        return "matrix"
+    if final_demand_norm in {"none", "skip", "no"}:
+        return "none"
+    raise ValueError("final_demand must be one of: 'summed', 'matrix', or 'none'.")
+
+
+def _load_exio_matrix_result_direct_from_zip(
+    zip_path: Path,
+    *,
+    year: int,
+    system: str,
+    doi: str,
+    matrix: str,
+    final_demand: str,
+) -> MrioMatrixResult:
+    matrix_request = _normalize_exio_matrix_request(matrix)
+    final_demand_request = _normalize_final_demand_request(final_demand)
+
+    x, basis_index = _read_exio_x_from_zip(zip_path)
+    Z_work = _read_exio_Z_sparse_from_zip(zip_path, basis_index=basis_index)
+    z_nnz = int(Z_work.nnz)
+
+    A_result: csr_matrix | None = None
+    Z_result: csr_matrix | None = None
+    if matrix_request in {"A", "both"}:
+        # ``_derive_A_from_Z_and_x`` scales sparse storage in-place to avoid a
+        # duplicate Z peak for the legacy A-only path.  When the caller explicitly
+        # asks for both matrices, copy once so Z remains the transaction matrix.
+        z_for_a = Z_work.copy() if matrix_request == "both" else Z_work
+        A_result = _derive_A_from_Z_and_x(z_for_a, x, basis_index=basis_index)
+    if matrix_request in {"Z", "both"}:
+        Z_result = Z_work
+
+    if final_demand_request == "summed":
+        y_result: pd.Series | pd.DataFrame | None = _read_exio_y_direct_from_zip(zip_path, basis_index=basis_index)
+    elif final_demand_request == "matrix":
+        y_result = _read_exio_Y_matrix_direct_from_zip(zip_path, basis_index=basis_index)
+    else:
+        y_result = None
+
+    density_denominator = float(len(basis_index) * len(basis_index)) if len(basis_index) else 0.0
+    metadata: dict[str, Any] = {
+        "cache_kind": "exiobase_zip_stream_matrix_result",
+        "cache_status": "streamed_direct_from_zip",
+        "dataset": "exiobase",
+        "system": str(system),
+        "year": int(year),
+        "exio_doi": _normalize_exiobase_doi(doi),
+        "source_zip": str(zip_path),
+        "zip_only_cache": True,
+        "source_zip_retained": True,
+        "cache_matrices": False,
+        "matrix_request": matrix_request,
+        "final_demand": final_demand_request,
+        "has_A": A_result is not None,
+        "has_Z": Z_result is not None,
+        "has_y": y_result is not None,
+        "matrix_shape": [int(len(basis_index)), int(len(basis_index))],
+        "z_nnz": z_nnz,
+        "a_nnz": int(A_result.nnz) if A_result is not None else None,
+        "z_density": (float(z_nnz) / density_denominator) if density_denominator else 0.0,
+        "index_columns": ["region", "sector"],
+        "stored_objects": [],
+        "not_stored_objects": ["full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "matrix_npz_cache"],
+    }
+    return MrioMatrixResult(
+        year=int(year),
+        dataset="exiobase",
+        system=str(system),
+        source_zip=zip_path,
+        A=A_result,
+        Z=Z_result,
+        x=x,
+        y=y_result,
+        basis_index=basis_index,
+        metadata=metadata,
+    )
+
+
+def load_mrio_matrix_result(
     year: int,
     *,
+    dataset: str = "exiobase",
+    matrix: str = "A",
+    final_demand: str = "summed",
     force_download: bool = False,
     data_root: str | Path | None = None,
     calc_all: bool = False,
@@ -981,14 +1144,18 @@ def load_mrio_matrices(
     exio_system: str = "pxp",
     cache_matrices: bool = False,
     read_existing_cache: bool = False,
-) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load EXIOBASE matrices directly from the source zip, without derived caches.
+) -> MrioMatrixResult:
+    """Load an explicit EXIOBASE matrix-result object from the DOI-checked source zip.
 
-    This is the zip-only, sparse, low-disk loader used by eigenmode workflows.
-    It reads only x.txt, Z.txt, and Y.txt from the EXIOBASE zip, computes
-    sparse technical coefficients as A_ij = Z_ij / x_j, and returns A/x/y. It never writes
-    fast pickles, parsed text caches, compact matrix caches, or deletes the zip.
+    Phase 3 intentionally keeps this provider-specific and backward-compatible:
+    callers can request ``matrix='A'``, ``'Z'``, or ``'both'`` and
+    ``final_demand='summed'``, ``'matrix'``, or ``'none'``.  The legacy
+    ``load_mrio_matrices`` tuple API delegates here with ``A`` plus summed
+    final demand.
     """
+    dataset_norm = str(dataset).strip().lower()
+    if dataset_norm not in {"exiobase", "exiobase3"}:
+        raise NotImplementedError("load_mrio_matrix_result currently supports only dataset='exiobase'.")
     system = str(exio_system).strip().lower()
     if system not in {"pxp", "ixi"}:
         raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
@@ -998,6 +1165,8 @@ def load_mrio_matrices(
     if delete_source_zip_after_parse:
         raise ValueError("delete_source_zip_after_parse=True is disabled; the EXIOBASE source zip must be retained.")
 
+    matrix_request = _normalize_exio_matrix_request(matrix)
+    final_demand_request = _normalize_final_demand_request(final_demand)
     paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
     data_dir = paths["data_dir"]
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -1017,20 +1186,66 @@ def load_mrio_matrices(
     )
 
     if verbose:
-        print(f"Streaming EXIOBASE x/Z/Y directly from {zip_path} (zip-only, no derived cache writes) ...")
-    A_direct, x_direct, y_direct, basis_index_direct, metadata_direct = _load_exio_matrices_direct_from_zip(zip_path)
-    metadata_direct = dict(metadata_direct)
-    metadata_direct.update(
-        {
-            "system": system,
-            "year": int(year),
-            "exio_doi": _normalize_exiobase_doi(doi),
-            "cache_status": "streamed_direct_from_zip",
-            "zip_only_cache": True,
-            "cache_matrices": False,
-            "source_zip_retained": True,
-        }
+        print(
+            f"Streaming EXIOBASE matrix result from {zip_path} "
+            f"(matrix={matrix_request}, final_demand={final_demand_request}; zip-only, no derived cache writes) ..."
+        )
+    result = _load_exio_matrix_result_direct_from_zip(
+        zip_path,
+        year=int(year),
+        system=system,
+        doi=str(doi),
+        matrix=matrix_request,
+        final_demand=final_demand_request,
     )
     if calc_all and verbose:
-        print("calc_all is ignored for load_mrio_matrices(); sparse A/x/y are returned directly.")
-    return A_direct, x_direct, y_direct, basis_index_direct, metadata_direct
+        print("calc_all is ignored for load_mrio_matrix_result(); requested sparse/direct objects are returned.")
+    return result
+
+
+def load_mrio_matrices(
+    year: int,
+    *,
+    force_download: bool = False,
+    data_root: str | Path | None = None,
+    calc_all: bool = False,
+    verbose: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
+    delete_source_zip_after_parse: bool = False,
+    exio_system: str = "pxp",
+    cache_matrices: bool = False,
+    read_existing_cache: bool = False,
+) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
+    """Backward-compatible tuple wrapper returning A/x/summed-y/index/metadata."""
+    result = load_mrio_matrix_result(
+        year=int(year),
+        dataset="exiobase",
+        matrix="A",
+        final_demand="summed",
+        force_download=force_download,
+        data_root=data_root,
+        calc_all=calc_all,
+        verbose=verbose,
+        allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads,
+        show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb,
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+        doi=str(doi),
+        delete_source_zip_after_parse=delete_source_zip_after_parse,
+        exio_system=exio_system,
+        cache_matrices=cache_matrices,
+        read_existing_cache=read_existing_cache,
+    )
+    if result.A is None:
+        raise RuntimeError("Internal error: legacy load_mrio_matrices expected A but result.A is None.")
+    if not isinstance(result.y, pd.Series):
+        raise RuntimeError("Internal error: legacy load_mrio_matrices expected summed final-demand Series.")
+    return result.A, result.x, result.y, result.basis_index, dict(result.metadata)

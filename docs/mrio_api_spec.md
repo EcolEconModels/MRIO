@@ -67,10 +67,10 @@ Current compatibility contract:
 - Default behavior must not break existing SDA callers.
 - For EXIOBASE, this remains zip-streaming and does not write derived matrix caches.
 
-### Future matrix result object
+### Matrix result object
 
 ```python
-load_mrio_matrix_result(source, request) -> MatrixResult
+load_mrio_matrix_result(...) -> MrioMatrixResult
 ```
 
 Draft result:
@@ -131,3 +131,10 @@ They should call the same provider/source-boundary machinery as generic APIs and
 `load_exiobase3_region_slice(...)` is the EXIOBASE-specific implementation of the future generic region-slice API. Its default behavior is direct source-zip streaming: it ensures the requested EXIOBASE zip through the DOI/version-checked source boundary, reads only `x.txt`, `Z.txt`, and `Y.txt`, and returns an in-memory `ExioRegionSlice`. It must not call the full EXIOBASE `load_mrio`/`pymrio.IOSystem` path in the default region-slice workflow.
 
 Derived region-slice pickle caches are optional and disabled by default. When enabled, cache metadata must include `year`, `system`, `region`, `flow`, and `exio_doi`, and a request with mismatched metadata must fail rather than silently reusing stale slices.
+
+
+## Phase 3 EXIOBASE matrix-result contract
+
+`load_mrio_matrix_result(...)` is the Phase 3 structured result API for EXIOBASE zip-stream reads. It accepts `matrix="A"`, `"Z"`, or `"both"` and `final_demand="summed"`, `"matrix"`, or `"none"`. The existing `load_mrio_matrices(...)` API remains stable and delegates to this object with `matrix="A"` and `final_demand="summed"`.
+
+The Phase 3 implementation is intentionally not yet a full provider registry. It keeps EXIOBASE DOI/system handling in the EXIOBASE source boundary while making matrix-result requests explicit and testable.
