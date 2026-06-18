@@ -3,13 +3,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import numpy as np
 from pathlib import Path
 from typing import Iterable, Sequence, cast
+import zipfile
 
 import pandas as pd
 
 from ecolecon_mrio.exio_concordance import load_pymrio_exio3_sectors
-from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
+from ecolecon_mrio.data import (
+    DEFAULT_EXIOBASE3_DOI,
+    _normalize_exiobase_doi,
+    _numeric_tail_from_exio_line,
+    _open_exio_zip_text,
+)
 
 try:
     import pymrio
@@ -28,6 +35,23 @@ class ExioRegionSlice:
     x_region: pd.Series
     source_zip: Path
     flow: str = "domestic"
+
+    def __post_init__(self) -> None:
+        """Keep single-region sector axes consistently named.
+
+        Direct zip streaming and legacy pickle slices may construct identical values
+        with different pandas Index.name metadata.  Downstream code treats these
+        axes as sector axes, so normalize only the row/index names here without
+        changing values or column labels.
+        """
+
+        if not isinstance(self.sectors, pd.MultiIndex) and self.sectors.name != "sector":
+            object.__setattr__(self, "sectors", pd.Index(self.sectors, name="sector"))
+        for frame in (self.Z_domestic, self.Y_region):
+            if not isinstance(frame.index, pd.MultiIndex) and frame.index.name != "sector":
+                frame.index = pd.Index(frame.index, name="sector")
+        if not isinstance(self.x_region.index, pd.MultiIndex) and self.x_region.index.name != "sector":
+            self.x_region.index = pd.Index(self.x_region.index, name="sector")
 
 
 def _coerce_single_column_df_to_series(x: pd.Series | pd.DataFrame, *, name: str) -> pd.Series:
@@ -104,6 +128,284 @@ def _code_index(index: pd.Index, *, label_to_code: dict[str, str]) -> pd.Index:
         raise ValueError(f"Could not map EXIO sector labels to codes: {missing[:10]!r}")
     return pd.Index([label_to_code[label] for label in labels])
 
+
+
+def _read_region_x_from_exio_zip(*, zip_path: Path, region: str) -> pd.Series:
+    """Read producer-side x for one EXIOBASE region directly from x.txt."""
+    with zipfile.ZipFile(zip_path) as zf:
+        with _open_exio_zip_text(zf, "x.txt") as fh:
+            frame = pd.read_csv(fh, sep="\t")
+    required = {"region", "sector"}
+    if not required.issubset(frame.columns):
+        raise ValueError("EXIOBASE x.txt must contain region and sector columns.")
+    value_col = "indout" if "indout" in frame.columns else frame.columns[-1]
+    region_mask = frame["region"].astype(str) == str(region)
+    if not bool(region_mask.any()):
+        raise ValueError(f"EXIOBASE x.txt has no rows for region={region!r}.")
+    region_frame = frame.loc[region_mask, ["sector", value_col]].copy()
+    values = pd.to_numeric(region_frame[value_col], errors="coerce").fillna(0.0).astype("float64")
+    sectors = pd.Index(region_frame["sector"].astype(str), name="sector")
+    return pd.Series(values.to_numpy(dtype=float), index=sectors, name="x_region")
+
+
+def _exio_table_header_for_region(
+    fh,
+    *,
+    table_name: str,
+    region: str,
+) -> tuple[list[int], list[str]]:
+    """Return zero-based numeric-column positions and labels for destination region columns."""
+    regions = next(fh).rstrip("\n\r").split("\t")[2:]
+    labels = next(fh).rstrip("\n\r").split("\t")[2:]
+    next(fh)
+    if len(regions) != len(labels):
+        raise ValueError(
+            f"EXIOBASE {table_name} column-header length mismatch: "
+            f"regions={len(regions)}, labels={len(labels)}."
+        )
+    keep_positions = [idx for idx, col_region in enumerate(regions) if str(col_region) == str(region)]
+    if not keep_positions:
+        raise ValueError(f"EXIOBASE {table_name} has no destination/final-demand columns for region={region!r}.")
+    keep_labels = [str(labels[idx]) for idx in keep_positions]
+    return keep_positions, keep_labels
+
+
+def _row_belongs_to_flow(*, row_region: str, region: str, flow: str) -> bool:
+    if flow == "domestic":
+        return str(row_region) == str(region)
+    if flow == "imports":
+        return str(row_region) != str(region)
+    if flow == "total":
+        return True
+    raise ValueError(f"Unsupported normalized flow {flow!r}")
+
+
+def _read_region_use_table_from_exio_zip(
+    *,
+    zip_path: Path,
+    member_name: str,
+    region: str,
+    flow: str,
+) -> pd.DataFrame:
+    """Stream a Z.txt or Y.txt use block for one destination region from the source zip."""
+    flow_norm = _normalize_flow(flow)
+    with zipfile.ZipFile(zip_path) as zf:
+        with _open_exio_zip_text(zf, member_name) as fh:
+            keep_positions, keep_labels = _exio_table_header_for_region(
+                fh,
+                table_name=member_name,
+                region=region,
+            )
+            acc: dict[str, np.ndarray] = {}
+            row_order: list[str] = []
+            max_keep = max(keep_positions)
+            for row_idx, line in enumerate(fh):
+                try:
+                    row_region, row_sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                except ValueError:
+                    raise ValueError(f"EXIOBASE {member_name} malformed row at position {row_idx}") from None
+                if not _row_belongs_to_flow(row_region=row_region, region=region, flow=flow_norm):
+                    continue
+                values = _numeric_tail_from_exio_line(line)
+                if values.size <= max_keep:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} row width mismatch at row {row_idx}: "
+                        f"got {values.size}, need column {max_keep + 1}."
+                    )
+                sector = str(row_sector)
+                if sector not in acc:
+                    acc[sector] = np.zeros(len(keep_positions), dtype=float)
+                    row_order.append(sector)
+                acc[sector] += values[keep_positions]
+    if not row_order:
+        raise ValueError(
+            f"EXIOBASE {member_name} produced an empty region slice for "
+            f"region={region!r}, flow={flow_norm!r}."
+        )
+    data = np.vstack([acc[sector] for sector in row_order])
+    return pd.DataFrame(
+        data,
+        index=pd.Index(row_order, name="sector"),
+        columns=pd.Index(keep_labels),
+        dtype="float64",
+    )
+
+
+def _load_exio_region_slice_direct_from_zip(
+    *,
+    year: int,
+    system: str,
+    region: str,
+    source_zip: Path,
+    flow: str,
+) -> ExioRegionSlice:
+    """Build an EXIOBASE region use slice directly from x.txt/Z.txt/Y.txt."""
+    flow_norm = _normalize_flow(flow)
+    Z_use = _read_region_use_table_from_exio_zip(
+        zip_path=source_zip,
+        member_name="Z.txt",
+        region=region,
+        flow=flow_norm,
+    )
+    Y_use = _read_region_use_table_from_exio_zip(
+        zip_path=source_zip,
+        member_name="Y.txt",
+        region=region,
+        flow=flow_norm,
+    )
+    # Z determines the sector basis for downstream input/sales profiles. Y should
+    # use the same row sector basis; missing final-demand rows are explicit zeros.
+    Y_use = Y_use.reindex(pd.Index(Z_use.index.astype(str)), fill_value=0.0)
+    x_output = _read_region_x_from_exio_zip(zip_path=source_zip, region=region)
+
+    label_to_code = _exio_label_to_code_lookup(system)
+    Z_use = Z_use.copy()
+    Y_use = Y_use.copy()
+    Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code)
+    Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
+    Y_use.index = _code_index(Y_use.index, label_to_code=label_to_code)
+    x_output = x_output.copy()
+    x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
+
+    sectors = pd.Index(Z_use.index.astype(str), name="sector")
+    x_region = x_output.reindex(sectors)
+    missing_x = list(x_region.index[x_region.isna()])
+    if missing_x:
+        raise ValueError(f"EXIOBASE x.txt is missing output values for slice sectors: {missing_x[:10]!r}")
+    return ExioRegionSlice(
+        year=int(year),
+        system=str(system),
+        region=str(region),
+        sectors=sectors,
+        Z_domestic=Z_use.astype("float64"),
+        Y_region=Y_use.astype("float64"),
+        x_region=x_region.astype("float64"),
+        source_zip=source_zip,
+        flow=flow_norm,
+    )
+
+
+def _region_slice_cache_paths(
+    *,
+    cache_root: Path,
+    year: int,
+    region: str,
+    system: str,
+    flow: str,
+) -> dict[str, Path]:
+    flow_norm = _normalize_flow(flow)
+    slice_dir = cache_root / f"exiobase3_{int(year)}" / "slices" / str(region) / str(system)
+    if flow_norm == "domestic":
+        z_name, y_name = "Z_domestic.pkl", "Y_region.pkl"
+    elif flow_norm == "imports":
+        z_name, y_name = "Z_imports.pkl", "Y_imports.pkl"
+    else:
+        z_name, y_name = "Z_total.pkl", "Y_total.pkl"
+    return {
+        "dir": slice_dir,
+        "z": slice_dir / z_name,
+        "y": slice_dir / y_name,
+        "x": slice_dir / "x_region.pkl",
+        "meta": slice_dir / "meta.json",
+    }
+
+
+def _read_cached_region_slice_if_valid(
+    *,
+    cache_root: Path,
+    year: int,
+    region: str,
+    system: str,
+    flow: str,
+    doi: str,
+    source_zip: Path,
+) -> ExioRegionSlice | None:
+    paths = _region_slice_cache_paths(cache_root=cache_root, year=year, region=region, system=system, flow=flow)
+    required_paths = [paths["z"], paths["y"], paths["x"], paths["meta"]]
+    if not any(path.exists() for path in required_paths):
+        return None
+    if not all(path.exists() for path in required_paths):
+        return None
+    try:
+        meta = json.loads(paths["meta"].read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Cached EXIOBASE region slice metadata is not readable: {paths['meta']}") from exc
+    flow_norm = _normalize_flow(flow)
+    expected = {
+        "year": int(year),
+        "system": str(system),
+        "region": str(region),
+        "flow": flow_norm,
+        "exio_doi": _normalize_exiobase_doi(doi),
+    }
+    actual = {
+        "year": int(meta.get("year", -1)),
+        "system": str(meta.get("system", "")),
+        "region": str(meta.get("region", "")),
+        "flow": _normalize_flow(str(meta.get("flow", "domestic"))),
+        "exio_doi": _normalize_exiobase_doi(str(meta.get("exio_doi", ""))),
+    }
+    if actual != expected:
+        raise ValueError(
+            "Cached EXIOBASE region slice metadata does not match the requested source. "
+            f"Expected {expected}; found {actual}. Use force_rebuild_slice=True or cache_region_slice=False."
+        )
+    label_to_code = _exio_label_to_code_lookup(system)
+    Z_use = cast(pd.DataFrame, pd.read_pickle(paths["z"])).copy()
+    Y_use = cast(pd.DataFrame, pd.read_pickle(paths["y"])).copy()
+    x_output = _coerce_single_column_df_to_series(pd.read_pickle(paths["x"]), name="x_region").copy()
+    Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code)
+    Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
+    Y_use.index = _code_index(Y_use.index, label_to_code=label_to_code)
+    x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
+    sectors = pd.Index(Z_use.index.astype(str), name="sector")
+    return ExioRegionSlice(
+        year=int(year),
+        system=str(system),
+        region=str(region),
+        sectors=sectors,
+        Z_domestic=Z_use.astype("float64"),
+        Y_region=Y_use.astype("float64"),
+        x_region=x_output.reindex(sectors).astype("float64"),
+        source_zip=source_zip,
+        flow=flow_norm,
+    )
+
+
+def _write_region_slice_cache(
+    *,
+    cache_root: Path,
+    region_slice: ExioRegionSlice,
+    doi: str,
+) -> None:
+    paths = _region_slice_cache_paths(
+        cache_root=cache_root,
+        year=region_slice.year,
+        region=region_slice.region,
+        system=region_slice.system,
+        flow=region_slice.flow,
+    )
+    paths["dir"].mkdir(parents=True, exist_ok=True)
+    region_slice.Z_domestic.to_pickle(paths["z"])
+    region_slice.Y_region.to_pickle(paths["y"])
+    region_slice.x_region.to_pickle(paths["x"])
+    paths["meta"].write_text(
+        json.dumps(
+            {
+                "year": int(region_slice.year),
+                "system": str(region_slice.system),
+                "region": str(region_slice.region),
+                "flow": str(region_slice.flow),
+                "exio_doi": _normalize_exiobase_doi(doi),
+                "source_zip": str(region_slice.source_zip),
+                "cache_kind": "exiobase_region_slice_optional_pickle",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 def build_exio_region_use_slice_from_mrio(
     *,
@@ -214,6 +516,7 @@ def load_exiobase3(
         raise RuntimeError(f"Failed to load EXIOBASE 3 for year={year}. {hint}") from e
 
 
+
 def load_exiobase3_region_slice(
     *,
     year: int,
@@ -222,15 +525,17 @@ def load_exiobase3_region_slice(
     flow: str = "domestic",
     force_download: bool = False,
     force_rebuild_slice: bool = False,
+    cache_region_slice: bool = False,
     cache_root: str | Path | None = None,
     doi: str = DEFAULT_EXIOBASE3_DOI,
     verbose: bool = False,
 ) -> ExioRegionSlice:
     """
-    Load (and cache) a single-region slice needed for domestic split profiles.
+    Load a single-region EXIOBASE use slice.
 
-    Caches the chosen use slice (`Z_domestic`, `Y_region`) together with producer-side `x_region`
-    to avoid re-loading the full MRIO.
+    By default this streams x.txt, Z.txt, and Y.txt directly from the DOI-checked
+    source zip and writes no derived slice cache. Set cache_region_slice=True only
+    when a caller explicitly wants optional pickle caching of the derived slice.
     """
     if cache_root is None:
         from ecolecon_mrio.data import default_data_root
@@ -239,21 +544,6 @@ def load_exiobase3_region_slice(
     cache_root = Path(cache_root)
     flow_norm = _normalize_flow(flow)
 
-    slice_dir = cache_root / f"exiobase3_{year}" / "slices" / region / system
-    slice_dir.mkdir(parents=True, exist_ok=True)
-
-    if flow_norm == "domestic":
-        z_path = slice_dir / "Z_domestic.pkl"
-        y_path = slice_dir / "Y_region.pkl"
-    elif flow_norm == "imports":
-        z_path = slice_dir / "Z_imports.pkl"
-        y_path = slice_dir / "Y_imports.pkl"
-    else:  # total
-        z_path = slice_dir / "Z_total.pkl"
-        y_path = slice_dir / "Y_total.pkl"
-    x_path = slice_dir / "x_region.pkl"
-    meta_path = slice_dir / "meta.json"
-
     from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_cache_paths
 
     exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
@@ -269,111 +559,40 @@ def load_exiobase3_region_slice(
         verbose=verbose,
     )
 
-    if not force_rebuild_slice and z_path.exists() and y_path.exists():
-        if verbose:
-            print(f"Loading cached EXIOBASE region slice from {slice_dir} [flow={flow_norm}] ...")
-        Z_use = cast(pd.DataFrame, pd.read_pickle(z_path))
-        Y_use = cast(pd.DataFrame, pd.read_pickle(y_path))
-        label_to_code = _exio_label_to_code_lookup(system)
-        Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code)
-        Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
-        Y_use.index = _code_index(Y_use.index, label_to_code=label_to_code)
-        sectors = pd.Index(Z_use.index.astype(str))
-        if x_path.exists():
-            x_output = _coerce_single_column_df_to_series(pd.read_pickle(x_path), name="x_region").astype("float64")
-            x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
-        else:
-            if verbose:
-                print(f"Cached slice missing {x_path.name}; rebuilding producer-side output vector ...")
-            mrio = load_exiobase3(
-                year,
-                system=system,
-                force_download=force_download,
-                cache_root=cache_root,
-                calc_all=False,
-                verbose=verbose,
-            )
-            x_output = _compute_region_output_from_mrio(Z=mrio.Z, Y=mrio.Y, region=region)
-            x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
-
-        Z_use.to_pickle(z_path)
-        Y_use.to_pickle(y_path)
-        x_output.to_pickle(x_path)
-        return ExioRegionSlice(
+    if cache_region_slice and not force_rebuild_slice:
+        cached = _read_cached_region_slice_if_valid(
+            cache_root=cache_root,
             year=year,
-            system=system,
             region=region,
-            sectors=sectors,
-            Z_domestic=Z_use,
-            Y_region=Y_use,
-            x_region=x_output.reindex(sectors).astype("float64"),
-            source_zip=source_zip,
+            system=system,
             flow=flow_norm,
+            doi=doi,
+            source_zip=source_zip,
         )
+        if cached is not None:
+            if verbose:
+                print(
+                    f"Loading cached EXIOBASE region slice for region={region} year={year} "
+                    f"system={system} flow={flow_norm} ..."
+                )
+            return cached
 
     if verbose:
+        cache_msg = "with optional slice cache write" if cache_region_slice else "without slice cache write"
         print(
-            f"Building EXIOBASE region slice for region={region} year={year} system={system} "
-            f"(requires loading the full MRIO once)..."
+            f"Streaming EXIOBASE region slice directly from {source_zip.name} "
+            f"for region={region} year={year} system={system} flow={flow_norm} ({cache_msg}) ..."
         )
-    mrio = load_exiobase3(
-        year,
-        system=system,
-        force_download=force_download,
-        cache_root=cache_root,
-        calc_all=False,
-        verbose=verbose,
-    )
-
-    Z = mrio.Z
-    Y = mrio.Y
-
-    if not isinstance(Z.index, pd.MultiIndex) or not isinstance(Z.columns, pd.MultiIndex):
-        raise ValueError("Expected EXIOBASE Z to have MultiIndex rows/cols (region, sector).")
-    if not isinstance(Y.index, pd.MultiIndex) or not isinstance(Y.columns, pd.MultiIndex):
-        raise ValueError("Expected EXIOBASE Y to have MultiIndex rows and columns.")
-
-    slice_obj = build_exio_region_use_slice_from_mrio(
+    region_slice = _load_exio_region_slice_direct_from_zip(
         year=year,
         system=system,
         region=region,
-        Z=Z,
-        Y=Y,
         source_zip=source_zip,
         flow=flow_norm,
     )
-
-    if verbose:
-        print(f"Writing EXIOBASE region slice cache to {slice_dir} ...")
-    label_to_code = _exio_label_to_code_lookup(system)
-    slice_obj = ExioRegionSlice(
-        year=slice_obj.year,
-        system=slice_obj.system,
-        region=slice_obj.region,
-        sectors=_code_index(slice_obj.sectors, label_to_code=label_to_code),
-        Z_domestic=slice_obj.Z_domestic.rename(index=label_to_code, columns=label_to_code),
-        Y_region=slice_obj.Y_region.rename(index=label_to_code),
-        x_region=slice_obj.x_region.rename(index=label_to_code),
-        source_zip=slice_obj.source_zip,
-        flow=slice_obj.flow,
-    )
-    slice_obj.Z_domestic.to_pickle(z_path)
-    slice_obj.Y_region.to_pickle(y_path)
-    slice_obj.x_region.to_pickle(x_path)
-    meta_path.write_text(
-        json.dumps(
-            {
-                "year": int(year),
-                "system": str(system),
-                "region": str(region),
-                "flow": flow_norm,
-                "exio_doi": str(doi),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    return slice_obj
+    if cache_region_slice:
+        _write_region_slice_cache(cache_root=cache_root, region_slice=region_slice, doi=doi)
+    return region_slice
 
 
 def load_exiobase3_region_slices(
@@ -381,14 +600,14 @@ def load_exiobase3_region_slices(
     year: int,
     regions: Sequence[str],
     system: str = "pxp",
+    flow: str = "domestic",
     force_download: bool = False,
     force_rebuild_slice: bool = False,
+    cache_region_slice: bool = False,
     cache_root: str | Path | None = None,
     doi: str = DEFAULT_EXIOBASE3_DOI,
 ) -> dict[str, ExioRegionSlice]:
-    """
-    Load (and cache) multiple region slices, ensuring the full MRIO is loaded at most once.
-    """
+    """Load multiple region slices through the direct-from-zip region-slice boundary."""
     if cache_root is None:
         from ecolecon_mrio.data import default_data_root
 
@@ -397,92 +616,20 @@ def load_exiobase3_region_slices(
     regions = list(dict.fromkeys(map(str, regions)))
     if not regions:
         return {}
-
-    def _slice_paths(r: str) -> tuple[Path, Path, Path, Path]:
-        slice_dir = cache_root / f"exiobase3_{year}" / "slices" / r / system
-        return (
-            slice_dir / "Z_domestic.pkl",
-            slice_dir / "Y_region.pkl",
-            slice_dir / "x_region.pkl",
-            slice_dir / "meta.json",
-        )
-
-    missing_any = False
-    if force_rebuild_slice:
-        missing_any = True
-    else:
-        for r in regions:
-            z_path, y_path, x_path, meta_path = _slice_paths(r)
-            if not (z_path.exists() and y_path.exists() and x_path.exists()):
-                missing_any = True
-                break
-
-    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_cache_paths
-
-    exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
-    data_dir = exio_paths["data_dir"]
-    data_dir.mkdir(parents=True, exist_ok=True)
-    source_zip = ensure_exiobase_year_zip(
-        year,
-        data_dir=data_dir,
-        system=system,
-        force_download=force_download,
-        allow_download_missing=True,
-        doi=str(doi),
-    )
-
-    if missing_any:
-        mrio = load_exiobase3(
-            year,
-            system=system,
-            force_download=force_download,
-            cache_root=cache_root,
-            calc_all=False,
-        )
-        Z = mrio.Z
-        Y = mrio.Y
-        x = mrio.x
-
-        if not isinstance(Z.index, pd.MultiIndex) or not isinstance(Z.columns, pd.MultiIndex):
-            raise ValueError("Expected EXIOBASE Z to have MultiIndex rows/cols (region, sector).")
-        if not isinstance(Y.index, pd.MultiIndex) or not isinstance(Y.columns, pd.MultiIndex):
-            raise ValueError("Expected EXIOBASE Y to have MultiIndex rows and columns.")
-
-        for r in regions:
-            z_path, y_path, x_path, meta_path = _slice_paths(r)
-            z_path.parent.mkdir(parents=True, exist_ok=True)
-            Z_rr = Z.xs(r, level=0, axis=0).xs(r, level=0, axis=1)
-            Y_r = Y.xs(r, level=0, axis=0).xs(r, level=0, axis=1)
-            x_r = x.xs(r, level=0, axis=0)
-            Z_rr.to_pickle(z_path)
-            Y_r.to_pickle(y_path)
-            x_r.to_pickle(x_path)
-            meta_path.write_text(
-                json.dumps(
-                    {
-                        "year": int(year),
-                        "system": str(system),
-                        "region": str(r),
-                        "exio_doi": str(doi),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
-    out: dict[str, ExioRegionSlice] = {}
-    for r in regions:
-        out[r] = load_exiobase3_region_slice(
+    return {
+        region: load_exiobase3_region_slice(
             year=year,
-            region=r,
+            region=region,
             system=system,
+            flow=flow,
             force_download=force_download,
-            force_rebuild_slice=False,
+            force_rebuild_slice=force_rebuild_slice,
+            cache_region_slice=cache_region_slice,
             cache_root=cache_root,
             doi=doi,
         )
-    return out
-
+        for region in regions
+    }
 
 def select_by_patterns(values: Iterable[str], patterns: Sequence[str]) -> list[str]:
     patterns_l = [p.lower() for p in patterns]

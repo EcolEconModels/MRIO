@@ -125,3 +125,9 @@ They should call the same provider/source-boundary machinery as generic APIs and
 - No change to region-slice implementation yet.
 - No change to the `load_mrio_matrices()` return shape.
 - No EXIOBASE full-object re-enable.
+
+## EXIOBASE region slice contract
+
+`load_exiobase3_region_slice(...)` is the EXIOBASE-specific implementation of the future generic region-slice API. Its default behavior is direct source-zip streaming: it ensures the requested EXIOBASE zip through the DOI/version-checked source boundary, reads only `x.txt`, `Z.txt`, and `Y.txt`, and returns an in-memory `ExioRegionSlice`. It must not call the full EXIOBASE `load_mrio`/`pymrio.IOSystem` path in the default region-slice workflow.
+
+Derived region-slice pickle caches are optional and disabled by default. When enabled, cache metadata must include `year`, `system`, `region`, `flow`, and `exio_doi`, and a request with mismatched metadata must fail rather than silently reusing stale slices.
