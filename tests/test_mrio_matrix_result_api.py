@@ -4,6 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from scipy.sparse import csr_matrix
@@ -40,6 +41,13 @@ def _write_tiny_exio_zip(path: Path) -> None:
         )
 
 
+
+
+def _sparse_scalar(matrix: csr_matrix, row: int, col: int) -> float:
+    """Return one sparse entry as a Python float for typed test assertions."""
+    dense = np.asarray(matrix.toarray(), dtype=float)
+    return float(dense[row, col])
+
 def _prepare_cache_root(tmp_path: Path) -> Path:
     data_dir = tmp_path / "exiobase3_2020"
     _write_tiny_exio_zip(data_dir / "IOT_2020_pxp.zip")
@@ -64,9 +72,10 @@ def test_matrix_result_can_return_z_and_full_final_demand_matrix(tmp_path: Path)
 
     assert isinstance(result, MrioMatrixResult)
     assert result.A is None
-    assert isinstance(result.Z, csr_matrix)
-    assert result.Z.shape == (2, 2)
-    assert float(result.Z[0, 1]) == 2.0
+    Z_result = result.Z
+    assert isinstance(Z_result, csr_matrix)
+    assert Z_result.shape == (2, 2)
+    assert _sparse_scalar(Z_result, 0, 1) == 2.0
     assert isinstance(result.y, pd.DataFrame)
     assert list(result.y.columns) == [("AT", "HFCE"), ("AT", "GFCF")]
     assert float(result.y.loc[("AT", "A"), ("AT", "HFCE")]) == 10.0
@@ -88,11 +97,13 @@ def test_matrix_result_can_return_a_and_z_without_mutating_z(tmp_path: Path) -> 
         doi=DEFAULT_EXIOBASE3_DOI,
     )
 
-    assert isinstance(result.A, csr_matrix)
-    assert isinstance(result.Z, csr_matrix)
+    A_result = result.A
+    Z_result = result.Z
+    assert isinstance(A_result, csr_matrix)
+    assert isinstance(Z_result, csr_matrix)
     assert result.y is None
-    assert float(result.Z[0, 1]) == 2.0
-    assert float(result.A[0, 1]) == pytest.approx(2.0 / 200.0)
+    assert _sparse_scalar(Z_result, 0, 1) == 2.0
+    assert _sparse_scalar(A_result, 0, 1) == pytest.approx(2.0 / 200.0)
     assert result.metadata["matrix_request"] == "both"
     assert result.metadata["final_demand"] == "none"
     assert result.metadata["has_A"] is True
