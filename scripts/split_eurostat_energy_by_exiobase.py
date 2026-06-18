@@ -591,7 +591,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.dump_exio_sectors_csv is not None or args.write_mapping_template_csv is not None:
         _vprint(args.verbose, "Calling: load_exiobase3_region_slice(...)")
-        doi=args.exio_doi,
         t = _Timer()
         exio_slice = load_exiobase3_region_slice(
             year=args.exio_year,
@@ -729,7 +728,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if exio_flow in exio_slices:
                     continue
                 _vprint(args.verbose, f"Calling: load_exiobase3_region_slice(..., flow={exio_flow})")
-                doi=args.exio_doi,
                 t = _Timer()
                 exio_slices[exio_flow] = load_exiobase3_region_slice(
                     year=args.exio_year,

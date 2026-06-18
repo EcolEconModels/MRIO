@@ -112,3 +112,26 @@ def test_existing_exiobase_zip_rejects_missing_download_log_doi(tmp_path: Path) 
             allow_download_missing=False,
             doi="10.5281/zenodo.20051562",
         )
+
+
+def test_split_script_has_no_standalone_exio_doi_tuple_assignments() -> None:
+    script = Path("scripts/split_eurostat_energy_by_exiobase.py")
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    bad_lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "doi" for target in node.targets):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Tuple) or len(value.elts) != 1:
+            continue
+        elt = value.elts[0]
+        if (
+            isinstance(elt, ast.Attribute)
+            and elt.attr == "exio_doi"
+            and isinstance(elt.value, ast.Name)
+            and elt.value.id == "args"
+        ):
+            bad_lines.append(node.lineno)
+    assert bad_lines == []
