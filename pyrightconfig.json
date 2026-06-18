@@ -1,0 +1,21 @@
+{
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "build",
+    "dist",
+    "data",
+    "tmp"
+  ],
+  "extraPaths": [
+    "src"
+  ],
+  "include": [
+    "src",
+    "scripts",
+    "tests"
+  ],
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "none",
+  "typeCheckingMode": "standard"
+}
