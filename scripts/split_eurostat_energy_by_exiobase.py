@@ -123,7 +123,13 @@ SPLIT_OUTPUT_NAME_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _split_info_payload(result, *, variant_dim: str | None = None, variant_value: str | None = None) -> dict[str, object]:
+def _split_info_payload(
+    result,
+    *,
+    variant_dim: str | None = None,
+    variant_value: str | None = None,
+    **extra_info: object,
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "method": result.balancing_method,
         "is_ras_balanced": False,
@@ -138,6 +144,7 @@ def _split_info_payload(result, *, variant_dim: str | None = None, variant_value
         payload["variant_dim"] = variant_dim
     if variant_value is not None:
         payload["variant_value"] = variant_value
+    payload.update({str(key): value for key, value in extra_info.items() if value is not None})
     return payload
 
 
