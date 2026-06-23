@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
   "pymrio",
   "pandas",
+  "openpyxl",
   "numpy",
   "matplotlib",
   "seaborn",

@@ -209,16 +209,18 @@ def read_exio20_to_exio30_bridge(zf: zipfile.ZipFile, member: str) -> pd.DataFra
     missing = required.difference(df.columns)
     if missing:
         raise ValueError(f"{member} missing columns: {sorted(missing)}")
-    base = df.rename(
+    renamed = df.rename(
         columns={
             "EXIOBASE 2 Name": "exio20_product_name",
             "EXIOBASE 2 code": "exio20_product_code",
             "EXIOBASE 3 name": "exio3_product_name",
             "EXIOBASE 3 code": "exio3_product_code",
         }
-    )[
-        ["exio20_product_name", "exio20_product_code", "exio3_product_name", "exio3_product_code"]
-    ].copy()
+    )
+    base = cast(
+        pd.DataFrame,
+        renamed.loc[:, ["exio20_product_name", "exio20_product_code", "exio3_product_name", "exio3_product_code"]].copy(),
+    )
     for col in list(base.columns):
         base[str(col)] = _clean_string_series(base, str(col))
 
@@ -273,7 +275,8 @@ def build_mapping(concordances_zip: Path) -> tuple[pd.DataFrame, pd.DataFrame, d
         "iot_a64_divisions",
         "source_chain",
     ]
-    long_df = merged[long_cols].drop_duplicates().sort_values(
+    # pandas-stubs cannot represent this DataFrame.sort_values list-of-columns overload reliably.
+    long_df = merged[long_cols].drop_duplicates().sort_values(  # pyright: ignore[reportCallIssue]
         by=["exio3_product_code", "iot_a64_code", "nace2_code", "source_exio_code"]
     )
 
@@ -295,7 +298,10 @@ def build_mapping(concordances_zip: Path) -> tuple[pd.DataFrame, pd.DataFrame, d
     collapsed["is_multi_target"] = collapsed["n_iot_a64_targets_for_exio3_product"] > 1
     collapsed["equal_split_weight_if_required"] = 1.0 / collapsed["n_iot_a64_targets_for_exio3_product"]
     collapsed["weight_status"] = "placeholder_equal_split_not_empirical"
-    collapsed = collapsed.sort_values(by=["exio3_product_code", "iot_a64_code"]).reset_index(drop=True)
+    # pandas-stubs cannot represent this DataFrame.sort_values list-of-columns overload reliably.
+    collapsed = collapsed.sort_values(  # pyright: ignore[reportCallIssue]
+        by=["exio3_product_code", "iot_a64_code"]
+    ).reset_index(drop=True)
 
     coverage = {
         "source_archive_sha256": sha256_file(concordances_zip),
