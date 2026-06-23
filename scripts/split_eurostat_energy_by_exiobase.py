@@ -847,10 +847,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     exio_out = exio_slice.x_region.astype("float64")
 
                     # Final-demand monetary totals by EXIO category (EUR)
-                    y_by_category = exio_slice.Y_region.sum(axis=0)
-                    if isinstance(y_by_category, pd.DataFrame):
-                        y_by_category = y_by_category.iloc[:, 0]
-                    y_by_category = y_by_category.astype("float64")
+                    y_by_category = exio_slice.Y_region.sum(axis=0).astype("float64")
 
                     exio_co2 = extract_exio_emissions_and_intensity(
                         container=exio_slice.source_zip,
