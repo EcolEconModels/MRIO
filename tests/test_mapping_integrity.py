@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportReturnType=false, reportGeneralTypeIssues=false, reportCallIssue=false
 from __future__ import annotations
 
 from pathlib import Path
@@ -47,21 +48,39 @@ def _active_targets_for(code: str, concordance: pd.DataFrame | None = None) -> s
     return set(concordance.loc[mask, "target_code"].astype(str).str.strip())
 
 
-def test_exio_concordance_covers_all_dictionary_codes_and_biofuels_map_to_c20() -> None:
+def _codes(df: pd.DataFrame) -> set[str]:
+    return set(df["code"].astype(str).str.strip())
+
+
+def test_legacy_exio_concordance_covers_all_dictionary_codes() -> None:
     exio_dict = _read_csv("exiobase_products_dictionary.csv")
     concordance = _active_rows(_read_csv("exio_to_eurostat_cpa_products.csv"))
 
-    exio_codes = set(exio_dict["code"].astype(str).str.strip())
+    exio_codes = _codes(exio_dict)
     mapped_codes = set(concordance["source_code"].astype(str).str.strip())
     missing = sorted(exio_codes - mapped_codes)
     assert not missing, f"Missing EXIO source codes in concordance: {missing[:20]}"
 
-    for code in ["p24.a", "p24.a.w", "p24.b", "p24.c", "p24.d", "p24.e", "p24.f", "p24.g", "p24.h", "p24.i"]:
-        assert _active_targets_for(code, concordance) == {"CPA_C20"}, f"{code} must map only to CPA_C20"
 
-    for code in ["p24.e", "p24.f", "p24.g", "p24.h", "p24.i"]:
-        targets = _active_targets_for(code, concordance)
-        assert "CPA_C21" not in targets, f"{code} must not map to CPA_C21; got {sorted(targets)!r}"
+def test_committed_cpa64_and_cpa65_target_dictionaries_have_explicit_real_estate_granularity() -> None:
+    cpa64 = _read_csv("eurostat_cpa64_products_dictionary.csv")
+    cpa65 = _read_csv("eurostat_cpa65_products_dictionary.csv")
+
+    cpa64_codes = _codes(cpa64)
+    cpa65_codes = _codes(cpa65)
+
+    assert len(cpa64_codes) == 64
+    assert len(cpa65_codes) == 65
+    assert "CPA_L68" in cpa64_codes
+    assert {"CPA_L68A", "CPA_L68B"}.isdisjoint(cpa64_codes)
+    assert "CPA_L68" not in cpa65_codes
+    assert {"CPA_L68A", "CPA_L68B"}.issubset(cpa65_codes)
+    assert cpa64_codes - {"CPA_L68"} == cpa65_codes - {"CPA_L68A", "CPA_L68B"}
+
+    for name, df in [("eurostat_cpa64_products_dictionary.csv", cpa64), ("eurostat_cpa65_products_dictionary.csv", cpa65)]:
+        assert df["code"].astype(str).str.strip().ne("").all(), f"{name} has blank code(s)"
+        assert df["label"].astype(str).str.strip().ne("").all(), f"{name} has blank label(s)"
+        assert df["description"].astype(str).str.strip().ne("").all(), f"{name} has blank description(s)"
 
 
 def test_eurostat_dictionary_snapshots_include_provenance_source() -> None:
@@ -91,6 +110,41 @@ def test_concordance_allocation_rules_are_explicit() -> None:
         if not allocation_rules.str.contains("split-by-output-share|derived-output-share-split", regex=True).any():
             bad_sources.append(source)
     assert not bad_sources, f"Sources with multiple active rows need explicit split allocation rules: {bad_sources[:20]}"
+
+
+def test_generated_cpa64_cpa65_concordance_outputs_if_present() -> None:
+    generated = MAPPINGS / "generated"
+    cpa64_path = generated / "exio_to_eurostat_cpa64_products_from_exiobase_concordances.csv"
+    cpa65_path = generated / "exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv"
+    if not cpa64_path.exists() or not cpa65_path.exists():
+        return
+
+    cpa64 = _active_rows(pd.read_csv(cpa64_path, dtype=str).fillna(""))
+    cpa65 = _active_rows(pd.read_csv(cpa65_path, dtype=str).fillna(""))
+    cpa64_dict_codes = _codes(_read_csv("eurostat_cpa64_products_dictionary.csv"))
+    cpa65_dict_codes = _codes(_read_csv("eurostat_cpa65_products_dictionary.csv"))
+
+    for name, frame, schema, dictionary_codes in [
+        ("CPA_64", cpa64, "CPA_64", cpa64_dict_codes),
+        ("CPA_65", cpa65, "CPA_65", cpa65_dict_codes),
+    ]:
+        assert set(frame["target_version"].astype(str).str.strip()) == {schema}
+        assert "weight" not in frame.columns, f"{name} generated mapping should not store static weights"
+        assert set(frame["target_code"].astype(str).str.strip()).issubset(dictionary_codes)
+        assert frame["source_code"].astype(str).str.strip().nunique() == 200
+        duplicated = frame.duplicated(subset=["source_code", "target_code"], keep=False)
+        assert not bool(duplicated.any()), f"{name} generated mapping has duplicate source/target rows"
+
+        target_counts = frame.groupby(frame["source_code"].astype(str).str.strip())["target_code"].nunique()
+        split_sources = set(target_counts[target_counts > 1].index.astype(str))
+        if split_sources:
+            split_rows = frame.loc[frame["source_code"].astype(str).str.strip().isin(split_sources)]
+            assert split_rows["allocation_rule"].astype(str).str.strip().eq("split-by-output-share").all()
+
+    assert "CPA_L68" in set(cpa64["target_code"].astype(str).str.strip())
+    assert {"CPA_L68A", "CPA_L68B"}.isdisjoint(set(cpa64["target_code"].astype(str).str.strip()))
+    assert "CPA_L68" not in set(cpa65["target_code"].astype(str).str.strip())
+    assert {"CPA_L68A", "CPA_L68B"}.issubset(set(cpa65["target_code"].astype(str).str.strip()))
 
 
 def test_p24_energy_and_fuel_relevant_block_stays_single_target_c20() -> None:
