@@ -11,6 +11,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.mapping_csv import resolve_weighted_mapping_frame
+
 
 DEFAULT_REL_THRESHOLD = 0.20
 DEFAULT_MIN_ABS_MEUR = 5.0
@@ -467,56 +469,20 @@ def _identity_metric_rows(
     return pd.DataFrame(rows)
 
 
-def _build_mapping_weights(mapping_df: pd.DataFrame) -> pd.DataFrame:
-    df = mapping_df.copy().fillna("")
-    required = {"source_code", "target_code"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Mapping frame missing required columns: {sorted(missing)}")
-
-    enabled = df["enabled"].map(_parse_boolish) if "enabled" in df.columns else pd.Series(True, index=df.index)
-    df = df[enabled].copy()
-    if df.empty:
-        raise ValueError("Mapping frame is empty after enabled filtering.")
-
-    df["source_code"] = df["source_code"].astype(str).str.strip()
-    df["target_code"] = df["target_code"].astype(str).str.strip()
-    if "source_label" not in df.columns:
-        df["source_label"] = ""
-    if "target_label" not in df.columns:
-        df["target_label"] = ""
-    df["source_label"] = df["source_label"].astype(str).str.strip()
-    df["target_label"] = df["target_label"].astype(str).str.strip()
-
-    if "weight" in df.columns:
-        df["raw_weight"] = pd.to_numeric(df["weight"], errors="coerce").fillna(0.0)
-        explicit_weight = True
-    elif "Share_used" in df.columns:
-        df["raw_weight"] = pd.to_numeric(df["Share_used"], errors="coerce").fillna(0.0)
-        explicit_weight = True
-    else:
-        df["raw_weight"] = 1.0
-        explicit_weight = False
-
-    agg_map: dict[str, Any] = {
-        "raw_weight": ("raw_weight", "sum"),
-        "source_label": ("source_label", _combine_texts),
-        "target_label": ("target_label", _combine_texts),
-    }
-    if "notes" in df.columns:
-        agg_map["notes"] = ("notes", _combine_texts)
-    grouped = df.groupby(["source_code", "target_code"], as_index=False).agg(**agg_map).copy()
-
-    if explicit_weight:
-        grouped["weight"] = grouped["raw_weight"]
-    else:
-        totals = grouped.groupby("source_code")["raw_weight"].transform("sum")
-        grouped["weight"] = np.where(totals > 0, grouped["raw_weight"] / totals, 0.0)
-
-    if "notes" not in grouped.columns:
-        grouped["notes"] = ""
-    return grouped.loc[:, ["source_code", "target_code", "weight", "source_label", "target_label", "notes"]].copy()
-
+def _build_mapping_weights(
+    mapping_df: pd.DataFrame,
+    *,
+    target_output_by_code: object | None = None,
+    target_output_by_target: object | None = None,
+) -> pd.DataFrame:
+    resolved = resolve_weighted_mapping_frame(
+        mapping_df,
+        target_output_by_code=target_output_by_code,
+        target_output_by_target=target_output_by_target,
+    )
+    if "notes" not in resolved.columns:
+        resolved["notes"] = ""
+    return resolved.loc[:, ["source_code", "target_code", "weight", "source_label", "target_label", "notes"]].copy()
 
 def _build_mapping_matrix(
     mapping_weights: pd.DataFrame,
@@ -1187,7 +1153,7 @@ def build_concordance_audit(
     exio_row_total, exio_col_total, exio_y_total = _source_metrics(exio_Z, exio_Y)
     euro_row_total, euro_col_total, euro_y_total = _source_metrics(eurostat_Z, eurostat_Y)
 
-    mapping_weights = _build_mapping_weights(mapping_df)
+    mapping_weights = _build_mapping_weights(mapping_df, target_output_by_code=eurostat_x)
     source_codes = list(exio_Z.index.astype(str))
     target_codes = sorted(set(eurostat_Z.index.astype(str)).union(set(eurostat_Z.columns.astype(str)), set(eurostat_Y.index.astype(str))))
     mapping_matrix = _build_mapping_matrix(mapping_weights, source_codes=source_codes, target_codes=target_codes)

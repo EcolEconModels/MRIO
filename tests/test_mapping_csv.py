@@ -309,3 +309,22 @@ def test_static_mappings_reject_duplicate_source_codes(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate source codes"):
         load_canonical_mapping_frame(mapping_path, dictionary_path, validate_target_codes=False)
+
+def test_resolve_weighted_mapping_frame_accepts_dataframe_and_runtime_reference() -> None:
+    from ecolecon_mrio.mapping_csv import resolve_weighted_mapping_frame
+
+    rows = []
+    for target in ["CPA_A", "CPA_B"]:
+        row = _canonical_base("weighted")
+        row["source_code"] = "S1"
+        row["source_label"] = "Source 1"
+        row["target_code"] = target
+        row["target_label"] = target
+        row["allocation_rule"] = "split-by-output-share"
+        rows.append(row)
+    frame = pd.DataFrame(rows)
+
+    resolved = resolve_weighted_mapping_frame(frame, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0})
+
+    weights = dict(zip(resolved["target_code"], resolved["weight"], strict=False))
+    assert weights == {"CPA_A": pytest.approx(0.25), "CPA_B": pytest.approx(0.75)}

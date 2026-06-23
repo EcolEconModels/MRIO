@@ -179,6 +179,128 @@ def load_weighted_mapping_frame(path: str | Path) -> pd.DataFrame:
     return frame
 
 
+def _coerce_weighted_mapping_frame(mapping: str | Path | pd.DataFrame) -> pd.DataFrame:
+    if isinstance(mapping, pd.DataFrame):
+        frame = mapping.copy().fillna("")
+        missing = [column for column in ("source_code", "target_code") if column not in frame.columns]
+        if missing:
+            raise ValueError(f"Weighted mapping frame missing required columns: {missing}")
+        if "kind" in frame.columns:
+            kinds = {str(value).strip() for value in frame["kind"].astype(str) if str(value).strip() != ""}
+            if kinds and kinds != {"weighted"}:
+                raise ValueError(f"Weighted mapping frame expected kind 'weighted', got {sorted(kinds)!r}")
+        frame["aggregate_sector"] = frame["target_code"].astype(str).str.strip()
+        frame["exio_sector"] = frame["source_code"].astype(str).str.strip()
+        return frame
+    return load_weighted_mapping_frame(mapping)
+
+
+def _combine_mapping_texts(values: pd.Series) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for value in values.astype(str):
+        text = _normalize_text(value)
+        if text and text not in seen:
+            parts.append(text)
+            seen.add(text)
+    return " | ".join(parts)
+
+
+def _mapping_dict_from_resolved_frame(frame: pd.DataFrame) -> dict[str, dict[str, float]]:
+    mapping: dict[str, dict[str, float]] = {}
+    for row in frame.itertuples(index=False):
+        target = str(row.target_code)
+        source = str(row.source_code)
+        mapping.setdefault(target, {})
+        mapping[target][source] = mapping[target].get(source, 0.0) + float(row.weight)
+    return mapping
+
+
+def _finalize_resolved_weight_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty:
+        raise ValueError("Mapping frame is empty after enabled filtering.")
+    rows = rows.copy()
+    for column in ("source_label", "target_label", "notes"):
+        if column not in rows.columns:
+            rows[column] = ""
+        rows[column] = rows[column].astype(str).str.strip()
+    grouped = rows.groupby(["source_code", "target_code"], as_index=False).agg(
+        weight=("weight", "sum"),
+        source_label=("source_label", _combine_mapping_texts),
+        target_label=("target_label", _combine_mapping_texts),
+        notes=("notes", _combine_mapping_texts),
+    )
+    validate_mapping_weights(_mapping_dict_from_resolved_frame(grouped))
+    return grouped.loc[:, ["source_code", "target_code", "weight", "source_label", "target_label", "notes"]].copy()
+
+
+def resolve_weighted_mapping_frame(
+    mapping: str | Path | pd.DataFrame,
+    *,
+    target_output_by_code: object | None = None,
+    target_output_by_target: object | None = None,
+) -> pd.DataFrame:
+    """Resolve a current-schema weighted mapping to numeric source-target weights.
+
+    Explicit static weights in ``weight`` or ``Share_used`` are preserved. When no
+    static weights are present, one-to-one source rows receive weight 1.0 and
+    one-to-many source rows are resolved from the supplied target-side output/value
+    reference. This is the common runtime resolver used by disaggregation and audit
+    code paths.
+    """
+    frame = _coerce_weighted_mapping_frame(mapping)
+    enabled = frame["enabled"].map(_parse_boolish) if "enabled" in frame.columns else pd.Series(True, index=frame.index)
+    frame = frame[enabled].copy()
+    frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
+    if frame.empty:
+        raise ValueError("Mapping frame is empty after enabled filtering.")
+
+    for column in ("source_label", "target_label", "notes"):
+        if column not in frame.columns:
+            frame[column] = ""
+
+    explicit_weight_column: str | None = None
+    if "weight" in frame.columns and frame["weight"].astype(str).str.strip().ne("").any():
+        explicit_weight_column = "weight"
+    elif "Share_used" in frame.columns and frame["Share_used"].astype(str).str.strip().ne("").any():
+        explicit_weight_column = "Share_used"
+
+    if explicit_weight_column is not None:
+        rows = pd.DataFrame(
+            {
+                "source_code": frame["exio_sector"].astype(str).str.strip(),
+                "target_code": frame["aggregate_sector"].astype(str).str.strip(),
+                "weight": pd.to_numeric(frame[explicit_weight_column], errors="coerce").fillna(0.0).astype("float64"),
+                "source_label": frame["source_label"].astype(str).str.strip(),
+                "target_label": frame["target_label"].astype(str).str.strip(),
+                "notes": frame["notes"].astype(str).str.strip(),
+            }
+        )
+        return _finalize_resolved_weight_rows(rows)
+
+    output_by_code = _normalize_numeric_reference(target_output_by_code)
+    output_by_target = _normalize_numeric_reference(target_output_by_target)
+    resolved_rows: list[dict[str, object]] = []
+    for _source, group in frame.groupby("exio_sector", sort=False):
+        resolved_weights = _resolve_split_weights_for_source_group(
+            group,
+            target_output_by_code=output_by_code,
+            target_output_by_target=output_by_target,
+        )
+        for (_, row), weight in zip(group.iterrows(), resolved_weights.tolist(), strict=False):
+            resolved_rows.append(
+                {
+                    "source_code": str(row["exio_sector"]).strip(),
+                    "target_code": str(row["aggregate_sector"]).strip(),
+                    "weight": float(weight),
+                    "source_label": str(row.get("source_label", "")).strip(),
+                    "target_label": str(row.get("target_label", "")).strip(),
+                    "notes": str(row.get("notes", "")).strip(),
+                }
+            )
+    return _finalize_resolved_weight_rows(pd.DataFrame(resolved_rows))
+
+
 def _normalize_numeric_reference(reference: object) -> dict[str, float]:
     if reference is None:
         return {}
@@ -241,28 +363,14 @@ def read_weighted_mapping(
     target_output_by_code: object | None = None,
     target_output_by_target: object | None = None,
 ) -> dict[str, dict[str, float]]:
-    frame = load_weighted_mapping_frame(path)
-    frame = frame[frame["enabled"].map(_parse_boolish)].copy()
-    frame = frame[(frame["aggregate_sector"] != "") & (frame["exio_sector"] != "")]
-
-    output_by_code = _normalize_numeric_reference(target_output_by_code)
-    output_by_target = _normalize_numeric_reference(target_output_by_target)
-
-    mapping: dict[str, dict[str, float]] = {}
-    for _, group in frame.groupby("exio_sector", sort=False):
-        resolved_weights = _resolve_split_weights_for_source_group(
-            group,
-            target_output_by_code=output_by_code,
-            target_output_by_target=output_by_target,
-        )
-        for row, weight in zip(group.itertuples(index=False), resolved_weights.tolist(), strict=False):
-            mapping.setdefault(str(row.aggregate_sector), {})
-            mapping[str(row.aggregate_sector)][str(row.exio_sector)] = (
-                mapping[str(row.aggregate_sector)].get(str(row.exio_sector), 0.0) + float(weight)
-            )
+    resolved = resolve_weighted_mapping_frame(
+        path,
+        target_output_by_code=target_output_by_code,
+        target_output_by_target=target_output_by_target,
+    )
+    mapping = _mapping_dict_from_resolved_frame(resolved)
     validate_mapping_weights(mapping)
     return mapping
-
 
 def load_split_mapping_frame(path: str | Path) -> pd.DataFrame:
     frame = read_mapping_csv(path, expected_kind="split").copy()
