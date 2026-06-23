@@ -11,7 +11,7 @@ schema used by the existing disaggregation and audit scripts.
 The converter expects the collapsed A64 file at:
 
 ```text
-data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64/exiobase3_products_to_eurostat_iot_a64_collapsed.csv
+data/exiobase_concordance_sources/derived/exiobase_eurostat_cpa64/exiobase3_products_to_eurostat_cpa64_collapsed.csv
 ```
 
 That file is generated from the EXIOBASE concordance chain:
@@ -31,7 +31,7 @@ scripts/mappings/generated/
 The two mapping projections are:
 
 ```text
-exio_to_eurostat_iot_a64_products_from_exiobase_concordances.csv
+exio_to_eurostat_cpa64_products_from_exiobase_concordances.csv
 exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv
 ```
 

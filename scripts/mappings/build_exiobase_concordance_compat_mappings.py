@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert EXIOBASE official-concordance A64 output to current mapping CSV schema.
+"""Convert EXIOBASE official-concordance output to CPA_64/CPA_65 mapping CSV schema.
 
 This script does not rebuild the EXIOBASE concordance itself. It consumes the
 collapsed output produced by ``build_exiobase3_to_eurostat_iot_a64_mapping.py``
@@ -7,7 +7,7 @@ and writes current-schema mapping CSVs usable by the existing MRIO mapping APIs.
 
 Two projections are supported:
 
-* IOT_A64: canonical 64-sector target with one ``CPA_L68`` real-estate sector.
+* CPA_64: canonical 64-sector target with one ``CPA_L68`` real-estate sector.
 * CPA_65: compatibility target that splits only ``CPA_L68`` into ``CPA_L68A``
   and ``CPA_L68B``. No static L68 weights are stored; runtime code should use
   the selected Eurostat target-side value reference for split weights.
@@ -28,7 +28,7 @@ DEFAULT_DERIVED_DIR = REPO_ROOT / "data" / "exiobase_concordance_sources" / "der
 DEFAULT_COLLAPSED = DEFAULT_DERIVED_DIR / "exiobase3_products_to_eurostat_iot_a64_collapsed.csv"
 DEFAULT_OUT_DIR = REPO_ROOT / "scripts" / "mappings" / "generated"
 
-A64_OUTPUT_NAME = "exio_to_eurostat_iot_a64_products_from_exiobase_concordances.csv"
+CPA64_OUTPUT_NAME = "exio_to_eurostat_cpa64_products_from_exiobase_concordances.csv"
 CPA65_OUTPUT_NAME = "exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv"
 MANIFEST_NAME = "exiobase_concordance_compat_manifest.json"
 
@@ -150,7 +150,7 @@ OFFICIAL_SOURCE = (
     "Eurostat IOT A*64 division rule"
 )
 
-A64_DICTIONARY_ROWS: Final[tuple[tuple[str, str, str], ...]] = (
+CPA64_DICTIONARY_ROWS: Final[tuple[tuple[str, str, str], ...]] = (
     ("CPA_A01", "Products of crop and animal production, hunting and related services", "A*64 A01; NACE/CPA division 01."),
     ("CPA_A02", "Products of forestry and logging", "A*64 A02; NACE/CPA division 02."),
     ("CPA_A03", "Fish and other fishing products; aquaculture products; support services to fishing", "A*64 A03; NACE/CPA division 03."),
@@ -217,17 +217,17 @@ A64_DICTIONARY_ROWS: Final[tuple[tuple[str, str, str], ...]] = (
     ("CPA_U", "Services provided by extraterritorial organisations and bodies", "A*64 U; NACE/CPA division 99."),
 )
 
-A64_LABEL_BY_CPA64: Final[dict[str, str]] = {code: label for code, label, _description in A64_DICTIONARY_ROWS}
+CPA64_LABEL_BY_CODE: Final[dict[str, str]] = {code: label for code, label, _description in CPA64_DICTIONARY_ROWS}
 
 
-def write_a64_dictionary(path: Path) -> None:
-    frame = pd.DataFrame(A64_DICTIONARY_ROWS, columns=["code", "label", "description"])
+def write_cpa64_dictionary(path: Path) -> None:
+    frame = pd.DataFrame(CPA64_DICTIONARY_ROWS, columns=["code", "label", "description"])
     if frame["code"].nunique() != 64:
-        raise AssertionError("A64 dictionary must contain 64 unique target codes.")
+        raise AssertionError("CPA_64 dictionary must contain 64 unique target codes.")
     if "CPA_L68" not in set(frame["code"]):
-        raise AssertionError("A64 dictionary must contain CPA_L68.")
+        raise AssertionError("CPA_64 dictionary must contain CPA_L68.")
     if {"CPA_L68A", "CPA_L68B"} & set(frame["code"]):
-        raise AssertionError("A64 dictionary must not contain CPA_L68A/CPA_L68B.")
+        raise AssertionError("CPA_64 dictionary must not contain CPA_L68A/CPA_L68B.")
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path, index=False)
 
@@ -274,12 +274,12 @@ def _base_note(row: object, *, target_code: str, target_version: str) -> str:
 def _target_rows_for_a64(row: object, *, projection: str) -> list[tuple[str, str, str]]:
     a64_code = _clean_text(getattr(row, "iot_a64_code"))
     cpa64_code = A64_CODE_TO_CPA64[a64_code]
-    if projection == "iot_a64":
-        return [(cpa64_code, A64_LABEL_BY_CPA64[cpa64_code], "IOT_A64")]
+    if projection == "cpa64":
+        return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_64")]
     if projection == "cpa65":
         if cpa64_code == "CPA_L68":
             return [(code, label, "CPA_65_COMPAT_FROM_A64") for code, label in CPA65_REAL_ESTATE_TARGETS]
-        return [(cpa64_code, A64_LABEL_BY_CPA64[cpa64_code], "CPA_65_COMPAT_FROM_A64")]
+        return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_65_COMPAT_FROM_A64")]
     raise ValueError(f"Unknown projection: {projection!r}")
 
 
@@ -308,7 +308,7 @@ def convert_collapsed_to_canonical(frame: pd.DataFrame, *, projection: str) -> p
                 )
             if projection == "cpa65" and target_code in {"CPA_L68A", "CPA_L68B"}:
                 note += (
-                    " This row is a CPA_65 compatibility projection of the canonical A64 CPA_L68 "
+                    " This row is a CPA_65 compatibility projection of the canonical CPA_64 CPA_L68 "
                     "real-estate target."
                 )
             rows.append(
@@ -368,30 +368,30 @@ def write_outputs(collapsed_path: Path, out_dir: Path) -> dict[str, object]:
     collapsed = pd.read_csv(collapsed_path, dtype=str).fillna("")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    a64 = convert_collapsed_to_canonical(collapsed, projection="iot_a64")
+    cpa64 = convert_collapsed_to_canonical(collapsed, projection="cpa64")
     cpa65 = convert_collapsed_to_canonical(collapsed, projection="cpa65")
 
-    a64_path = out_dir / A64_OUTPUT_NAME
+    cpa64_path = out_dir / CPA64_OUTPUT_NAME
     cpa65_path = out_dir / CPA65_OUTPUT_NAME
-    a64.to_csv(a64_path, index=False)
+    cpa64.to_csv(cpa64_path, index=False)
     cpa65.to_csv(cpa65_path, index=False)
 
     manifest = {
         "created_utc": datetime.now(UTC).isoformat(),
         "source_collapsed_csv": str(collapsed_path),
         "outputs": {
-            "iot_a64": str(a64_path),
+            "cpa64": str(cpa64_path),
             "cpa65_compat": str(cpa65_path),
         },
         "coverage": {
-            "iot_a64": coverage_summary(a64),
+            "cpa64": coverage_summary(cpa64),
             "cpa65_compat": coverage_summary(cpa65),
         },
         "method_notes": [
             "Generated from EXIOBASE official-concordance-derived A64 collapsed mapping.",
             "Rows use the existing MRIO canonical weighted mapping schema for script compatibility.",
             "No static weight column is written. Multi-target sources use allocation_rule=split-by-output-share.",
-            "The IOT_A64 output keeps one CPA_L68 real-estate target.",
+            "The CPA_64 output keeps one CPA_L68 real-estate target.",
             "The CPA_65 compatibility output splits only CPA_L68 into CPA_L68A and CPA_L68B for older workflows.",
         ],
         "licensing_notice": "Generated files derive from EXIOBASE/XIO concordances; check upstream terms before redistribution.",
@@ -405,13 +405,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collapsed-csv", type=Path, default=DEFAULT_COLLAPSED, help="Collapsed A64 CSV generated from EXIOBASE concordance sources.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="Directory for generated current-schema mapping CSVs.")
-    parser.add_argument("--write-a64-dictionary", type=Path, default=REPO_ROOT / "scripts" / "mappings" / "eurostat_iot_a64_products_dictionary.csv", help="Write/update the 64-sector target dictionary at this path.")
+    parser.add_argument("--write-cpa64-dictionary", type=Path, default=REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv", help="Write/update the CPA_64 64-sector target dictionary at this path.")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    write_a64_dictionary(args.write_a64_dictionary)
+    write_cpa64_dictionary(args.write_cpa64_dictionary)
     if not args.collapsed_csv.exists():
         raise SystemExit(f"Collapsed input not found: {args.collapsed_csv}")
     manifest = write_outputs(args.collapsed_csv, args.out_dir)

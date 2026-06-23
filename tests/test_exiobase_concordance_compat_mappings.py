@@ -87,9 +87,9 @@ def _synthetic_collapsed() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_a64_dictionary_has_64_targets_and_unsplit_real_estate() -> None:
+def test_cpa64_dictionary_has_64_targets_and_unsplit_real_estate() -> None:
     module = _load_module()
-    rows = list(module.A64_DICTIONARY_ROWS)
+    rows = list(module.CPA64_DICTIONARY_ROWS)
     codes = [row[0] for row in rows]
     assert len(codes) == 64
     assert len(set(codes)) == 64
@@ -101,17 +101,17 @@ def test_a64_dictionary_has_64_targets_and_unsplit_real_estate() -> None:
 def test_converter_writes_current_schema_without_static_weight_column() -> None:
     module = _load_module()
     collapsed = _synthetic_collapsed()
-    a64 = module.convert_collapsed_to_canonical(collapsed, projection="iot_a64")
+    cpa64 = module.convert_collapsed_to_canonical(collapsed, projection="cpa64")
     cpa65 = module.convert_collapsed_to_canonical(collapsed, projection="cpa65")
 
-    assert list(a64.columns) == list(module.CANONICAL_COLUMNS)
+    assert list(cpa64.columns) == list(module.CANONICAL_COLUMNS)
     assert list(cpa65.columns) == list(module.CANONICAL_COLUMNS)
-    assert "weight" not in a64.columns
+    assert "weight" not in cpa64.columns
     assert "weight" not in cpa65.columns
 
-    p24_rules = set(a64.loc[a64["source_code"] == "p24.d", "allocation_rule"])
+    p24_rules = set(cpa64.loc[cpa64["source_code"] == "p24.d", "allocation_rule"])
     assert p24_rules == {"split-by-output-share"}
-    assert set(a64.loc[a64["source_code"] == "p70", "target_code"]) == {"CPA_L68"}
+    assert set(cpa64.loc[cpa64["source_code"] == "p70", "target_code"]) == {"CPA_L68"}
     assert set(cpa65.loc[cpa65["source_code"] == "p70", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
 
 
@@ -143,8 +143,8 @@ def test_real_generated_collapsed_file_if_present(tmp_path: Path) -> None:
         pytest.skip("Generated EXIOBASE concordance collapsed file is not present locally.")
     module = _load_module()
     manifest = module.write_outputs(DERIVED_COLLAPSED, tmp_path)
-    assert manifest["coverage"]["iot_a64"]["distinct_sources"] == 200
-    assert manifest["coverage"]["iot_a64"]["distinct_targets"] == 64
-    assert manifest["coverage"]["iot_a64"]["multi_target_sources"] >= 1
-    assert (tmp_path / module.A64_OUTPUT_NAME).exists()
+    assert manifest["coverage"]["cpa64"]["distinct_sources"] == 200
+    assert manifest["coverage"]["cpa64"]["distinct_targets"] == 64
+    assert manifest["coverage"]["cpa64"]["multi_target_sources"] >= 1
+    assert (tmp_path / module.CPA64_OUTPUT_NAME).exists()
     assert (tmp_path / module.CPA65_OUTPUT_NAME).exists()
