@@ -1561,14 +1561,14 @@ def render_concordance_audit_report(
     lines.append("")
     lines.append(f"Important caveat: if the metric is {human_metric_label(METRIC_X_OUTPUT_PROXY_TOTAL_USE)}, the Eurostat side is inferred from row totals and final demand. Do not interpret it as an independently observed Eurostat gross-output vector.")
     if bool((mapping_coverage["mapped_targets"].astype(int) > 1).any()) or bool((mapping_coverage.get("large_value_in_ambiguous_mapping", pd.Series(dtype=bool)).astype(bool).any())):
-        lines.append("Warning: multi-target EXIO→Eurostat mappings without explicit weights are normalized equally. Discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement.")
+        lines.append("Warning: multi-target EXIO→Eurostat mappings are resolved to numeric weights before auditing. For mapping files without static weights, the resolver uses the selected Eurostat target-side value reference for the relevant year/flow; discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement.")
     lines.append("")
 
     _section_heading("## Mapping coverage")
     lines.append(_markdown_table(_human_mapping_coverage_table(mapping_coverage), columns=["EXIOBASE source sector", "Mapped targets", "Mapping weight sum", "Status", "EXIOBASE x, MEUR", "EXIOBASE y total, MEUR", "EXIOBASE Z row total, MEUR", "EXIOBASE Z col total, MEUR", "Reason"], max_rows=20))
     if bool((mapping_coverage["mapped_targets"].astype(int) > 1).any()) or bool((mapping_coverage.get("large_value_in_ambiguous_mapping", pd.Series(dtype=bool)).astype(bool).any())):
         lines.append("")
-        lines.append("Warning: multi-target EXIO→Eurostat mappings without explicit weights are normalized equally. Discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement.")
+        lines.append("Warning: multi-target EXIO→Eurostat mappings are resolved to numeric weights before auditing. For mapping files without static weights, the resolver uses the selected Eurostat target-side value reference for the relevant year/flow; discrepancies involving such targets may reflect concordance allocation assumptions rather than database disagreement.")
 
     _section_heading("## Internal identities")
     lines.append(_markdown_table(_human_internal_identities_table(internal_identities), columns=["Database", "Sector", "EXIOBASE mapped x, MEUR", "Z row total, MEUR", "Y total, MEUR", "Z + Y, MEUR", "Absolute gap, MEUR", "Relative gap", "Severity", "Status", "Identity mode"], max_rows=20))

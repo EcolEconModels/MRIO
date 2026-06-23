@@ -496,7 +496,7 @@ def test_concordance_audit_records_selected_and_excluded_final_demand_columns() 
     assert result.metadata["eurostat_final_demand_columns_available"] == ["P3_S13", "P3_S14", "P51G", "P52", "P53", "P6"]
 
 
-def test_concordance_audit_warns_about_equal_split_multi_target_mapping(tmp_path: Path) -> None:
+def test_concordance_audit_warns_about_runtime_resolved_multi_target_mapping(tmp_path: Path) -> None:
     from ecolecon_mrio.exio_eurostat_concordance_audit import build_concordance_audit, write_concordance_audit_outputs
 
     exio_Z = pd.DataFrame([[5.0]], index=["p1"], columns=["p1"])
@@ -532,4 +532,4 @@ def test_concordance_audit_warns_about_equal_split_multi_target_mapping(tmp_path
     paths = write_concordance_audit_outputs(result, tmp_path)
     report_text = Path(paths["audit_exio_eurostat_concordance.md"]).read_text(encoding="utf-8")
 
-    assert "normalized equally" in report_text
+    assert "multi-target EXIO→Eurostat mappings are resolved to numeric weights" in report_text
