@@ -52,3 +52,17 @@ src/data/
 
 # macOS
 .DS_Store
+
+
+# EXIOBASE concordance source archives and generated concordance outputs.
+# Keep raw licence-controlled source archives outside git.
+data/exiobase_concordance_sources/exiobase_concordances.zip
+data/exiobase_concordance_sources/Concordances.zip
+data/exiobase_concordance_sources/Concordances/
+data/exiobase_concordance_sources/*.zip
+
+# Generated from the local EXIOBASE concordance archive by
+# scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py.
+data/derived/concordances/exiobase_eurostat_iot_a64/*.csv
+data/derived/concordances/exiobase_eurostat_iot_a64/*.json
+data/derived/concordances/exiobase_eurostat_iot_a64/README.md
