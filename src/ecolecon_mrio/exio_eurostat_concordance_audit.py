@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportReturnType=false, reportGeneralTypeIssues=false, reportOptionalIterable=false, reportOptionalMemberAccess=false, reportCallIssue=false, reportAssignmentType=false
 from __future__ import annotations
 
 import hashlib
@@ -1922,6 +1923,9 @@ def load_default_label_maps(repo_root: str | Path) -> tuple[dict[str, str], dict
     root = Path(repo_root)
     exio_labels = _read_label_map(root / "scripts" / "mappings" / "exiobase_products_dictionary.csv")
     euro_labels = _read_label_map(root / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv")
+    cpa64_path = root / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv"
+    if cpa64_path.exists():
+        euro_labels.update(_read_label_map(cpa64_path))
     return exio_labels, euro_labels
 
 

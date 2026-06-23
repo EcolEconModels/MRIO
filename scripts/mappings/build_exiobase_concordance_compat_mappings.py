@@ -255,7 +255,10 @@ def _validate_collapsed(frame: pd.DataFrame) -> None:
 
 
 def _source_target_count(frame: pd.DataFrame) -> pd.Series:
-    return frame.groupby(frame["exio3_product_code"].astype(str).str.strip())["iot_a64_code"].transform("nunique")
+    source_codes = pd.Series(frame["exio3_product_code"], index=frame.index, dtype="object").astype(str).str.strip()
+    target_codes = pd.Series(frame["iot_a64_code"], index=frame.index, dtype="object")
+    transformed = target_codes.groupby(source_codes).transform("nunique")
+    return pd.Series(transformed, index=frame.index, dtype="int64")
 
 
 def _base_note(row: object, *, target_code: str, target_version: str) -> str:
@@ -278,8 +281,8 @@ def _target_rows_for_a64(row: object, *, projection: str) -> list[tuple[str, str
         return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_64")]
     if projection == "cpa65":
         if cpa64_code == "CPA_L68":
-            return [(code, label, "CPA_65_COMPAT_FROM_A64") for code, label in CPA65_REAL_ESTATE_TARGETS]
-        return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_65_COMPAT_FROM_A64")]
+            return [(code, label, "CPA_65") for code, label in CPA65_REAL_ESTATE_TARGETS]
+        return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_65")]
     raise ValueError(f"Unknown projection: {projection!r}")
 
 
@@ -353,13 +356,16 @@ def convert_collapsed_to_canonical(frame: pd.DataFrame, *, projection: str) -> p
 
 def coverage_summary(mapping: pd.DataFrame) -> dict[str, object]:
     active = mapping[mapping["enabled"].map(_as_bool)].copy()
-    by_source = active.groupby("source_code")["target_code"].nunique()
+    source_codes = pd.Series(active["source_code"], index=active.index, dtype="object")
+    target_codes = pd.Series(active["target_code"], index=active.index, dtype="object")
+    target_versions = pd.Series(active["target_version"], index=active.index, dtype="object")
+    by_source = target_codes.groupby(source_codes).nunique()
     return {
         "rows": int(len(active)),
-        "distinct_sources": int(active["source_code"].nunique()),
-        "distinct_targets": int(active["target_code"].nunique()),
+        "distinct_sources": int(source_codes.nunique()),
+        "distinct_targets": int(target_codes.nunique()),
         "multi_target_sources": int((by_source > 1).sum()),
-        "target_version_values": sorted(map(str, active["target_version"].unique().tolist())),
+        "target_version_values": sorted(map(str, target_versions.unique().tolist())),
         "has_static_weight_column": "weight" in active.columns,
     }
 

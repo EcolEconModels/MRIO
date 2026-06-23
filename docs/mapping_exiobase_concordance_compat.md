@@ -11,7 +11,7 @@ schema used by the existing disaggregation and audit scripts.
 The converter expects the collapsed A64 file at:
 
 ```text
-data/exiobase_concordance_sources/derived/exiobase_eurostat_cpa64/exiobase3_products_to_eurostat_cpa64_collapsed.csv
+data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64/exiobase3_products_to_eurostat_iot_a64_collapsed.csv
 ```
 
 That file is generated from the EXIOBASE concordance chain:
@@ -35,7 +35,7 @@ exio_to_eurostat_cpa64_products_from_exiobase_concordances.csv
 exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv
 ```
 
-The A64 output is the canonical 64-sector version and keeps `CPA_L68` as one
+The CPA_64 output is the canonical 64-sector version and keeps `CPA_L68` as one
 real-estate sector. The CPA_65 output is a compatibility projection for older
 workflows: it splits only `CPA_L68` into `CPA_L68A` and `CPA_L68B`.
 

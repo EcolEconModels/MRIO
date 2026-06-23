@@ -113,6 +113,8 @@ def test_converter_writes_current_schema_without_static_weight_column() -> None:
     assert p24_rules == {"split-by-output-share"}
     assert set(cpa64.loc[cpa64["source_code"] == "p70", "target_code"]) == {"CPA_L68"}
     assert set(cpa65.loc[cpa65["source_code"] == "p70", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
+    assert set(cpa64["target_version"]) == {"CPA_64"}
+    assert set(cpa65["target_version"]) == {"CPA_65"}
 
 
 def test_existing_weighted_mapping_api_resolves_runtime_target_output_shares(tmp_path: Path) -> None:

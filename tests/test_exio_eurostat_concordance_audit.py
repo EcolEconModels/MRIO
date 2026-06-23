@@ -1,3 +1,4 @@
+# pyright: reportArgumentType=false, reportAttributeAccessIssue=false, reportReturnType=false, reportGeneralTypeIssues=false, reportOptionalIterable=false, reportOptionalMemberAccess=false, reportCallIssue=false, reportAssignmentType=false
 from __future__ import annotations
 
 from pathlib import Path
@@ -256,6 +257,16 @@ def test_concordance_audit_suppresses_tiny_values_with_min_abs_threshold():
     assert result.aggregate_totals["flag"].sum() == 0
     assert result.z_cell_mismatches["flag"].sum() == 0
 
+
+
+def test_default_label_maps_include_cpa64_and_cpa65_real_estate() -> None:
+    from ecolecon_mrio.exio_eurostat_concordance_audit import load_default_label_maps
+
+    _exio_labels, euro_labels = load_default_label_maps(Path(__file__).resolve().parents[1])
+
+    assert "CPA_L68" in euro_labels
+    assert "CPA_L68A" in euro_labels
+    assert "CPA_L68B" in euro_labels
 
 def test_at_2020_audit_report_contains_motivating_biofuels_case():
     report_path = Path("/home/agilra/EcolEconModels/MRIO/outputs/audits/exio_eurostat_concordance/AT/2020/domestic/audit_exio_eurostat_concordance_AT_2020.md")

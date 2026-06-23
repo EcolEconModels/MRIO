@@ -8,7 +8,7 @@ before publication.
 Create the source A64 concordance first:
 
 ```bash
-../MRIO/.venv/bin/python scripts/mappings/build_exiobase3_to_eurostat_cpa64_mapping.py
+../MRIO/.venv/bin/python scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py
 ```
 
 Then create compatibility mappings:
@@ -25,7 +25,7 @@ scripts/mappings/generated/exio_to_eurostat_cpa65_products_from_exiobase_concord
 scripts/mappings/generated/exiobase_concordance_compat_manifest.json
 ```
 
-The A64 file is the canonical 64-sector projection and keeps a single
+The CPA_64 file is the canonical 64-sector projection and keeps a single
 `CPA_L68` real-estate target. The CPA_65 file is a compatibility projection that
 splits only `CPA_L68` into `CPA_L68A` and `CPA_L68B` for older workflows.
 Neither file stores static split weights; rows requiring a split use
