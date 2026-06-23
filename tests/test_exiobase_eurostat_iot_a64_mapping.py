@@ -48,8 +48,8 @@ def test_generated_collapsed_mapping_if_present() -> None:
     path = (
         REPO_ROOT
         / "data"
+        / "exiobase_concordance_sources"
         / "derived"
-        / "concordances"
         / "exiobase_eurostat_iot_a64"
         / "exiobase3_products_to_eurostat_iot_a64_collapsed.csv"
     )
@@ -68,9 +68,10 @@ def test_generated_collapsed_mapping_if_present() -> None:
     assert required.issubset(df.columns)
     assert df["exio3_product_code"].nunique() == 200
     assert df["iot_a64_code"].nunique() == 64
-    assert not df["exio3_product_code"].isna().any()
-    assert not df["iot_a64_code"].isna().any()
+    assert int(df["exio3_product_code"].isna().sum()) == 0
+    assert int(df["iot_a64_code"].isna().sum()) == 0
 
     sums = df.groupby("exio3_product_code")["equal_split_weight_if_required"].sum().round(12)
-    assert (sums == 1.0).all()
+    assert float(sums.min()) == 1.0
+    assert float(sums.max()) == 1.0
     assert set(df["weight_status"]) == {"placeholder_equal_split_not_empirical"}

@@ -35,6 +35,11 @@ data/**/*.7z
 outputs/
 figures/
 
+# Keep raw EXIOBASE concordance sources out of git, but allow the audit README.
+!data/exiobase_concordance_sources/
+data/exiobase_concordance_sources/*
+!data/exiobase_concordance_sources/README.md
+
 # VSCode / editor
 .vscode/
 .idea/
@@ -63,6 +68,6 @@ data/exiobase_concordance_sources/*.zip
 
 # Generated from the local EXIOBASE concordance archive by
 # scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py.
-data/derived/concordances/exiobase_eurostat_iot_a64/*.csv
-data/derived/concordances/exiobase_eurostat_iot_a64/*.json
-data/derived/concordances/exiobase_eurostat_iot_a64/README.md
+data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64/*.csv
+data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64/*.json
+data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64/README.md

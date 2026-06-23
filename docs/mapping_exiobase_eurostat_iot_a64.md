@@ -53,7 +53,7 @@ Run the builder from the MRIO repository root after placing the source archive
 at the path above:
 
 ```bash
-/home/agilra/EcolEconModels/MRIO/.venv/bin/python   scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py   --concordances-zip data/exiobase_concordance_sources/exiobase_concordances.zip   --out-dir data/derived/concordances/exiobase_eurostat_iot_a64
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python   scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py   --concordances-zip data/exiobase_concordance_sources/exiobase_concordances.zip   --out-dir data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64
 ```
 
 The script can also be used with its defaults once the zip is in the expected
@@ -68,7 +68,7 @@ location:
 The script writes generated files under:
 
 ```text
-data/derived/concordances/exiobase_eurostat_iot_a64/
+data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64/
 ```
 
 Generated outputs are intentionally ignored by git by default. Commit them only

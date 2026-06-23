@@ -23,7 +23,8 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Sequence
+from typing import cast
 
 import pandas as pd
 
@@ -163,6 +164,19 @@ def find_member_by_suffix(zf: zipfile.ZipFile, suffix: str) -> str:
     return matches[0]
 
 
+
+
+def _clean_string_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    """Return a stripped string Series from a DataFrame column.
+
+    This is intentionally tiny: runtime correctness comes from pandas, while the
+    cast documents the stub boundary so Pyright does not treat a selected column
+    as a NumPy array.
+    """
+
+    series = cast(pd.Series, frame[column])
+    return cast(pd.Series, series.map(lambda value: str(value).strip()))
+
 def read_nace_to_exio20(zf: zipfile.ZipFile, member: str) -> pd.DataFrame:
     with zf.open(member) as handle:
         df = pd.read_csv(handle, dtype=str, encoding="utf-8-sig")
@@ -177,8 +191,8 @@ def read_nace_to_exio20(zf: zipfile.ZipFile, member: str) -> pd.DataFrame:
             "EXIOBASE code": "source_exio_code",
         }
     ).copy()
-    out["source_exio_code"] = out["source_exio_code"].astype(str).str.strip()
-    out["nace2_code"] = out["nace2_code"].astype(str).str.strip()
+    out["source_exio_code"] = _clean_string_series(out, "source_exio_code")
+    out["nace2_code"] = _clean_string_series(out, "nace2_code")
     out["nace2_division"] = out["nace2_code"].map(nace2_to_division)
     return out
 
@@ -205,12 +219,13 @@ def read_exio20_to_exio30_bridge(zf: zipfile.ZipFile, member: str) -> pd.DataFra
     )[
         ["exio20_product_name", "exio20_product_code", "exio3_product_name", "exio3_product_code"]
     ].copy()
-    for col in base.columns:
-        base[col] = base[col].astype(str).str.strip()
+    for col in list(base.columns):
+        base[str(col)] = _clean_string_series(base, str(col))
 
     records: list[dict[str, str]] = []
-    for rec_obj in base.to_dict(orient="records"):
-        rec = {str(k): str(v) for k, v in rec_obj.items()}
+    columns = [str(column) for column in base.columns]
+    for row in base.itertuples(index=False, name=None):
+        rec = {column: str(value) for column, value in zip(columns, row)}
         records.append({"source_exio_code": rec["exio20_product_code"], "bridge_key_kind": "exio20_code", **rec})
         if rec["exio3_product_code"] != rec["exio20_product_code"]:
             records.append({"source_exio_code": rec["exio3_product_code"], "bridge_key_kind": "exio3_code_alias", **rec})
@@ -231,7 +246,11 @@ def build_mapping(concordances_zip: Path) -> tuple[pd.DataFrame, pd.DataFrame, d
 
     a64_lookup = division_to_a64_lookup()
     merged = nace.merge(bridge, on="source_exio_code", how="left", validate="many_to_many")
-    unmatched = merged[merged["exio3_product_code"].isna()]["source_exio_code"].dropna().unique().tolist()
+    unmatched_series = cast(
+        pd.Series,
+        merged.loc[merged["exio3_product_code"].isna(), "source_exio_code"],
+    )
+    unmatched = sorted(set(map(str, unmatched_series.dropna().tolist())))
     if unmatched:
         raise RuntimeError(f"Unmatched EXIOBASE product codes after bridge: {sorted(unmatched)}")
 
@@ -255,7 +274,7 @@ def build_mapping(concordances_zip: Path) -> tuple[pd.DataFrame, pd.DataFrame, d
         "source_chain",
     ]
     long_df = merged[long_cols].drop_duplicates().sort_values(
-        ["exio3_product_code", "iot_a64_code", "nace2_code", "source_exio_code"]
+        by=["exio3_product_code", "iot_a64_code", "nace2_code", "source_exio_code"]
     )
 
     grouped = long_df.groupby(
@@ -276,7 +295,7 @@ def build_mapping(concordances_zip: Path) -> tuple[pd.DataFrame, pd.DataFrame, d
     collapsed["is_multi_target"] = collapsed["n_iot_a64_targets_for_exio3_product"] > 1
     collapsed["equal_split_weight_if_required"] = 1.0 / collapsed["n_iot_a64_targets_for_exio3_product"]
     collapsed["weight_status"] = "placeholder_equal_split_not_empirical"
-    collapsed = collapsed.sort_values(["exio3_product_code", "iot_a64_code"]).reset_index(drop=True)
+    collapsed = collapsed.sort_values(by=["exio3_product_code", "iot_a64_code"]).reset_index(drop=True)
 
     coverage = {
         "source_archive_sha256": sha256_file(concordances_zip),
@@ -386,7 +405,7 @@ estate services into actual-rent and imputed-rent categories.
     readme_path.write_text(readme, encoding="utf-8")
 
 
-def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--concordances-zip",
@@ -397,7 +416,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("data/derived/concordances/exiobase_eurostat_iot_a64"),
+        default=Path("data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64"),
         help="Output directory for generated mapping files.",
     )
     parser.add_argument(
@@ -408,7 +427,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     long_df, collapsed, coverage = build_mapping(args.concordances_zip)
     if not args.check_only:

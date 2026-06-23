@@ -28,3 +28,44 @@ Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx
 The generated mapping is an unweighted relational concordance. Equal-split
 weights, where written, are placeholders for downstream users who explicitly
 choose such an assumption; they are not empirical allocation shares.
+
+<!-- BEGIN EXIOBASE A64 AUDIT TRAIL -->
+
+## Recreating the EXIOBASE3 to Eurostat IOT A*64 mapping
+
+The raw EXIOBASE concordance archive is a licensed external source and should not
+be committed to this repository. Download the concordance folder from the
+EXIOBASE Box share used for the paper audit trail, archive it as
+`exiobase_concordances.zip`, and place it at:
+
+```text
+data/exiobase_concordance_sources/exiobase_concordances.zip
+```
+
+The mapping builder is:
+
+```text
+scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py
+```
+
+Run the builder from the MRIO repository root with:
+
+```bash
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+  scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py \
+  --concordances-zip data/exiobase_concordance_sources/exiobase_concordances.zip \
+  --out-dir data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64
+```
+
+The generated derived files are written under:
+
+```text
+data/exiobase_concordance_sources/derived/exiobase_eurostat_iot_a64
+```
+
+These derived outputs are reproducible audit artifacts, but they remain ignored
+by default because they are produced from EXIOBASE concordance inputs. Commit the
+script, documentation, tests, and licence/provenance notices; do not commit the
+raw concordance archive unless EXIOBASE explicitly permits redistribution.
+
+<!-- END EXIOBASE A64 AUDIT TRAIL -->
