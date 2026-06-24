@@ -4,6 +4,7 @@
 This script does not rebuild the EXIOBASE concordance itself. It consumes the
 collapsed output produced by ``build_exiobase3_to_eurostat_iot_a64_mapping.py``
 and writes current-schema mapping CSVs usable by the existing MRIO mapping APIs.
+Generated labels are read from the committed CPA_64/CPA_65 dictionaries.
 
 Two projections are supported:
 
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -31,6 +32,8 @@ DEFAULT_OUT_DIR = REPO_ROOT / "scripts" / "mappings" / "generated"
 CPA64_OUTPUT_NAME = "exio_to_eurostat_cpa64_products_from_exiobase_concordances.csv"
 CPA65_OUTPUT_NAME = "exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv"
 MANIFEST_NAME = "exiobase_concordance_compat_manifest.json"
+DEFAULT_CPA64_DICTIONARY = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv"
+DEFAULT_CPA65_DICTIONARY = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv"
 
 CANONICAL_COLUMNS: Final[tuple[str, ...]] = (
     "order",
@@ -139,10 +142,7 @@ A64_CODE_TO_CPA64: Final[dict[str, str]] = {
     "U": "CPA_U",
 }
 
-CPA65_REAL_ESTATE_TARGETS: Final[tuple[tuple[str, str], ...]] = (
-    ("CPA_L68A", "Imputed rents of owner-occupied dwellings"),
-    ("CPA_L68B", "Real estate services excluding imputed rents"),
-)
+CPA65_REAL_ESTATE_TARGETS: Final[tuple[str, ...]] = ("CPA_L68A", "CPA_L68B")
 
 OFFICIAL_SOURCE = (
     "EXIOBASE/XIO concordances: NACE2_EXIOBASE20p_list.csv | "
@@ -150,86 +150,25 @@ OFFICIAL_SOURCE = (
     "Eurostat IOT A*64 division rule"
 )
 
-CPA64_DICTIONARY_ROWS: Final[tuple[tuple[str, str, str], ...]] = (
-    ("CPA_A01", "Products of crop and animal production, hunting and related services", "A*64 A01; NACE/CPA division 01."),
-    ("CPA_A02", "Products of forestry and logging", "A*64 A02; NACE/CPA division 02."),
-    ("CPA_A03", "Fish and other fishing products; aquaculture products; support services to fishing", "A*64 A03; NACE/CPA division 03."),
-    ("CPA_B", "Mining and quarrying products", "A*64 B; NACE/CPA divisions 05-09."),
-    ("CPA_C10-12", "Food products, beverages and tobacco products", "A*64 C10-C12; NACE/CPA divisions 10-12."),
-    ("CPA_C13-15", "Textiles, wearing apparel, leather and related products", "A*64 C13-C15; NACE/CPA divisions 13-15."),
-    ("CPA_C16", "Wood and products of wood and cork, except furniture; articles of straw and plaiting materials", "A*64 C16; NACE/CPA division 16."),
-    ("CPA_C17", "Paper and paper products", "A*64 C17; NACE/CPA division 17."),
-    ("CPA_C18", "Printing and reproduction services of recorded media", "A*64 C18; NACE/CPA division 18."),
-    ("CPA_C19", "Coke and refined petroleum products", "A*64 C19; NACE/CPA division 19."),
-    ("CPA_C20", "Chemicals and chemical products", "A*64 C20; NACE/CPA division 20."),
-    ("CPA_C21", "Basic pharmaceutical products and pharmaceutical preparations", "A*64 C21; NACE/CPA division 21."),
-    ("CPA_C22", "Rubber and plastic products", "A*64 C22; NACE/CPA division 22."),
-    ("CPA_C23", "Other non-metallic mineral products", "A*64 C23; NACE/CPA division 23."),
-    ("CPA_C24", "Basic metals", "A*64 C24; NACE/CPA division 24."),
-    ("CPA_C25", "Fabricated metal products, except machinery and equipment", "A*64 C25; NACE/CPA division 25."),
-    ("CPA_C26", "Computer, electronic and optical products", "A*64 C26; NACE/CPA division 26."),
-    ("CPA_C27", "Electrical equipment", "A*64 C27; NACE/CPA division 27."),
-    ("CPA_C28", "Machinery and equipment n.e.c.", "A*64 C28; NACE/CPA division 28."),
-    ("CPA_C29", "Motor vehicles, trailers and semi-trailers", "A*64 C29; NACE/CPA division 29."),
-    ("CPA_C30", "Other transport equipment", "A*64 C30; NACE/CPA division 30."),
-    ("CPA_C31_32", "Furniture; other manufactured goods", "A*64 C31-C32; NACE/CPA divisions 31-32."),
-    ("CPA_C33", "Repair and installation services of machinery and equipment", "A*64 C33; NACE/CPA division 33."),
-    ("CPA_D", "Electricity, gas, steam and air-conditioning", "A*64 D35; NACE/CPA division 35."),
-    ("CPA_E36", "Natural water; water treatment and supply services", "A*64 E36; NACE/CPA division 36."),
-    ("CPA_E37-39", "Sewerage; waste collection, treatment and disposal; remediation and other waste management services", "A*64 E37-E39; NACE/CPA divisions 37-39."),
-    ("CPA_F", "Constructions and construction works", "A*64 F; NACE/CPA divisions 41-43."),
-    ("CPA_G45", "Wholesale and retail trade and repair services of motor vehicles and motorcycles", "A*64 G45; NACE/CPA division 45."),
-    ("CPA_G46", "Wholesale trade services, except of motor vehicles and motorcycles", "A*64 G46; NACE/CPA division 46."),
-    ("CPA_G47", "Retail trade services, except of motor vehicles and motorcycles", "A*64 G47; NACE/CPA division 47."),
-    ("CPA_H49", "Land transport services and transport services via pipelines", "A*64 H49; NACE/CPA division 49."),
-    ("CPA_H50", "Water transport services", "A*64 H50; NACE/CPA division 50."),
-    ("CPA_H51", "Air transport services", "A*64 H51; NACE/CPA division 51."),
-    ("CPA_H52", "Warehousing and support services for transportation", "A*64 H52; NACE/CPA division 52."),
-    ("CPA_H53", "Postal and courier services", "A*64 H53; NACE/CPA division 53."),
-    ("CPA_I", "Accommodation and food services", "A*64 I; NACE/CPA divisions 55-56."),
-    ("CPA_J58", "Publishing services", "A*64 J58; NACE/CPA division 58."),
-    ("CPA_J59_60", "Motion picture, video, television programme production, sound recording and music publishing; programming and broadcasting services", "A*64 J59-J60; NACE/CPA divisions 59-60."),
-    ("CPA_J61", "Telecommunications services", "A*64 J61; NACE/CPA division 61."),
-    ("CPA_J62_63", "Computer programming, consultancy and related services; information services", "A*64 J62-J63; NACE/CPA divisions 62-63."),
-    ("CPA_K64", "Financial services, except insurance and pension funding", "A*64 K64; NACE/CPA division 64."),
-    ("CPA_K65", "Insurance, reinsurance and pension funding services, except compulsory social security", "A*64 K65; NACE/CPA division 65."),
-    ("CPA_K66", "Services auxiliary to financial services and insurance services", "A*64 K66; NACE/CPA division 66."),
-    ("CPA_L68", "Real estate services", "A*64 L68; NACE/CPA division 68. This 64-sector target does not split imputed rents."),
-    ("CPA_M69_70", "Legal and accounting services; services of head offices; management consulting services", "A*64 M69-M70; NACE/CPA divisions 69-70."),
-    ("CPA_M71", "Architectural and engineering services; technical testing and analysis services", "A*64 M71; NACE/CPA division 71."),
-    ("CPA_M72", "Scientific research and development services", "A*64 M72; NACE/CPA division 72."),
-    ("CPA_M73", "Advertising and market research services", "A*64 M73; NACE/CPA division 73."),
-    ("CPA_M74_75", "Other professional, scientific and technical services; veterinary services", "A*64 M74-M75; NACE/CPA divisions 74-75."),
-    ("CPA_N77", "Rental and leasing services", "A*64 N77; NACE/CPA division 77."),
-    ("CPA_N78", "Employment services", "A*64 N78; NACE/CPA division 78."),
-    ("CPA_N79", "Travel agency, tour operator and other reservation services and related services", "A*64 N79; NACE/CPA division 79."),
-    ("CPA_N80-82", "Security and investigation; services to buildings and landscape; office administrative and support services", "A*64 N80-N82; NACE/CPA divisions 80-82."),
-    ("CPA_O", "Public administration and defence services; compulsory social security services", "A*64 O84; NACE/CPA division 84."),
-    ("CPA_P", "Education services", "A*64 P85; NACE/CPA division 85."),
-    ("CPA_Q86", "Human health services", "A*64 Q86; NACE/CPA division 86."),
-    ("CPA_Q87_88", "Residential care services; social work services without accommodation", "A*64 Q87-Q88; NACE/CPA divisions 87-88."),
-    ("CPA_R90-92", "Creative, arts and entertainment; libraries, archives, museums and other cultural; gambling and betting services", "A*64 R90-R92; NACE/CPA divisions 90-92."),
-    ("CPA_R93", "Sporting services and amusement and recreation services", "A*64 R93; NACE/CPA division 93."),
-    ("CPA_S94", "Services furnished by membership organisations", "A*64 S94; NACE/CPA division 94."),
-    ("CPA_S95", "Repair services of computers and personal and household goods", "A*64 S95; NACE/CPA division 95."),
-    ("CPA_S96", "Other personal services", "A*64 S96; NACE/CPA division 96."),
-    ("CPA_T", "Services of households as employers; undifferentiated goods and services produced by households for own use", "A*64 T; NACE/CPA divisions 97-98."),
-    ("CPA_U", "Services provided by extraterritorial organisations and bodies", "A*64 U; NACE/CPA division 99."),
-)
-
-CPA64_LABEL_BY_CODE: Final[dict[str, str]] = {code: label for code, label, _description in CPA64_DICTIONARY_ROWS}
-
-
-def write_cpa64_dictionary(path: Path) -> None:
-    frame = pd.DataFrame(CPA64_DICTIONARY_ROWS, columns=["code", "label", "description"])
-    if frame["code"].nunique() != 64:
-        raise AssertionError("CPA_64 dictionary must contain 64 unique target codes.")
-    if "CPA_L68" not in set(frame["code"]):
-        raise AssertionError("CPA_64 dictionary must contain CPA_L68.")
-    if {"CPA_L68A", "CPA_L68B"} & set(frame["code"]):
-        raise AssertionError("CPA_64 dictionary must not contain CPA_L68A/CPA_L68B.")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(path, index=False)
+def read_target_label_map(path: Path) -> dict[str, str]:
+    """Read committed target-code labels from a CPA dictionary CSV."""
+    frame = pd.read_csv(path, dtype=str).fillna("")
+    required = {"code", "label"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"Target dictionary {path} is missing required columns: {missing}")
+    codes = pd.Series(frame["code"], index=frame.index, dtype="object").astype(str).str.strip()
+    labels = pd.Series(frame["label"], index=frame.index, dtype="object").astype(str).str.strip()
+    blank_codes = sorted(codes[codes.eq("")].index.tolist())
+    blank_labels = sorted(codes[labels.eq("")].tolist())
+    if blank_codes:
+        raise ValueError(f"Target dictionary {path} has blank code rows: {blank_codes[:20]}")
+    if blank_labels:
+        raise ValueError(f"Target dictionary {path} has blank labels for: {blank_labels[:20]}")
+    duplicates = sorted(codes[codes.duplicated()].unique().tolist())
+    if duplicates:
+        raise ValueError(f"Target dictionary {path} has duplicate codes: {duplicates[:20]}")
+    return dict(zip(codes.tolist(), labels.tolist(), strict=False))
 
 
 def _clean_text(value: object) -> str:
@@ -274,21 +213,45 @@ def _base_note(row: object, *, target_code: str, target_version: str) -> str:
     )
 
 
-def _target_rows_for_a64(row: object, *, projection: str) -> list[tuple[str, str, str]]:
+def _label_for(labels: Mapping[str, str], code: str, *, dictionary_name: str) -> str:
+    try:
+        return labels[code]
+    except KeyError as exc:
+        raise ValueError(f"{dictionary_name} is missing required target code: {code}") from exc
+
+
+def _target_rows_for_a64(
+    row: object,
+    *,
+    projection: str,
+    cpa64_labels: Mapping[str, str],
+    cpa65_labels: Mapping[str, str],
+) -> list[tuple[str, str, str]]:
     a64_code = _clean_text(getattr(row, "iot_a64_code"))
     cpa64_code = A64_CODE_TO_CPA64[a64_code]
     if projection == "cpa64":
-        return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_64")]
+        return [(cpa64_code, _label_for(cpa64_labels, cpa64_code, dictionary_name="CPA_64 dictionary"), "CPA_64")]
     if projection == "cpa65":
         if cpa64_code == "CPA_L68":
-            return [(code, label, "CPA_65") for code, label in CPA65_REAL_ESTATE_TARGETS]
-        return [(cpa64_code, CPA64_LABEL_BY_CODE[cpa64_code], "CPA_65")]
+            return [
+                (code, _label_for(cpa65_labels, code, dictionary_name="CPA_65 dictionary"), "CPA_65")
+                for code in CPA65_REAL_ESTATE_TARGETS
+            ]
+        return [(cpa64_code, _label_for(cpa65_labels, cpa64_code, dictionary_name="CPA_65 dictionary"), "CPA_65")]
     raise ValueError(f"Unknown projection: {projection!r}")
 
 
-def convert_collapsed_to_canonical(frame: pd.DataFrame, *, projection: str) -> pd.DataFrame:
+def convert_collapsed_to_canonical(
+    frame: pd.DataFrame,
+    *,
+    projection: str,
+    cpa64_labels: Mapping[str, str] | None = None,
+    cpa65_labels: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
     """Return current-schema rows for the requested target projection."""
     _validate_collapsed(frame)
+    cpa64_label_map = cpa64_labels if cpa64_labels is not None else read_target_label_map(DEFAULT_CPA64_DICTIONARY)
+    cpa65_label_map = cpa65_labels if cpa65_labels is not None else read_target_label_map(DEFAULT_CPA65_DICTIONARY)
     work = frame.copy().fillna("")
     work["_source_target_count"] = _source_target_count(work)
 
@@ -296,7 +259,12 @@ def convert_collapsed_to_canonical(frame: pd.DataFrame, *, projection: str) -> p
     for _source_code, source_group in work.groupby(work["exio3_product_code"].astype(str).str.strip(), sort=True):
         expanded_targets: list[tuple[object, str, str, str]] = []
         for row in source_group.itertuples(index=False):
-            for target_code, target_label, target_version in _target_rows_for_a64(row, projection=projection):
+            for target_code, target_label, target_version in _target_rows_for_a64(
+                row,
+                projection=projection,
+                cpa64_labels=cpa64_label_map,
+                cpa65_labels=cpa65_label_map,
+            ):
                 expanded_targets.append((row, target_code, target_label, target_version))
         n_runtime_targets = len({target_code for _row, target_code, _label, _version in expanded_targets})
         for row, target_code, target_label, target_version in expanded_targets:
@@ -370,12 +338,20 @@ def coverage_summary(mapping: pd.DataFrame) -> dict[str, object]:
     }
 
 
-def write_outputs(collapsed_path: Path, out_dir: Path) -> dict[str, object]:
+def write_outputs(
+    collapsed_path: Path,
+    out_dir: Path,
+    *,
+    cpa64_dictionary: Path = DEFAULT_CPA64_DICTIONARY,
+    cpa65_dictionary: Path = DEFAULT_CPA65_DICTIONARY,
+) -> dict[str, object]:
     collapsed = pd.read_csv(collapsed_path, dtype=str).fillna("")
     out_dir.mkdir(parents=True, exist_ok=True)
+    cpa64_labels = read_target_label_map(cpa64_dictionary)
+    cpa65_labels = read_target_label_map(cpa65_dictionary)
 
-    cpa64 = convert_collapsed_to_canonical(collapsed, projection="cpa64")
-    cpa65 = convert_collapsed_to_canonical(collapsed, projection="cpa65")
+    cpa64 = convert_collapsed_to_canonical(collapsed, projection="cpa64", cpa64_labels=cpa64_labels, cpa65_labels=cpa65_labels)
+    cpa65 = convert_collapsed_to_canonical(collapsed, projection="cpa65", cpa64_labels=cpa64_labels, cpa65_labels=cpa65_labels)
 
     cpa64_path = out_dir / CPA64_OUTPUT_NAME
     cpa65_path = out_dir / CPA65_OUTPUT_NAME
@@ -385,6 +361,10 @@ def write_outputs(collapsed_path: Path, out_dir: Path) -> dict[str, object]:
     manifest = {
         "created_utc": datetime.now(UTC).isoformat(),
         "source_collapsed_csv": str(collapsed_path),
+        "target_dictionaries": {
+            "cpa64": str(cpa64_dictionary),
+            "cpa65": str(cpa65_dictionary),
+        },
         "outputs": {
             "cpa64": str(cpa64_path),
             "cpa65_compat": str(cpa65_path),
@@ -411,16 +391,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collapsed-csv", type=Path, default=DEFAULT_COLLAPSED, help="Collapsed A64 CSV generated from EXIOBASE concordance sources.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="Directory for generated current-schema mapping CSVs.")
-    parser.add_argument("--write-cpa64-dictionary", type=Path, default=REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv", help="Write/update the CPA_64 64-sector target dictionary at this path.")
+    parser.add_argument("--cpa64-dictionary", type=Path, default=DEFAULT_CPA64_DICTIONARY, help="Committed CPA_64 target dictionary used for generated CPA_64 labels.")
+    parser.add_argument("--cpa65-dictionary", type=Path, default=DEFAULT_CPA65_DICTIONARY, help="Committed CPA_65 target dictionary used for generated CPA_65 labels.")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    write_cpa64_dictionary(args.write_cpa64_dictionary)
     if not args.collapsed_csv.exists():
         raise SystemExit(f"Collapsed input not found: {args.collapsed_csv}")
-    manifest = write_outputs(args.collapsed_csv, args.out_dir)
+    manifest = write_outputs(args.collapsed_csv, args.out_dir, cpa64_dictionary=args.cpa64_dictionary, cpa65_dictionary=args.cpa65_dictionary)
     print(json.dumps(manifest["coverage"], indent=2))
     return 0
 

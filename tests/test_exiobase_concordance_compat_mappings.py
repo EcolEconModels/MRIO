@@ -89,10 +89,9 @@ def _synthetic_collapsed() -> pd.DataFrame:
 
 def test_cpa64_dictionary_has_64_targets_and_unsplit_real_estate() -> None:
     module = _load_module()
-    rows = list(module.CPA64_DICTIONARY_ROWS)
-    codes = [row[0] for row in rows]
+    labels = module.read_target_label_map(module.DEFAULT_CPA64_DICTIONARY)
+    codes = set(labels)
     assert len(codes) == 64
-    assert len(set(codes)) == 64
     assert "CPA_L68" in codes
     assert "CPA_L68A" not in codes
     assert "CPA_L68B" not in codes
@@ -115,6 +114,10 @@ def test_converter_writes_current_schema_without_static_weight_column() -> None:
     assert set(cpa65.loc[cpa65["source_code"] == "p70", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(cpa64["target_version"]) == {"CPA_64"}
     assert set(cpa65["target_version"]) == {"CPA_65"}
+    cpa64_labels = module.read_target_label_map(module.DEFAULT_CPA64_DICTIONARY)
+    cpa65_labels = module.read_target_label_map(module.DEFAULT_CPA65_DICTIONARY)
+    assert set(cpa64.loc[cpa64["source_code"] == "p01.a", "target_label"]) == {cpa64_labels["CPA_A01"]}
+    assert set(cpa65.loc[cpa65["source_code"] == "p01.a", "target_label"]) == {cpa65_labels["CPA_A01"]}
 
 
 def test_existing_weighted_mapping_api_resolves_runtime_target_output_shares(tmp_path: Path) -> None:

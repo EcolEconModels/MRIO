@@ -11,7 +11,7 @@ Create the source A64 concordance first:
 ../MRIO/.venv/bin/python scripts/mappings/build_exiobase3_to_eurostat_iot_a64_mapping.py
 ```
 
-Then create compatibility mappings:
+Then create compatibility mappings. The compatibility converter reads labels from the committed CPA_64 and CPA_65 dictionaries:
 
 ```bash
 ../MRIO/.venv/bin/python scripts/mappings/build_exiobase_concordance_compat_mappings.py

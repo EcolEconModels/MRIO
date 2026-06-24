@@ -22,7 +22,10 @@ NACE Rev. 2 class -> EXIOBASE2 product -> EXIOBASE3 product -> Eurostat IOT A*64
 
 ## Outputs
 
-The converter writes local generated outputs to:
+The converter reads labels from the committed CPA_64 and CPA_65 dictionaries; it does not write dictionary files.
+
+
+The converter reads the committed CPA_64/CPA_65 target dictionaries and writes local generated outputs to:
 
 ```text
 scripts/mappings/generated/

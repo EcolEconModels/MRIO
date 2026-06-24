@@ -49,7 +49,14 @@ def test_committed_cpa64_and_cpa65_target_dictionaries_have_explicit_real_estate
     assert {"CPA_L68A", "CPA_L68B"}.isdisjoint(cpa64_codes)
     assert "CPA_L68" not in cpa65_codes
     assert {"CPA_L68A", "CPA_L68B"}.issubset(cpa65_codes)
-    assert cpa64_codes - {"CPA_L68"} == cpa65_codes - {"CPA_L68A", "CPA_L68B"}
+    shared_codes = cpa64_codes - {"CPA_L68"}
+    assert shared_codes == cpa65_codes - {"CPA_L68A", "CPA_L68B"}
+
+    cpa64_by_code = cpa64.set_index("code")
+    cpa65_by_code = cpa65.set_index("code")
+    for code in sorted(shared_codes):
+        assert cpa65_by_code.at[code, "label"] == cpa64_by_code.at[code, "label"], code
+        assert cpa65_by_code.at[code, "description"] == cpa64_by_code.at[code, "description"], code
 
     for name, df in [("eurostat_cpa64_products_dictionary.csv", cpa64), ("eurostat_cpa65_products_dictionary.csv", cpa65)]:
         assert df["code"].astype(str).str.strip().ne("").all(), f"{name} has blank code(s)"
