@@ -7,7 +7,7 @@ import time
 import re
 from collections.abc import Iterable as IterableABC
 from pathlib import Path
-from typing import Sequence, cast
+from typing import Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -215,6 +215,114 @@ def _read_exio_to_eurostat_mapping_with_notes(
 
 
 
+
+def _flatten_selected_child_codes(value: object) -> list[str]:
+    """Flatten split-output selected-child structures while preserving order."""
+    out: list[str] = []
+
+    def _visit(obj: object) -> None:
+        if obj is None:
+            return
+        if isinstance(obj, dict):
+            for nested in obj.values():
+                _visit(nested)
+            return
+        if isinstance(obj, IterableABC) and not isinstance(obj, (str, bytes)):
+            for nested in obj:
+                _visit(nested)
+            return
+        text_value = str(obj).strip()
+        if text_value:
+            out.append(text_value)
+
+    _visit(value)
+    return list(dict.fromkeys(out))
+
+
+def _source_targets_from_sector_mapping(
+    sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> dict[str, dict[str, float]]:
+    source_targets: dict[str, dict[str, float]] = {}
+    if sector_mapping is None:
+        return source_targets
+    for target_code, source_weights in sector_mapping.items():
+        target = str(target_code)
+        for source_code, weight in source_weights.items():
+            source = str(source_code)
+            source_targets.setdefault(source, {})[target] = float(weight)  # pyright: ignore[reportArgumentType]  # read_weighted_mapping validates numeric weights
+    return source_targets
+
+
+def _build_split_child_edge_metadata(
+    *,
+    selected_children: Mapping[str, object],
+    sector_mapping: Mapping[str, Mapping[str, float]] | None,
+    variant_dim: str | None = None,
+    variant_value: str | None = None,
+    exio_flow: str | None = None,
+) -> pd.DataFrame:
+    """Build Phase-2 diagnostic metadata for future edge-aware split children.
+
+    This is diagnostic-only. It records what child code an edge-aware split would
+    emit for a selected raw EXIO child, but it does not alter current Z/Y/x split
+    outputs.
+    """
+    source_targets = _source_targets_from_sector_mapping(sector_mapping)
+    rows: list[dict[str, object]] = []
+    for parent_code, child_values in selected_children.items():
+        parent = str(parent_code)
+        for child_code in _flatten_selected_child_codes(child_values):
+            target_weights = source_targets.get(child_code)
+            if target_weights is None:
+                target_weights = {}
+            source_n_targets = len(target_weights)
+            if source_n_targets == 0:
+                source_n_targets = 1
+            is_many_target_source = source_n_targets > 1
+            proposed_child_code = f"{child_code}@{parent}" if is_many_target_source else child_code
+            edge_weight: float | None = target_weights.get(parent)
+            rows.append(
+                {
+                    "variant_dim": variant_dim or "",
+                    "variant_value": variant_value or "",
+                    "exio_flow": exio_flow or "",
+                    "parent_code": parent,
+                    "current_child_code": child_code,
+                    "proposed_edge_child_code": proposed_child_code,
+                    "source_code": child_code,
+                    "concordance_target_code": parent,
+                    "source_n_targets": int(source_n_targets),
+                    "is_many_target_source": bool(is_many_target_source),
+                    "is_edge_child_candidate": bool(is_many_target_source),
+                    "edge_weight_current_reference": "" if edge_weight is None else edge_weight,
+                    "selected_parent_in_concordance": bool(parent in target_weights) if target_weights else False,
+                    "phase": "phase2_diagnostic_only",
+                    "notes": (
+                        "Current Phase 2 split outputs still use current_child_code. "
+                        "Future edge-aware output should use proposed_edge_child_code "
+                        "for rows where is_edge_child_candidate is true."
+                    ),
+                }
+            )
+    columns = [
+        "variant_dim",
+        "variant_value",
+        "exio_flow",
+        "parent_code",
+        "current_child_code",
+        "proposed_edge_child_code",
+        "source_code",
+        "concordance_target_code",
+        "source_n_targets",
+        "is_many_target_source",
+        "is_edge_child_candidate",
+        "edge_weight_current_reference",
+        "selected_parent_in_concordance",
+        "phase",
+        "notes",
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
 def _eurostat_output_reference_from_frames(
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
@@ -269,7 +377,7 @@ def _build_output_consistency_frame(
         total = 0.0
         for exio, weight in sector_mapping.get(str(cpa), {}).items():
             if exio in exio_out.index:
-                total += float(exio_out.get(exio, 0.0)) * float(weight)
+                total += float(exio_out.get(exio, 0.0)) * float(weight)  # pyright: ignore[reportArgumentType]  # pandas Series.get stubs allow None; membership guard/default keep this numeric
         mapped_rows.append(
             {
                 "cpa": str(cpa),
@@ -820,6 +928,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "exio_doi": args.exio_doi,
                     },
                 )
+
+                if full_sector_mapping is not None:
+                    edge_metadata = _build_split_child_edge_metadata(
+                        selected_children=res.exio_selected_sectors,
+                        sector_mapping=full_sector_mapping,
+                        variant_dim=args.eurostat_stk_flow_dim,
+                        variant_value=str(flow),
+                        exio_flow=exio_flow,
+                    )
+                    if not edge_metadata.empty:
+                        out = flow_dir / "split_child_edges.csv"
+                        edge_metadata.to_csv(out, index=False)
+                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
                 if res.exio_quantity_and_price is not None:
                     out = flow_dir / "exio_quantity_and_price.csv"
                     res.exio_quantity_and_price.to_csv(out, index=False)
@@ -990,6 +1111,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         verbose=args.verbose,
         extra_info={"exio_doi": args.exio_doi},
     )
+
+    if full_sector_mapping is not None:
+        edge_metadata = _build_split_child_edge_metadata(
+            selected_children=res.exio_selected_sectors,
+            sector_mapping=full_sector_mapping,
+            exio_flow=exio_flow_single,
+        )
+        if not edge_metadata.empty:
+            out = outdir / "split_child_edges.csv"
+            edge_metadata.to_csv(out, index=False)
+            _vprint(args.verbose, f"Wrote: {out.resolve()}")
     if res.exio_quantity_and_price is not None:
         out = outdir / "exio_quantity_and_price_proxies.csv"
         res.exio_quantity_and_price.to_csv(out, index=False)
