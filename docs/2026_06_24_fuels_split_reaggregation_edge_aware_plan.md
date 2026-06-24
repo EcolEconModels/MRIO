@@ -155,6 +155,18 @@ This phase can still output raw children, but it must prove the flow-specific
 weights are available and tested. The audit boundary should be use-side and
 exclude export final-demand columns from the destination-use reference.
 
+
+#### Phase 3 implementation note
+
+Phase 3 resolves the EXIO-to-Eurostat weighted concordance separately for each
+`stk_flow` variant. The pipeline must no longer resolve the full concordance once
+from `TOTAL` and then reuse those weights for `DOM` and `IMP`. Each flow writes a
+`flow_specific_exio_to_eurostat_weights.csv` diagnostic beside the split outputs.
+
+This phase still preserves the Phase 2 raw-child output contract: multi-target
+sources are diagnosed with proposed edge-child codes, but `Z_split`, `Y_split`,
+and `x_split` are not renamed to edge children until Phase 4.
+
 ### Phase 4 -- Edge-aware split output
 
 Purpose: change the actual split output so multi-target sources are not emitted

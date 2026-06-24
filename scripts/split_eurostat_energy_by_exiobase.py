@@ -213,6 +213,80 @@ def _read_exio_to_eurostat_mapping_with_notes(
 
     return mapping, condensed_notes
 
+def _eurostat_export_final_demand_codes(parsed: ParsedEurostatIOT) -> tuple[str, ...]:
+    """Return Eurostat export final-demand columns present in a parsed IOT."""
+    return tuple(
+        str(column)
+        for column in parsed.Y.columns
+        if str(column) == "P6" or str(column).startswith("P6_")
+    )
+
+
+def _eurostat_non_export_use_reference_from_parsed(parsed: ParsedEurostatIOT) -> pd.Series:
+    """Build a destination-use reference for flow-specific concordance weights.
+
+    This excludes export final-demand columns so DOM/IMP/TOTAL weights are based
+    on products used by the destination country rather than producer-output or
+    export-inclusive final demand.
+    """
+    reference_raw = build_eurostat_product_use_reference(
+        parsed,
+        exclude_final_demand_codes=_eurostat_export_final_demand_codes(parsed),
+    )
+    reference = cast(pd.Series, pd.to_numeric(reference_raw, errors="coerce")).fillna(0.0).astype("float64")
+    reference.index = reference.index.astype(str)
+    return reference
+
+
+def _resolve_exio_to_eurostat_mapping_for_parsed(
+    path: str | Path,
+    parsed: ParsedEurostatIOT,
+) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
+    """Resolve EXIO-to-Eurostat weights from this flow's Eurostat use reference."""
+    return _read_exio_to_eurostat_mapping_with_notes(
+        path,
+        target_output_by_code=_eurostat_non_export_use_reference_from_parsed(parsed),
+    )
+
+
+def _mapping_weights_frame(
+    sector_mapping: Mapping[str, Mapping[str, float]],
+    *,
+    variant_dim: str | None = None,
+    variant_value: str | None = None,
+    exio_flow: str | None = None,
+    reference_basis: str = "eurostat_Z_plus_non_export_Y",
+) -> pd.DataFrame:
+    """Flatten resolved weights for reproducibility diagnostics."""
+    rows: list[dict[str, object]] = []
+    for target_code, source_weights in sector_mapping.items():
+        for source_code, weight in source_weights.items():
+            rows.append(
+                {
+                    "variant_dim": variant_dim or "",
+                    "variant_value": variant_value or "",
+                    "exio_flow": exio_flow or "",
+                    "source_code": str(source_code),
+                    "target_code": str(target_code),
+                    "weight": float(weight),
+                    "reference_basis": reference_basis,
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "variant_dim",
+            "variant_value",
+            "exio_flow",
+            "source_code",
+            "target_code",
+            "weight",
+            "reference_basis",
+        ],
+    )
+
+
+
 
 
 
@@ -827,14 +901,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             _vprint(args.verbose, f"Returned: load_eurostat_iot_variants ({t.elapsed_s():.2f}s)")
 
-            if full_sector_mapping_csv and full_sector_mapping is None:
-                total_variant = variants.get("TOTAL")
-                if total_variant is None:
-                    total_variant = next(iter(variants.values()))
-                total_reference = build_eurostat_product_use_reference(total_variant)
-                full_sector_mapping, full_sector_notes = _read_exio_to_eurostat_mapping_with_notes(
-                    full_sector_mapping_csv,
-                    target_output_by_code=total_reference,
+            if full_sector_mapping_csv:
+                _vprint(
+                    args.verbose,
+                    "Phase 3: resolving EXIO-to-Eurostat weights separately for each stk_flow "
+                    "from that flow's Eurostat Z + non-export Y reference.",
                 )
 
             exio_slices: dict[str, ExioRegionSlice] = {}
@@ -864,10 +935,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                 t = _Timer()
                 exio_flow = _exio_flow_for_eurostat_flow_value(flow)
                 exio_slice = exio_slices[exio_flow]
-                if full_sector_mapping is not None and not args.no_mapping_consistency_check:
+                flow_sector_mapping: dict[str, dict[str, float]] | None = None
+                flow_sector_notes: dict[str, str] | None = None
+                if full_sector_mapping_csv is not None:
+                    _vprint(args.verbose, f"Calling: resolve flow-specific EXIO-to-Eurostat mapping [{flow}]")
+                    t_map = _Timer()
+                    flow_sector_mapping, flow_sector_notes = _resolve_exio_to_eurostat_mapping_for_parsed(
+                        full_sector_mapping_csv,
+                        parsed,
+                    )
+                    _vprint(
+                        args.verbose,
+                        f"Returned: resolve flow-specific EXIO-to-Eurostat mapping ({t_map.elapsed_s():.2f}s)",
+                    )
+                    out = flow_dir / "flow_specific_exio_to_eurostat_weights.csv"
+                    _write_rows_csv(
+                        _mapping_weights_frame(
+                            flow_sector_mapping,
+                            variant_dim=args.eurostat_stk_flow_dim,
+                            variant_value=str(flow),
+                            exio_flow=exio_flow,
+                        ),
+                        out,
+                        verbose=args.verbose,
+                    )
+                if flow_sector_mapping is not None and not args.no_mapping_consistency_check:
                     label = f"{args.eurostat_stk_flow_dim}={flow}"
                     _assert_mapping_integrity(
-                        sector_mapping=full_sector_mapping,
+                        sector_mapping=flow_sector_mapping,
                         eurostat_Z=parsed.Z,
                         eurostat_Y=parsed.Y,
                         required_target_codes=report_aggregates,
@@ -875,7 +970,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     if _should_check_output(flow, eurostat_year, args.exio_year):
                         output_consistency, _, _ = _build_output_consistency_frame(
-                            sector_mapping=full_sector_mapping,
+                            sector_mapping=flow_sector_mapping,
                             eurostat_Z=parsed.Z,
                             eurostat_Y=parsed.Y,
                             exio_slice=exio_slice,
@@ -884,7 +979,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         output_consistency.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
                         _assert_output_consistency(
-                            sector_mapping=full_sector_mapping,
+                            sector_mapping=flow_sector_mapping,
                             eurostat_Z=parsed.Z,
                             eurostat_Y=parsed.Y,
                             exio_slice=exio_slice,
@@ -908,7 +1003,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     sector_patterns=None if sector_to_exio_sectors is not None else sector_patterns,
                     exio_cache_root=data_root,
                     balancing_scope=args.balancing_scope,
-                    eurostat_sector_mapping=full_sector_mapping,
+                    eurostat_sector_mapping=flow_sector_mapping,
                     coverage_expected_exio_sectors=coverage_expected_exio,
                     coverage_tol=args.coverage_tol,
                     extract_quantity_and_price=extract_qp,
@@ -929,10 +1024,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     },
                 )
 
-                if full_sector_mapping is not None:
+                if flow_sector_mapping is not None:
                     edge_metadata = _build_split_child_edge_metadata(
                         selected_children=res.exio_selected_sectors,
-                        sector_mapping=full_sector_mapping,
+                        sector_mapping=flow_sector_mapping,
                         variant_dim=args.eurostat_stk_flow_dim,
                         variant_value=str(flow),
                         exio_flow=exio_flow,
@@ -1009,8 +1104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         exio_fd_co2.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-                if extract_co2 and full_sector_mapping is not None:
-                    exio_sectors_full = flatten_exio_sectors_from_mapping(full_sector_mapping)
+                if extract_co2 and flow_sector_mapping is not None:
+                    exio_sectors_full = flatten_exio_sectors_from_mapping(flow_sector_mapping)
 
                     available = set(map(str, exio_slice.sectors))
                     exio_sectors_full = [s for s in exio_sectors_full if s in available]
@@ -1027,12 +1122,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     if exio_co2_full is not None:
                         eurostat_co2 = _aggregate_exio_emissions_to_eurostat(
-                            exio_co2_full, full_sector_mapping
+                            exio_co2_full, flow_sector_mapping
                         )
-                        if full_sector_notes is not None and not eurostat_co2.empty:
+                        if flow_sector_notes is not None and not eurostat_co2.empty:
                             eurostat_co2 = eurostat_co2.copy()
                             eurostat_co2["mapping_notes"] = [
-                                full_sector_notes.get(str(sector), "")
+                                flow_sector_notes.get(str(sector), "")
                                 for sector in eurostat_co2["aggregated_sector"].astype(str)
                             ]
                         if not eurostat_co2.empty:
@@ -1073,6 +1168,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         Z, Y = load_local_iot(args.eurostat_z, args.eurostat_y)
         _vprint(args.verbose, f"Returned: load_local_iot ({t.elapsed_s():.2f}s)")
         exio_flow_single = "domestic" if args.exio_share_flow == "auto" else str(args.exio_share_flow)
+
+    if full_sector_mapping_csv is not None and full_sector_mapping is None:
+        parsed_for_mapping = parsed if args.eurostat_dataset else ParsedEurostatIOT(Z=Z, Y=Y, meta={})
+        _vprint(args.verbose, "Calling: resolve flow-specific EXIO-to-Eurostat mapping [single]")
+        t_map = _Timer()
+        full_sector_mapping, full_sector_notes = _resolve_exio_to_eurostat_mapping_for_parsed(
+            full_sector_mapping_csv,
+            parsed_for_mapping,
+        )
+        _vprint(
+            args.verbose,
+            f"Returned: resolve flow-specific EXIO-to-Eurostat mapping ({t_map.elapsed_s():.2f}s)",
+        )
+        if outdir is not None:
+            out = outdir / "flow_specific_exio_to_eurostat_weights.csv"
+            _write_rows_csv(
+                _mapping_weights_frame(full_sector_mapping, exio_flow=exio_flow_single),
+                out,
+                verbose=args.verbose,
+            )
 
     _vprint(args.verbose, "Calling: split_iot_using_exiobase_shares(...)")
     t = _Timer()
