@@ -37,10 +37,12 @@ These are the only mapping CSVs that should be used by code and by humans:
   - split manifest for the analytical green/brown energy view
 - `scripts/pipelines/energy_green_brown_reaggregation.csv`
   - reaggregation table for the analytical green/brown energy view
+The split and reaggregation helper tables are single-sourced under `scripts/pipelines/`; do not mirror them into `scripts/mappings/`.
+
+### Design notes
+
 - `docs/2026_06_24_fuels_split_reaggregation_edge_aware_plan.md`
   - phased design note for reaggregation coverage preflights and later edge-aware many-to-many split semantics
-
-The split and reaggregation helper tables are single-sourced under `scripts/pipelines/`; do not mirror them into `scripts/mappings/`.
 
 There should be no parallel `.mapping.csv` duplicates and no separate mapping tables in the markdown documentation.
 
