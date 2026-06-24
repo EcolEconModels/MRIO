@@ -77,6 +77,12 @@ fi
 
 set -x
 
+"$PY" "$ROOT_DIR/scripts/pipelines/check_reaggregation_coverage.py" \
+  --split-mapping-csv "$SPLIT_MAPPING_CSV" \
+  --reagg-mapping-csv "$REAGG_MAPPING_CSV" \
+  --concordance-csv "$CONCORDANCE_CSV" \
+  --report-csv "$GENERATED_MAPPINGS_OUT/reaggregation_coverage_preflight.csv"
+
 "$PY" "$ROOT_DIR/scripts/split_eurostat_energy_by_exiobase.py" --verbose \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \

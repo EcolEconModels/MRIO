@@ -31,6 +31,7 @@ p23.20.n,Lubricants,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggreg
 p23.20.o,Bitumen,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggregation row from CPA_C19::Bitumen to CPA_C19: Oil.
 p23.20.p,Paraffin Waxes,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggregation row from CPA_C19::Paraffin Waxes to CPA_C19: Oil.
 p23.20.q,Petroleum Coke,CPA_C19_COAL,CPA_C19: Coal,True,Workbook-driven fuels reaggregation row from CPA_C19::Petroleum Coke to CPA_C19: Coal.
+p10.g,BKB/Peat Briquettes,CPA_C19_COAL,CPA_C19: Coal,True,Added for the official-derived EXIOBASE-to-Eurostat CPA_65 concordance: p10.g (BKB/Peat Briquettes) can be selected under CPA_C19 and is conservatively reaggregated with coal/peat solid fuels.
 p23.20.r,Non-specified Petroleum Products,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggregation row from CPA_C19::Non-specified Petroleum Products to CPA_C19: Oil.
 p24.f,Additives/Blending Components,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Workbook-driven fuels reaggregation row from CPA_C20::Additives/Blending Components to CPA_C20: Chemicals and chemical products_remaining.
 p24.e,Charcoal,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Workbook-driven fuels reaggregation row from CPA_C20::Charcoal to CPA_C20: Chemicals and chemical products_remaining.

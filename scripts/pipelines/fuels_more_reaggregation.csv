@@ -35,6 +35,7 @@ order,source_code,source_label,target_code,target_label,enabled,notes
 34,p23.1.c,Coal Tar,CPA_C19_COAL,CPA_C19: Coal,True,Workbook-driven fuels reaggregation row from CPA_C19::Coal Tar to CPA_C19: Coal.
 35,p23.1.a,Coke Oven Coke,CPA_C19_COAL,CPA_C19: Coal,True,Workbook-driven fuels reaggregation row from CPA_C19::Coke Oven Coke to CPA_C19: Coal.
 36,p23.1.b,Gas Coke,CPA_C19_COAL,CPA_C19: Coal,True,Workbook-driven fuels reaggregation row from CPA_C19::Gas Coke to CPA_C19: Coal.
+32.5,p10.g,BKB/Peat Briquettes,CPA_C19_COAL,CPA_C19: Coal,True,Added for the official-derived EXIOBASE-to-Eurostat CPA_65 concordance: p10.g (BKB/Peat Briquettes) can be selected under CPA_C19 and is conservatively reaggregated with coal/peat solid fuels.
 37,p23.20.a,Motor Gasoline,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggregation row from CPA_C19::Motor Gasoline to CPA_C19: Oil.
 38,p23.20.c,Gasoline Type Jet Fuel,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggregation row from CPA_C19::Gasoline Type Jet Fuel to CPA_C19: Oil.
 39,p23.20.d,Kerosene Type Jet Fuel,CPA_C19_OIL,CPA_C19: Oil,True,Workbook-driven fuels reaggregation row from CPA_C19::Kerosene Type Jet Fuel to CPA_C19: Oil.
