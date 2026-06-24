@@ -489,6 +489,162 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
     assert res.Y.loc["a2", "P6"] == pytest.approx(90.0)
 
 
+def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["p24.d", "p24.g", "c21"]
+    Z_domestic = pd.DataFrame(
+        [
+            [10.0, 5.0, 2.0],
+            [3.0, 8.0, 1.0],
+            [4.0, 2.0, 6.0],
+        ],
+        index=exio_sectors,
+        columns=exio_sectors,
+    )
+    Y_region = pd.DataFrame(
+        {"Final consumption expenditure by households": [20.0, 10.0, 5.0]},
+        index=exio_sectors,
+    )
+    x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+    euro_Z = pd.DataFrame(
+        [[100.0, 20.0], [30.0, 40.0]],
+        index=["CPA_C20", "CPA_C21"],
+        columns=["CPA_C20", "CPA_C21"],
+    )
+    euro_Y = pd.DataFrame({"P3": [50.0, 60.0]}, index=["CPA_C20", "CPA_C21"])
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"CPA_C20": ["p24.d", "p24.g"]},
+        eurostat_sector_mapping={
+            "CPA_C20": {"p24.d": 0.75, "p24.g": 1.0},
+            "CPA_C21": {"p24.d": 0.25, "c21": 1.0},
+        },
+        create_io_system=False,
+    )
+
+    assert "p24.d@CPA_C20" in res.Z.index
+    assert "p24.d" not in res.Z.index
+    assert "p24.g" in res.Z.index
+    assert res.exio_selected_sectors["CPA_C20"] == ["p24.d@CPA_C20", "p24.g"]
+
+    child_codes = ["p24.d@CPA_C20", "p24.g"]
+    assert float(res.Z.loc[child_codes, child_codes].to_numpy().sum()) == pytest.approx(euro_Z.loc["CPA_C20", "CPA_C20"])
+    assert float(res.Z.loc[child_codes, "CPA_C21"].sum()) == pytest.approx(euro_Z.loc["CPA_C20", "CPA_C21"])
+    assert float(res.Z.loc["CPA_C21", child_codes].sum()) == pytest.approx(euro_Z.loc["CPA_C21", "CPA_C20"])
+    assert float(res.Y.loc[child_codes, "P3"].sum()) == pytest.approx(euro_Y.loc["CPA_C20", "P3"])
+    pd.testing.assert_series_equal(
+        (res.Z.sum(axis=1) + res.Y.sum(axis=1)).astype("float64"),
+        res.x.astype("float64"),
+        check_names=False,
+    )
+
+
+def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["p24.d", "p24.g"]
+    Z_domestic = pd.DataFrame([[1.0, 0.0], [0.0, 1.0]], index=exio_sectors, columns=exio_sectors)
+    Y_region = pd.DataFrame(
+        {"Final consumption expenditure by households": [100.0, 50.0]},
+        index=exio_sectors,
+    )
+    x_region = Y_region.sum(axis=1).astype("float64")
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+    euro_Z = pd.DataFrame([[0.0]], index=["CPA_C20"], columns=["CPA_C20"])
+    euro_Y = pd.DataFrame({"P3": [100.0]}, index=["CPA_C20"])
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"CPA_C20": ["p24.d", "p24.g"]},
+        eurostat_sector_mapping={
+            "CPA_C20": {"p24.d": 0.25, "p24.g": 1.0},
+            "CPA_C21": {"p24.d": 0.75},
+        },
+        create_io_system=False,
+    )
+
+    # Edge-weighted donor values are p24.d: 25 and p24.g: 50.
+    assert res.Y.loc["p24.d@CPA_C20", "P3"] == pytest.approx(100.0 / 3.0)
+    assert res.Y.loc["p24.g", "P3"] == pytest.approx(200.0 / 3.0)
+
+
+def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["p24.d", "p24.g"]
+    Z_domestic = pd.DataFrame(
+        [[4.0, 0.0], [0.0, 8.0]],
+        index=exio_sectors,
+        columns=exio_sectors,
+    )
+    Y_region = pd.DataFrame({"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors)
+    x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=x_region,
+        source_zip=tmp_path / "IOT_2020_pxp.zip",
+    )
+    euro_Z = pd.DataFrame([[0.0]], index=["CPA_C20"], columns=["CPA_C20"])
+    euro_Y = pd.DataFrame({"P3": [1.0]}, index=["CPA_C20"])
+    euro_V = pd.DataFrame([[90.0]], index=["Value added, gross"], columns=["CPA_C20"])
+    euro_M = pd.DataFrame([[7.0]], index=["Value added, gross"], columns=["P3"])
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        eurostat_V=euro_V,
+        eurostat_M=euro_M,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"CPA_C20": ["p24.d", "p24.g"]},
+        eurostat_sector_mapping={
+            "CPA_C20": {"p24.d": 0.25, "p24.g": 1.0},
+            "CPA_C21": {"p24.d": 0.75},
+        },
+        create_io_system=False,
+    )
+
+    assert res.V is not None
+    assert res.M is not None
+    # Column-side donor inputs are p24.d edge: 4 * 0.25 = 1 and p24.g: 8.
+    assert res.V.loc["Value added, gross", "p24.d@CPA_C20"] == pytest.approx(10.0)
+    assert res.V.loc["Value added, gross", "p24.g"] == pytest.approx(80.0)
+    assert float(res.V.loc["Value added, gross", ["p24.d@CPA_C20", "p24.g"]].sum()) == pytest.approx(90.0)
+    assert res.M.loc["Value added, gross", "P3"] == pytest.approx(7.0)
+
+
 def test_validate_split_reconstruction_preserves_original_final_demand_columns():
     from ecolecon_mrio.disaggregation import SplitProfiles
     from ecolecon_mrio.exio_share_split import _validate_split_reconstruction

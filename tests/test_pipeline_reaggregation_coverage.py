@@ -106,3 +106,55 @@ def test_reaggregation_coverage_preflight_passes_when_selected_child_is_covered(
     report = pd.read_csv(tmp_path / "report.csv")
     assert set(report["child_code"]) == {"p23.1.a", "p10.g"}
     assert report["covered_by_reaggregation"].astype(str).str.lower().eq("true").all()
+
+
+def test_reaggregation_coverage_preflight_checks_edge_child_for_multi_target_source(tmp_path: Path) -> None:
+    split_csv = tmp_path / "split.csv"
+    concordance_csv = tmp_path / "concordance.csv"
+    reagg_csv = tmp_path / "reagg.csv"
+    report_csv = tmp_path / "report.csv"
+
+    _write_csv(split_csv, [{"source_code": "CPA_C20", "source_label": "Chemicals"}])
+    _write_csv(
+        concordance_csv,
+        [
+            {"source_code": "p24.d", "source_label": "Chemicals nec", "target_code": "CPA_C20", "enabled": "True"},
+            {"source_code": "p24.d", "source_label": "Chemicals nec", "target_code": "CPA_C21", "enabled": "True"},
+        ],
+    )
+    _write_csv(
+        reagg_csv,
+        [
+            {
+                "source_code": "p24.d@CPA_C20",
+                "source_label": "Chemicals nec allocated to CPA_C20",
+                "target_code": "CPA_C20_others",
+                "target_label": "CPA_C20 other",
+                "enabled": "True",
+            }
+        ],
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CHECKER),
+            "--split-mapping-csv",
+            str(split_csv),
+            "--reagg-mapping-csv",
+            str(reagg_csv),
+            "--concordance-csv",
+            str(concordance_csv),
+            "--report-csv",
+            str(report_csv),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = pd.read_csv(report_csv)
+    assert report["child_code"].tolist() == ["p24.d@CPA_C20"]
+    assert report["source_code"].tolist() == ["p24.d"]

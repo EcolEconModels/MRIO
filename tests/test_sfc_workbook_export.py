@@ -247,6 +247,7 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
                 "prd_ava": {
                     "CPA_C19": "Coke and refined petroleum products",
                     "CPA_D": "Electricity, gas, steam and air conditioning",
+                    "D21X31": "Taxes less subsidies on products",
                 },
                 "prd_use": {
                     "P3": "Final consumption expediture",
@@ -298,6 +299,16 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
         },
         index=z_after.index,
     )
+    v_after = pd.DataFrame(
+        [[0.25, 0.75, 2.0]],
+        index=["D21X31"],
+        columns=z_after.columns,
+    )
+    m_after = pd.DataFrame(
+        [[9.0, 8.0, 7.0, 27.0, 24.0]],
+        index=["D21X31"],
+        columns=["P3", "P5", "P6", "TU", "TFU"],
+    )
 
     mapping_df = pd.DataFrame(
         {
@@ -333,6 +344,8 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
         Y_before=y_before,
         Z_after=z_after,
         Y_after=y_after,
+        V_after=v_after,
+        M_after=m_after,
         mapping_df=mapping_df,
         mapping_from_col="from_sector",
         mapping_to_col="to_sector",
@@ -361,7 +374,7 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
     expected_value_added = (x_after - col_sums_z).tolist()
     expected_output = x_after.tolist()
     expected_intermediate = col_sums_z.tolist()
-    expected_taxes = [c19_share_motor, c19_share_remaining, 2.0]
+    expected_taxes = [0.25, 0.75, 2.0]
     expected_imports = [7.0 * c19_share_motor, 7.0 * c19_share_remaining, 8.0]
     expected_supply = [round(a + b, 10) for a, b in zip(expected_output, expected_imports, strict=True)]
 

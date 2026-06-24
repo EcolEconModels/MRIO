@@ -33,6 +33,9 @@ class SplitResult:
     balancing_stats: BalanceStats
     exio_selected_sectors: dict[str, list[str]]
     exio_quantity_and_price: pd.DataFrame | None
+    V: pd.DataFrame | None = None
+    M: pd.DataFrame | None = None
+    supplementary_diagnostics: pd.DataFrame | None = None
     fallback_diagnostics: pd.DataFrame | None = None
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
@@ -113,6 +116,140 @@ def _normalize_vector(values: pd.Series) -> pd.Series:
     return numeric / total
 
 
+def _edge_child_source_target(subsector: object) -> tuple[str, str] | None:
+    """Return (EXIO source, Eurostat target) for edge-child codes like p24.d@CPA_C20."""
+    text = str(subsector).strip()
+    if "@" not in text:
+        return None
+    source, target = text.split("@", 1)
+    source = source.strip()
+    target = target.strip()
+    if not source or not target:
+        return None
+    return source, target
+
+
+def _edge_member_weight(
+    *,
+    subsector: object,
+    member: object,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> float:
+    """Weight an EXIO member when a split child represents a source-target edge."""
+    edge = _edge_child_source_target(subsector)
+    if edge is None:
+        return 1.0
+    edge_source, edge_target = edge
+    member_s = str(member).strip()
+    if member_s != edge_source:
+        return 0.0
+    if eurostat_sector_mapping is None:
+        return 1.0
+    return float(eurostat_sector_mapping.get(edge_target, {}).get(edge_source, 0.0))
+
+
+def _weighted_exio_member_sum(
+    values: pd.Series,
+    *,
+    subsector: object,
+    members: Sequence[str],
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> float:
+    total = 0.0
+    for member in map(str, members):
+        if member not in values.index:
+            continue
+        total += float(values.loc[member]) * _edge_member_weight(
+            subsector=subsector,
+            member=member,
+            eurostat_sector_mapping=eurostat_sector_mapping,
+        )
+    return float(total)
+
+
+def _raw_exio_members_from_profile(prof: SplitProfiles | None) -> list[str]:
+    if prof is None or not prof.subsector_to_exio_sectors:
+        return []
+    out: list[str] = []
+    for members in prof.subsector_to_exio_sectors.values():
+        out.extend(str(member) for member in members if str(member).strip())
+    return list(dict.fromkeys(out))
+
+
+def _raw_exio_members_from_profiles(profiles: Mapping[str, SplitProfiles]) -> list[str]:
+    out: list[str] = []
+    for prof in profiles.values():
+        out.extend(_raw_exio_members_from_profile(prof))
+    return list(dict.fromkeys(out))
+
+
+def _source_targets_from_eurostat_mapping(
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> dict[str, dict[str, float]]:
+    source_targets: dict[str, dict[str, float]] = {}
+    if eurostat_sector_mapping is None:
+        return source_targets
+    for target_code, source_weights in eurostat_sector_mapping.items():
+        target = str(target_code)
+        for source_code, weight in source_weights.items():
+            source = str(source_code)
+            weight_float = float(weight)
+            if weight_float == 0.0:
+                continue
+            source_targets.setdefault(source, {})[target] = weight_float
+    return source_targets
+
+
+def _edge_aware_sector_to_exio_sectors(
+    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    *,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None:
+    """Derive edge-child output labels for selected multi-target EXIO sources.
+
+    The public split manifest stays parent -> raw EXIO source. When a raw source
+    maps to multiple Eurostat targets and the selected parent is one of them, the
+    emitted split child is source@parent while retaining the raw source as its
+    EXIO donor member.
+    """
+    if sector_to_exio_sectors is None or eurostat_sector_mapping is None:
+        return sector_to_exio_sectors
+
+    source_targets = _source_targets_from_eurostat_mapping(eurostat_sector_mapping)
+    if not source_targets:
+        return sector_to_exio_sectors
+
+    def _child_label(parent: str, source: str) -> str:
+        targets = source_targets.get(source, {})
+        if len(targets) > 1 and parent in targets:
+            return f"{source}@{parent}"
+        return source
+
+    expanded: dict[str, list[str] | dict[str, list[str]]] = {}
+    for parent_code, value in sector_to_exio_sectors.items():
+        parent = str(parent_code)
+        if isinstance(value, ABCMapping):
+            grouped: dict[str, list[str]] = {}
+            for group_code, members in value.items():
+                for source_code in members:
+                    source = str(source_code)
+                    child = _child_label(parent, source)
+                    grouped.setdefault(child, [])
+                    if source not in grouped[child]:
+                        grouped[child].append(source)
+            expanded[parent] = grouped
+        else:
+            children: dict[str, list[str]] = {}
+            for source_code in value:
+                source = str(source_code)
+                child = _child_label(parent, source)
+                children.setdefault(child, [])
+                if source not in children[child]:
+                    children[child].append(source)
+            expanded[parent] = children
+
+    return expanded
+
 def _validate_split_reconstruction(
     *,
     eurostat_Z: pd.DataFrame,
@@ -176,6 +313,60 @@ def _validate_split_reconstruction(
             "Disaggregation validation failed: split result does not aggregate back to the original IOT.\n"
             + "\n".join(errors)
         )
+
+
+def _split_supplementary_rows_columnwise(
+    *,
+    eurostat_V: pd.DataFrame | None,
+    eurostat_M: pd.DataFrame | None,
+    sectors_old: Sequence[str],
+    sectors_new: Sequence[str],
+    split_profiles: Mapping[str, SplitProfiles],
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    if eurostat_V is None:
+        M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
+        return None, M_out, None
+
+    V = eurostat_V.copy().astype("float64")
+    V.index = V.index.astype(str)
+    V.columns = V.columns.astype(str)
+    V_split = pd.DataFrame(0.0, index=V.index, columns=list(map(str, sectors_new)), dtype="float64")
+    diagnostics: list[dict[str, object]] = []
+
+    for parent in map(str, sectors_old):
+        if parent not in V.columns:
+            continue
+        children = list(map(str, split_profiles[parent].subsectors)) if parent in split_profiles else [parent]
+        if parent in split_profiles:
+            weights = split_profiles[parent].intermediate_input_share.reindex(children).fillna(0.0).clip(lower=0.0)
+            method = "edge_aware_child_column_input_share"
+        else:
+            weights = pd.Series(1.0, index=children, dtype="float64")
+            method = "unsplit_identity"
+        total = float(weights.sum())
+        if not np.isfinite(total) or total <= 0.0:
+            weights = pd.Series(1.0 / len(children), index=children, dtype="float64")
+            method = "equal_share_fallback"
+        else:
+            weights = weights / total
+
+        for child in children:
+            V_split.loc[:, child] = V.loc[:, parent].to_numpy(dtype="float64") * float(weights.loc[child])
+        diagnostics.append(
+            {
+                "parent_code": parent,
+                "child_codes": "|".join(children),
+                "allocation_method": method,
+                "denominator": total,
+            }
+        )
+
+    M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
+    if M_out is not None:
+        M_out.index = M_out.index.astype(str)
+        M_out.columns = M_out.columns.astype(str)
+    diag = pd.DataFrame(diagnostics) if diagnostics else None
+    return V_split, M_out, diag
 
 
 def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
@@ -256,8 +447,19 @@ def _build_label_to_exio_weights(
             continue
         for subsector, exio_members in subsector_map.items():
             members = [str(member) for member in exio_members if str(member) in available_exio]
-            if members:
-                out[str(subsector)] = {member: 1.0 for member in members}
+            if not members:
+                continue
+            weighted_members = {
+                member: _edge_member_weight(
+                    subsector=subsector,
+                    member=member,
+                    eurostat_sector_mapping=eurostat_sector_mapping,
+                )
+                for member in members
+            }
+            weighted_members = {member: weight for member, weight in weighted_members.items() if weight != 0.0}
+            if weighted_members:
+                out[str(subsector)] = weighted_members
 
     return out
 
@@ -267,6 +469,7 @@ def _build_fd_category_donor_shares(
     exio_slice: ExioRegionSlice,
     split_profiles: Mapping[str, SplitProfiles],
     sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     eurostat_fd_codes: Sequence[str],
 ) -> dict[str, dict[str, pd.Series]]:
     Y_region = exio_slice.Y_region.copy().astype("float64")
@@ -298,8 +501,11 @@ def _build_fd_category_donor_shares(
 
             donor_values = pd.Series(0.0, index=list(map(str, prof.subsectors)), dtype="float64")
             for subsector, exio_members in subsector_map.items():
-                donor_values.loc[str(subsector)] = float(
-                    Y_region.reindex(index=list(map(str, exio_members)), columns=cols).fillna(0.0).to_numpy(dtype="float64").sum()
+                donor_values.loc[str(subsector)] = _weighted_exio_member_sum(
+                    Y_region.loc[:, cols].sum(axis=1).astype("float64"),
+                    subsector=subsector,
+                    members=list(map(str, exio_members)),
+                    eurostat_sector_mapping=eurostat_sector_mapping,
                 )
 
             total = float(donor_values.sum())
@@ -316,6 +522,8 @@ def _split_iot_using_donor_blocks(
     *,
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
+    eurostat_V: pd.DataFrame | None = None,
+    eurostat_M: pd.DataFrame | None = None,
     exio_slice: ExioRegionSlice,
     split_profiles: Mapping[str, SplitProfiles],
     sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
@@ -345,6 +553,7 @@ def _split_iot_using_donor_blocks(
         exio_slice=exio_slice,
         split_profiles=split_profiles,
         sector_to_exio_sectors=sector_to_exio_sectors,
+        eurostat_sector_mapping=eurostat_sector_mapping,
         eurostat_fd_codes=Y.columns.astype(str),
     )
 
@@ -493,6 +702,13 @@ def _split_iot_using_donor_blocks(
 
     x_split = calc_x(Z_split, Y_split)
     A_split = calc_A(Z_split, x_split)
+    V_split, M_split, supplementary_diagnostics = _split_supplementary_rows_columnwise(
+        eurostat_V=eurostat_V,
+        eurostat_M=eurostat_M,
+        sectors_old=sectors_old,
+        sectors_new=sectors_new,
+        split_profiles=split_profiles,
+    )
 
     io_system = None
     if create_io_system:
@@ -519,6 +735,9 @@ def _split_iot_using_donor_blocks(
         balancing_stats=BalanceStats(0, 0.0, 0.0),
         exio_selected_sectors={},
         exio_quantity_and_price=None,
+        V=V_split,
+        M=M_split,
+        supplementary_diagnostics=supplementary_diagnostics,
         fallback_diagnostics=pd.DataFrame(fallback_records) if fallback_records else None,
         io_system=io_system,
     )
@@ -568,6 +787,7 @@ def build_split_profiles_from_exiobase_domestic_block(
     *,
     sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
 ) -> tuple[dict[str, SplitProfiles], dict[str, list[str]]]:
     """
     Build split profiles for any set of aggregate sectors.
@@ -613,26 +833,49 @@ def build_split_profiles_from_exiobase_domestic_block(
                 # Aggregate EXIO vectors into subsector totals, then normalize to shares.
                 # Optimized: slices from pre-computed sums instead of summing matrix block every time.
                 x_sub = pd.Series(
-                    {sub: float(x_use.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()},
+                    {
+                        sub: _weighted_exio_member_sum(
+                            x_use,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
+                        for sub, members in subsector_to_exio.items()
+                    },
                     dtype="float64",
                 )
                 sales_sub = pd.Series(
                     {
-                        sub: float(Z_sales_sum.loc[pd.Index(members)].sum())
+                        sub: _weighted_exio_member_sum(
+                            Z_sales_sum,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
                 )
                 inputs_sub = pd.Series(
                     {
-                        sub: float(Z_inputs_sum.loc[pd.Index(members)].sum())
+                        sub: _weighted_exio_member_sum(
+                            Z_inputs_sum,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
                 )
                 fd_sub = pd.Series(
                     {
-                        sub: float(Y_fd_sum.loc[pd.Index(members)].sum())
+                        sub: _weighted_exio_member_sum(
+                            Y_fd_sum,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
@@ -659,10 +902,7 @@ def build_split_profiles_from_exiobase_domestic_block(
                     subsector_to_exio_sectors=subsector_to_exio,
                 )
 
-                flat_members: list[str] = []
-                for members in subsector_to_exio.values():
-                    flat_members.extend(members)
-                selected[str(aggregate)] = list(dict.fromkeys(flat_members))
+                selected[str(aggregate)] = list(dict.fromkeys(map(str, subsector_to_exio.keys())))
             else:
                 requested_codes = [str(member).strip() for member in exio_sectors if str(member).strip() != ""]
                 missing = [code for code in requested_codes if code not in available_codes]
@@ -671,26 +911,49 @@ def build_split_profiles_from_exiobase_domestic_block(
                 subsector_to_exio = {code: [code] for code in requested_codes}
 
                 x_sub = pd.Series(
-                    {sub: float(x_use.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()},
+                    {
+                        sub: _weighted_exio_member_sum(
+                            x_use,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
+                        for sub, members in subsector_to_exio.items()
+                    },
                     dtype="float64",
                 )
                 sales_sub = pd.Series(
                     {
-                        sub: float(Z_sales_sum.loc[pd.Index(members)].sum())
+                        sub: _weighted_exio_member_sum(
+                            Z_sales_sum,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
                 )
                 inputs_sub = pd.Series(
                     {
-                        sub: float(Z_inputs_sum.loc[pd.Index(members)].sum())
+                        sub: _weighted_exio_member_sum(
+                            Z_inputs_sum,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
                 )
                 fd_sub = pd.Series(
                     {
-                        sub: float(Y_fd_sum.loc[pd.Index(members)].sum())
+                        sub: _weighted_exio_member_sum(
+                            Y_fd_sum,
+                            subsector=sub,
+                            members=list(map(str, members)),
+                            eurostat_sector_mapping=eurostat_sector_mapping,
+                        )
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
@@ -901,6 +1164,8 @@ def split_iot_using_exiobase_split_profiles(
     *,
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
+    eurostat_V: pd.DataFrame | None = None,
+    eurostat_M: pd.DataFrame | None = None,
     exio_slice: ExioRegionSlice,
     sector_to_exio_sectors: (
         Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None
@@ -924,10 +1189,15 @@ def split_iot_using_exiobase_split_profiles(
     The allocation uses full donor blocks for Z and donor final-demand-category shares for Y.
     Where donor information is unavailable, it falls back to the existing marginal-share logic.
     """
+    effective_sector_to_exio_sectors = _edge_aware_sector_to_exio_sectors(
+        sector_to_exio_sectors,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+    )
     profiles, selected = build_split_profiles_from_exiobase_domestic_block(
         exio_slice,
-        sector_to_exio_sectors=sector_to_exio_sectors,
+        sector_to_exio_sectors=effective_sector_to_exio_sectors,
         sector_patterns=sector_patterns,
+        eurostat_sector_mapping=eurostat_sector_mapping,
     )
 
     if coverage_expected_exio_sectors is not None:
@@ -941,7 +1211,9 @@ def split_iot_using_exiobase_split_profiles(
         for agg, expected in coverage_expected_exio_sectors.items():
             agg_s = str(agg)
             expected_list = list(map(str, expected))
-            selected_list = list(map(str, selected.get(agg_s, [])))
+            profile = profiles.get(agg_s)
+            raw_selected = _raw_exio_members_from_profile(profile)
+            selected_list = raw_selected or list(map(str, selected.get(agg_s, [])))
 
             missing_expected = [s for s in expected_list if s not in use_total.index]
             if missing_expected:
@@ -988,6 +1260,8 @@ def split_iot_using_exiobase_split_profiles(
     res = _split_iot_using_donor_blocks(
         eurostat_Z=eurostat_Z,
         eurostat_Y=eurostat_Y,
+        eurostat_V=eurostat_V,
+        eurostat_M=eurostat_M,
         exio_slice=exio_slice,
         split_profiles=profiles,
         sector_to_exio_sectors=sector_to_exio_sectors,
@@ -1011,10 +1285,7 @@ def split_iot_using_exiobase_split_profiles(
                 "When extract_quantity_and_price=True, also provide "
                 "quantity_price_extensions and quantity_price_stressor_keywords."
             )
-        exio_sectors: list[str] = []
-        for agg in profiles.keys():
-            exio_sectors.extend(selected.get(str(agg), []))
-        exio_sectors = list(dict.fromkeys(exio_sectors))
+        exio_sectors = _raw_exio_members_from_profiles(profiles)
 
         monetary_output = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype(
             "float64"
@@ -1039,6 +1310,9 @@ def split_iot_using_exiobase_split_profiles(
         balancing_stats=res.balancing_stats,
         exio_selected_sectors=selected,
         exio_quantity_and_price=exio_qp,
+        V=res.V,
+        M=res.M,
+        supplementary_diagnostics=res.supplementary_diagnostics,
         fallback_diagnostics=res.fallback_diagnostics,
         disaggregated_sector_value_per_physical_input=res.disaggregated_sector_value_per_physical_input,
         io_system=res.io_system,
@@ -1049,6 +1323,8 @@ def split_iot_using_exiobase_shares(
     *,
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
+    eurostat_V: pd.DataFrame | None = None,
+    eurostat_M: pd.DataFrame | None = None,
     exio_year: int,
     exio_region: str,
     exio_slice: ExioRegionSlice | None = None,
@@ -1081,6 +1357,8 @@ def split_iot_using_exiobase_shares(
     return split_iot_using_exiobase_split_profiles(
         eurostat_Z=eurostat_Z,
         eurostat_Y=eurostat_Y,
+        eurostat_V=eurostat_V,
+        eurostat_M=eurostat_M,
         exio_slice=exio_slice,
         sector_to_exio_sectors=sector_to_exio_sectors,
         sector_patterns=sector_patterns,

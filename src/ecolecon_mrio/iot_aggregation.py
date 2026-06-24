@@ -14,6 +14,8 @@ class AggregationResult:
     Y: pd.DataFrame
     x: pd.Series
     A: pd.DataFrame
+    V: pd.DataFrame | None = None
+    M: pd.DataFrame | None = None
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None
     aggregated_sector_emission_intensity: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
@@ -106,6 +108,20 @@ def aggregate_Y(
     Y.index = new_index
     Y = Y.groupby(level=0).sum()
     return Y
+
+
+def aggregate_V(
+    V: pd.DataFrame,
+    mapping: Mapping[str, str],
+    *,
+    keep_unmapped: bool = True,
+) -> pd.DataFrame:
+    """Aggregate supplementary/lower IO rows over product columns."""
+    V = V.copy()
+    new_columns, keep_cols = _map_index_values(pd.Index(V.columns.astype(str)), mapping, keep_unmapped=keep_unmapped)
+    V = V.loc[:, keep_cols]
+    V.columns = new_columns
+    return V.T.groupby(level=0).sum().T
 
 
 def _compute_aggregated_sector_ratio_of_sums(
@@ -251,6 +267,8 @@ def aggregate_iot(
     Y: pd.DataFrame,
     mapping: Mapping[str, str],
     *,
+    V: pd.DataFrame | None = None,
+    M: pd.DataFrame | None = None,
     level: int = -1,
     keep_unmapped: bool = True,
     create_io_system: bool = True,
@@ -284,6 +302,8 @@ def aggregate_iot(
 
     Z_agg = aggregate_square_matrix(Z, mapping, level=level, keep_unmapped=keep_unmapped)
     Y_agg = aggregate_Y(Y, mapping, level=level, keep_unmapped=keep_unmapped)
+    V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
+    M_agg = M.copy() if M is not None else None
 
     if not Y_agg.index.equals(Z_agg.index):
         raise RuntimeError("Aggregation produced inconsistent Z/Y indices.")
@@ -324,8 +344,9 @@ def aggregate_iot(
         Y=Y_agg,
         x=x,
         A=A,
+        V=V_agg,
+        M=M_agg,
         aggregated_sector_value_per_physical_input=agg_sector_values,
         aggregated_sector_emission_intensity=agg_sector_emission_intensity,
         io_system=io_system,
     )
-

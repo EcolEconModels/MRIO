@@ -295,6 +295,8 @@ class ParsedEurostatIOT:
     Z: pd.DataFrame
     Y: pd.DataFrame
     meta: dict[str, Any]
+    V: pd.DataFrame | None = None
+    M: pd.DataFrame | None = None
 
 
 def select_eurostat_atomic_final_demand_columns(
@@ -438,6 +440,9 @@ def parse_eurostat_iot(
     # that appear as intermediate-demand columns.
     Z = df.loc[ind_cols, ind_cols].astype("float64").fillna(0.0)
     Y = df.loc[ind_cols, fd_cols].astype("float64").fillna(0.0)
+    lower_rows = [r for r in industries if r not in set(ind_cols)]
+    V = df.loc[lower_rows, ind_cols].astype("float64").fillna(0.0) if lower_rows else None
+    M = df.loc[lower_rows, fd_cols].astype("float64").fillna(0.0) if lower_rows and fd_cols else None
 
     if not Z.index.equals(pd.Index(ind_cols)):
         # Rows are industries; columns are a subset of industries but may be missing/ordered differently.
@@ -452,8 +457,9 @@ def parse_eurostat_iot(
         "identified_final_demand_columns": fd_cols,
         "row_codes_not_in_intermediate_columns": sorted(row_codes - set(ind_cols)),
         "intermediate_columns_not_in_rows": sorted(set(ind_cols) - row_codes),
+        "identified_supplementary_rows": lower_rows,
     }
-    return ParsedEurostatIOT(Z=Z, Y=Y, meta=meta)
+    return ParsedEurostatIOT(Z=Z, Y=Y, meta=meta, V=V, M=M)
 
 
 def load_eurostat_iot(

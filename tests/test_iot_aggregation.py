@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def test_aggregate_iot_keeps_unmapped_and_sums_correctly():
@@ -84,3 +85,27 @@ def test_aggregate_iot_preserves_final_demand_column_totals():
         res.x.astype("float64"),
         (res.Z.sum(axis=1) + res.Y.sum(axis=1)).astype("float64"),
     )
+
+
+def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+
+    sectors = ["p24.d@CPA_C20", "p24.g", "CPA_C21"]
+    Z = pd.DataFrame(np.eye(3), index=sectors, columns=sectors)
+    Y = pd.DataFrame({"P3": [1.0, 2.0, 3.0]}, index=sectors)
+    V = pd.DataFrame(
+        [[10.0, 80.0, 5.0], [1.0, 2.0, 3.0]],
+        index=["Value added, gross", "Taxes less subsidies on products"],
+        columns=sectors,
+    )
+    M = pd.DataFrame({"P3": [7.0, 8.0]}, index=V.index)
+    mapping = {"p24.d@CPA_C20": "CPA_C20_others", "p24.g": "CPA_C20_BIOGASOLINE"}
+
+    res = aggregate_iot(Z, Y, mapping, V=V, M=M, keep_unmapped=True, create_io_system=False)
+
+    assert res.V is not None
+    assert res.M is not None
+    assert res.V.loc["Value added, gross", "CPA_C20_others"] == pytest.approx(10.0)
+    assert res.V.loc["Value added, gross", "CPA_C20_BIOGASOLINE"] == pytest.approx(80.0)
+    assert res.V.loc["Value added, gross", "CPA_C21"] == pytest.approx(5.0)
+    pd.testing.assert_frame_equal(res.M, M)

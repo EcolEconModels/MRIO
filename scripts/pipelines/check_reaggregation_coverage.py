@@ -66,6 +66,12 @@ def expand_selected_children(split_csv: Path, concordance_csv: Path) -> list[dic
     parent_set = set(parents)
     concordance_rows = _active_rows(_read_csv(concordance_csv))
     _required_columns(concordance_rows, concordance_csv, {"source_code", "target_code"})
+    targets_by_source: dict[str, set[str]] = {}
+    for row in concordance_rows:
+        source_code = str(row.get("source_code", "")).strip()
+        target_code = str(row.get("target_code", "")).strip()
+        if source_code and target_code:
+            targets_by_source.setdefault(source_code, set()).add(target_code)
 
     selected: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -74,14 +80,15 @@ def expand_selected_children(split_csv: Path, concordance_csv: Path) -> list[dic
         source_code = str(row.get("source_code", "")).strip()
         if not target_code or not source_code or target_code not in parent_set:
             continue
-        key = (target_code, source_code)
+        child_code = f"{source_code}@{target_code}" if len(targets_by_source.get(source_code, set())) > 1 else source_code
+        key = (target_code, child_code)
         if key in seen:
             continue
         seen.add(key)
         selected.append(
             {
                 "parent_code": target_code,
-                "child_code": source_code,
+                "child_code": child_code,
                 "source_code": source_code,
                 "source_label": str(row.get("source_label", "")).strip(),
                 "target_code": target_code,

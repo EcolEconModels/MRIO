@@ -311,6 +311,22 @@ V'_{\ell s}
 This phase is required before the full workbook output can be considered
 consistent with the disaggregation/reaggregation of the monetary IO table.
 
+Implementation status, 2026-06-24:
+
+- `parse_eurostat_iot()` now returns `V` and `M` supplementary arrays alongside
+  `Z`, `Y`, and metadata.
+- `split_iot_using_exiobase_*()` passes `V` and `M` through the split pipeline.
+  `V` is split column-wise over product children using edge-aware EXIO
+  column-input donor shares and writes diagnostics when a fallback is needed.
+  `M` is preserved as the supplementary-row by final-demand block.
+- `aggregate_iot()` and `aggregate_iot_by_mapping.py` reaggregate/write `V` and
+  `M` as first-class outputs.
+- The SFC workbook exporter consumes the aggregated `V` and `M` outputs when
+  available, falling back to the older template identity/share reconstruction
+  only for rows or columns that are absent.
+- Focused tests cover parser retention, edge-aware `V` splitting,
+  reaggregation of supplementary rows, and workbook export from provided `V/M`.
+
 ### Phase 6 -- Reaggregation manifest update for edge children
 
 Purpose: make reaggregation operate on the new output child codes.
@@ -330,6 +346,16 @@ p10.g,BKB/Peat Briquettes,CPA_C19_COAL,CPA_C19: Coal,True,...
 
 The reaggregation loader can keep enforcing one source to one target because
 `p24.d@CPA_C20` and `p24.d@CPA_C21` are different source codes.
+
+Implementation status, 2026-06-24:
+
+- The split pipeline emits edge children such as `p24.d@CPA_C20` for selected
+  multi-target EXIO sources while retaining the raw EXIO source as the donor
+  member.
+- The fuels, fuels-more, and energy green/brown reaggregation manifests include
+  the `p24.d@CPA_C20` edge row.
+- The reaggregation coverage preflight expands selected multi-target sources to
+  their emitted edge-child code before checking coverage.
 
 ### Phase 7 -- Boundary-correct consistency checks
 

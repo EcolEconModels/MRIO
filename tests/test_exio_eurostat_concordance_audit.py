@@ -440,7 +440,13 @@ def test_parse_eurostat_iot_records_row_and_column_mismatches() -> None:
     assert parsed.meta["identified_industry_columns"] == ["CPA_A", "CPA_B"]
     assert parsed.meta["identified_final_demand_columns"] == ["P3_S13", "P6"]
     assert parsed.meta["row_codes_not_in_intermediate_columns"] == ["CPA_C"]
+    assert parsed.meta["identified_supplementary_rows"] == ["CPA_C"]
     assert parsed.meta["intermediate_columns_not_in_rows"] == []
+    assert parsed.V is not None
+    assert parsed.M is not None
+    assert list(parsed.V.index) == ["CPA_C"]
+    assert list(parsed.V.columns) == ["CPA_A", "CPA_B"]
+    assert list(parsed.M.columns) == ["P3_S13", "P6"]
 
 
 def test_concordance_audit_records_selected_and_excluded_final_demand_columns() -> None:

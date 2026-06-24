@@ -1276,6 +1276,8 @@ def _write_sfc_workbook(
     Y_before: pd.DataFrame,
     Z_after: pd.DataFrame,
     Y_after: pd.DataFrame,
+    V_after: pd.DataFrame | None = None,
+    M_after: pd.DataFrame | None = None,
     mapping_df: pd.DataFrame,
     mapping_from_col: str,
     mapping_to_col: str,
@@ -1410,6 +1412,16 @@ def _write_sfc_workbook(
 
     Z_ord = Z_after.loc[product_codes_order, product_codes_order].astype("float64")
     Y_ord = Y_after.loc[product_codes_order, :].astype("float64")
+    V_ord = None
+    if V_after is not None:
+        V_ord = V_after.copy().astype("float64")
+        V_ord.index = V_ord.index.astype(str)
+        V_ord.columns = V_ord.columns.astype(str)
+    M_ord = None
+    if M_after is not None:
+        M_ord = M_after.copy().astype("float64")
+        M_ord.index = M_ord.index.astype(str)
+        M_ord.columns = M_ord.columns.astype(str)
     x_after = (Z_after.sum(axis=1) + Y_after.sum(axis=1)).astype("float64")
 
     # Workbook creation/load
@@ -1546,6 +1558,14 @@ def _write_sfc_workbook(
 
     lower_row_vectors: dict[str, pd.Series] = {}
     lower_fd_vectors: dict[str, pd.Series] = {}
+    supplementary_row_by_label: dict[str, str] = {}
+    if V_ord is not None:
+        for row_code in V_ord.index.astype(str):
+            supplementary_row_by_label[row_code.strip()] = row_code
+            row_label = str(row_labels.get(row_code, "")).strip()
+            if row_label:
+                supplementary_row_by_label[row_label] = row_code
+                supplementary_row_by_label[_pretty_sector_label(row_label)] = row_code
 
     # Template-only: rebuild lower rows from identities and parent-sector shares, then remove
     # template-only tabs that would otherwise survive as blank sheets.
@@ -1614,8 +1634,11 @@ def _write_sfc_workbook(
             if label is None or str(label).strip() == "":
                 continue
             label_text = str(label).strip()
+            v_row_code = supplementary_row_by_label.get(label_text)
 
-            if label_text == "Value added, gross":
+            if v_row_code is not None and V_ord is not None:
+                product_vector = V_ord.loc[v_row_code].reindex(product_codes_order).fillna(0.0).astype("float64")
+            elif label_text == "Value added, gross":
                 product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
             elif label_text == "Output":
                 product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
@@ -1648,7 +1671,9 @@ def _write_sfc_workbook(
                 dtype="object",
             )
             numeric_template_fd = pd.to_numeric(template_fd_values, errors="coerce")
-            if label_text == "Total intermediate consumption /final use":
+            if v_row_code is not None and M_ord is not None and v_row_code in M_ord.index:
+                fd_vector = M_ord.loc[v_row_code].reindex(fd_codes_order_no_total).astype("float64")
+            elif label_text == "Total intermediate consumption /final use":
                 fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
             elif numeric_template_fd.notna().any():
                 fd_vector = _supplementary_fd_row_from_current_shares(
@@ -1835,6 +1860,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         Y.index = Y.index.astype(str)
         Y.columns = Y.columns.astype(str)
         z_dir = Z_path.parent
+        V = None
+        M = None
+        for v_name in ("V_split_balanced.csv", "V_split.csv"):
+            v_path = z_dir / v_name
+            if v_path.exists():
+                _vprint(args.verbose, f"Reading: {v_path.resolve()}")
+                V = _read_table(v_path).astype("float64")
+                V.index = V.index.astype(str)
+                V.columns = V.columns.astype(str)
+                break
+        for m_name in ("M_split_balanced.csv", "M_split.csv"):
+            m_path = z_dir / m_name
+            if m_path.exists():
+                _vprint(args.verbose, f"Reading: {m_path.resolve()}")
+                M = _read_table(m_path).astype("float64")
+                M.index = M.index.astype(str)
+                M.columns = M.columns.astype(str)
+                break
 
         input_sectors = set(Z.index.astype(str))
         mapped_sources = set(map(str, mapping.keys()))
@@ -1942,6 +1985,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             Z,
             Y,
             mapping,
+            V=V,
+            M=M,
             keep_unmapped=keep_unmapped,
             create_io_system=args.create_io_system,
             compute_sector_value_per_physical_input=disaggregated_values is not None,
@@ -1980,6 +2025,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_df_csv(res.Y, out_base / "Y_agg.csv", verbose=args.verbose)
         _write_series_csv(res.x, out_base / "x_agg.csv", verbose=args.verbose)
         _write_df_csv(res.A, out_base / "A_agg.csv", verbose=args.verbose)
+        if res.V is not None:
+            _write_df_csv(res.V, out_base / "V_agg.csv", verbose=args.verbose)
+        if res.M is not None:
+            _write_df_csv(res.M, out_base / "M_agg.csv", verbose=args.verbose)
         _write_text(
             out_base / "aggregation_info.json",
             json.dumps(
@@ -2091,6 +2140,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 Y_before=Y,
                 Z_after=res.Z,
                 Y_after=res.Y,
+                V_after=res.V,
+                M_after=res.M,
                 mapping_df=mapping_df,
                 mapping_from_col="from_sector",
                 mapping_to_col="to_sector",

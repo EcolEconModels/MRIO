@@ -181,6 +181,14 @@ def write_split_core_outputs(res, outdir: Path, *, verbose: bool, extra_info: di
     _write_text(outdir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=verbose)
     if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
         _write_df_csv(res.fallback_diagnostics, outdir / "fallback_diagnostics.csv", verbose=verbose)
+    if getattr(res, "V", None) is not None and not res.V.empty:
+        _write_df_csv(res.V, outdir / "V_split.csv", verbose=verbose)
+        _write_df_csv(res.V, outdir / "V_split_balanced.csv", verbose=verbose)
+    if getattr(res, "M", None) is not None and not res.M.empty:
+        _write_df_csv(res.M, outdir / "M_split.csv", verbose=verbose)
+        _write_df_csv(res.M, outdir / "M_split_balanced.csv", verbose=verbose)
+    if getattr(res, "supplementary_diagnostics", None) is not None and not res.supplementary_diagnostics.empty:
+        _write_rows_csv(res.supplementary_diagnostics, outdir / "supplementary_row_split_diagnostics.csv", verbose=verbose)
 
 
 def _read_exio_to_eurostat_mapping_with_notes(
@@ -996,6 +1004,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 res = split_iot_using_exiobase_shares(
                     eurostat_Z=parsed.Z,
                     eurostat_Y=parsed.Y,
+                    eurostat_V=parsed.V,
+                    eurostat_M=parsed.M,
                     exio_year=args.exio_year,
                     exio_region=args.exio_region,
                     exio_slice=exio_slice,
@@ -1194,6 +1204,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     res = split_iot_using_exiobase_shares(
         eurostat_Z=Z,
         eurostat_Y=Y,
+        eurostat_V=parsed.V if args.eurostat_dataset else None,
+        eurostat_M=parsed.M if args.eurostat_dataset else None,
         exio_year=args.exio_year,
         exio_region=args.exio_region,
         exio_slice=load_exiobase3_region_slice(
