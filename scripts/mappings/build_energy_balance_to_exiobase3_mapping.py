@@ -134,7 +134,11 @@ def sha256_bytes(data: bytes) -> str:
 def clean_text(value: object) -> str:
     """Normalize text fields used as stable CSV keys."""
 
-    if pd.isna(value):
+    # Avoid pandas.isna here: for object-typed values it may return an array-like
+    # object, which is both a runtime ambiguity and a Pyright/Pylance boundary.
+    if value is None or value is pd.NA:
+        return ""
+    if isinstance(value, float) and value != value:
         return ""
     return " ".join(str(value).strip().split())
 
@@ -284,7 +288,7 @@ def read_rules(path: Path) -> pd.DataFrame:
     frame = frame.loc[:, list(RULE_COLUMNS)].copy()
     for column in frame.columns:
         frame[column] = clean_series(frame, str(column))
-    frame = frame.loc[frame["enabled"].str.lower().isin({"1", "true", "yes", "y"})].copy()
+    frame = frame.loc[frame["enabled"].str.lower().isin(("1", "true", "yes", "y"))].copy()
     unknown_bases = sorted(set(frame["mapping_basis"]) - SUPPORTED_MAPPING_BASES)
     if unknown_bases:
         raise ValueError(f"Rules CSV has unsupported mapping_basis values: {unknown_bases}")
@@ -303,7 +307,7 @@ def select_nace_rows(nace: pd.DataFrame, rule: pd.Series) -> pd.DataFrame:
         return nace.iloc[0:0].copy()
     if basis == "nace2_division":
         divisions = expand_division_selectors(selectors)
-        return cast(pd.DataFrame, nace.loc[nace["nace2_division"].isin(divisions)].copy())
+        return cast(pd.DataFrame, nace.loc[nace["nace2_division"].isin(sorted(divisions))].copy())
     if basis == "nace2_exact_or_prefix":
         prefixes = expand_prefix_selectors(selectors)
         if not prefixes:
@@ -383,8 +387,8 @@ def build_mapping(concordances_zip: Path, rules_csv: Path) -> BuildResult:
         matched["source_chain"] = SOURCE_CHAIN
         long_frames.append(matched.loc[:, list(LONG_COLUMNS)].copy())
 
-    long_links = pd.concat(long_frames, ignore_index=True).drop_duplicates() if long_frames else pd.DataFrame(columns=LONG_COLUMNS)
-    diagnostics_df = pd.DataFrame.from_records(diagnostics, columns=DIAGNOSTIC_COLUMNS).fillna("")
+    long_links = pd.concat(long_frames, ignore_index=True).drop_duplicates() if long_frames else pd.DataFrame(columns=list(LONG_COLUMNS))
+    diagnostics_df = pd.DataFrame.from_records(diagnostics, columns=list(DIAGNOSTIC_COLUMNS)).fillna("")
 
     if long_links.empty:
         collapsed = pd.DataFrame(
@@ -557,7 +561,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--concordances-zip", type=Path, default=DEFAULT_CONCORDANCES_ZIP)
-    parser.add_argument("--rules-csv", type=Path, default=DEFAULT_RULES_CSV)
+    parser.add_argument("--rules-csv", "--rules", dest="rules_csv", type=Path, default=DEFAULT_RULES_CSV)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--check-only", action="store_true", help="Build in memory and print coverage without writing generated outputs.")
     return parser.parse_args(argv)

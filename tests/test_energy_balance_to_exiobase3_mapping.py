@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import sys
 import zipfile
 from pathlib import Path
@@ -10,6 +9,7 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "mappings" / "build_energy_balance_to_exiobase3_mapping.py"
+REAL_RULES_PATH = REPO_ROOT / "scripts" / "mappings" / "energy_balance_sector_rules_for_exiobase3.csv"
 
 
 def load_module():
@@ -59,12 +59,14 @@ def make_synthetic_zip(path: Path) -> None:
             },
         ]
     )
-    excel_bytes = io.BytesIO()
-    with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
+    excel_path = path.with_suffix(".bridge.xlsx")
+    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         bridge.to_excel(writer, index=False)
+    bridge_bytes = excel_path.read_bytes()
+    excel_path.unlink(missing_ok=True)
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("Concordances/Archive/International classifications/NACE2_EXIOBASE20p_list.csv", nace_csv)
-        zf.writestr("Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx", excel_bytes.getvalue())
+        zf.writestr("Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx", bridge_bytes)
 
 
 def make_rules(path: Path) -> None:
@@ -133,6 +135,14 @@ def make_rules(path: Path) -> None:
     ]
     pd.DataFrame(rows, columns=columns).to_csv(path, index=False)
 
+
+def test_committed_rule_seed_csv_is_parseable_by_generator() -> None:
+    module = load_module()
+    rules = module.read_rules(REAL_RULES_PATH)
+
+    assert len(rules) >= 20
+    assert {"FC_IND_IS_E", "FC_OTH_CP_E", "FC_OTH_HH_E"}.issubset(set(rules["source_code"]))
+    assert "no_exio_production_sector" in set(rules["mapping_basis"])
 
 def test_nace_division_and_prefix_rules_build_independent_exio_links(tmp_path: Path) -> None:
     module = load_module()
