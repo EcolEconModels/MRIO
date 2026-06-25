@@ -605,3 +605,47 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     assert "Z_agg_matches_recomputed_reaggregation" in names
     assert "V_agg_matches_recomputed_reaggregation" in names
     assert "ratio_file::disaggregated_sector_co2_intensity.csv" in names
+
+
+def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary():
+    from scripts.split_eurostat_energy_by_exiobase import (
+        _assert_output_consistency,
+        _build_output_consistency_frame,
+        _should_check_output,
+    )
+
+    # The consistency check must run for all three Eurostat stk_flow variants,
+    # and it must not silently skip just because a sensitivity run uses a
+    # different EXIO year.
+    for flow in ("DOM", "IMP", "TOTAL", "TOT"):
+        assert _should_check_output(flow, eurostat_year=2021, exio_year=2020)
+
+    class DummyExioSlice:
+        x_region = pd.Series({"exio_a": 10.0}, dtype="float64")
+
+    mapping = {"CPA_A": {"exio_a": 1.0}}
+    Z = pd.DataFrame([[7.0]], index=["CPA_A"], columns=["CPA_A"])
+    # P6 is export final demand. The mapped-output check must use Z + non-export
+    # final demand (= 7 + 3), not Z + P3 + P6 (= 110).
+    Y = pd.DataFrame([[3.0, 100.0]], index=["CPA_A"], columns=["P3", "P6"])
+
+    frame, exio_total, euro_total = _build_output_consistency_frame(
+        sector_mapping=mapping,
+        eurostat_Z=Z,
+        eurostat_Y=Y,
+        exio_slice=DummyExioSlice(),
+    )
+
+    assert exio_total == 10.0
+    assert euro_total == 10.0
+    assert frame.loc[0, "eurostat_output"] == 10.0
+
+    _assert_output_consistency(
+        sector_mapping=mapping,
+        eurostat_Z=Z,
+        eurostat_Y=Y,
+        exio_slice=DummyExioSlice(),
+        rtol=0.0,
+        atol=0.0,
+        label="boundary-test",
+    )

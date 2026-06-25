@@ -443,9 +443,19 @@ def _eurostat_output_reference_from_frames(
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
 ) -> pd.Series:
-    """Build the Eurostat product-use output reference from in-memory Z/Y frames."""
+    """Build the Eurostat destination-use reference used for output checks.
+
+    This intentionally matches the boundary used to resolve flow-specific
+    EXIO->Eurostat weights: product rows plus non-export final demand. Exports
+    are excluded for DOM, IMP, and TOTAL so mapped EXIO domestic/import/total
+    use slices are checked against the same destination-use object used for the
+    split mapping weights.
+    """
     parsed = ParsedEurostatIOT(Z=eurostat_Z, Y=eurostat_Y, meta={})
-    reference_raw = build_eurostat_product_use_reference(parsed)
+    reference_raw = build_eurostat_product_use_reference(
+        parsed,
+        exclude_final_demand_codes=_eurostat_export_final_demand_codes(parsed),
+    )
     reference = cast(pd.Series, pd.to_numeric(reference_raw, errors="coerce")).fillna(0.0).astype("float64")
     reference.index = reference.index.astype(str)
     return reference
@@ -568,11 +578,15 @@ def _extract_year(value: object) -> int | None:
 
 
 def _should_check_output(flow_value: object, eurostat_year: int | None, exio_year: int) -> bool:
-    if str(flow_value).strip().upper() != "TOTAL":
-        return False
-    if eurostat_year is None:
-        return False
-    return int(exio_year) == int(eurostat_year)
+    """Return whether a stk_flow variant should run mapped-output checks.
+
+    The check is deliberately flow-based, not year-gated. The fuels pipeline can
+    compare Eurostat 2021 with EXIOBASE 2021 by default, but users may still run
+    sensitivity checks with another EXIO year; the diagnostic should run and
+    report the boundary-consistent gap instead of silently skipping.
+    """
+    flow = str(flow_value).strip().upper()
+    return flow in {"DOM", "IMP", "TOTAL", "TOT", "DOMESTIC", "IMPORTS"}
 
 def _aggregate_exio_emissions_to_eurostat(
     exio_emissions: pd.DataFrame,
@@ -1034,7 +1048,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _vprint(
                             args.verbose,
                             f"Skipping output consistency check for {label} "
-                            f"(flow != TOTAL or year mismatch: Eurostat={eurostat_year}, EXIO={args.exio_year}).",
+                            "because the stk_flow value is not one of DOM, IMP, or TOTAL.",
                         )
                 res = split_iot_using_exiobase_shares(
                     eurostat_Z=parsed.Z,
