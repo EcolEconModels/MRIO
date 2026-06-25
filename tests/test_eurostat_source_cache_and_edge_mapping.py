@@ -402,3 +402,102 @@ def test_supplementary_rows_use_row_specific_proxy_hierarchy():
     assert "output_share_proxy_for_value_added_row" in set(diag["allocation_method"])
     assert "projected_exio_column_use_proxy" in set(diag["allocation_method"])
     pd.testing.assert_frame_equal(M_out, M.astype("float64"))
+
+
+def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
+    from ecolecon_mrio.exio_share_split import aggregation_mapping_from_split_profiles
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+
+    children_c20 = ["S@CPA_C20", "A"]
+    children_c21 = ["S@CPA_C21"]
+    all_children = children_c20 + children_c21
+    profiles = {
+        "CPA_C20": SplitProfiles(
+            aggregate_sector="CPA_C20",
+            subsectors=tuple(children_c20),
+            output_share=pd.Series([0.25, 0.75], index=children_c20, dtype="float64"),
+            intermediate_sales_share=pd.Series([0.25, 0.75], index=children_c20, dtype="float64"),
+            intermediate_input_share=pd.Series([0.25, 0.75], index=children_c20, dtype="float64"),
+            final_demand_share=pd.Series([0.25, 0.75], index=children_c20, dtype="float64"),
+            subsector_to_exio_sectors={"S@CPA_C20": ["S"], "A": ["A"]},
+        ),
+        "CPA_C21": SplitProfiles(
+            aggregate_sector="CPA_C21",
+            subsectors=tuple(children_c21),
+            output_share=pd.Series([1.0], index=children_c21, dtype="float64"),
+            intermediate_sales_share=pd.Series([1.0], index=children_c21, dtype="float64"),
+            intermediate_input_share=pd.Series([1.0], index=children_c21, dtype="float64"),
+            final_demand_share=pd.Series([1.0], index=children_c21, dtype="float64"),
+            subsector_to_exio_sectors={"S@CPA_C21": ["S"]},
+        ),
+    }
+    mapping = aggregation_mapping_from_split_profiles(profiles)
+    assert mapping == {"S@CPA_C20": "CPA_C20", "A": "CPA_C20", "S@CPA_C21": "CPA_C21"}
+
+    Z = pd.DataFrame(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+        index=all_children,
+        columns=all_children,
+    )
+    Y = pd.DataFrame([[10.0], [20.0], [30.0]], index=all_children, columns=["P3"])
+    V = pd.DataFrame([[100.0, 200.0, 300.0]], index=["B1G"], columns=all_children)
+    M = pd.DataFrame([[5.0]], index=["B1G"], columns=["P3"])
+
+    result = aggregate_iot(Z, Y, mapping, V=V, M=M, keep_unmapped=False, create_io_system=False)
+
+    expected_Z = pd.DataFrame(
+        [[12.0, 9.0], [15.0, 9.0]],
+        index=["CPA_C20", "CPA_C21"],
+        columns=["CPA_C20", "CPA_C21"],
+    )
+    expected_Y = pd.DataFrame([[30.0], [30.0]], index=["CPA_C20", "CPA_C21"], columns=["P3"])
+    expected_V = pd.DataFrame([[300.0, 300.0]], index=["B1G"], columns=["CPA_C20", "CPA_C21"])
+    expected_x = expected_Z.sum(axis=1) + expected_Y.sum(axis=1)
+
+    pd.testing.assert_frame_equal(result.Z, expected_Z)
+    pd.testing.assert_frame_equal(result.Y, expected_Y)
+    pd.testing.assert_series_equal(result.x, expected_x)
+    assert result.V is not None
+    assert result.M is not None
+    pd.testing.assert_frame_equal(result.V, expected_V)
+    pd.testing.assert_frame_equal(result.M, M)
+
+
+def test_aggregation_cli_augments_mapping_from_split_child_edges_metadata():
+    from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
+
+    mapping = {"A": "CPA_C20"}
+    mapping_df = pd.DataFrame(
+        [
+            {
+                "source_code": "A",
+                "target_code": "CPA_C20",
+                "from_sector": "A",
+                "to_sector": "CPA_C20",
+                "enabled": "1",
+                "kind": "aggregate",
+                "notes": "manual",
+            }
+        ]
+    )
+    edge_metadata = pd.DataFrame(
+        [
+            {
+                "current_child_code": "S@CPA_C20",
+                "source_code": "S",
+                "parent_code": "CPA_C20",
+                "concordance_target_code": "CPA_C20",
+            }
+        ]
+    )
+
+    new_mapping, new_df, audit = _augment_mapping_from_split_child_edges(
+        mapping=mapping,
+        mapping_df=mapping_df,
+        edge_metadata=edge_metadata,
+    )
+
+    assert new_mapping["S@CPA_C20"] == "CPA_C20"
+    assert "S@CPA_C20" in set(new_df["from_sector"].astype(str))
+    assert len(audit) == 1
+    assert audit.iloc[0]["mapping_source"] == "identity_to_concordance_target"

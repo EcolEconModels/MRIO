@@ -192,6 +192,32 @@ def raw_exio_members_from_split_profiles(profiles: Mapping[str, SplitProfiles]) 
     return _raw_exio_members_from_profiles(profiles)
 
 
+def aggregation_mapping_from_split_profiles(
+    profiles: Mapping[str, SplitProfiles],
+) -> dict[str, str]:
+    """Return emitted split child -> aggregate parent mapping for reaggregation.
+
+    This is the explicit ``H`` mapping used to reaggregate split outputs. It is
+    edge-label aware: materialized children such as ``p24.d@CPA_C20`` map through
+    the target-side aggregate that produced them, not through the raw EXIO source
+    alone.
+    """
+    mapping: dict[str, str] = {}
+    for aggregate_sector, prof in profiles.items():
+        aggregate = str(aggregate_sector)
+        for child in prof.subsectors:
+            child_s = str(child).strip()
+            if not child_s:
+                continue
+            if child_s in mapping and mapping[child_s] != aggregate:
+                raise ValueError(
+                    f"Split child {child_s!r} maps to multiple aggregate parents: "
+                    f"{mapping[child_s]!r} and {aggregate!r}."
+                )
+            mapping[child_s] = aggregate
+    return mapping
+
+
 def emitted_sector_to_exio_members_from_split_profiles(
     profiles: Mapping[str, SplitProfiles],
 ) -> dict[str, dict[str, list[str]]]:

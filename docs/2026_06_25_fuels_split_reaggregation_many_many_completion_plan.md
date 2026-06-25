@@ -138,7 +138,7 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 | 3 | `split_child_edges.csv` metadata | Implemented | Materialized edge children parse into raw source, target, edge weight, and `phase4_edge_output`. |
 | 4 | Explicit \(PZP^\top\), \(PY\) toy tests | Implemented for selected-edge toy case | Toy fixture compares donor projection and split allocations against explicit matrix projection. |
 | 5 | Lower-row `V/M` split hierarchy | Implemented row-specific hierarchy | Supplementary `V` rows choose output-share proxy for value-added-like rows, projected EXIO column-use proxy for other lower rows, and equal fallback with row-level diagnostics. |
-| 6 | Reaggregation with edge labels and `V/M` | Needs audit | Reaggregate `Z/Y/x/V/M` with \(H\) and verify exact recovery or documented tolerances. |
+| 6 | Reaggregation with edge labels and `V/M` | Implemented for library helper and CLI edge metadata augmentation | Reaggregate `Z/Y/x/V/M` with \(H\), verify exact toy recovery, and auto-augment CLI mappings from `split_child_edges.csv`. |
 | 7 | End-to-end validation on Eurostat/EXIOBASE data | Pending | Run split, CO2/value/price extraction, reaggregation, and audit reports for representative flows and years. |
 
 ## Tests added by this patch
@@ -148,6 +148,8 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 - Edge-child CO2 intensity maps raw EXIO member `p24.d` into emitted child `p24.d@CPA_C20` using the concordance edge weight.
 - `split_child_edges.csv` metadata now records `source_code=p24.d`, `concordance_target_code=CPA_C20`, and `phase=phase4_edge_output` for a materialized edge child.
 - Projection matrix helper builds explicit emitted-label by raw-EXIO `P`, and the toy test checks `PZP^T`, `PY`, and resulting Eurostat split allocations.
+- Reaggregation helper builds explicit emitted-child to aggregate-parent `H` mappings from split profiles, and the toy test checks exact `Z/Y/x/V/M` recovery for edge labels.
+- Aggregation CLI auto-augments missing edge-child mapping rows from `split_child_edges.csv` and writes `aggregation_edge_mapping_audit.csv`.
 
 ## Remaining high-priority work
 

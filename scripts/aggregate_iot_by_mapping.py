@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportReturnType=false, reportArgumentType=false, reportAbstractUsage=false, reportAttributeAccessIssue=false, reportGeneralTypeIssues=false, reportPossiblyUnboundVariable=false, reportOptionalMemberAccess=false
 
 from __future__ import annotations
 
@@ -86,6 +87,110 @@ def _load_split_selected_children(path: Path | None) -> set[str]:
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     return _flatten_selected_sector_values(data)
+
+
+def _augment_mapping_from_split_child_edges(
+    *,
+    mapping: dict[str, str],
+    mapping_df: pd.DataFrame,
+    edge_metadata: pd.DataFrame | None,
+) -> tuple[dict[str, str], pd.DataFrame, pd.DataFrame]:
+    """Add materialized edge children to an aggregation mapping.
+
+    Aggregation CSVs are often written against Eurostat target sectors or older
+    raw child labels. Phase-4 split outputs can contain emitted edge labels such
+    as ``p24.d@CPA_C20``. Those labels must map through their target side. This
+    helper uses ``split_child_edges.csv`` metadata to map each current edge child
+    to the mapped parent/concordance target when available, otherwise to the
+    concordance target itself.
+    """
+    if edge_metadata is None or edge_metadata.empty:
+        return dict(mapping), mapping_df.copy(), pd.DataFrame()
+
+    out_mapping = {str(k): str(v) for k, v in mapping.items()}
+    out_df = mapping_df.copy()
+    audit_rows: list[dict[str, object]] = []
+    synthetic_rows: list[dict[str, object]] = []
+
+    def _cell(row: pd.Series, name: str) -> str:
+        if name not in row.index:
+            return ""
+        value = row.get(name)
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ""
+        return str(value).strip()
+
+    for _, row in edge_metadata.iterrows():
+        child = _cell(row, "current_child_code")
+        if not child or "@" not in child:
+            continue
+        source = _cell(row, "source_code")
+        parent = _cell(row, "parent_code")
+        concordance_target = _cell(row, "concordance_target_code") or parent
+
+        if child in out_mapping:
+            audit_rows.append(
+                {
+                    "current_child_code": child,
+                    "source_code": source,
+                    "parent_code": parent,
+                    "concordance_target_code": concordance_target,
+                    "mapped_to_sector": out_mapping[child],
+                    "mapping_source": "existing_mapping",
+                }
+            )
+            continue
+
+        candidate_keys = [k for k in (parent, concordance_target) if k]
+        mapped_to = ""
+        mapping_source = ""
+        for candidate in candidate_keys:
+            if candidate in out_mapping:
+                mapped_to = out_mapping[candidate]
+                mapping_source = f"existing_mapping_for_{candidate}"
+                break
+        if not mapped_to:
+            mapped_to = concordance_target or parent
+            mapping_source = "identity_to_concordance_target"
+        if not mapped_to:
+            continue
+
+        out_mapping[child] = mapped_to
+        audit_rows.append(
+            {
+                "current_child_code": child,
+                "source_code": source,
+                "parent_code": parent,
+                "concordance_target_code": concordance_target,
+                "mapped_to_sector": mapped_to,
+                "mapping_source": mapping_source,
+            }
+        )
+
+        new_row = {column: "" for column in out_df.columns}
+        for source_col in ("source_code", "from_sector"):
+            if source_col in new_row:
+                new_row[source_col] = child
+        for target_col in ("target_code", "to_sector"):
+            if target_col in new_row:
+                new_row[target_col] = mapped_to
+        if "kind" in new_row:
+            new_row["kind"] = "aggregate"
+        if "enabled" in new_row:
+            new_row["enabled"] = "1"
+        if "notes" in new_row:
+            new_row["notes"] = "auto-added from split_child_edges.csv for Phase-4 edge child reaggregation"
+        synthetic_rows.append(new_row)
+
+    if synthetic_rows:
+        out_df = pd.concat([out_df, pd.DataFrame(synthetic_rows)], ignore_index=True)
+        if "from_sector" in out_df.columns:
+            out_df["from_sector"] = out_df["from_sector"].astype(str)
+        if "to_sector" in out_df.columns:
+            out_df["to_sector"] = out_df["to_sector"].astype(str)
+
+    audit = pd.DataFrame(audit_rows)
+    return out_mapping, out_df, audit
 
 
 def _infer_variant_value(
@@ -968,7 +1073,7 @@ def _validate_template_reaggregation(
     children_by_parent: dict[str, list[str]] = {code: [] for code in base_codes}
     has_multi_parent_outputs = any(len(tuple(parents)) > 1 for parents in parents_by_output.values())
     for output_code in product_codes:
-        for parent_code in parents_by_output.get(output_code, ()): 
+        for parent_code in parents_by_output.get(output_code, ()):
             if parent_code in children_by_parent:
                 children_by_parent[parent_code].append(output_code)
 
@@ -1653,7 +1758,7 @@ def _write_sfc_workbook(
                 product_values: dict[str, float] = {}
                 for output_code in product_codes_order:
                     total_value = 0.0
-                    for parent_code in parents_by_output.get(output_code, ()): 
+                    for parent_code in parents_by_output.get(output_code, ()):
                         cell_value = tpl_ws.cell(row=source_r, column=tpl_product_cols[parent_code]).value
                         if not isinstance(cell_value, (int, float)):
                             continue
@@ -1879,8 +1984,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 M.columns = M.columns.astype(str)
                 break
 
+        edge_metadata_path = z_dir / "split_child_edges.csv"
+        mapping_for_run = dict(mapping)
+        mapping_df_for_run = mapping_df.copy()
+        edge_mapping_audit = pd.DataFrame()
+        if edge_metadata_path.exists():
+            _vprint(args.verbose, f"Reading: {edge_metadata_path.resolve()}")
+            edge_metadata = pd.read_csv(edge_metadata_path)
+            mapping_for_run, mapping_df_for_run, edge_mapping_audit = _augment_mapping_from_split_child_edges(
+                mapping=mapping_for_run,
+                mapping_df=mapping_df_for_run,
+                edge_metadata=edge_metadata,
+            )
+            if not edge_mapping_audit.empty:
+                _vprint(
+                    args.verbose,
+                    f"Added/verified {len(edge_mapping_audit)} edge-child aggregation mapping row(s).",
+                )
+
         input_sectors = set(Z.index.astype(str))
-        mapped_sources = set(map(str, mapping.keys()))
+        mapped_sources = set(map(str, mapping_for_run.keys()))
         unmapped = sorted(input_sectors - mapped_sources)
         if args.fail_on_unmapped and unmapped:
             raise SystemExit(
@@ -1984,7 +2107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         res = aggregate_iot(
             Z,
             Y,
-            mapping,
+            mapping_for_run,
             V=V,
             M=M,
             keep_unmapped=keep_unmapped,
@@ -2034,7 +2157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "mapping_csv": str(Path(args.mapping_csv).resolve()),
-                    "n_map_entries": len(mapping),
+                    "n_map_entries": len(mapping_for_run),
                     "n_sectors_before": int(len(Z.index)),
                     "n_sectors_after": int(len(res.Z.index)),
                 },
@@ -2042,6 +2165,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             verbose=args.verbose,
         )
+        if not edge_mapping_audit.empty:
+            _write_df_csv(edge_mapping_audit, out_base / "aggregation_edge_mapping_audit.csv", verbose=args.verbose)
 
         # Output aggregated sector value-per-physical-input if available
         if res.aggregated_sector_value_per_physical_input is not None:
@@ -2103,7 +2228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if not args.no_xlsx:
             out_xlsx = out_base / "aggregation_report.xlsx"
-            write_aggregation_report_xlsx(out_xlsx, Z_before=Z, Y_before=Y, result=res, mapping_df=mapping_df)
+            write_aggregation_report_xlsx(out_xlsx, Z_before=Z, Y_before=Y, result=res, mapping_df=mapping_df_for_run)
             _vprint(args.verbose, f"Wrote: {out_xlsx.resolve()}")
 
         if args.write_sfc_workbook:
@@ -2142,7 +2267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 Y_after=res.Y,
                 V_after=res.V,
                 M_after=res.M,
-                mapping_df=mapping_df,
+                mapping_df=mapping_df_for_run,
                 mapping_from_col="from_sector",
                 mapping_to_col="to_sector",
                 verbose=args.verbose,
