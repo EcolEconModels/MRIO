@@ -621,7 +621,12 @@ def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary(
         assert _should_check_output(flow, eurostat_year=2021, exio_year=2020)
 
     class DummyExioSlice:
-        x_region = pd.Series({"exio_a": 10.0}, dtype="float64")
+        # x_region is deliberately wrong for this destination-use check. The
+        # consistency code must use Z_domestic + Y_region instead, especially for
+        # IMP and TOTAL flow slices where x_region is producer-side output.
+        x_region = pd.Series({"exio_a": 999.0}, dtype="float64")
+        Z_domestic = pd.DataFrame([[4.0]], index=["exio_a"], columns=["exio_a"])
+        Y_region = pd.DataFrame([[6.0]], index=["exio_a"], columns=["P3"])
 
     mapping = {"CPA_A": {"exio_a": 1.0}}
     Z = pd.DataFrame([[7.0]], index=["CPA_A"], columns=["CPA_A"])

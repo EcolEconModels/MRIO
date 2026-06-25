@@ -494,8 +494,16 @@ def _build_output_consistency_frame(
 ) -> tuple[pd.DataFrame, float, float]:
     euro_x = _eurostat_output_reference_from_frames(eurostat_Z, eurostat_Y)
 
-    exio_raw = getattr(exio_slice, "x_region")
-    exio_out = cast(pd.Series, pd.to_numeric(exio_raw, errors="coerce")).fillna(0.0).astype("float64")
+    # Match the EXIO side to the same destination-use boundary as the Eurostat
+    # reference: rows from the selected EXIO flow into the destination region plus
+    # that destination region's final demand. Do not use x_region here: x_region is
+    # producer-side output and is the wrong object for IMP/TOTAL destination-use
+    # flow checks.
+    exio_Z = cast(pd.DataFrame, getattr(exio_slice, "Z_domestic")).copy().astype("float64")
+    exio_Y = cast(pd.DataFrame, getattr(exio_slice, "Y_region")).copy().astype("float64")
+    exio_Z.index = exio_Z.index.astype(str)
+    exio_Y.index = exio_Y.index.astype(str)
+    exio_out = (exio_Z.sum(axis=1) + exio_Y.sum(axis=1).reindex(exio_Z.index).fillna(0.0)).astype("float64")
     exio_out.index = exio_out.index.astype(str)
 
     mapped_rows: list[dict[str, float | str | bool]] = []
@@ -550,7 +558,7 @@ def _assert_output_consistency(
     if not np.isfinite(exio_total) or not np.isfinite(euro_total) or exio_total <= 0 or euro_total <= 0:
         raise SystemExit(
             "Mapping consistency check failed: invalid total outputs for comparison "
-            f"({label}). EXIO total={exio_total}, Eurostat total={euro_total}."
+            f"({label}). EXIO destination-use total={exio_total}, Eurostat destination-use total={euro_total}."
         )
 
     diff_total = abs(exio_total - euro_total)
@@ -559,7 +567,7 @@ def _assert_output_consistency(
         raise SystemExit(
             "Mapping consistency check failed: EXIO-mapped total output does not match the Eurostat "
             f"total output reference within tolerances (rtol={rtol}, atol={atol}) for {label}. "
-            f"EXIO total={exio_total:.6g}, Eurostat total={euro_total:.6g}, diff={diff_total:.6g}, tol={tol_total:.6g}."
+            f"EXIO destination-use total={exio_total:.6g}, Eurostat destination-use total={euro_total:.6g}, diff={diff_total:.6g}, tol={tol_total:.6g}."
         )
 
 

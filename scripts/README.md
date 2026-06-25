@@ -132,7 +132,7 @@ The wrapper passes through extra CLI arguments as well, so you can still append 
 | `mapped_output_consistency.csv` | Written for `DOM`, `IMP`, and `TOTAL` flows when the EXIO-to-Eurostat output sanity check is evaluated. Contains the Eurostat `Z + non-export final demand` output reference, mapped EXIO flow output, scalar normalization factor, and scaled differences by CPA sector. |
 | `eurostat_sector_co2_intensity.csv` | EXIO direct-emissions intensities reaggregated to Eurostat sectors using `exio_to_eurostat_cpa.csv`. |
 
-`mapped_output_consistency.csv` is diagnostic, not an additional balancing target. The hard gate checks total-scale consistency between mapped EXIO producer output and the Eurostat product-use reference; the per-sector comparison is preserved as an audit artifact because the EXIO-to-CPA bridge is approximate by construction.
+`mapped_output_consistency.csv` is diagnostic, not an additional balancing target. The hard gate checks total-scale consistency between mapped EXIO destination-use totals and the Eurostat non-export product-use reference for each DOM/IMP/TOTAL flow; the per-sector comparison is preserved as an audit artifact because the EXIO-to-CPA bridge is approximate by construction.
 
 ### 5. Export canonical fuels IO workbooks
 
