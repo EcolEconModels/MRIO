@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Mapping as ABCMapping
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,6 @@ from ecolecon_mrio.balancing import BalanceStats
 from ecolecon_mrio.disaggregation import SplitProfiles, calc_A, calc_x
 from ecolecon_mrio.exiobase3 import (
     ExioRegionSlice,
-    build_split_profiles_from_exio_domestic_block,
     load_exiobase3_region_slice,
 )
 from ecolecon_mrio.exiobase3_extensions import (
@@ -59,8 +58,8 @@ def _aggregate_rows_to_original(
     }
     out = df.copy()
     out.index = pd.Index([mapping.get(str(idx), str(idx)) for idx in out.index])
-    return out.groupby(level=0).sum()
-
+    grouped = out.groupby(level=0).sum()
+    return cast(pd.DataFrame, grouped)
 
 def _aggregate_square_to_original(
     df: pd.DataFrame,
@@ -75,9 +74,9 @@ def _aggregate_square_to_original(
     out = df.copy()
     out.index = pd.Index([mapping.get(str(idx), str(idx)) for idx in out.index])
     out.columns = pd.Index([mapping.get(str(col), str(col)) for col in out.columns])
-    out = out.groupby(level=0).sum()
-    return out.T.groupby(level=0).sum().T
-
+    grouped_rows = cast(pd.DataFrame, out.groupby(level=0).sum())
+    grouped_cols = cast(pd.DataFrame, grouped_rows.T.groupby(level=0).sum().T)
+    return grouped_cols
 
 def _largest_abs_gap(diff: pd.DataFrame | pd.Series) -> tuple[str, float]:
     if isinstance(diff, pd.Series):
@@ -91,8 +90,11 @@ def _largest_abs_gap(diff: pd.DataFrame | pd.Series) -> tuple[str, float]:
     if stack.empty:
         return "", 0.0
     where = stack.idxmax()
-    return f"{where[0]} -> {where[1]}", float(stack.max())
-
+    if isinstance(where, tuple) and len(where) >= 2:
+        label = f"{where[0]} -> {where[1]}"
+    else:
+        label = str(where)
+    return label, float(stack.max())
 
 def _expanded_sector_order(
     *,
@@ -109,12 +111,14 @@ def _expanded_sector_order(
 
 
 def _normalize_vector(values: pd.Series) -> pd.Series:
-    numeric = pd.to_numeric(values, errors="coerce").fillna(0.0).astype("float64")
+    numeric_obj = pd.to_numeric(values, errors="coerce")
+    if not isinstance(numeric_obj, pd.Series):
+        raise TypeError("Expected normalized donor vector input to remain a pandas Series.")
+    numeric = numeric_obj.fillna(0.0).astype("float64")
     total = float(numeric.sum())
     if not np.isfinite(total) or total <= 0:
         raise ValueError("Cannot normalize non-positive donor vector.")
     return numeric / total
-
 
 def _edge_child_source_target(subsector: object) -> tuple[str, str] | None:
     """Return (EXIO source, Eurostat target) for edge-child codes like p24.d@CPA_C20."""
@@ -183,6 +187,39 @@ def _raw_exio_members_from_profiles(profiles: Mapping[str, SplitProfiles]) -> li
     return list(dict.fromkeys(out))
 
 
+def raw_exio_members_from_split_profiles(profiles: Mapping[str, SplitProfiles]) -> list[str]:
+    """Return raw EXIO member codes used by split profiles, ignoring edge-child labels."""
+    return _raw_exio_members_from_profiles(profiles)
+
+
+def emitted_sector_to_exio_members_from_split_profiles(
+    profiles: Mapping[str, SplitProfiles],
+) -> dict[str, dict[str, list[str]]]:
+    """Return aggregate -> emitted split child -> raw EXIO members.
+
+    This is the post-Phase-4 mapping for downstream outputs. It preserves
+    materialized edge-child labels such as ``p24.d@CPA_C20`` while keeping
+    the raw EXIO member codes needed for extension extraction and weighted
+    ratio-of-sums calculations.
+    """
+    out: dict[str, dict[str, list[str]]] = {}
+    for aggregate_sector, prof in profiles.items():
+        child_map: dict[str, list[str]] = {}
+        if prof.subsector_to_exio_sectors:
+            for child, members in prof.subsector_to_exio_sectors.items():
+                child_s = str(child).strip()
+                raw_members = [str(member).strip() for member in members if str(member).strip()]
+                if child_s and raw_members:
+                    child_map[child_s] = list(dict.fromkeys(raw_members))
+        else:
+            for child in prof.subsectors:
+                child_s = str(child).strip()
+                if child_s:
+                    child_map[child_s] = [child_s]
+        if child_map:
+            out[str(aggregate_sector)] = child_map
+    return out
+
 def _source_targets_from_eurostat_mapping(
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
 ) -> dict[str, dict[str, float]]:
@@ -248,7 +285,7 @@ def _edge_aware_sector_to_exio_sectors(
                     children[child].append(source)
             expanded[parent] = children
 
-    return expanded
+    return expanded  # pyright: ignore[reportReturnType]
 
 def _validate_split_reconstruction(
     *,
@@ -337,8 +374,10 @@ def _split_supplementary_rows_columnwise(
         if parent not in V.columns:
             continue
         children = list(map(str, split_profiles[parent].subsectors)) if parent in split_profiles else [parent]
+        weights: pd.Series
         if parent in split_profiles:
-            weights = split_profiles[parent].intermediate_input_share.reindex(children).fillna(0.0).clip(lower=0.0)
+            raw_weights = split_profiles[parent].intermediate_input_share.reindex(children)
+            weights = pd.Series(raw_weights, index=children, dtype="float64").fillna(0.0).clip(lower=0.0)  # pyright: ignore[reportAssignmentType]
             method = "edge_aware_child_column_input_share"
         else:
             weights = pd.Series(1.0, index=children, dtype="float64")
@@ -367,7 +406,6 @@ def _split_supplementary_rows_columnwise(
         M_out.columns = M_out.columns.astype(str)
     diag = pd.DataFrame(diagnostics) if diagnostics else None
     return V_split, M_out, diag
-
 
 def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
     code = str(fd_code)
@@ -554,7 +592,7 @@ def _split_iot_using_donor_blocks(
         split_profiles=split_profiles,
         sector_to_exio_sectors=sector_to_exio_sectors,
         eurostat_sector_mapping=eurostat_sector_mapping,
-        eurostat_fd_codes=Y.columns.astype(str),
+        eurostat_fd_codes=list(map(str, Y.columns)),
     )
 
     donor_Z = exio_slice.Z_domestic.copy().astype("float64")
@@ -713,7 +751,7 @@ def _split_iot_using_donor_blocks(
     io_system = None
     if create_io_system:
         try:
-            import pymrio
+            import pymrio  # pyright: ignore[reportMissingImports]
 
             io_system = pymrio.IOSystem()
             io_system.Z = Z_split
@@ -750,11 +788,13 @@ def _read_table(path: Path) -> pd.DataFrame:
     if suffix in {".parquet"}:
         return pd.read_parquet(path)
     if suffix in {".pkl", ".pickle"}:
-        return pd.read_pickle(path)
+        obj = pd.read_pickle(path)
+        if not isinstance(obj, pd.DataFrame):
+            raise ValueError(f"Expected DataFrame in table pickle: {path}")
+        return obj
     if suffix in {".xlsx", ".xls"}:
         return pd.read_excel(path, index_col=0)
     raise ValueError(f"Unsupported table format: {path}")
-
 
 def load_local_iot(
     z_path: str | Path,
@@ -810,7 +850,7 @@ def build_split_profiles_from_exiobase_domestic_block(
         Z_rr = exio_slice.Z_domestic
         Y_r = exio_slice.Y_region
         x_use = (Z_rr.sum(axis=1) + Y_r.sum(axis=1)).astype("float64")
-        
+
         # Pre-compute sums to avoid repetitive matrix summing in loop
         # These are series indexed by exio sector
         Z_sales_sum = Z_rr.sum(axis=1)
@@ -1063,6 +1103,7 @@ def _map_exio_ratio_to_disaggregated_sectors(
     exio_df: pd.DataFrame | None,
     split_profiles: dict[str, SplitProfiles],
     sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     numerator_col: str,
     denominator_col: str,
     out_ratio_col: str,
@@ -1078,10 +1119,12 @@ def _map_exio_ratio_to_disaggregated_sectors(
             f"exio_df missing required columns for mapping: {sorted(missing_cols)!r}"
         )
 
+    df["exio_sector"] = df["exio_sector"].astype(str)
     df[numerator_col] = pd.to_numeric(df[numerator_col], errors="coerce")
     df[denominator_col] = pd.to_numeric(df[denominator_col], errors="coerce")
 
-    rows: list[dict] = []
+    rows: list[dict[str, object]] = []
+    group_cols = ["extension", "stressor", "unit"]
     for agg_sector, prof in split_profiles.items():
         subsector_map = _resolve_subsector_to_exio_sectors(
             agg_sector=str(agg_sector),
@@ -1092,24 +1135,45 @@ def _map_exio_ratio_to_disaggregated_sectors(
             continue
 
         for subsector, exio_sectors in subsector_map.items():
-            exio_subset = df[df["exio_sector"].isin(list(map(str, exio_sectors)))]
+            weight_map: dict[str, float] = {}
+            for exio_sector in map(str, exio_sectors):
+                weight = _edge_member_weight(
+                    subsector=subsector,
+                    member=exio_sector,
+                    eurostat_sector_mapping=eurostat_sector_mapping,
+                )
+                if np.isfinite(weight) and weight != 0.0:
+                    weight_map[exio_sector] = float(weight)
+            if not weight_map:
+                continue
+
+            exio_subset = df[df["exio_sector"].isin(list(weight_map.keys()))].copy()
             if exio_subset.empty:
                 continue
 
-            grouped = exio_subset.groupby(["extension", "stressor", "unit"], dropna=False)
-            for (ext, stressor, unit), group in grouped:
-                total_num = float(group[numerator_col].sum())
+            grouped = exio_subset.groupby(group_cols, dropna=False)
+            for keys, group in grouped:
+                key_tuple = keys if isinstance(keys, tuple) else (keys,)
+                if len(key_tuple) != len(group_cols):
+                    continue
+                exio_sector_series = cast(pd.Series, group["exio_sector"])
+                weights = exio_sector_series.map(weight_map).fillna(0.0).astype("float64")
+                num_values = cast(pd.Series, pd.to_numeric(group[numerator_col], errors="coerce")).astype("float64")
+                den_values = cast(pd.Series, pd.to_numeric(group[denominator_col], errors="coerce")).astype("float64")
+
+                total_num = float((num_values * weights).sum())
                 if not np.isfinite(total_num):
                     continue
-                total_den = float(group[denominator_col].sum())
+                total_den = float((den_values * weights).sum())
                 if not np.isfinite(total_den) or total_den == 0:
                     continue
+
                 rows.append(
                     {
                         "disaggregated_sector": subsector,
-                        "extension": ext,
-                        "stressor": stressor,
-                        "unit": unit,
+                        "extension": key_tuple[0],
+                        "stressor": key_tuple[1],  # pyright: ignore[reportGeneralTypeIssues]
+                        "unit": key_tuple[2],  # pyright: ignore[reportGeneralTypeIssues]
                         numerator_col: total_num,
                         denominator_col: total_den,
                         out_ratio_col: total_num / total_den,
@@ -1120,13 +1184,13 @@ def _map_exio_ratio_to_disaggregated_sectors(
         return None
     return pd.DataFrame(rows)
 
-
 def map_exio_value_per_physical_input(
     exio_quantity_and_price: pd.DataFrame | None,
     split_profiles: dict[str, SplitProfiles],
     sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
 ) -> pd.DataFrame | None:
-    """Map EXIOBASE unit-value proxies to disaggregated sectors."""
+    """Map EXIOBASE unit-value proxies to emitted disaggregated sectors."""
     if exio_quantity_and_price is None or not split_profiles:
         return None
 
@@ -1138,6 +1202,7 @@ def map_exio_value_per_physical_input(
         exio_df=exio_qp,
         split_profiles=split_profiles,
         sector_to_exio_sectors=sector_to_exio_sectors,
+        eurostat_sector_mapping=eurostat_sector_mapping,
         numerator_col="monetary_output",
         denominator_col="quantity",
         out_ratio_col="value_per_physical_input",
@@ -1148,12 +1213,14 @@ def map_exio_emission_intensity(
     exio_emissions_and_intensity: pd.DataFrame | None,
     split_profiles: dict[str, SplitProfiles],
     sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
 ) -> pd.DataFrame | None:
-    """Map EXIOBASE emissions intensity (ratio-of-sums) to disaggregated sectors."""
+    """Map EXIOBASE emissions intensity to emitted disaggregated sectors."""
     return _map_exio_ratio_to_disaggregated_sectors(
         exio_df=exio_emissions_and_intensity,
         split_profiles=split_profiles,
         sector_to_exio_sectors=sector_to_exio_sectors,
+        eurostat_sector_mapping=eurostat_sector_mapping,
         numerator_col="emission",
         denominator_col="monetary_output",
         out_ratio_col="emission_intensity",
@@ -1422,7 +1489,7 @@ def write_split_report_xlsx(
         rows.append(df)
     profiles_df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
-    with pd.ExcelWriter(out_path) as xw:
+    with pd.ExcelWriter(out_path) as xw:  # pyright: ignore[reportAbstractUsage]
         profiles_df.to_excel(xw, sheet_name=_safe_sheet("split_profiles"), index=False)
         result.Z.loc[subsectors, subsectors].to_excel(xw, sheet_name=_safe_sheet("Z_split_submatrix"))
         result.Y.loc[subsectors, :].to_excel(xw, sheet_name=_safe_sheet("Y_split_rows"))

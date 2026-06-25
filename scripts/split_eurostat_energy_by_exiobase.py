@@ -19,6 +19,8 @@ from ecolecon_mrio.exio_share_split import (
     write_split_report_xlsx,
     map_exio_value_per_physical_input,
     map_exio_emission_intensity,
+    raw_exio_members_from_split_profiles,
+    emitted_sector_to_exio_members_from_split_profiles,
 )
 from ecolecon_mrio.exiobase3 import ExioRegionSlice, load_exiobase3_region_slice
 from ecolecon_mrio.exiobase3_extensions import (
@@ -331,9 +333,23 @@ def _source_targets_from_sector_mapping(
         target = str(target_code)
         for source_code, weight in source_weights.items():
             source = str(source_code)
-            source_targets.setdefault(source, {})[target] = float(weight)  # pyright: ignore[reportArgumentType]  # read_weighted_mapping validates numeric weights
+            weight_float = float(weight)
+            if weight_float == 0.0:
+                continue
+            source_targets.setdefault(source, {})[target] = weight_float
     return source_targets
 
+
+def _parse_edge_child_code(child_code: object) -> tuple[str, str] | None:
+    text = str(child_code).strip()
+    if "@" not in text:
+        return None
+    source, target = text.split("@", 1)
+    source = source.strip()
+    target = target.strip()
+    if not source or not target:
+        return None
+    return source, target
 
 def _build_split_child_edge_metadata(
     *,
@@ -343,26 +359,48 @@ def _build_split_child_edge_metadata(
     variant_value: str | None = None,
     exio_flow: str | None = None,
 ) -> pd.DataFrame:
-    """Build Phase-2 diagnostic metadata for future edge-aware split children.
-
-    This is diagnostic-only. It records what child code an edge-aware split would
-    emit for a selected raw EXIO child, but it does not alter current Z/Y/x split
-    outputs.
-    """
+    """Build metadata for Phase-4 edge-aware split children."""
     source_targets = _source_targets_from_sector_mapping(sector_mapping)
     rows: list[dict[str, object]] = []
     for parent_code, child_values in selected_children.items():
         parent = str(parent_code)
         for child_code in _flatten_selected_child_codes(child_values):
-            target_weights = source_targets.get(child_code)
-            if target_weights is None:
-                target_weights = {}
-            source_n_targets = len(target_weights)
-            if source_n_targets == 0:
-                source_n_targets = 1
+            edge = _parse_edge_child_code(child_code)
+            if edge is not None:
+                source_code, concordance_target_code = edge
+                target_weights = source_targets.get(source_code, {})
+                source_n_targets = len(target_weights) or 1
+                proposed_child_code = child_code
+                edge_weight = target_weights.get(concordance_target_code)
+                phase = "phase4_edge_output"
+                notes = (
+                    "Current child code is a materialized source-target edge child. "
+                    "source_code is the raw EXIO source and concordance_target_code is the mapped Eurostat target."
+                )
+                selected_parent = concordance_target_code in target_weights if target_weights else False
+            else:
+                source_code = child_code
+                concordance_target_code = parent
+                target_weights = source_targets.get(source_code, {})
+                source_n_targets = len(target_weights) or 1
+                edge_weight = target_weights.get(parent)
+                selected_parent = parent in target_weights if target_weights else False
+                proposed_child_code = (
+                    f"{source_code}@{parent}"
+                    if source_n_targets > 1 and selected_parent
+                    else source_code
+                )
+                if source_n_targets > 1:
+                    phase = "phase4_incomplete_edge_materialization"
+                    notes = (
+                        "Raw child code still represents a many-target EXIO source; "
+                        "edge-aware output should materialize proposed_edge_child_code."
+                    )
+                else:
+                    phase = "phase4_raw_single_target_output"
+                    notes = "Raw child code has a single mapped target or no weighted concordance split."
+
             is_many_target_source = source_n_targets > 1
-            proposed_child_code = f"{child_code}@{parent}" if is_many_target_source else child_code
-            edge_weight: float | None = target_weights.get(parent)
             rows.append(
                 {
                     "variant_dim": variant_dim or "",
@@ -371,19 +409,15 @@ def _build_split_child_edge_metadata(
                     "parent_code": parent,
                     "current_child_code": child_code,
                     "proposed_edge_child_code": proposed_child_code,
-                    "source_code": child_code,
-                    "concordance_target_code": parent,
+                    "source_code": source_code,
+                    "concordance_target_code": concordance_target_code,
                     "source_n_targets": int(source_n_targets),
                     "is_many_target_source": bool(is_many_target_source),
                     "is_edge_child_candidate": bool(is_many_target_source),
                     "edge_weight_current_reference": "" if edge_weight is None else edge_weight,
-                    "selected_parent_in_concordance": bool(parent in target_weights) if target_weights else False,
-                    "phase": "phase2_diagnostic_only",
-                    "notes": (
-                        "Current Phase 2 split outputs still use current_child_code. "
-                        "Future edge-aware output should use proposed_edge_child_code "
-                        "for rows where is_edge_child_candidate is true."
-                    ),
+                    "selected_parent_in_concordance": bool(selected_parent),
+                    "phase": phase,
+                    "notes": notes,
                 }
             )
     columns = [
@@ -879,6 +913,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     base_filters: dict[str, object] = {}
     eurostat_year = None
+    parsed: ParsedEurostatIOT | None = None
     if args.eurostat_dataset:
         if not (args.eurostat_filters and args.eurostat_row_dim and args.eurostat_col_dim):
             raise SystemExit(
@@ -1052,11 +1087,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
                     # Compute and output disaggregated sector values per physical input
-                    mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+                    mapping_for_values = emitted_sector_to_exio_members_from_split_profiles(res.split_profiles)
                     disagg_values = map_exio_value_per_physical_input(
                         exio_quantity_and_price=res.exio_quantity_and_price,
                         sector_to_exio_sectors=mapping_for_values,
                         split_profiles=res.split_profiles,
+                        eurostat_sector_mapping=flow_sector_mapping,
                     )
                     if disagg_values is not None:
                         out = flow_dir / "disaggregated_sector_value_per_physical_input.csv"
@@ -1065,10 +1101,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
                 if extract_co2:
-                    exio_sectors: list[str] = []
-                    for agg in res.split_profiles.keys():
-                        exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
-                    exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
+                    exio_sectors = raw_exio_members_from_split_profiles(res.split_profiles)
+                    available = set(map(str, exio_slice.sectors))
+                    exio_sectors = [s for s in exio_sectors if s in available]
 
                     exio_out = exio_slice.x_region.astype("float64")
 
@@ -1089,11 +1124,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                         exio_co2.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-                        mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+                        mapping_for_values = emitted_sector_to_exio_members_from_split_profiles(res.split_profiles)
                         disagg_co2 = map_exio_emission_intensity(
                             exio_emissions_and_intensity=exio_co2,
                             sector_to_exio_sectors=mapping_for_values,
                             split_profiles=res.split_profiles,
+                            eurostat_sector_mapping=flow_sector_mapping,
                         )
                         if disagg_co2 is not None:
                             out = flow_dir / "disaggregated_sector_co2_intensity.csv"
@@ -1180,7 +1216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exio_flow_single = "domestic" if args.exio_share_flow == "auto" else str(args.exio_share_flow)
 
     if full_sector_mapping_csv is not None and full_sector_mapping is None:
-        parsed_for_mapping = parsed if args.eurostat_dataset else ParsedEurostatIOT(Z=Z, Y=Y, meta={})
+        parsed_for_mapping = parsed if parsed is not None else ParsedEurostatIOT(Z=Z, Y=Y, meta={})
         _vprint(args.verbose, "Calling: resolve flow-specific EXIO-to-Eurostat mapping [single]")
         t_map = _Timer()
         full_sector_mapping, full_sector_notes = _resolve_exio_to_eurostat_mapping_for_parsed(
@@ -1204,8 +1240,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     res = split_iot_using_exiobase_shares(
         eurostat_Z=Z,
         eurostat_Y=Y,
-        eurostat_V=parsed.V if args.eurostat_dataset else None,
-        eurostat_M=parsed.M if args.eurostat_dataset else None,
+        eurostat_V=parsed.V if parsed is not None else None,
+        eurostat_M=parsed.M if parsed is not None else None,
         exio_year=args.exio_year,
         exio_region=args.exio_region,
         exio_slice=load_exiobase3_region_slice(
@@ -1255,11 +1291,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
         # Compute and output disaggregated sector values per physical input
-        mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+        mapping_for_values = emitted_sector_to_exio_members_from_split_profiles(res.split_profiles)
         disagg_values = map_exio_value_per_physical_input(
             exio_quantity_and_price=res.exio_quantity_and_price,
             sector_to_exio_sectors=mapping_for_values,
             split_profiles=res.split_profiles,
+            eurostat_sector_mapping=full_sector_mapping,
         )
         if disagg_values is not None:
             out = outdir / "disaggregated_sector_value_per_physical_input.csv"
@@ -1314,10 +1351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"(flow != TOTAL or year mismatch: Eurostat={eurostat_year}, EXIO={args.exio_year}).",
             )
     if extract_co2:
-        exio_sectors: list[str] = []
-        for agg in res.split_profiles.keys():
-            exio_sectors.extend(res.exio_selected_sectors.get(str(agg), []))
-        exio_sectors = list(dict.fromkeys(map(str, exio_sectors)))
+        exio_sectors = raw_exio_members_from_split_profiles(res.split_profiles)
 
         if exio_slice_single is None:
             exio_slice_single = load_exiobase3_region_slice(
@@ -1329,6 +1363,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 doi=args.exio_doi,
                 verbose=args.verbose,
             )
+        available = set(map(str, exio_slice_single.sectors))
+        exio_sectors = [s for s in exio_sectors if s in available]
         exio_out = exio_slice_single.x_region.astype("float64")
         exio_co2 = extract_exio_emissions_and_intensity(
             container=exio_slice_single.source_zip,
@@ -1344,11 +1380,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             exio_co2.to_csv(out, index=False)
             _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-            mapping_for_values = sector_to_exio_sectors or res.exio_selected_sectors
+            mapping_for_values = emitted_sector_to_exio_members_from_split_profiles(res.split_profiles)
             disagg_co2 = map_exio_emission_intensity(
                 exio_emissions_and_intensity=exio_co2,
                 sector_to_exio_sectors=mapping_for_values,
                 split_profiles=res.split_profiles,
+                eurostat_sector_mapping=full_sector_mapping,
             )
             if disagg_co2 is not None:
                 out = outdir / "disaggregated_sector_co2_intensity.csv"
@@ -1385,9 +1422,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             eurostat_co2 = _aggregate_exio_emissions_to_eurostat(exio_co2_full, full_sector_mapping)
             if full_sector_notes is not None and not eurostat_co2.empty:
                 eurostat_co2 = eurostat_co2.copy()
-                eurostat_co2["mapping_notes"] = eurostat_co2["aggregated_sector"].map(
-                    full_sector_notes
-                ).fillna("")
+                eurostat_co2["mapping_notes"] = [
+                    full_sector_notes.get(str(sector), "")
+                    for sector in eurostat_co2["aggregated_sector"].astype(str)
+                ]
             if not eurostat_co2.empty:
                 out = outdir / "eurostat_sector_co2_intensity.csv"
                 eurostat_co2.to_csv(out, index=False)

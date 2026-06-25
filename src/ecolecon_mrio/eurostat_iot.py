@@ -224,7 +224,7 @@ def sdmx_json_to_series(payload: Mapping[str, Any], *, value_key: str = "value")
                     "This usually indicates an invalid filter value or no data for the selected slice."
                 )
             raise EurostatParseError(f"Missing category index for dimension '{d}'.")
-        rev = [None] * sz
+        rev: list[str | None] = [None] * sz
         for code, pos in idx.items():
             rev[int(pos)] = str(code)
         if any(x is None for x in rev):
@@ -388,7 +388,7 @@ def parse_eurostat_iot(
     value_key: str = "value",
 ) -> ParsedEurostatIOT:
     """
-    Parse a Eurostat SDMX-JSON slice into (Z, Y) using specified row/column dimensions.
+    Parse a Eurostat SDMX-JSON slice into (Z, Y, V, M) using specified row/column dimensions.
 
     The common Eurostat IOT layout is:
       - Rows: industries
@@ -406,7 +406,10 @@ def parse_eurostat_iot(
             f"Observed dimension codes (filtered): { {k: list(v.keys())[:20] for k, v in dim_info.items()} }"
         )
 
-    df = series.unstack(col_dim)
+    df_obj = series.unstack(col_dim)
+    if not isinstance(df_obj, pd.DataFrame):
+        raise EurostatParseError("Expected unstacked Eurostat table to be a DataFrame.")
+    df = df_obj
     for d in dims:
         if d in {row_dim, col_dim}:
             continue
@@ -473,36 +476,25 @@ def load_eurostat_iot(
     force_reparse: bool = False,
 ) -> ParsedEurostatIOT:
     """
-    Download+cache+parse a Eurostat IOT slice into (Z, Y).
+    Download/cache the raw Eurostat source payload and parse an IOT slice into (Z, Y, V, M).
 
-    This is a thin convenience wrapper around `download_eurostat_dataset` + `parse_eurostat_iot`.
-    Parsing assumes all non-(row_dim,col_dim) dimensions are fixed singletons in `filters`.
+    Only the raw SDMX-JSON source response is persisted by this convenience wrapper.
+    Derived parsed pickle caches are intentionally not used: parsing is cheap relative
+    to downloading, and stale parsed caches can silently drop newer parsed components
+    such as supplementary rows ``V`` and ``M``.
+
+    ``force_reparse`` is retained for CLI/API compatibility. It has no effect because
+    there is no derived parsed cache to bypass.
     """
+    _ = force_reparse
     ds = download_eurostat_dataset(
         dataset,
         filters=filters,
         storage_folder=storage_folder,
         force_download=force_download,
     )
-    parsed_dir = ds.raw_path.parent / "parsed"
-    _ensure_dir(parsed_dir)
-    z_path = parsed_dir / "Z.pkl"
-    y_path = parsed_dir / "Y.pkl"
-    meta_path = parsed_dir / "meta.json"
-
-    if z_path.exists() and y_path.exists() and meta_path.exists() and not force_reparse:
-        Z = pd.read_pickle(z_path)
-        Y = pd.read_pickle(y_path)
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return ParsedEurostatIOT(Z=Z, Y=Y, meta=meta)
-
     payload = read_eurostat_raw(ds.raw_path)
-    parsed = parse_eurostat_iot(payload, row_dim=row_dim, col_dim=col_dim)
-
-    parsed.Z.to_pickle(z_path)
-    parsed.Y.to_pickle(y_path)
-    meta_path.write_text(json.dumps(parsed.meta, indent=2), encoding="utf-8")
-    return parsed
+    return parse_eurostat_iot(payload, row_dim=row_dim, col_dim=col_dim)
 
 
 def load_eurostat_iot_variants(
@@ -520,8 +512,8 @@ def load_eurostat_iot_variants(
     """
     Load multiple variants (e.g., `stk_flow` = DOM/IMP/TOTAL) of the same dataset slice.
 
-    Uses the same cache layout as `load_eurostat_iot`; each variant is cached under its own
-    hashed filter set, so repeated calls don't re-download unless forced.
+    Uses the same raw-source cache layout as `load_eurostat_iot`; each variant is cached under its own
+    hashed filter set, so repeated calls don't re-download unless forced. Derived parsed caches are not used.
     """
     out: dict[str, ParsedEurostatIOT] = {}
     for v in variant_values:
@@ -561,7 +553,10 @@ def parse_eurostat_table_2d(
             f"Observed dimension codes (filtered): { {k: list(v.keys())[:20] for k, v in dim_info.items()} }"
         )
 
-    df = series.unstack(col_dim)
+    df_obj = series.unstack(col_dim)
+    if not isinstance(df_obj, pd.DataFrame):
+        raise EurostatParseError("Expected unstacked Eurostat table to be a DataFrame.")
+    df = df_obj
     for d in dims:
         if d in {row_dim, col_dim}:
             continue
@@ -605,9 +600,11 @@ def load_eurostat_table_2d(
     meta_path = parsed_dir / f"table_{row_dim}_x_{col_dim}_meta.json"
 
     if df_path.exists() and meta_path.exists() and not force_reparse:
-        df = pd.read_pickle(df_path)
+        df_obj = pd.read_pickle(df_path)
+        if not isinstance(df_obj, pd.DataFrame):
+            raise EurostatParseError(f"Cached parsed table is not a DataFrame: {df_path}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return df, meta
+        return df_obj, meta
 
     payload = read_eurostat_raw(ds.raw_path)
     df, meta = parse_eurostat_table_2d(payload, row_dim=row_dim, col_dim=col_dim, value_key=value_key)
@@ -650,7 +647,10 @@ def parse_eurostat_series_1d(
         raise EurostatParseError("Unexpected index type after dropping singleton dims.")
 
     series.index = series.index.astype(str)
-    series = pd.to_numeric(series, errors="coerce").fillna(0.0).astype("float64")
+    numeric_obj = pd.to_numeric(series, errors="coerce")
+    if not isinstance(numeric_obj, pd.Series):
+        raise EurostatParseError("Expected parsed Eurostat 1D object to remain a Series.")
+    series = numeric_obj.fillna(0.0).astype("float64")
     meta = {"dimensions": eurostat_dimensions(payload), "dim": dim}
     return series, meta
 
@@ -680,9 +680,11 @@ def load_eurostat_series_1d(
     meta_path = parsed_dir / f"series_{dim}_meta.json"
 
     if s_path.exists() and meta_path.exists() and not force_reparse:
-        s = pd.read_pickle(s_path)
+        s_obj = pd.read_pickle(s_path)
+        if not isinstance(s_obj, pd.Series):
+            raise EurostatParseError(f"Cached parsed series is not a Series: {s_path}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return s, meta
+        return s_obj, meta
 
     payload = read_eurostat_raw(ds.raw_path)
     s, meta = parse_eurostat_series_1d(payload, dim=dim, value_key=value_key)
