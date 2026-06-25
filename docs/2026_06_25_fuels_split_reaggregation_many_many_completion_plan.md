@@ -139,7 +139,7 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 | 4 | Explicit \(PZP^\top\), \(PY\) toy tests | Implemented for selected-edge toy case | Toy fixture compares donor projection and split allocations against explicit matrix projection. |
 | 5 | Lower-row `V/M` split hierarchy | Implemented row-specific hierarchy | Supplementary `V` rows choose output-share proxy for value-added-like rows, projected EXIO column-use proxy for other lower rows, and equal fallback with row-level diagnostics. |
 | 6 | Reaggregation with edge labels and `V/M` | Implemented for library helper and CLI edge metadata augmentation | Reaggregate `Z/Y/x/V/M` with \(H\), verify exact toy recovery, and auto-augment CLI mappings from `split_child_edges.csv`. |
-| 7 | End-to-end validation on Eurostat/EXIOBASE data | Pending | Run split, CO2/value/price extraction, reaggregation, and audit reports for representative flows and years. |
+| 7 | End-to-end validation on Eurostat/EXIOBASE data | Validation tool implemented; representative data runs still required | Run split, CO2/value/price extraction, reaggregation, and audit reports for representative flows and years. |
 
 ## Tests added by this patch
 
@@ -153,6 +153,18 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 
 ## Remaining high-priority work
 
-1. Audit reaggregation outputs for edge-child labels and `V/M`, including exact `Z/Y/x/V/M` recovery on a toy fixture.
-2. Run end-to-end validation on representative Eurostat/EXIOBASE flow/year combinations and inspect generated audit reports.
-- Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks.
+1. Run the Phase-7 validator on representative Eurostat/EXIOBASE flow/year outputs after a full split and reaggregation run, for example:
+
+   ```bash
+   /home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+     scripts/validate_many_many_pipeline_outputs.py \
+     --split-dir <split-output-dir> \
+     --agg-dir <aggregation-output-dir> \
+     --mapping-csv <aggregation-mapping.csv> \
+     --out-json <validation-report.json>
+   ```
+
+2. Inspect generated `validation-report.json`, `aggregation_edge_mapping_audit.csv`, value/price ratio checks, CO2 ratio checks, and exact recomputed `Z/Y/x/V/M` reaggregation gaps.
+
+Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks.
+- Phase-7 output validator recomputes edge-aware aggregation from split outputs and checks exact `Z/Y/x/V/M` recovery plus CO2/value ratio files.

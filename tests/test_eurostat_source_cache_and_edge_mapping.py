@@ -501,3 +501,107 @@ def test_aggregation_cli_augments_mapping_from_split_child_edges_metadata():
     assert "S@CPA_C20" in set(new_df["from_sector"].astype(str))
     assert len(audit) == 1
     assert audit.iloc[0]["mapping_source"] == "identity_to_concordance_target"
+
+
+def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+    from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
+    from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
+
+    split_dir = tmp_path / "split"
+    agg_dir = tmp_path / "agg"
+    split_dir.mkdir()
+    agg_dir.mkdir()
+
+    children = ["S@CPA_C20", "A", "S@CPA_C21"]
+    Z = pd.DataFrame(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+        index=children,
+        columns=children,
+    )
+    Y = pd.DataFrame([[10.0], [20.0], [30.0]], index=children, columns=["P3"])
+    V = pd.DataFrame([[100.0, 200.0, 300.0]], index=["B1G"], columns=children)
+    M = pd.DataFrame([[5.0]], index=["B1G"], columns=["P3"])
+    x = Z.sum(axis=1) + Y.sum(axis=1)
+
+    Z.to_csv(split_dir / "Z_split_balanced.csv")
+    Y.to_csv(split_dir / "Y_split_balanced.csv")
+    V.to_csv(split_dir / "V_split_balanced.csv")
+    M.to_csv(split_dir / "M_split_balanced.csv")
+    x.to_csv(split_dir / "x_split_balanced.csv")
+
+    pd.DataFrame(
+        [
+            {
+                "parent_code": "CPA_C20",
+                "current_child_code": "S@CPA_C20",
+                "source_code": "S",
+                "concordance_target_code": "CPA_C20",
+            }
+        ]
+    ).to_csv(split_dir / "split_child_edges.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "disaggregated_sector": "S@CPA_C20",
+                "extension": "air_emissions",
+                "stressor": "CO2",
+                "unit": "kg",
+                "emission": 2.0,
+                "monetary_output": 4.0,
+                "emission_intensity": 0.5,
+            }
+        ]
+    ).to_csv(split_dir / "disaggregated_sector_co2_intensity.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "disaggregated_sector": "S@CPA_C20",
+                "extension": "energy",
+                "stressor": "quantity",
+                "unit": "TJ",
+                "quantity": 2.0,
+                "monetary_output": 10.0,
+                "value_per_physical_input": 5.0,
+            }
+        ]
+    ).to_csv(split_dir / "disaggregated_sector_value_per_physical_input.csv", index=False)
+
+    mapping_csv = tmp_path / "aggregation_mapping.csv"
+    mapping_df = pd.DataFrame(
+        [
+            {"source_code": "A", "target_code": "CPA_C20", "enabled": "1"},
+            {"source_code": "S@CPA_C21", "target_code": "CPA_C21", "enabled": "1"},
+        ]
+    )
+    mapping_df.to_csv(mapping_csv, index=False)
+    mapping = {"A": "CPA_C20", "S@CPA_C21": "CPA_C21"}
+    edge_meta = pd.read_csv(split_dir / "split_child_edges.csv")
+    augmented_mapping, _, audit = _augment_mapping_from_split_child_edges(
+        mapping=mapping,
+        mapping_df=mapping_df.assign(from_sector=mapping_df["source_code"], to_sector=mapping_df["target_code"]),
+        edge_metadata=edge_meta,
+    )
+    assert not audit.empty
+
+    expected = aggregate_iot(Z, Y, augmented_mapping, V=V, M=M, keep_unmapped=False, create_io_system=False)
+    expected.Z.to_csv(agg_dir / "Z_agg.csv")
+    expected.Y.to_csv(agg_dir / "Y_agg.csv")
+    expected.x.to_csv(agg_dir / "x_agg.csv")
+    assert expected.V is not None
+    assert expected.M is not None
+    expected.V.to_csv(agg_dir / "V_agg.csv")
+    expected.M.to_csv(agg_dir / "M_agg.csv")
+    audit.to_csv(agg_dir / "aggregation_edge_mapping_audit.csv", index=False)
+
+    report = validate_pipeline_outputs(
+        split_dir=split_dir,
+        agg_dir=agg_dir,
+        mapping_csv=mapping_csv,
+    )
+
+    assert report["ok"] is True
+    names = {check["name"] for check in report["checks"]}
+    assert "Z_agg_matches_recomputed_reaggregation" in names
+    assert "V_agg_matches_recomputed_reaggregation" in names
+    assert "ratio_file::disaggregated_sector_co2_intensity.csv" in names
