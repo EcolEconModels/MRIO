@@ -454,6 +454,44 @@ def _validate_split_reconstruction(
         )
 
 
+
+_VALUE_ADDED_SUPPLEMENTARY_PREFIXES: tuple[str, ...] = (
+    "B",
+    "D1",
+    "D2",
+    "D3",
+    "D29",
+    "D39",
+    "P51C",
+)
+
+
+def _supplementary_row_proxy_share(
+    row_code: object,
+    prof: SplitProfiles,
+) -> tuple[pd.Series, str]:
+    """Choose the Phase-5 proxy vector for one supplementary/lower V row."""
+    code = str(row_code).strip().upper()
+    if code.startswith(_VALUE_ADDED_SUPPLEMENTARY_PREFIXES):
+        return prof.output_share, "output_share_proxy_for_value_added_row"
+    return prof.intermediate_input_share, "projected_exio_column_use_proxy"
+
+
+def _normalized_supplementary_weights(
+    share: pd.Series,
+    *,
+    children: Sequence[str],
+) -> tuple[pd.Series, float, bool]:
+    """Return non-negative normalized weights and the pre-normalization denominator."""
+    child_list = list(map(str, children))
+    numeric_obj = pd.to_numeric(share.reindex(child_list), errors="coerce")
+    if not isinstance(numeric_obj, pd.Series):
+        raise TypeError("Expected supplementary proxy share to remain a pandas Series.")
+    weights = numeric_obj.fillna(0.0).astype("float64").clip(lower=0.0)
+    denom = float(weights.sum())  # pyright: ignore[reportOptionalMemberAccess]  # pandas Series after runtime guard; stub may infer Optional
+    if not np.isfinite(denom) or denom <= 0.0:
+        return pd.Series(1.0 / len(child_list), index=child_list, dtype="float64"), denom, True
+    return weights / denom, denom, False  # pyright: ignore[reportOptionalOperand]  # pandas Series after nonzero finite denominator guard
 def _split_supplementary_rows_columnwise(
     *,
     eurostat_V: pd.DataFrame | None,
@@ -475,32 +513,46 @@ def _split_supplementary_rows_columnwise(
     for parent in map(str, sectors_old):
         if parent not in V.columns:
             continue
-        children = list(map(str, split_profiles[parent].subsectors)) if parent in split_profiles else [parent]
-        weights: pd.Series
         if parent in split_profiles:
-            raw_weights = split_profiles[parent].intermediate_input_share.reindex(children)
-            weights = pd.Series(raw_weights, index=children, dtype="float64").fillna(0.0).clip(lower=0.0)  # pyright: ignore[reportAssignmentType]
-            method = "edge_aware_child_column_input_share"
+            prof = split_profiles[parent]
+            children = list(map(str, prof.subsectors))
         else:
-            weights = pd.Series(1.0, index=children, dtype="float64")
-            method = "unsplit_identity"
-        total = float(weights.sum())
-        if not np.isfinite(total) or total <= 0.0:
-            weights = pd.Series(1.0 / len(children), index=children, dtype="float64")
-            method = "equal_share_fallback"
-        else:
-            weights = weights / total
+            prof = None
+            children = [parent]
 
-        for child in children:
-            V_split.loc[:, child] = V.loc[:, parent].to_numpy(dtype="float64") * float(weights.loc[child])
-        diagnostics.append(
-            {
-                "parent_code": parent,
-                "child_codes": "|".join(children),
-                "allocation_method": method,
-                "denominator": total,
-            }
-        )
+        for row_code in map(str, V.index):
+            row_total = float(V.loc[row_code, parent])
+            if prof is None:
+                weights = pd.Series(1.0, index=children, dtype="float64")
+                denominator = 1.0
+                method = "unsplit_identity"
+                fallback_reason = ""
+            else:
+                share, method = _supplementary_row_proxy_share(row_code, prof)
+                weights, denominator, used_equal_fallback = _normalized_supplementary_weights(
+                    share,
+                    children=children,
+                )
+                fallback_reason = "non_positive_or_non_finite_proxy_denominator" if used_equal_fallback else ""
+                if used_equal_fallback:
+                    method = "equal_share_fallback"
+
+            for child in children:
+                V_split.loc[row_code, child] = row_total * float(weights.loc[child])
+
+            diagnostics.append(
+                {
+                    "row_code": row_code,
+                    "parent_code": parent,
+                    "child_codes": "|".join(children),
+                    "allocation_method": method,
+                    "denominator": denominator,
+                    "fallback_reason": fallback_reason,
+                    "mass_before": row_total,
+                    "mass_after": float(V_split.loc[row_code, children].sum()),
+                    "weights": "|".join(f"{child}={float(weights.loc[child]):.12g}" for child in children),
+                }
+            )
 
     M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
     if M_out is not None:

@@ -137,7 +137,7 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 | 2 | CO2/value/price mapping under many-many edges | Implemented for selected split children | Extension extraction uses raw EXIO members; disaggregated ratios use edge weights and emitted child labels. |
 | 3 | `split_child_edges.csv` metadata | Implemented | Materialized edge children parse into raw source, target, edge weight, and `phase4_edge_output`. |
 | 4 | Explicit \(PZP^\top\), \(PY\) toy tests | Implemented for selected-edge toy case | Toy fixture compares donor projection and split allocations against explicit matrix projection. |
-| 5 | Lower-row `V/M` split hierarchy | Pending | Implement documented \(q_{\ell s}^f\) hierarchy or downgrade documentation to the current intermediate-input-share-only method. |
+| 5 | Lower-row `V/M` split hierarchy | Implemented row-specific hierarchy | Supplementary `V` rows choose output-share proxy for value-added-like rows, projected EXIO column-use proxy for other lower rows, and equal fallback with row-level diagnostics. |
 | 6 | Reaggregation with edge labels and `V/M` | Needs audit | Reaggregate `Z/Y/x/V/M` with \(H\) and verify exact recovery or documented tolerances. |
 | 7 | End-to-end validation on Eurostat/EXIOBASE data | Pending | Run split, CO2/value/price extraction, reaggregation, and audit reports for representative flows and years. |
 
@@ -151,12 +151,6 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 
 ## Remaining high-priority work
 
-1. Implement the full lower-row `V` split hierarchy:
-   \[
-   V'^{f}_{\ell s}
-   =
-   V^{E,f}_{\ell j}
-   \frac{q^f_{\ell s}}{\sum_{s'\in R_j}q^f_{\ell s'}}
-   \]
-   using row-specific production/value-added proxies where available, projected EXIO column-use where appropriate, and equal fallback only as a last resort.
-2. Audit reaggregation outputs for edge-child labels and `V/M`.
+1. Audit reaggregation outputs for edge-child labels and `V/M`, including exact `Z/Y/x/V/M` recovery on a toy fixture.
+2. Run end-to-end validation on representative Eurostat/EXIOBASE flow/year combinations and inspect generated audit reports.
+- Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks.

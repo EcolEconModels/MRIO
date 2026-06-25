@@ -358,3 +358,47 @@ def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
     expected_y_c20 = explicit_Y.loc[c20_labels, "P3"]
     expected_y_c20 = expected_y_c20 * (50.0 / float(expected_y_c20.sum()))
     pd.testing.assert_series_equal(res.Y.loc[c20_labels, "P3"], expected_y_c20)
+def test_supplementary_rows_use_row_specific_proxy_hierarchy():
+    from ecolecon_mrio.exio_share_split import _split_supplementary_rows_columnwise
+
+    children = pd.Index(["child_output_heavy", "child_input_heavy"])
+    profiles = {
+        "CPA_X": SplitProfiles(
+            aggregate_sector="CPA_X",
+            subsectors=tuple(children),
+            output_share=pd.Series([0.8, 0.2], index=children, dtype="float64"),
+            intermediate_sales_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
+            intermediate_input_share=pd.Series([0.25, 0.75], index=children, dtype="float64"),
+            final_demand_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
+            subsector_to_exio_sectors={
+                "child_output_heavy": ["exio_a"],
+                "child_input_heavy": ["exio_b"],
+            },
+        )
+    }
+    V = pd.DataFrame(
+        [[100.0], [100.0]],
+        index=["B1G", "OTHER_ROW"],
+        columns=["CPA_X"],
+    )
+    M = pd.DataFrame([[7.0]], index=["B1G"], columns=["P3"])
+
+    V_split, M_out, diag = _split_supplementary_rows_columnwise(
+        eurostat_V=V,
+        eurostat_M=M,
+        sectors_old=["CPA_X"],
+        sectors_new=list(children),
+        split_profiles=profiles,
+    )
+
+    assert V_split is not None
+    assert M_out is not None
+    assert diag is not None
+    pd.testing.assert_series_equal(V_split.sum(axis=1), V["CPA_X"], check_names=False)
+    assert V_split.loc["B1G", "child_output_heavy"] == 80.0
+    assert V_split.loc["B1G", "child_input_heavy"] == 20.0
+    assert V_split.loc["OTHER_ROW", "child_output_heavy"] == 25.0
+    assert V_split.loc["OTHER_ROW", "child_input_heavy"] == 75.0
+    assert "output_share_proxy_for_value_added_row" in set(diag["allocation_method"])
+    assert "projected_exio_column_use_proxy" in set(diag["allocation_method"])
+    pd.testing.assert_frame_equal(M_out, M.astype("float64"))
