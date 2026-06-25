@@ -586,32 +586,22 @@ def load_eurostat_table_2d(
     force_reparse: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
-    Download+cache+parse a Eurostat slice into a 2D DataFrame (row_dim x col_dim).
+    Download/cache the raw Eurostat source payload and parse a 2D table.
+
+    Only the raw SDMX-JSON response is persisted. Legacy derived parsed
+    pickle caches are intentionally ignored, matching `load_eurostat_iot()`.
+    ``force_reparse`` is retained for CLI/API compatibility and has no
+    effect because there is no derived parsed cache to bypass.
     """
+    _ = force_reparse
     ds = download_eurostat_dataset(
         dataset,
         filters=filters,
         storage_folder=storage_folder,
         force_download=force_download,
     )
-    parsed_dir = ds.raw_path.parent / "parsed"
-    _ensure_dir(parsed_dir)
-    df_path = parsed_dir / f"table_{row_dim}_x_{col_dim}.pkl"
-    meta_path = parsed_dir / f"table_{row_dim}_x_{col_dim}_meta.json"
-
-    if df_path.exists() and meta_path.exists() and not force_reparse:
-        df_obj = pd.read_pickle(df_path)
-        if not isinstance(df_obj, pd.DataFrame):
-            raise EurostatParseError(f"Cached parsed table is not a DataFrame: {df_path}")
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return df_obj, meta
-
     payload = read_eurostat_raw(ds.raw_path)
-    df, meta = parse_eurostat_table_2d(payload, row_dim=row_dim, col_dim=col_dim, value_key=value_key)
-    df.to_pickle(df_path)
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    return df, meta
-
+    return parse_eurostat_table_2d(payload, row_dim=row_dim, col_dim=col_dim, value_key=value_key)
 
 def parse_eurostat_series_1d(
     payload: Mapping[str, Any],
@@ -666,28 +656,19 @@ def load_eurostat_series_1d(
     force_reparse: bool = False,
 ) -> tuple[pd.Series, dict[str, Any]]:
     """
-    Download+cache+parse a Eurostat slice into a 1D Series indexed by `dim`.
+    Download/cache the raw Eurostat source payload and parse a 1D Series.
+
+    Only the raw SDMX-JSON response is persisted. Legacy derived parsed
+    pickle caches are intentionally ignored, matching `load_eurostat_iot()`.
+    ``force_reparse`` is retained for CLI/API compatibility and has no
+    effect because there is no derived parsed cache to bypass.
     """
+    _ = force_reparse
     ds = download_eurostat_dataset(
         dataset,
         filters=filters,
         storage_folder=storage_folder,
         force_download=force_download,
     )
-    parsed_dir = ds.raw_path.parent / "parsed"
-    _ensure_dir(parsed_dir)
-    s_path = parsed_dir / f"series_{dim}.pkl"
-    meta_path = parsed_dir / f"series_{dim}_meta.json"
-
-    if s_path.exists() and meta_path.exists() and not force_reparse:
-        s_obj = pd.read_pickle(s_path)
-        if not isinstance(s_obj, pd.Series):
-            raise EurostatParseError(f"Cached parsed series is not a Series: {s_path}")
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return s_obj, meta
-
     payload = read_eurostat_raw(ds.raw_path)
-    s, meta = parse_eurostat_series_1d(payload, dim=dim, value_key=value_key)
-    s.to_pickle(s_path)
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    return s, meta
+    return parse_eurostat_series_1d(payload, dim=dim, value_key=value_key)

@@ -19,7 +19,7 @@ parsed/Y.pkl
 parsed/meta.json
 ```
 
-`load_eurostat_iot()` must always parse from the cached source payload. This avoids stale parsed-cache bugs where `parse_eurostat_iot()` supports `V/M`, but a legacy parsed cache silently returns only `Z/Y/meta`.
+`load_eurostat_iot()`, `load_eurostat_table_2d()`, and `load_eurostat_series_1d()` must always parse from the cached source payload. This avoids stale parsed-cache bugs where parser behaviour changes but a legacy parsed cache silently returns an older derived representation.
 
 ## One mapping after Phase 4
 
@@ -132,27 +132,26 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 
 | Phase | Scope | Status after this patch | Completion condition |
 |---|---|---:|---|
-| 0 | Source-cache-only Eurostat loading | Implemented | `load_eurostat_iot()` persists/uses raw source payloads only and ignores legacy parsed caches. |
-| 1 | Canonical many-many edge projection \(P^f\) | Partially implemented | Add a public helper or module that materializes \(P^f\) and makes the projection contract directly testable. |
+| 0 | Source-cache-only Eurostat loading | Implemented for IOT/2D/1D loaders | Eurostat loaders persist/use raw source payloads only and ignore legacy parsed caches. |
+| 1 | Canonical many-many edge projection \(P^f\) | Implemented for split profiles | Public helper materializes \(P^f\) from emitted split profiles and raw EXIO members. |
 | 2 | CO2/value/price mapping under many-many edges | Implemented for selected split children | Extension extraction uses raw EXIO members; disaggregated ratios use edge weights and emitted child labels. |
 | 3 | `split_child_edges.csv` metadata | Implemented | Materialized edge children parse into raw source, target, edge weight, and `phase4_edge_output`. |
-| 4 | Explicit \(PZP^\top\), \(PY\) toy tests | Partially implemented | Add a toy IO fixture comparing implementation allocations exactly against explicit matrix projection. |
+| 4 | Explicit \(PZP^\top\), \(PY\) toy tests | Implemented for selected-edge toy case | Toy fixture compares donor projection and split allocations against explicit matrix projection. |
 | 5 | Lower-row `V/M` split hierarchy | Pending | Implement documented \(q_{\ell s}^f\) hierarchy or downgrade documentation to the current intermediate-input-share-only method. |
 | 6 | Reaggregation with edge labels and `V/M` | Needs audit | Reaggregate `Z/Y/x/V/M` with \(H\) and verify exact recovery or documented tolerances. |
 | 7 | End-to-end validation on Eurostat/EXIOBASE data | Pending | Run split, CO2/value/price extraction, reaggregation, and audit reports for representative flows and years. |
 
 ## Tests added by this patch
 
-- Legacy parsed-cache files are ignored; fresh parsed `V/M` from the raw source path are returned.
+- Legacy parsed-cache files are ignored for IOT, 2D, and 1D Eurostat loaders; fresh parsed values from the raw source path are returned.
 - Emitted mapping helper returns `aggregate -> emitted child -> raw EXIO member(s)`.
 - Edge-child CO2 intensity maps raw EXIO member `p24.d` into emitted child `p24.d@CPA_C20` using the concordance edge weight.
 - `split_child_edges.csv` metadata now records `source_code=p24.d`, `concordance_target_code=CPA_C20`, and `phase=phase4_edge_output` for a materialized edge child.
+- Projection matrix helper builds explicit emitted-label by raw-EXIO `P`, and the toy test checks `PZP^T`, `PY`, and resulting Eurostat split allocations.
 
 ## Remaining high-priority work
 
-1. Add an explicit `build_projection_matrix_for_split_profiles()` or equivalent public helper so tests and docs can refer to the actual \(P^f\).
-2. Add a toy `PZP^T/PY` allocation test with one raw EXIO source split over two Eurostat targets.
-3. Implement the full lower-row `V` split hierarchy:
+1. Implement the full lower-row `V` split hierarchy:
    \[
    V'^{f}_{\ell s}
    =
@@ -160,4 +159,4 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
    \frac{q^f_{\ell s}}{\sum_{s'\in R_j}q^f_{\ell s'}}
    \]
    using row-specific production/value-added proxies where available, projected EXIO column-use where appropriate, and equal fallback only as a last resort.
-4. Audit reaggregation outputs for edge-child labels and `V/M`.
+2. Audit reaggregation outputs for edge-child labels and `V/M`.

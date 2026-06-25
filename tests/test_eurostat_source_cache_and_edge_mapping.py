@@ -154,3 +154,207 @@ def test_split_child_edges_metadata_parses_materialized_edge_child():
     assert bool(row["is_many_target_source"]) is True
     assert row["edge_weight_current_reference"] == 0.25
     assert row["phase"] == "phase4_edge_output"
+
+
+def test_load_eurostat_table_2d_ignores_derived_parsed_cache(tmp_path, monkeypatch):
+    from ecolecon_mrio import eurostat_iot
+
+    base = tmp_path / "eurostat" / "demo_table" / "request_hash"
+    parsed_dir = base / "parsed"
+    parsed_dir.mkdir(parents=True)
+    raw_path = base / "raw.json"
+    raw_path.write_text("{}", encoding="utf-8")
+    pd.DataFrame([[999.0]], index=["stale"], columns=["stale"]).to_pickle(
+        parsed_dir / "table_row_x_col.pkl"
+    )
+    (parsed_dir / "table_row_x_col_meta.json").write_text('{"stale": true}', encoding="utf-8")
+
+    fresh_df = pd.DataFrame([[1.0]], index=["fresh_row"], columns=["fresh_col"])
+    fresh_meta = {"fresh": True}
+
+    def fake_download(*args, **kwargs):
+        return eurostat_iot.EurostatDataset(
+            dataset="demo_table",
+            filters={},
+            request_url="memory://table",
+            raw_path=raw_path,
+        )
+
+    def fake_read(path):
+        assert path == raw_path
+        return {"fresh_payload": "table"}
+
+    def fake_parse(payload, *, row_dim, col_dim, value_key="value"):
+        assert payload == {"fresh_payload": "table"}
+        assert row_dim == "row"
+        assert col_dim == "col"
+        assert value_key == "value"
+        return fresh_df, fresh_meta
+
+    monkeypatch.setattr(eurostat_iot, "download_eurostat_dataset", fake_download)
+    monkeypatch.setattr(eurostat_iot, "read_eurostat_raw", fake_read)
+    monkeypatch.setattr(eurostat_iot, "parse_eurostat_table_2d", fake_parse)
+
+    result_df, result_meta = eurostat_iot.load_eurostat_table_2d(
+        dataset="demo_table",
+        filters={"time": "2020"},
+        row_dim="row",
+        col_dim="col",
+        storage_folder=tmp_path,
+    )
+
+    pd.testing.assert_frame_equal(result_df, fresh_df)
+    assert result_meta == fresh_meta
+
+
+def test_load_eurostat_series_1d_ignores_derived_parsed_cache(tmp_path, monkeypatch):
+    from ecolecon_mrio import eurostat_iot
+
+    base = tmp_path / "eurostat" / "demo_series" / "request_hash"
+    parsed_dir = base / "parsed"
+    parsed_dir.mkdir(parents=True)
+    raw_path = base / "raw.json"
+    raw_path.write_text("{}", encoding="utf-8")
+    pd.Series([999.0], index=["stale"]).to_pickle(parsed_dir / "series_dim.pkl")
+    (parsed_dir / "series_dim_meta.json").write_text('{"stale": true}', encoding="utf-8")
+
+    fresh_series = pd.Series([1.0], index=["fresh"], dtype="float64")
+    fresh_meta = {"fresh": True}
+
+    def fake_download(*args, **kwargs):
+        return eurostat_iot.EurostatDataset(
+            dataset="demo_series",
+            filters={},
+            request_url="memory://series",
+            raw_path=raw_path,
+        )
+
+    def fake_read(path):
+        assert path == raw_path
+        return {"fresh_payload": "series"}
+
+    def fake_parse(payload, *, dim, value_key="value"):
+        assert payload == {"fresh_payload": "series"}
+        assert dim == "dim"
+        assert value_key == "value"
+        return fresh_series, fresh_meta
+
+    monkeypatch.setattr(eurostat_iot, "download_eurostat_dataset", fake_download)
+    monkeypatch.setattr(eurostat_iot, "read_eurostat_raw", fake_read)
+    monkeypatch.setattr(eurostat_iot, "parse_eurostat_series_1d", fake_parse)
+
+    result_series, result_meta = eurostat_iot.load_eurostat_series_1d(
+        dataset="demo_series",
+        filters={"time": "2020"},
+        dim="dim",
+        storage_folder=tmp_path,
+    )
+
+    pd.testing.assert_series_equal(result_series, fresh_series)
+    assert result_meta == fresh_meta
+
+
+def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import (
+        build_projection_matrix_for_split_profiles,
+        project_exio_donor_blocks_for_split_profiles,
+        split_iot_using_exiobase_split_profiles,
+    )
+
+    exio_Z = pd.DataFrame(
+        [[10.0, 30.0], [20.0, 40.0]],
+        index=pd.Index(["S", "A"], name="sector"),
+        columns=pd.Index(["S", "A"], name="sector"),
+    )
+    exio_Y = pd.DataFrame(
+        [[100.0], [200.0]],
+        index=pd.Index(["S", "A"], name="sector"),
+        columns=pd.Index(["P3"], name="final_demand"),
+    )
+    exio_x = exio_Z.sum(axis=1) + exio_Y.sum(axis=1)
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(["S", "A"], name="sector"),
+        Z_domestic=exio_Z,
+        Y_region=exio_Y,
+        x_region=exio_x,
+        source_zip=tmp_path / "dummy.zip",
+        flow="domestic",
+    )
+
+    eurostat_Z = pd.DataFrame(
+        [[100.0, 80.0], [60.0, 40.0]],
+        index=["CPA_C20", "CPA_C21"],
+        columns=["CPA_C20", "CPA_C21"],
+    )
+    eurostat_Y = pd.DataFrame(
+        [[50.0], [30.0]],
+        index=["CPA_C20", "CPA_C21"],
+        columns=["P3"],
+    )
+    sector_to_exio = {
+        "CPA_C20": ["S", "A"],
+        "CPA_C21": ["S"],
+    }
+    mapping = {
+        "CPA_C20": {"S": 0.25, "A": 1.0},
+        "CPA_C21": {"S": 0.75},
+    }
+
+    res = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=eurostat_Z,
+        eurostat_Y=eurostat_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors=sector_to_exio,
+        eurostat_sector_mapping=mapping,
+        create_io_system=False,
+    )
+
+    P = build_projection_matrix_for_split_profiles(
+        res.split_profiles,
+        eurostat_sector_mapping=mapping,
+        raw_exio_sectors=["S", "A"],
+    )
+    expected_P = pd.DataFrame(
+        [[0.25, 0.0], [0.0, 1.0], [0.75, 0.0]],
+        index=["S@CPA_C20", "A", "S@CPA_C21"],
+        columns=["S", "A"],
+    )
+    pd.testing.assert_frame_equal(P, expected_P)
+
+    _, donor_Z, donor_Y = project_exio_donor_blocks_for_split_profiles(
+        exio_Z=exio_Z,
+        exio_Y=exio_Y,
+        split_profiles=res.split_profiles,
+        eurostat_sector_mapping=mapping,
+        raw_exio_sectors=["S", "A"],
+    )
+    explicit_Z = pd.DataFrame(
+        expected_P.to_numpy() @ exio_Z.to_numpy() @ expected_P.to_numpy().T,
+        index=expected_P.index,
+        columns=expected_P.index,
+    )
+    explicit_Y = pd.DataFrame(
+        expected_P.to_numpy() @ exio_Y.to_numpy(),
+        index=expected_P.index,
+        columns=exio_Y.columns,
+    )
+    pd.testing.assert_frame_equal(donor_Z, explicit_Z)
+    pd.testing.assert_frame_equal(donor_Y, explicit_Y)
+
+    c20_labels = ["S@CPA_C20", "A"]
+    c21_labels = ["S@CPA_C21"]
+    expected_c20_c20 = explicit_Z.loc[c20_labels, c20_labels]
+    expected_c20_c20 = expected_c20_c20 * (100.0 / float(expected_c20_c20.to_numpy().sum()))
+    pd.testing.assert_frame_equal(res.Z.loc[c20_labels, c20_labels], expected_c20_c20)
+
+    expected_c20_c21 = explicit_Z.loc[c20_labels, c21_labels]
+    expected_c20_c21 = expected_c20_c21 * (80.0 / float(expected_c20_c21.to_numpy().sum()))
+    pd.testing.assert_frame_equal(res.Z.loc[c20_labels, c21_labels], expected_c20_c21)
+
+    expected_y_c20 = explicit_Y.loc[c20_labels, "P3"]
+    expected_y_c20 = expected_y_c20 * (50.0 / float(expected_y_c20.sum()))
+    pd.testing.assert_series_equal(res.Y.loc[c20_labels, "P3"], expected_y_c20)

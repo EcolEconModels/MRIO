@@ -220,6 +220,108 @@ def emitted_sector_to_exio_members_from_split_profiles(
             out[str(aggregate_sector)] = child_map
     return out
 
+
+def build_projection_matrix_for_split_profiles(
+    split_profiles: Mapping[str, SplitProfiles],
+    *,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
+    raw_exio_sectors: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Build the emitted-label by raw-EXIO projection matrix ``P``.
+
+    Rows are emitted split labels such as ``p24.d@CPA_C20``. Columns are raw
+    EXIO sector codes. Entry ``P.loc[r, e]`` is the edge weight that projects
+    raw EXIO sector ``e`` into emitted child ``r``. Non-edge children receive
+    weight 1 for their raw member; edge children receive the corresponding
+    EXIO-to-Eurostat concordance weight.
+    """
+    emitted_mapping = emitted_sector_to_exio_members_from_split_profiles(split_profiles)
+    row_labels: list[str] = []
+    inferred_raw: list[str] = []
+    for aggregate_sector in map(str, split_profiles.keys()):
+        child_map = emitted_mapping.get(aggregate_sector, {})
+        for child, members in child_map.items():
+            child_s = str(child).strip()
+            if child_s and child_s not in row_labels:
+                row_labels.append(child_s)
+            for member in members:
+                member_s = str(member).strip()
+                if member_s and member_s not in inferred_raw:
+                    inferred_raw.append(member_s)
+
+    if raw_exio_sectors is None:
+        raw_order = inferred_raw
+    else:
+        raw_order = []
+        for sector in raw_exio_sectors:
+            sector_s = str(sector).strip()
+            if sector_s and sector_s not in raw_order:
+                raw_order.append(sector_s)
+
+    P = pd.DataFrame(0.0, index=row_labels, columns=raw_order, dtype="float64")
+    if P.empty:
+        return P
+
+    for child_map in emitted_mapping.values():
+        for child, members in child_map.items():
+            child_s = str(child).strip()
+            if child_s not in P.index:
+                continue
+            for member in members:
+                member_s = str(member).strip()
+                if member_s not in P.columns:
+                    continue
+                weight = _edge_member_weight(
+                    subsector=child_s,
+                    member=member_s,
+                    eurostat_sector_mapping=eurostat_sector_mapping,
+                )
+                if np.isfinite(weight) and weight != 0.0:
+                    P.loc[child_s, member_s] = float(P.loc[child_s, member_s]) + float(weight)
+    return P
+
+
+def project_exio_donor_blocks_for_split_profiles(
+    *,
+    exio_Z: pd.DataFrame,
+    exio_Y: pd.DataFrame,
+    split_profiles: Mapping[str, SplitProfiles],
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
+    raw_exio_sectors: Sequence[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Project raw EXIO donor blocks using ``P Z P.T`` and ``P Y``."""
+    P = build_projection_matrix_for_split_profiles(
+        split_profiles,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+        raw_exio_sectors=raw_exio_sectors,
+    )
+    raw_order = list(map(str, P.columns))
+
+    Z_raw = exio_Z.copy().astype("float64")
+    Z_raw.index = Z_raw.index.astype(str)
+    Z_raw.columns = Z_raw.columns.astype(str)
+    Y_raw = exio_Y.copy().astype("float64")
+    Y_raw.index = Y_raw.index.astype(str)
+    Y_raw.columns = Y_raw.columns.astype(str)
+
+    Z_block = Z_raw.reindex(index=raw_order, columns=raw_order).fillna(0.0)
+    Y_block = Y_raw.reindex(index=raw_order).fillna(0.0)
+
+    p_arr = P.to_numpy(dtype="float64")
+    Z_projected = pd.DataFrame(
+        p_arr @ Z_block.to_numpy(dtype="float64") @ p_arr.T,
+        index=P.index.copy(),
+        columns=P.index.copy(),
+        dtype="float64",
+    )
+    Y_projected = pd.DataFrame(
+        p_arr @ Y_block.to_numpy(dtype="float64"),
+        index=P.index.copy(),
+        columns=Y_block.columns.copy(),
+        dtype="float64",
+    )
+    return P, Z_projected, Y_projected
+
 def _source_targets_from_eurostat_mapping(
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
 ) -> dict[str, dict[str, float]]:
