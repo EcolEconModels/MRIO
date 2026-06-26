@@ -750,6 +750,24 @@ def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
     assert z_check["max_abs_gap"] == float("inf")
 
 
+def test_flow_identity_tolerance_is_strict_for_internal_additivity():
+    from scripts.split_eurostat_energy_by_exiobase import _build_mapped_output_flow_identity_frame
+
+    # Cross-dataset EXIO-vs-Eurostat diagnostics may use a loose 20% tolerance,
+    # but internal Eurostat/EXIO flow additivity should be checked with its own
+    # strict tolerance. DOM + IMP = TOTAL is an accounting identity, not an
+    # approximate concordance-quality diagnostic.
+    totals = {
+        "DOM": {"eurostat_output_total": 7.0, "exio_mapped_output_total": 70.0},
+        "IMP": {"eurostat_output_total": 3.0, "exio_mapped_output_total": 30.0},
+        "TOTAL": {"eurostat_output_total": 11.0, "exio_mapped_output_total": 101.0},
+    }
+
+    strict = _build_mapped_output_flow_identity_frame(totals, rtol=1e-9, atol=1e-6)
+
+    assert strict["ok"].tolist() == [False, False]
+
+
 def test_p1_supplementary_row_uses_output_share_proxy():
     from ecolecon_mrio.exio_share_split import _supplementary_row_proxy_share
 

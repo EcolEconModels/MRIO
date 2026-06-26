@@ -771,6 +771,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=1e-6,
         help="Absolute tolerance for mapping consistency checks.",
     )
+    p.add_argument(
+        "--flow-identity-rtol",
+        type=float,
+        default=1e-9,
+        help=(
+            "Relative tolerance for the internal DOM+IMP=TOTAL flow-identity check. "
+            "This is intentionally strict and independent of the looser cross-dataset mapping-consistency tolerance."
+        ),
+    )
+    p.add_argument(
+        "--flow-identity-atol",
+        type=float,
+        default=1e-6,
+        help="Absolute tolerance for the internal DOM+IMP=TOTAL flow-identity check.",
+    )
 
     p.add_argument(
         "--dump-exio-sectors-csv",
@@ -1275,8 +1290,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             flow_identity = _build_mapped_output_flow_identity_frame(
                 flow_identity_totals,
-                rtol=float(args.mapping_consistency_rtol),
-                atol=float(args.mapping_consistency_atol),
+                rtol=float(args.flow_identity_rtol),
+                atol=float(args.flow_identity_atol),
             )
             if not flow_identity.empty:
                 out = outdir / "mapped_output_flow_identity.csv"
