@@ -723,7 +723,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     euro.add_argument("--eurostat-stk-flow-dim", default="stk_flow")
 
-    p.add_argument("--exio-year", type=int, default=2020)
+    p.add_argument("--exio-year", type=int, default=2021)
     p.add_argument("--exio-region", default="AT")
     p.add_argument(
         "--exio-doi",
