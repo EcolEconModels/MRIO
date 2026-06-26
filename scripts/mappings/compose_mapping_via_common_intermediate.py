@@ -110,6 +110,18 @@ def read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
 
 
+def parse_filter_values(values: Sequence[str] | None) -> set[str]:
+    """Parse repeated comma/semicolon-separated CLI filter values."""
+
+    out: set[str] = set()
+    for value in values or ():
+        for token in str(value).replace(";", ",").split(","):
+            cleaned = clean_text(token)
+            if cleaned:
+                out.add(cleaned)
+    return out
+
+
 def require_columns(frame: pd.DataFrame, *, path: Path, columns: Sequence[str]) -> None:
     """Validate that a frame has all required columns."""
 
@@ -128,6 +140,8 @@ def prepare_left(
     intermediate_label_col: str,
     source_balance_role_col: str,
     include_col: str,
+    source_role_filter: set[str] | None = None,
+    include_direct_energy_only: bool = False,
 ) -> pd.DataFrame:
     """Normalize the left source->intermediate mapping side."""
 
@@ -146,7 +160,13 @@ def prepare_left(
             "include_in_direct_energy": frame[include_col].map(clean_text) if include_col in frame.columns else "1",
         }
     )
-    return out.loc[(out["left_source_code"] != "") & (out["intermediate_code"] != "")].drop_duplicates().copy()
+    out = out.loc[(out["left_source_code"] != "") & (out["intermediate_code"] != "")].copy()
+    if source_role_filter:
+        out = out.loc[out["source_balance_role"].isin(source_role_filter)].copy()
+    if include_direct_energy_only:
+        include_norm = out["include_in_direct_energy"].astype(str).str.strip().str.lower()
+        out = out.loc[include_norm.isin({"1", "true", "t", "yes", "y", "on"})].copy()
+    return out.drop_duplicates().copy()
 
 
 def prepare_right(
@@ -317,6 +337,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--left-intermediate-label-col", default="exio3_product_name")
     parser.add_argument("--left-source-balance-role-col", default="source_balance_role")
     parser.add_argument("--left-include-col", default="include_in_direct_energy")
+    parser.add_argument(
+        "--source-balance-role-filter",
+        action="append",
+        default=None,
+        help=(
+            "Restrict left-side source rows to these source_balance_role values. "
+            "May be repeated or comma/semicolon-separated. For the direct EB workbook path, use final_use."
+        ),
+    )
+    parser.add_argument(
+        "--include-direct-energy-only",
+        action="store_true",
+        help="Keep only left-side rows whose include_in_direct_energy column is truthy.",
+    )
     parser.add_argument("--right-intermediate-code-col", default="source_code")
     parser.add_argument("--right-intermediate-label-col", default="source_label")
     parser.add_argument("--right-target-code-col", default="target_code")
@@ -345,6 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         intermediate_label_col=args.left_intermediate_label_col,
         source_balance_role_col=args.left_source_balance_role_col,
         include_col=args.left_include_col,
+        source_role_filter=parse_filter_values(args.source_balance_role_filter),
+        include_direct_energy_only=bool(args.include_direct_energy_only),
     )
     right = prepare_right(
         right_raw,

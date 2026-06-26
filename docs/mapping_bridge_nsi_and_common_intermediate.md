@@ -90,7 +90,9 @@ Compose EB -> EXIOBASE3 and EXIOBASE3 -> CPA65 into a direct EB -> CPA map:
 
 ```bash
 /home/agilra/EcolEconModels/MRIO/.venv/bin/python \
-  scripts/mappings/compose_mapping_via_common_intermediate.py
+  scripts/mappings/compose_mapping_via_common_intermediate.py \
+  --source-balance-role-filter final_use \
+  --include-direct-energy-only
 ```
 
 Use the generated direct map with the existing direct Energy Balance workbook
@@ -108,3 +110,8 @@ current split plan is a technology/product split for selected producer rows.  Th
 direct EB -> CPA map generated here is therefore an input to the existing Energy
 Balance mapping APIs, not a silent replacement for technology-specific SIEC and
 price selector recipes.
+
+For the direct EB workbook path, filter to `final_use` rows and direct-energy rows.
+The workbook builder constructs a final-use-by-sector table; transformation inputs,
+transformation outputs, and energy-sector own-use rows should not be mixed into
+that direct final-use workbook map.

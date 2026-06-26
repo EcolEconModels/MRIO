@@ -138,6 +138,51 @@ def test_common_intermediate_composer_collapses_edges_to_direct_eb_cpa_mapping(t
     assert result.diagnostics.empty
 
 
+def test_common_intermediate_composer_filters_to_final_use_direct_energy_rows(tmp_path: Path) -> None:
+    module = load_module(COMPOSE_SCRIPT, "common_intermediate_filter")
+    left = pd.DataFrame(
+        [
+            {
+                "source_code": "FC_IND_CPC_E",
+                "source_label": "chemical and petrochemical",
+                "source_balance_role": "final_use",
+                "include_in_direct_energy": "1",
+                "exio3_product_code": "p24.d",
+                "exio3_product_name": "Chemicals nec",
+            },
+            {
+                "source_code": "TI_E",
+                "source_label": "transformation input",
+                "source_balance_role": "transformation_input",
+                "include_in_direct_energy": "1",
+                "exio3_product_code": "p24.d",
+                "exio3_product_name": "Chemicals nec",
+            },
+            {
+                "source_code": "NE_E",
+                "source_label": "non energy",
+                "source_balance_role": "final_use",
+                "include_in_direct_energy": "0",
+                "exio3_product_code": "p24.d",
+                "exio3_product_name": "Chemicals nec",
+            },
+        ]
+    )
+    prepared = module.prepare_left(
+        left,
+        path=tmp_path / "left.csv",
+        source_code_col="source_code",
+        source_label_col="source_label",
+        intermediate_code_col="exio3_product_code",
+        intermediate_label_col="exio3_product_name",
+        source_balance_role_col="source_balance_role",
+        include_col="include_in_direct_energy",
+        source_role_filter={"final_use"},
+        include_direct_energy_only=True,
+    )
+    assert prepared["left_source_code"].tolist() == ["FC_IND_CPC_E"]
+
+
 def test_common_intermediate_cli_writes_outputs(tmp_path: Path) -> None:
     module = load_module(COMPOSE_SCRIPT, "common_intermediate_cli")
     left_path = tmp_path / "left.csv"
@@ -171,6 +216,8 @@ def test_common_intermediate_cli_writes_outputs(tmp_path: Path) -> None:
         "--edge-out-csv", str(edges),
         "--diagnostics-csv", str(diagnostics),
         "--manifest-json", str(manifest),
+        "--source-balance-role-filter", "final_use",
+        "--include-direct-energy-only",
     ]) == 0
     assert out.exists()
     assert edges.exists()
