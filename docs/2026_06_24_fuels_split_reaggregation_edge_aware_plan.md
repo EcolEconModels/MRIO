@@ -400,6 +400,14 @@ The conceptual boundary is that `DOM`, `IMP`, and `TOTAL` are separate flow mode
 and `TOTAL` means products used by the selected country, not production-side
 output including exports.
 
+Implementation status, 2026-06-26:
+
+- The mapped-output consistency check now runs for `DOM`, `IMP`, and `TOTAL` variants.
+- The Eurostat side uses the same `Z + non-export Y` destination-use boundary used for flow-specific concordance weights.
+- The EXIO side uses the selected flow's destination-use slice (`Z` rows for the requested flow into the destination plus destination final demand), not producer-side `x_region`.
+- The pipeline writes and hard-checks `mapped_output_flow_identity.csv` so `DOM + IMP` is compared against `TOTAL` for both Eurostat and mapped-EXIO totals.
+- Export-specific donor profiles remain Phase 8 optional work.
+
 ### Phase 8 -- Optional export-specific donor profile
 
 Purpose: improve export splitting.

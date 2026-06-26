@@ -654,3 +654,25 @@ def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary(
         atol=0.0,
         label="boundary-test",
     )
+
+
+def test_mapped_output_flow_identity_frame_checks_dom_imp_total():
+    from scripts.split_eurostat_energy_by_exiobase import _build_mapped_output_flow_identity_frame
+
+    good = {
+        "DOM": {"eurostat_output_total": 7.0, "exio_mapped_output_total": 70.0},
+        "IMP": {"eurostat_output_total": 3.0, "exio_mapped_output_total": 30.0},
+        "TOTAL": {"eurostat_output_total": 10.0, "exio_mapped_output_total": 100.0},
+    }
+    frame = _build_mapped_output_flow_identity_frame(good, rtol=0.0, atol=0.0)
+    assert list(frame["quantity"]) == ["eurostat_output_total", "exio_mapped_output_total"]
+    assert frame["ok"].tolist() == [True, True]
+
+    bad = {
+        "DOM": {"eurostat_output_total": 7.0, "exio_mapped_output_total": 70.0},
+        "IMP": {"eurostat_output_total": 3.0, "exio_mapped_output_total": 30.0},
+        "TOTAL": {"eurostat_output_total": 11.0, "exio_mapped_output_total": 100.0},
+    }
+    bad_frame = _build_mapped_output_flow_identity_frame(bad, rtol=0.0, atol=0.0)
+    assert not bool(bad_frame.loc[bad_frame["quantity"] == "eurostat_output_total", "ok"].iloc[0])
+    assert bool(bad_frame.loc[bad_frame["quantity"] == "exio_mapped_output_total", "ok"].iloc[0])

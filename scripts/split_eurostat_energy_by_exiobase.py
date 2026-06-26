@@ -596,6 +596,57 @@ def _should_check_output(flow_value: object, eurostat_year: int | None, exio_yea
     flow = str(flow_value).strip().upper()
     return flow in {"DOM", "IMP", "TOTAL", "TOT", "DOMESTIC", "IMPORTS"}
 
+def _flow_identity_key(flow_value: object) -> str:
+    flow = str(flow_value).strip().upper()
+    if flow in {"TOTAL", "TOT"}:
+        return "TOTAL"
+    if flow in {"DOM", "DOMESTIC"}:
+        return "DOM"
+    if flow in {"IMP", "IMPORT", "IMPORTS"}:
+        return "IMP"
+    return flow
+
+
+def _build_mapped_output_flow_identity_frame(
+    flow_totals: Mapping[str, Mapping[str, float]],
+    *,
+    rtol: float,
+    atol: float,
+) -> pd.DataFrame:
+    """Compare DOM + IMP against TOTAL for boundary-correct mapped-output totals."""
+    required = ("DOM", "IMP", "TOTAL")
+    columns = [
+        "quantity",
+        "dom_plus_imp",
+        "total",
+        "abs_diff",
+        "tolerance",
+        "ok",
+    ]
+    if any(flow not in flow_totals for flow in required):
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict[str, object]] = []
+    for quantity in ("eurostat_output_total", "exio_mapped_output_total"):
+        dom = float(flow_totals["DOM"].get(quantity, 0.0))
+        imp = float(flow_totals["IMP"].get(quantity, 0.0))
+        total = float(flow_totals["TOTAL"].get(quantity, 0.0))
+        lhs = dom + imp
+        diff = abs(lhs - total)
+        tol = max(float(atol), float(rtol) * abs(total))
+        rows.append(
+            {
+                "quantity": quantity,
+                "dom_plus_imp": lhs,
+                "total": total,
+                "abs_diff": diff,
+                "tolerance": tol,
+                "ok": bool(diff <= tol),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _aggregate_exio_emissions_to_eurostat(
     exio_emissions: pd.DataFrame,
     sector_to_exio_sectors: dict[str, list[str]] | dict[str, dict[str, list[str]]] | dict[str, dict[str, float]],
@@ -992,7 +1043,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _vprint(args.verbose, f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)")
 
             assert outdir is not None
-            for flow, parsed in variants.items():
+            flow_identity_totals: dict[str, dict[str, float]] = {}
+            for flow, parsed_variant in variants.items():
                 flow_dir = outdir / f"{args.eurostat_stk_flow_dim}={flow}"
                 flow_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1007,7 +1059,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     t_map = _Timer()
                     flow_sector_mapping, flow_sector_notes = _resolve_exio_to_eurostat_mapping_for_parsed(
                         full_sector_mapping_csv,
-                        parsed,
+                        parsed_variant,
                     )
                     _vprint(
                         args.verbose,
@@ -1028,25 +1080,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                     label = f"{args.eurostat_stk_flow_dim}={flow}"
                     _assert_mapping_integrity(
                         sector_mapping=flow_sector_mapping,
-                        eurostat_Z=parsed.Z,
-                        eurostat_Y=parsed.Y,
+                        eurostat_Z=parsed_variant.Z,
+                        eurostat_Y=parsed_variant.Y,
                         required_target_codes=report_aggregates,
                         label=label,
                     )
                     if _should_check_output(flow, eurostat_year, args.exio_year):
                         output_consistency, _, _ = _build_output_consistency_frame(
                             sector_mapping=flow_sector_mapping,
-                            eurostat_Z=parsed.Z,
-                            eurostat_Y=parsed.Y,
+                            eurostat_Z=parsed_variant.Z,
+                            eurostat_Y=parsed_variant.Y,
                             exio_slice=exio_slice,
                         )
                         out = flow_dir / "mapped_output_consistency.csv"
                         output_consistency.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
+                        flow_identity_totals[_flow_identity_key(flow)] = {
+                            "eurostat_output_total": float(output_consistency["eurostat_output"].sum()),
+                            "exio_mapped_output_total": float(output_consistency["exio_mapped_output"].sum()),
+                        }
                         _assert_output_consistency(
                             sector_mapping=flow_sector_mapping,
-                            eurostat_Z=parsed.Z,
-                            eurostat_Y=parsed.Y,
+                            eurostat_Z=parsed_variant.Z,
+                            eurostat_Y=parsed_variant.Y,
                             exio_slice=exio_slice,
                             rtol=float(args.mapping_consistency_rtol),
                             atol=float(args.mapping_consistency_atol),
@@ -1059,10 +1115,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "because the stk_flow value is not one of DOM, IMP, or TOTAL.",
                         )
                 res = split_iot_using_exiobase_shares(
-                    eurostat_Z=parsed.Z,
-                    eurostat_Y=parsed.Y,
-                    eurostat_V=parsed.V,
-                    eurostat_M=parsed.M,
+                    eurostat_Z=parsed_variant.Z,
+                    eurostat_Y=parsed_variant.Y,
+                    eurostat_V=parsed_variant.V,
+                    eurostat_M=parsed_variant.M,
                     exio_year=args.exio_year,
                     exio_region=args.exio_region,
                     exio_slice=exio_slice,
@@ -1210,6 +1266,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                         aggregates=report_aggregates,
                     )
                     _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+            flow_identity = _build_mapped_output_flow_identity_frame(
+                flow_identity_totals,
+                rtol=float(args.mapping_consistency_rtol),
+                atol=float(args.mapping_consistency_atol),
+            )
+            if not flow_identity.empty:
+                out = outdir / "mapped_output_flow_identity.csv"
+                flow_identity.to_csv(out, index=False)
+                _vprint(args.verbose, f"Wrote: {out.resolve()}")
+                identity_ok = all(bool(value) for value in flow_identity["ok"].tolist())
+                if not identity_ok:
+                    raise SystemExit(
+                        "Mapping consistency check failed: DOM + IMP does not match TOTAL "
+                        "for boundary-correct mapped-output totals. See "
+                        f"{out.resolve()}"
+                    )
             return 0
 
         _vprint(args.verbose, "Calling: load_eurostat_iot(...)")

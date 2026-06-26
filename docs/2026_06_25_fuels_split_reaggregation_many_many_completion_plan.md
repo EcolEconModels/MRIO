@@ -164,7 +164,8 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
      --out-json <validation-report.json>
    ```
 
-2. Inspect generated `validation-report.json`, `aggregation_edge_mapping_audit.csv`, value/price ratio checks, CO2 ratio checks, and exact recomputed `Z/Y/x/V/M` reaggregation gaps.
+2. Inspect generated `validation-report.json`, `aggregation_edge_mapping_audit.csv`, `mapped_output_consistency.csv` for each flow, `mapped_output_flow_identity.csv`, value/price ratio checks, CO2 ratio checks, and exact recomputed `Z/Y/x/V/M` reaggregation gaps.
 
 Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks.
 - Phase-7 output validator recomputes edge-aware aggregation from split outputs and checks exact `Z/Y/x/V/M` recovery plus CO2/value ratio files.
+- Boundary-correct mapped-output checks now run for `DOM`, `IMP`, and `TOTAL`, and the pipeline writes `mapped_output_flow_identity.csv` to compare `DOM + IMP` against `TOTAL`.
