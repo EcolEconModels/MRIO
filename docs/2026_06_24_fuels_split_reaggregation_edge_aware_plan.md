@@ -406,7 +406,8 @@ Implementation status, 2026-06-26:
 - The Eurostat side uses the same `Z + non-export Y` destination-use boundary used for flow-specific concordance weights.
 - The EXIO side uses the selected flow's destination-use slice (`Z` rows for the requested flow into the destination plus destination final demand), not producer-side `x_region`.
 - The pipeline writes and hard-checks `mapped_output_flow_identity.csv` so `DOM + IMP` is compared against `TOTAL` for both Eurostat and mapped-EXIO totals, using strict flow-identity tolerances independent of the looser cross-dataset mapping-consistency diagnostics.
-- Export-specific donor profiles remain Phase 8 optional work.
+- Accounting identity lower rows such as `P1`, `P2_ADJ`, and `TS_BP` are derived from split `x`, split `Z` column sums, and split imports where available, not from donor proxy shares.
+- `IMP` extension CO2/value proxy files are suppressed until origin-weighted import intensities are implemented; export/import-specific donor profiles remain Phase 8 optional work.
 
 ### Phase 8 -- Optional export-specific donor profile
 

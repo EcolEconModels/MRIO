@@ -1072,6 +1072,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 t = _Timer()
                 exio_flow = _exio_flow_for_eurostat_flow_value(flow)
                 exio_slice = exio_slices[exio_flow]
+                flow_has_origin_weighted_extension_proxies = exio_flow != "imports"
+                if exio_flow == "imports" and (extract_qp or extract_co2):
+                    _vprint(
+                        args.verbose,
+                        "Skipping EXIO extension CO2/value proxy outputs for IMP flow: "
+                        "origin-weighted import intensities are not implemented; AT-region extension "
+                        "proxies would be misleading.",
+                    )
                 flow_sector_mapping: dict[str, dict[str, float]] | None = None
                 flow_sector_notes: dict[str, str] | None = None
                 if full_sector_mapping_csv is not None:
@@ -1150,10 +1158,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     eurostat_sector_mapping=flow_sector_mapping,
                     coverage_expected_exio_sectors=coverage_expected_exio,
                     coverage_tol=args.coverage_tol,
-                    extract_quantity_and_price=extract_qp,
-                    quantity_price_extensions=qp_extensions if extract_qp else None,
-                    quantity_price_stressor_keywords=qp_keywords if extract_qp else None,
-                    quantity_price_cache_dir=qp_cache_dir if extract_qp else None,
+                    extract_quantity_and_price=extract_qp and flow_has_origin_weighted_extension_proxies,
+                    quantity_price_extensions=qp_extensions if extract_qp and flow_has_origin_weighted_extension_proxies else None,
+                    quantity_price_stressor_keywords=qp_keywords if extract_qp and flow_has_origin_weighted_extension_proxies else None,
+                    quantity_price_cache_dir=qp_cache_dir if extract_qp and flow_has_origin_weighted_extension_proxies else None,
                 )
                 _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
@@ -1199,7 +1207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
                 # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
-                if extract_co2:
+                if extract_co2 and flow_has_origin_weighted_extension_proxies:
                     exio_sectors = raw_exio_members_from_split_profiles(res.split_profiles)
                     available = set(map(str, exio_slice.sectors))
                     exio_sectors = [s for s in exio_sectors if s in available]
@@ -1249,7 +1257,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         exio_fd_co2.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-                if extract_co2 and flow_sector_mapping is not None:
+                if extract_co2 and flow_has_origin_weighted_extension_proxies and flow_sector_mapping is not None:
                     exio_sectors_full = flatten_exio_sectors_from_mapping(flow_sector_mapping)
 
                     available = set(map(str, exio_slice.sectors))
@@ -1351,6 +1359,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verbose=args.verbose,
             )
 
+    single_has_origin_weighted_extension_proxies = exio_flow_single != "imports"
+    if exio_flow_single == "imports" and (extract_qp or extract_co2):
+        _vprint(
+            args.verbose,
+            "Skipping EXIO extension CO2/value proxy outputs for single-flow imports: "
+            "origin-weighted import intensities are not implemented; AT-region extension proxies would be misleading.",
+        )
+
     _vprint(args.verbose, "Calling: split_iot_using_exiobase_shares(...)")
     t = _Timer()
     res = split_iot_using_exiobase_shares(
@@ -1376,10 +1392,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         eurostat_sector_mapping=full_sector_mapping,
         coverage_expected_exio_sectors=coverage_expected_exio,
         coverage_tol=args.coverage_tol,
-        extract_quantity_and_price=extract_qp,
-        quantity_price_extensions=qp_extensions if extract_qp else None,
-        quantity_price_stressor_keywords=qp_keywords if extract_qp else None,
-        quantity_price_cache_dir=qp_cache_dir if extract_qp else None,
+        extract_quantity_and_price=extract_qp and single_has_origin_weighted_extension_proxies,
+        quantity_price_extensions=qp_extensions if extract_qp and single_has_origin_weighted_extension_proxies else None,
+        quantity_price_stressor_keywords=qp_keywords if extract_qp and single_has_origin_weighted_extension_proxies else None,
+        quantity_price_cache_dir=qp_cache_dir if extract_qp and single_has_origin_weighted_extension_proxies else None,
     )
     _vprint(args.verbose, f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)")
 
@@ -1451,22 +1467,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             out = outdir / "mapped_output_consistency.csv"
             output_consistency.to_csv(out, index=False)
             _vprint(args.verbose, f"Wrote: {out.resolve()}")
-            _assert_output_consistency(
-                sector_mapping=full_sector_mapping,
-                eurostat_Z=Z,
-                eurostat_Y=Y,
-                exio_slice=exio_slice_single,
-                rtol=float(args.mapping_consistency_rtol),
-                atol=float(args.mapping_consistency_atol),
-                label="single",
-            )
+            if args.strict_mapping_consistency_check:
+                _assert_output_consistency(
+                    sector_mapping=full_sector_mapping,
+                    eurostat_Z=Z,
+                    eurostat_Y=Y,
+                    exio_slice=exio_slice_single,
+                    rtol=float(args.mapping_consistency_rtol),
+                    atol=float(args.mapping_consistency_atol),
+                    label="single",
+                )
         else:
             _vprint(
                 args.verbose,
                 "Skipping output consistency check for single flow "
                 f"(flow != TOTAL or year mismatch: Eurostat={eurostat_year}, EXIO={args.exio_year}).",
             )
-    if extract_co2:
+    if extract_co2 and single_has_origin_weighted_extension_proxies:
         exio_sectors = raw_exio_members_from_split_profiles(res.split_profiles)
 
         if exio_slice_single is None:
@@ -1508,7 +1525,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 disagg_co2.to_csv(out, index=False)
                 _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-    if extract_co2 and full_sector_mapping is not None:
+    if extract_co2 and single_has_origin_weighted_extension_proxies and full_sector_mapping is not None:
         exio_sectors_full = flatten_exio_sectors_from_mapping(full_sector_mapping)
 
         if exio_slice_single is None:

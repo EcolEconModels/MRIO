@@ -526,6 +526,8 @@ def _split_supplementary_rows_columnwise(
     sectors_old: Sequence[str],
     sectors_new: Sequence[str],
     split_profiles: Mapping[str, SplitProfiles],
+    Z_split: pd.DataFrame | None = None,
+    x_split: pd.Series | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     if eurostat_V is None:
         M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
@@ -580,6 +582,79 @@ def _split_supplementary_rows_columnwise(
                     "weights": "|".join(f"{child}={float(weights.loc[child]):.12g}" for child in children),
                 }
             )
+
+    identity_child_codes = "|".join(map(str, V_split.columns))
+    x_identity: pd.Series | None = None
+    if x_split is not None:
+        x_obj = pd.to_numeric(x_split.reindex(V_split.columns), errors="coerce")
+        if not isinstance(x_obj, pd.Series):
+            raise TypeError("Expected x_split identity vector to remain a pandas Series.")
+        x_identity = x_obj.fillna(0.0).astype("float64")
+        for row_code in list(map(str, V_split.index)):
+            if row_code.strip().upper() in {"P1", "OUTPUT"}:
+                mass_before = float(V_split.loc[row_code].sum())
+                V_split.loc[row_code, V_split.columns] = x_identity
+                diagnostics.append(
+                    {
+                        "row_code": row_code,
+                        "parent_code": "__accounting_identity__",
+                        "child_codes": identity_child_codes,
+                        "allocation_method": "accounting_identity_x_split",
+                        "denominator": 1.0,
+                        "fallback_reason": "",
+                        "mass_before": mass_before,
+                        "mass_after": float(V_split.loc[row_code].sum()),
+                        "weights": "derived_from_split_x",
+                    }
+                )
+
+    if Z_split is not None:
+        z_use = Z_split.reindex(index=V_split.columns, columns=V_split.columns).fillna(0.0).astype("float64")
+        z_col_use = z_use.sum(axis=0).astype("float64")
+        for row_code in list(map(str, V_split.index)):
+            if row_code.strip().upper() in {"P2_ADJ", "P2ADJ"}:
+                mass_before = float(V_split.loc[row_code].sum())
+                V_split.loc[row_code, V_split.columns] = z_col_use
+                diagnostics.append(
+                    {
+                        "row_code": row_code,
+                        "parent_code": "__accounting_identity__",
+                        "child_codes": identity_child_codes,
+                        "allocation_method": "accounting_identity_z_column_sum",
+                        "denominator": 1.0,
+                        "fallback_reason": "",
+                        "mass_before": mass_before,
+                        "mass_after": float(V_split.loc[row_code].sum()),
+                        "weights": "derived_from_split_Z_column_sums",
+                    }
+                )
+
+    if x_identity is not None:
+        imports_vector = None
+        imports_row_code = ""
+        for candidate in ("P7", "P7_CIF", "P7_FOB"):
+            if candidate in V_split.index:
+                imports_row_code = candidate
+                imports_vector = V_split.loc[candidate].reindex(V_split.columns).fillna(0.0).astype("float64")
+                break
+        if imports_vector is not None:
+            for row_code in list(map(str, V_split.index)):
+                if row_code.strip().upper() in {"TS_BP", "TOTAL_SUPPLY_AT_BASIC_PRICES"}:
+                    mass_before = float(V_split.loc[row_code].sum())
+                    V_split.loc[row_code, V_split.columns] = x_identity + imports_vector
+                    diagnostics.append(
+                        {
+                            "row_code": row_code,
+                            "parent_code": "__accounting_identity__",
+                            "child_codes": identity_child_codes,
+                            "allocation_method": "accounting_identity_x_plus_imports",
+                            "denominator": 1.0,
+                            "fallback_reason": "",
+                            "mass_before": mass_before,
+                            "mass_after": float(V_split.loc[row_code].sum()),
+                            "weights": f"derived_from_split_x_plus_{imports_row_code}",
+                        }
+                    )
 
     M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
     if M_out is not None:
@@ -927,6 +1002,8 @@ def _split_iot_using_donor_blocks(
         sectors_old=sectors_old,
         sectors_new=sectors_new,
         split_profiles=split_profiles,
+        Z_split=Z_split,
+        x_split=x_split,
     )
 
     io_system = None

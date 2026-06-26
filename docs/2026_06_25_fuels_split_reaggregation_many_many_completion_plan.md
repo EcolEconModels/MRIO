@@ -166,6 +166,8 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 
 2. Inspect generated `validation-report.json`, `aggregation_edge_mapping_audit.csv`, `mapped_output_consistency.csv` for each flow, `mapped_output_flow_identity.csv`, value/price ratio checks, CO2 ratio checks, and exact recomputed `Z/Y/x/V/M` reaggregation gaps.
 
-Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks.
+Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks; accounting identity rows such as `P1`, `P2_ADJ`, and `TS_BP` are derived from split `x`/`Z`/imports rather than donor proxy shares.
 - Phase-7 output validator recomputes edge-aware aggregation from split outputs and checks exact `Z/Y/x/V/M` recovery plus CO2/value ratio files.
 - Boundary-correct mapped-output diagnostics now run for `DOM`, `IMP`, and `TOTAL`; cross-dataset EXIO-vs-Eurostat level gaps are diagnostic by default, while `mapped_output_flow_identity.csv` hard-checks `DOM + IMP` against `TOTAL` with strict flow-identity tolerances.
+
+- `IMP` CO2/value proxy files are suppressed until origin-weighted import intensities are implemented; this avoids mislabelling Austrian-region extension proxies as import embodied intensities.

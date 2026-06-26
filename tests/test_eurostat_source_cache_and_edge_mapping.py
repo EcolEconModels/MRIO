@@ -786,3 +786,52 @@ def test_p1_supplementary_row_uses_output_share_proxy():
 
     assert proxy == "output_share_proxy_for_value_added_row"
     pd.testing.assert_series_equal(share, prof.output_share)
+
+
+
+def test_accounting_identity_rows_are_derived_from_split_tables():
+    from ecolecon_mrio.exio_share_split import _split_supplementary_rows_columnwise
+
+    children = pd.Index(["child_a", "child_b"])
+    prof = SplitProfiles(
+        aggregate_sector="CPA_TEST",
+        subsectors=("child_a", "child_b"),
+        output_share=pd.Series([0.9, 0.1], index=children, dtype="float64"),
+        intermediate_sales_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
+        intermediate_input_share=pd.Series([0.25, 0.75], index=children, dtype="float64"),
+        final_demand_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
+        subsector_to_exio_sectors={"child_a": ["a"], "child_b": ["b"]},
+    )
+    V = pd.DataFrame(
+        [[100.0], [50.0], [20.0], [120.0]],
+        index=["P1", "P2_ADJ", "P7", "TS_BP"],
+        columns=["CPA_TEST"],
+    )
+    Z_split = pd.DataFrame(
+        [[5.0, 25.0], [15.0, 5.0]],
+        index=children,
+        columns=children,
+    )
+    x_split = pd.Series([50.0, 50.0], index=children, dtype="float64")
+
+    V_split, _, diag = _split_supplementary_rows_columnwise(
+        eurostat_V=V,
+        eurostat_M=None,
+        sectors_old=("CPA_TEST",),
+        sectors_new=tuple(children),
+        split_profiles={"CPA_TEST": prof},
+        Z_split=Z_split,
+        x_split=x_split,
+    )
+
+    assert V_split is not None
+    pd.testing.assert_series_equal(V_split.loc["P1"], x_split, check_names=False)
+    pd.testing.assert_series_equal(V_split.loc["P2_ADJ"], Z_split.sum(axis=0), check_names=False)
+    expected_imports = pd.Series([5.0, 15.0], index=children, dtype="float64")
+    pd.testing.assert_series_equal(V_split.loc["P7"], expected_imports, check_names=False)
+    pd.testing.assert_series_equal(V_split.loc["TS_BP"], x_split + expected_imports, check_names=False)
+    assert diag is not None
+    methods = set(diag["allocation_method"].astype(str))
+    assert "accounting_identity_x_split" in methods
+    assert "accounting_identity_z_column_sum" in methods
+    assert "accounting_identity_x_plus_imports" in methods

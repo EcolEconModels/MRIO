@@ -156,7 +156,7 @@ The fuels pipeline no longer needs a workbook to author mapping CSVs. The split 
 ## Notes on Reproducibility
 
 - The checked-in helper CSVs under `scripts/pipelines/` are the source of truth for split and reaggregation pipeline runs. If you manually tweak them, rerun the affected pipelines directly rather than regenerating them as part of the workflow.
-- The IO split step uses EXIOBASE producer-side output for mapping diagnostics and emissions intensity denominators, but destination-side use slices for the actual split profiles. Those are distinct objects and should not be conflated.
+- The IO split step uses destination-side use slices for split profiles and mapped-output diagnostics. Domestic-flow EXIO extension intensities remain region-sector proxies; import-flow CO2/value proxy files are suppressed until origin-weighted import intensities are implemented.
 - The PostGrowth model consumes the exported workbooks directly; it no longer redoes the brown/green split inside R.
 
 ### Eurostat Energy Balance dictionary
