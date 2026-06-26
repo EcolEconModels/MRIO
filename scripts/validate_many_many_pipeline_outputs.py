@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _extra_path in (_REPO_ROOT, _REPO_ROOT / "src"):
+    _extra_text = str(_extra_path)
+    if _extra_text not in sys.path:
+        sys.path.insert(0, _extra_text)
 
 from ecolecon_mrio.iot_aggregation import aggregate_iot
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
@@ -53,16 +60,20 @@ def _numeric_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _max_abs_frame_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
-    aligned_actual = actual.reindex(index=expected.index, columns=expected.columns).fillna(0.0)
-    diff = aligned_actual.astype("float64") - expected.astype("float64")
+    if not actual.index.astype(str).equals(expected.index.astype(str)):
+        return float("inf")
+    if not actual.columns.astype(str).equals(expected.columns.astype(str)):
+        return float("inf")
+    diff = actual.astype("float64") - expected.astype("float64")
     if diff.empty:
         return 0.0
     return float(np.nanmax(np.abs(diff.to_numpy(dtype="float64"))))
 
 
 def _max_abs_series_gap(actual: pd.Series, expected: pd.Series) -> float:
-    aligned_actual = actual.reindex(expected.index).fillna(0.0).astype("float64")
-    diff = aligned_actual - expected.astype("float64")
+    if not actual.index.astype(str).equals(expected.index.astype(str)):
+        return float("inf")
+    diff = actual.astype("float64") - expected.astype("float64")
     if diff.empty:
         return 0.0
     return float(np.nanmax(np.abs(diff.to_numpy(dtype="float64"))))

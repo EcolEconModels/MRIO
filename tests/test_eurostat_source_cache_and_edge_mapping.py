@@ -676,3 +676,95 @@ def test_mapped_output_flow_identity_frame_checks_dom_imp_total():
     bad_frame = _build_mapped_output_flow_identity_frame(bad, rtol=0.0, atol=0.0)
     assert not bool(bad_frame.loc[bad_frame["quantity"] == "eurostat_output_total", "ok"].iloc[0])
     assert bool(bad_frame.loc[bad_frame["quantity"] == "exio_mapped_output_total", "ok"].iloc[0])
+
+
+def test_edge_mapping_augmentation_prefers_target_compatible_raw_source_mapping():
+    from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
+
+    mapping = {"p24.d": "CPA_C20_others"}
+    mapping_df = pd.DataFrame(
+        [
+            {
+                "source_code": "p24.d",
+                "target_code": "CPA_C20_others",
+                "enabled": "1",
+            }
+        ]
+    )
+    edge_metadata = pd.DataFrame(
+        [
+            {
+                "current_child_code": "p24.d@CPA_C20",
+                "source_code": "p24.d",
+                "parent_code": "CPA_C20",
+                "concordance_target_code": "CPA_C20",
+            }
+        ]
+    )
+
+    new_mapping, _, audit = _augment_mapping_from_split_child_edges(
+        mapping=mapping,
+        mapping_df=mapping_df,
+        edge_metadata=edge_metadata,
+    )
+
+    assert new_mapping["p24.d@CPA_C20"] == "CPA_C20_others"
+    assert audit.iloc[0]["mapping_source"] == "existing_mapping_for_source_code_p24.d"
+
+
+def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
+    from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
+
+    split_dir = tmp_path / "split"
+    agg_dir = tmp_path / "agg"
+    split_dir.mkdir()
+    agg_dir.mkdir()
+
+    pd.DataFrame([[1.0]], index=["A"], columns=["A"]).to_csv(split_dir / "Z_split_balanced.csv")
+    pd.DataFrame([[2.0]], index=["A"], columns=["P3"]).to_csv(split_dir / "Y_split_balanced.csv")
+    pd.Series([3.0], index=["A"], name="x").to_csv(split_dir / "x_split_balanced.csv")
+
+    pd.DataFrame([{"source_code": "A", "target_code": "A", "enabled": "1"}]).to_csv(
+        tmp_path / "mapping.csv",
+        index=False,
+    )
+
+    # Same expected A block, but with an extra aggregate label B. This must fail;
+    # silently reindexing observed outputs to expected labels would hide it.
+    pd.DataFrame(
+        [[1.0, 0.0], [0.0, 0.0]],
+        index=["A", "B"],
+        columns=["A", "B"],
+    ).to_csv(agg_dir / "Z_agg.csv")
+    pd.DataFrame([[2.0], [0.0]], index=["A", "B"], columns=["P3"]).to_csv(agg_dir / "Y_agg.csv")
+    pd.Series([3.0, 0.0], index=["A", "B"], name="x").to_csv(agg_dir / "x_agg.csv")
+
+    report = validate_pipeline_outputs(
+        split_dir=split_dir,
+        agg_dir=agg_dir,
+        mapping_csv=tmp_path / "mapping.csv",
+    )
+
+    assert report["ok"] is False
+    z_check = next(check for check in report["checks"] if check["name"] == "Z_agg_matches_recomputed_reaggregation")
+    assert z_check["max_abs_gap"] == float("inf")
+
+
+def test_p1_supplementary_row_uses_output_share_proxy():
+    from ecolecon_mrio.exio_share_split import _supplementary_row_proxy_share
+
+    idx = pd.Index(["child_a", "child_b"])
+    prof = SplitProfiles(
+        aggregate_sector="CPA_TEST",
+        subsectors=("child_a", "child_b"),
+        output_share=pd.Series([0.8, 0.2], index=idx, dtype="float64"),
+        intermediate_sales_share=pd.Series([0.5, 0.5], index=idx, dtype="float64"),
+        intermediate_input_share=pd.Series([0.1, 0.9], index=idx, dtype="float64"),
+        final_demand_share=pd.Series([0.5, 0.5], index=idx, dtype="float64"),
+        subsector_to_exio_sectors={"child_a": ["a"], "child_b": ["b"]},
+    )
+
+    share, proxy = _supplementary_row_proxy_share("P1", prof)
+
+    assert proxy == "output_share_proxy_for_value_added_row"
+    pd.testing.assert_series_equal(share, prof.output_share)

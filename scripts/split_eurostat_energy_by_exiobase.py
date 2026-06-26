@@ -296,10 +296,6 @@ def _mapping_weights_frame(
     )
 
 
-
-
-
-
 def _flatten_selected_child_codes(value: object) -> list[str]:
     """Flatten split-output selected-child structures while preserving order."""
     out: list[str] = []
@@ -752,7 +748,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument(
         "--no-mapping-consistency-check",
         action="store_true",
-        help="Disable consistency checks between mapped EXIO outputs and Eurostat outputs.",
+        help="Disable consistency diagnostics between mapped EXIO use totals and Eurostat use totals.",
+    )
+    p.add_argument(
+        "--strict-mapping-consistency-check",
+        action="store_true",
+        help=(
+            "Fail if mapped EXIO destination-use totals differ from Eurostat destination-use totals. "
+            "By default these cross-dataset level differences are written as diagnostics only; "
+            "DOM+IMP=TOTAL flow identity remains a hard internal check."
+        ),
     )
     p.add_argument(
         "--mapping-consistency-rtol",
@@ -1099,15 +1104,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "eurostat_output_total": float(output_consistency["eurostat_output"].sum()),
                             "exio_mapped_output_total": float(output_consistency["exio_mapped_output"].sum()),
                         }
-                        _assert_output_consistency(
-                            sector_mapping=flow_sector_mapping,
-                            eurostat_Z=parsed_variant.Z,
-                            eurostat_Y=parsed_variant.Y,
-                            exio_slice=exio_slice,
-                            rtol=float(args.mapping_consistency_rtol),
-                            atol=float(args.mapping_consistency_atol),
-                            label=label,
-                        )
+                        if args.strict_mapping_consistency_check:
+                            _assert_output_consistency(
+                                sector_mapping=flow_sector_mapping,
+                                eurostat_Z=parsed_variant.Z,
+                                eurostat_Y=parsed_variant.Y,
+                                exio_slice=exio_slice,
+                                rtol=float(args.mapping_consistency_rtol),
+                                atol=float(args.mapping_consistency_atol),
+                                label=label,
+                            )
                     else:
                         _vprint(
                             args.verbose,

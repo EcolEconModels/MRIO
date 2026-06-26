@@ -23,7 +23,7 @@ def test_mapping_integrity_check_passes():
     )
 
 
-def test_output_consistency_check_fails_on_total_mismatch():
+def test_output_consistency_check_uses_destination_use_not_x_region():
     from types import SimpleNamespace
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
@@ -33,7 +33,34 @@ def test_output_consistency_check_fails_on_total_mismatch():
     exio_slice = SimpleNamespace(
         Z_domestic=pd.DataFrame([[0.0, 0.0], [0.0, 0.0]], index=["S1", "S2"], columns=["S1", "S2"]),
         Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=["S1", "S2"]),
+        # Deliberately wrong producer-output values. The boundary-correct check
+        # must use Z_domestic + Y_region, not x_region.
         x_region=pd.Series([40.0, 40.0], index=["S1", "S2"], dtype="float64"),
+    )
+    mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
+
+    _assert_output_consistency(
+        sector_mapping=mapping,
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        rtol=0.0,
+        atol=0.0,
+        label="destination-use-boundary-test",
+    )
+
+
+def test_output_consistency_strict_helper_still_fails_on_destination_use_mismatch():
+    from types import SimpleNamespace
+    from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
+
+    euro_Z = pd.DataFrame([[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=["CPA_A", "CPA_B"])
+
+    exio_slice = SimpleNamespace(
+        Z_domestic=pd.DataFrame([[0.0, 0.0], [0.0, 0.0]], index=["S1", "S2"], columns=["S1", "S2"]),
+        Y_region=pd.DataFrame({"P3": [50.0, 100.0]}, index=["S1", "S2"]),
+        x_region=pd.Series([999.0, 999.0], index=["S1", "S2"], dtype="float64"),
     )
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
 
@@ -43,9 +70,9 @@ def test_output_consistency_check_fails_on_total_mismatch():
             eurostat_Z=euro_Z,
             eurostat_Y=euro_Y,
             exio_slice=exio_slice,
-            rtol=0.01,
-            atol=1e-6,
-            label="test",
+            rtol=0.0,
+            atol=0.0,
+            label="strict-destination-use-mismatch-test",
         )
 
 

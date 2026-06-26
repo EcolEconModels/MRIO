@@ -168,4 +168,4 @@ Edge labels such as `p24.d@CPA_C20` must map through their target side, not as i
 
 Supplementary `V` splitting now writes row-level diagnostics with row code, proxy method, denominator, fallback reason, and mass-before/mass-after checks.
 - Phase-7 output validator recomputes edge-aware aggregation from split outputs and checks exact `Z/Y/x/V/M` recovery plus CO2/value ratio files.
-- Boundary-correct mapped-output checks now run for `DOM`, `IMP`, and `TOTAL`, and the pipeline writes `mapped_output_flow_identity.csv` to compare `DOM + IMP` against `TOTAL`.
+- Boundary-correct mapped-output diagnostics now run for `DOM`, `IMP`, and `TOTAL`; cross-dataset EXIO-vs-Eurostat level gaps are diagnostic by default, while `mapped_output_flow_identity.csv` hard-checks `DOM + IMP` against `TOTAL`.

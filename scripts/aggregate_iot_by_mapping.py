@@ -141,14 +141,31 @@ def _augment_mapping_from_split_child_edges(
             )
             continue
 
-        candidate_keys = [k for k in (parent, concordance_target) if k]
+        target_hint = concordance_target or parent
         mapped_to = ""
         mapping_source = ""
-        for candidate in candidate_keys:
-            if candidate in out_mapping:
-                mapped_to = out_mapping[candidate]
-                mapping_source = f"existing_mapping_for_{candidate}"
-                break
+
+        # Prefer a legacy raw-source mapping only when its target is compatible
+        # with this materialized edge target.  This recovers old rows such as
+        # p24.d -> CPA_C20_others for p24.d@CPA_C20, without silently using that
+        # row for an incompatible p24.d@CPA_C21 edge.
+        if source and source in out_mapping:
+            raw_mapped_to = out_mapping[source]
+            raw_target = str(raw_mapped_to).strip()
+            hint = str(target_hint).strip()
+            raw_upper = raw_target.upper()
+            hint_upper = hint.upper()
+            if not hint or raw_upper == hint_upper or raw_upper.startswith(f"{hint_upper}_"):
+                mapped_to = raw_mapped_to
+                mapping_source = f"existing_mapping_for_source_code_{source}"
+
+        candidate_keys = [k for k in (parent, concordance_target) if k]
+        if not mapped_to:
+            for candidate in candidate_keys:
+                if candidate in out_mapping:
+                    mapped_to = out_mapping[candidate]
+                    mapping_source = f"existing_mapping_for_{candidate}"
+                    break
         if not mapped_to:
             mapped_to = concordance_target or parent
             mapping_source = "identity_to_concordance_target"

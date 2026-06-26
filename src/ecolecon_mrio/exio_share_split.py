@@ -480,7 +480,6 @@ def _validate_split_reconstruction(
         )
 
 
-
 _VALUE_ADDED_SUPPLEMENTARY_PREFIXES: tuple[str, ...] = (
     "B",
     "D1",
@@ -488,7 +487,9 @@ _VALUE_ADDED_SUPPLEMENTARY_PREFIXES: tuple[str, ...] = (
     "D3",
     "D29",
     "D39",
+    "P1",
     "P51C",
+    "CPA_TOTAL",
 )
 
 
