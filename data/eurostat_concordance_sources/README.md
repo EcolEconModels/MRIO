@@ -31,6 +31,10 @@ Between NACE Rev. 2 and NACE Rev. 2.1:
 <https://ec.europa.eu/eurostat/web/nace/correspondence-tables>
 
 ## CPA 2.1 to 64 products A*64 concordance
+At <https://showvoc.op.europa.eu/#/datasets/ESTAT_Statistical_classification_of_products_by_activity,_2.1_%28CPA_2.1%29/data?resId=http:%2F%2Fdata.europa.eu%2Fehl%2Fcpa21%2Fcpa21>  
+the "Concept" tab gives the A*64 classification, and from "Downloads", we get the full classification:  
+<https://showvoc.op.europa.eu/#/datasets/ESTAT_Statistical_classification_of_products_by_activity,_2.1_%28CPA_2.1%29/downloads>
+
 From <https://sdmx.org/sdmx-data-structure-definitions-for-national-accounts-sdmx-na/>  
 the relevant row is:  
 NA_SU — Supply/Use & Input/Output Tables  
