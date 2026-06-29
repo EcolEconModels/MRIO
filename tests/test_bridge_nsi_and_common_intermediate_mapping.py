@@ -31,10 +31,9 @@ def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_generator")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
     esa.write_text(
-        "Products of agriculture, hunting and related services (01)\n"
-        "p01.a Paddy rice\n"
-        "Real estate services (70)\n"
-        "p47.a Real estate activities\n",
+        "\tProducts of agriculture, hunting and related services (01)\tReal estate services (70)\n"
+        "Paddy rice\t1\t0\n"
+        "Real estate activities\t0\t1\n",
         encoding="utf-8",
     )
     exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
@@ -80,6 +79,7 @@ def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path
     assert set(result.mapping.loc[result.mapping["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "allocation_rule"]) == {"split-by-output-share"}
+    assert set(result.mapping["target_version"]) == {"CPA_65"}
 
 
 def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
@@ -93,10 +93,9 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
         ]
     ).to_excel(exio_bridge, index=False)
     esa_text = (
-        "Products of agriculture, hunting and related services (01)\n"
-        "p01.a Paddy rice\n"
-        "Real estate services (70)\n"
-        "p47.a Real estate activities\n"
+        "\tProducts of agriculture, hunting and related services (01)\tReal estate services (70)\n"
+        "Paddy rice\t1\t0\n"
+        "Real estate activities\t0\t1\n"
     )
     with zipfile.ZipFile(concordances_zip, "w") as zf:
         zf.writestr("Concordances/Different aggregations/EXIOBASE20p_ESA59p.txt", esa_text)
@@ -141,6 +140,7 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     generated = pd.read_csv(out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances.csv", dtype=str)
     assert set(generated.loc[generated["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(generated.loc[generated["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
+    assert set(generated["target_version"]) == {"CPA_65"}
 
 
 def test_common_intermediate_composer_collapses_edges_to_direct_eb_cpa_mapping(tmp_path: Path) -> None:

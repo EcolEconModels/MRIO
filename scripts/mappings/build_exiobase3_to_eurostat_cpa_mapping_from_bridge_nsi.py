@@ -163,13 +163,69 @@ def is_prefix_related(left: str, right: str) -> bool:
 
 
 def read_esa59_mapping(path: Path) -> pd.DataFrame:
-    """Read EXIOBASE2 product -> ESA59 old-product-group mapping text.
+    """Read EXIOBASE2 product -> ESA59 old-product-group mapping.
 
-    The EXIOBASE aggregation text files use group headers containing old product
-    division codes in parentheses, followed by EXIOBASE2 product rows.  This
-    reader also accepts two/three-column tabular variants for testability and
-    for future upstream formatting changes.
+    The upstream EXIOBASE ``EXIOBASE20p_ESA59p.txt`` source is a tab-separated
+    0/1 matrix: rows are EXIOBASE2 product names, columns are ESA59 product
+    groups, and active cells indicate membership.  The parser converts that
+    matrix to the repository's canonical edge-list representation internally.
+    No Layer-2 derived concordance file is written.  A legacy line-oriented
+    fallback is kept only for small synthetic tests and possible upstream format
+    variants.
     """
+
+    def parse_group_header(value: object) -> tuple[str, str]:
+        header = clean_text(value).strip('"')
+        match = re.search(r"\((\d{2})\)\s*$", header)
+        if not match:
+            return "", header
+        return match.group(1), header[: match.start()].strip()
+
+    def is_active_matrix_cell(value: object) -> bool:
+        text = clean_text(value).strip('"')
+        if not text:
+            return False
+        try:
+            return float(text) != 0.0
+        except ValueError:
+            return text.casefold() in {"x", "true", "t", "yes", "y"}
+
+    def parse_matrix_format() -> pd.DataFrame:
+        try:
+            raw = pd.read_csv(path, sep="\t", header=None, dtype=str, keep_default_na=False, engine="python").fillna("")
+        except (pd.errors.EmptyDataError, pd.errors.ParserError, UnicodeDecodeError):
+            return pd.DataFrame()
+        if raw.shape[0] < 2 or raw.shape[1] < 2:
+            return pd.DataFrame()
+        headers: list[tuple[int, str, str]] = []
+        for col in range(1, raw.shape[1]):
+            code, label = parse_group_header(raw.iat[0, col])
+            if code and label:
+                headers.append((col, code, label))
+        if not headers:
+            return pd.DataFrame()
+        records: list[dict[str, str]] = []
+        for row_idx in range(1, raw.shape[0]):
+            product_name = clean_text(raw.iat[row_idx, 0])
+            if not product_name:
+                continue
+            for col, group_code, group_label in headers:
+                if col < raw.shape[1] and is_active_matrix_cell(raw.iat[row_idx, col]):
+                    records.append(
+                        {
+                            "exio20_product_code": "",
+                            "exio20_product_name": product_name,
+                            "esa59_product_code": group_code,
+                            "esa59_product_label": group_label,
+                        }
+                    )
+        if not records:
+            return pd.DataFrame()
+        return pd.DataFrame.from_records(records).drop_duplicates().reset_index(drop=True)
+
+    matrix = parse_matrix_format()
+    if not matrix.empty:
+        return matrix
 
     group_code = ""
     group_label = ""
@@ -182,11 +238,11 @@ def read_esa59_mapping(path: Path) -> pd.DataFrame:
         product_code_match = re.match(r"^([pi]\d[\w.\-]*)\b\s*(.*)$", line, flags=re.IGNORECASE)
         if header_match and not product_code_match:
             group_code = header_match.group(1)
-            group_label = line[: header_match.start()].strip()
+            group_label = line[: header_match.start()].strip().strip('"')
             continue
         parts = [part.strip() for part in re.split(r"\t+|\s{2,}|,", line, maxsplit=2) if part.strip()]
         exio_code = ""
-        exio_label = line
+        exio_label = line.strip('"')
         if product_code_match:
             exio_code = product_code_match.group(1)
             exio_label = clean_text(product_code_match.group(2)) or exio_code
@@ -199,7 +255,7 @@ def read_esa59_mapping(path: Path) -> pd.DataFrame:
                     "exio20_product_code": clean_text(exio_code),
                     "exio20_product_name": clean_text(exio_label),
                     "esa59_product_code": group_code,
-                    "esa59_product_label": group_label,
+                    "esa59_product_label": clean_text(group_label),
                 }
             )
     frame = pd.DataFrame.from_records(records)
@@ -346,6 +402,17 @@ def expand_division_token(token: str) -> set[str]:
     if token.isdigit():
         return {f"{int(token):02d}"}
     return set()
+
+
+def canonical_target_version_label(target_version: str) -> str:
+    """Return canonical mapping target-version metadata label."""
+
+    normalized = target_version.strip().casefold().replace("_", "")
+    if normalized == "cpa64":
+        return "CPA_64"
+    if normalized == "cpa65":
+        return "CPA_65"
+    return target_version.upper()
 
 
 def load_target_division_map(path: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
@@ -495,7 +562,7 @@ def build_official_mapping(
                     "source_level": "product",
                     "target_dataset": "Eurostat_IO",
                     "target_system": "pxp",
-                    "target_version": target_version.upper(),
+                    "target_version": canonical_target_version_label(target_version),
                     "target_level": "CPA_product",
                     "source_code": clean_text(row.get("exio3_product_code", "")),
                     "source_label": clean_text(row.get("exio3_product_name", "")),
@@ -530,7 +597,7 @@ def build_official_mapping(
         "cpa2002_cpa2008_sha256": sha256_file(cpa2002_cpa2008_path),
         "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
         "cpa2008_cpa21_sha256": sha256_file(cpa2008_cpa21_path),
-        "target_version": target_version,
+        "target_version": canonical_target_version_label(target_version),
         "esa59_rows": int(len(esa)),
         "edge_rows": int(len(edges)),
         "mapping_rows": int(len(mapping)),
