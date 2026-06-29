@@ -19,6 +19,8 @@ import argparse
 import hashlib
 import json
 import re
+import tempfile
+import zipfile
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -31,12 +33,17 @@ import pandas as pd
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 DEFAULT_EXIOBASE_SOURCE_ROOT: Final[Path] = REPO_ROOT / "data" / "exiobase_concordance_sources"
 DEFAULT_EUROSTAT_SOURCE_ROOT: Final[Path] = REPO_ROOT / "data" / "eurostat_concordance_sources"
+DEFAULT_CONCORDANCES_ZIP: Final[Path] = DEFAULT_EXIOBASE_SOURCE_ROOT / "exiobase_concordances.zip"
+DEFAULT_CPA2002_CPA2008: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA_2002_to_CPA_2008.csv"
+DEFAULT_CPA2008_CPA21: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA_2008_to_CPA_21.csv"
 DEFAULT_OUT_DIR: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "generated"
 DEFAULT_CPA64_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv"
 DEFAULT_CPA65_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv"
 
 ESA59_SUFFIX: Final[str] = "EXIOBASE20p_ESA59p.txt"
 EXIO20_EXIO30_SUFFIX: Final[str] = "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+ESA59_MEMBER: Final[str] = "Concordances/Different aggregations/EXIOBASE20p_ESA59p.txt"
+EXIO20_EXIO30_MEMBER: Final[str] = "Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
 
 CANONICAL_COLUMNS: Final[tuple[str, ...]] = (
     "order",
@@ -96,36 +103,39 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def normalize_path_text(path: Path) -> str:
-    """Normalize a path for fuzzy source-file discovery."""
+def sha256_bytes(data: bytes) -> str:
+    """Return the SHA-256 digest for an in-memory source payload."""
 
-    return re.sub(r"[^a-z0-9]+", "", str(path).casefold())
+    return hashlib.sha256(data).hexdigest()
 
 
-def find_one_file(root: Path, *, suffix: str | None = None, tokens: Sequence[str] = ()) -> Path:
-    """Find exactly one source file under ``root`` by suffix or filename tokens."""
+def find_zip_member_by_suffix(concordances_zip: Path, member_suffix: str) -> str:
+    """Find exactly one member in the EXIOBASE concordance zip by path suffix."""
 
-    if not root.exists():
-        raise FileNotFoundError(f"Missing source root: {root}")
-    matches: list[Path] = []
-    token_norm = [re.sub(r"[^a-z0-9]+", "", token.casefold()) for token in tokens]
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        normalized = normalize_path_text(path.relative_to(root))
-        if suffix and path.name == suffix:
-            matches.append(path)
-        elif token_norm and all(token in normalized for token in token_norm):
-            matches.append(path)
+    normalized_suffix = member_suffix.replace("\\", "/")
+    if not concordances_zip.exists():
+        raise FileNotFoundError(f"Missing EXIOBASE concordance zip: {concordances_zip}")
+    with zipfile.ZipFile(concordances_zip) as zf:
+        matches = [
+            name
+            for name in zf.namelist()
+            if name.replace("\\", "/").endswith(normalized_suffix)
+        ]
     unique = sorted(set(matches))
     if not unique:
-        if suffix:
-            raise FileNotFoundError(f"No file named {suffix!r} found under {root}")
-        raise FileNotFoundError(f"No file matching tokens {tokens!r} found under {root}")
+        raise FileNotFoundError(f"No zip member ending with {member_suffix!r} in {concordances_zip}")
     if len(unique) > 1:
-        rendered = "\n  ".join(str(path) for path in unique)
-        raise RuntimeError(f"Multiple source files matched {suffix or tokens!r}:\n  {rendered}")
+        rendered = "\n  ".join(unique)
+        raise RuntimeError(f"Multiple zip members matched {member_suffix!r}:\n  {rendered}")
     return unique[0]
+
+
+def read_zip_member_bytes(concordances_zip: Path, member_suffix: str) -> tuple[bytes, str]:
+    """Read one source member from the EXIOBASE concordance zip."""
+
+    member = find_zip_member_by_suffix(concordances_zip, member_suffix)
+    with zipfile.ZipFile(concordances_zip) as zf:
+        return zf.read(member), member
 
 
 def canonical_code(value: object) -> str:
@@ -358,16 +368,6 @@ def load_target_division_map(path: Path) -> tuple[dict[str, str], dict[str, set[
         # CPA65 L68A/L68B encode the deliberate 65-sector split of CPA division 68.
         if re.search(r"CPA[_-]?L68[A-Z]?", target_code, flags=re.IGNORECASE):
             divisions.add("68")
-        if target_code == "CPA_T":
-            divisions.update({"97", "98"})
-        if target_code == "CPA_U":
-            divisions.add("99")
-        if target_code == "CPA_B":
-            divisions.update({"05", "06", "07", "08", "09"})
-        if target_code == "CPA_F":
-            divisions.update({"41", "42", "43"})
-        if target_code == "CPA_I":
-            divisions.update({"55", "56"})
         for division in divisions:
             division_to_targets.setdefault(division, set()).add(target_code)
     return labels, division_to_targets
@@ -578,12 +578,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments."""
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--exiobase-source-root", type=Path, default=DEFAULT_EXIOBASE_SOURCE_ROOT)
-    parser.add_argument("--eurostat-source-root", type=Path, default=DEFAULT_EUROSTAT_SOURCE_ROOT)
-    parser.add_argument("--esa59-products", type=Path, default=None)
-    parser.add_argument("--exio20-exio30-products", type=Path, default=None)
-    parser.add_argument("--cpa2002-cpa2008", type=Path, default=None)
-    parser.add_argument("--cpa2008-cpa21", type=Path, default=None)
+    parser.add_argument("--concordances-zip", type=Path, default=DEFAULT_CONCORDANCES_ZIP)
+    parser.add_argument("--esa59-member", default=ESA59_MEMBER)
+    parser.add_argument("--exio20-exio30-member", default=EXIO20_EXIO30_MEMBER)
+    parser.add_argument("--cpa2002-cpa2008", type=Path, default=DEFAULT_CPA2002_CPA2008)
+    parser.add_argument("--cpa2008-cpa21", type=Path, default=DEFAULT_CPA2008_CPA21)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
     parser.add_argument("--target-dictionary", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
@@ -599,18 +598,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     target_dictionary = args.target_dictionary
     if target_dictionary is None:
         target_dictionary = DEFAULT_CPA65_DICTIONARY if args.target_version == "cpa65" else DEFAULT_CPA64_DICTIONARY
-    esa59_path = args.esa59_products or find_one_file(args.exiobase_source_root, suffix=ESA59_SUFFIX)
-    exio_bridge_path = args.exio20_exio30_products or find_one_file(args.exiobase_source_root, suffix=EXIO20_EXIO30_SUFFIX)
-    cpa2002_cpa2008_path = args.cpa2002_cpa2008 or find_one_file(args.eurostat_source_root, tokens=("cpa", "2002", "2008"))
-    cpa2008_cpa21_path = args.cpa2008_cpa21 or find_one_file(args.eurostat_source_root, tokens=("cpa", "2008", "21"))
-    result = build_official_mapping(
-        esa59_path=esa59_path,
-        exio20_exio30_path=exio_bridge_path,
-        cpa2002_cpa2008_path=cpa2002_cpa2008_path,
-        cpa2008_cpa21_path=cpa2008_cpa21_path,
-        target_dictionary=target_dictionary,
-        target_version=args.target_version,
+
+    esa59_bytes, esa59_member = read_zip_member_bytes(args.concordances_zip, args.esa59_member)
+    exio_bridge_bytes, exio_bridge_member = read_zip_member_bytes(args.concordances_zip, args.exio20_exio30_member)
+
+    with tempfile.TemporaryDirectory(prefix="exio_cpa_official_sources_") as tmpdir_text:
+        tmpdir = Path(tmpdir_text)
+        esa59_path = tmpdir / ESA59_SUFFIX
+        exio_bridge_path = tmpdir / EXIO20_EXIO30_SUFFIX
+        esa59_path.write_text(esa59_bytes.decode("utf-8-sig", errors="replace"), encoding="utf-8")
+        exio_bridge_path.write_bytes(exio_bridge_bytes)
+        result = build_official_mapping(
+            esa59_path=esa59_path,
+            exio20_exio30_path=exio_bridge_path,
+            cpa2002_cpa2008_path=args.cpa2002_cpa2008,
+            cpa2008_cpa21_path=args.cpa2008_cpa21,
+            target_dictionary=target_dictionary,
+            target_version=args.target_version,
+        )
+
+    official_source = "; ".join(
+        [
+            f"{args.concordances_zip}::{esa59_member}",
+            f"{args.concordances_zip}::{exio_bridge_member}",
+            str(args.cpa2002_cpa2008),
+            str(args.cpa2008_cpa21),
+        ]
     )
+    mapping = result.mapping.copy()
+    if "official_source" in mapping.columns:
+        mapping.loc[:, "official_source"] = official_source
+    coverage = dict(result.coverage)
+    coverage.update(
+        {
+            "concordances_zip": str(args.concordances_zip),
+            "concordances_zip_sha256": sha256_file(args.concordances_zip),
+            "esa59_member": esa59_member,
+            "esa59_path": f"{args.concordances_zip}::{esa59_member}",
+            "esa59_sha256": sha256_bytes(esa59_bytes),
+            "exio20_exio30_member": exio_bridge_member,
+            "exio20_exio30_path": f"{args.concordances_zip}::{exio_bridge_member}",
+            "exio20_exio30_sha256": sha256_bytes(exio_bridge_bytes),
+        }
+    )
+    result = BuildResult(mapping=mapping, edges=result.edges, diagnostics=result.diagnostics, coverage=coverage)
     if not args.check_only:
         write_outputs(result, out_dir=args.out_dir, target_version=args.target_version)
     print(json.dumps({"coverage": result.coverage, "out_dir": str(args.out_dir), "wrote_outputs": not args.check_only}, indent=2, sort_keys=True))

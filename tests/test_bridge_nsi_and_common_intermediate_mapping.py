@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -79,6 +80,67 @@ def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path
     assert set(result.mapping.loc[result.mapping["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "allocation_rule"]) == {"split-by-output-share"}
+
+
+def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_zip_cli")
+    concordances_zip = tmp_path / "exiobase_concordances.zip"
+    exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+    pd.DataFrame(
+        [
+            {"EXIOBASE 2 Name": "Paddy rice", "EXIOBASE 2 code": "p01.a", "EXIOBASE 3 name": "Paddy rice", "EXIOBASE 3 code": "p01.a"},
+            {"EXIOBASE 2 Name": "Real estate activities", "EXIOBASE 2 code": "p47.a", "EXIOBASE 3 name": "Real estate services", "EXIOBASE 3 code": "p47.a"},
+        ]
+    ).to_excel(exio_bridge, index=False)
+    esa_text = (
+        "Products of agriculture, hunting and related services (01)\n"
+        "p01.a Paddy rice\n"
+        "Real estate services (70)\n"
+        "p47.a Real estate activities\n"
+    )
+    with zipfile.ZipFile(concordances_zip, "w") as zf:
+        zf.writestr("Concordances/Different aggregations/EXIOBASE20p_ESA59p.txt", esa_text)
+        zf.write(
+            exio_bridge,
+            "Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx",
+        )
+
+    cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
+    pd.DataFrame(
+        [
+            {"CPA2002_SOURCE_CODE": "01.11", "CPA2008_TARGET_CODE": "01.11"},
+            {"CPA2002_SOURCE_CODE": "70.20", "CPA2008_TARGET_CODE": "68.20"},
+        ]
+    ).to_csv(cpa02_08, index=False)
+    cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
+    pd.DataFrame(
+        [
+            {"CPA2008_SOURCE_CODE": "01.11", "CPA21_TARGET_CODE": "01.11"},
+            {"CPA2008_SOURCE_CODE": "68.20", "CPA21_TARGET_CODE": "68.20"},
+        ]
+    ).to_csv(cpa08_21, index=False)
+    dictionary = tmp_path / "cpa65_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "CPA_A01", "label": "Agriculture", "description": "A*64 A01; NACE/CPA division 01."},
+            {"code": "CPA_L68A", "label": "Imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
+            {"code": "CPA_L68B", "label": "Real estate excluding imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
+        ]
+    ).to_csv(dictionary, index=False)
+    out_dir = tmp_path / "out"
+
+    assert module.main([
+        "--concordances-zip", str(concordances_zip),
+        "--cpa2002-cpa2008", str(cpa02_08),
+        "--cpa2008-cpa21", str(cpa08_21),
+        "--target-dictionary", str(dictionary),
+        "--target-version", "cpa65",
+        "--out-dir", str(out_dir),
+    ]) == 0
+
+    generated = pd.read_csv(out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances.csv", dtype=str)
+    assert set(generated.loc[generated["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
+    assert set(generated.loc[generated["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
 
 
 def test_common_intermediate_composer_collapses_edges_to_direct_eb_cpa_mapping(tmp_path: Path) -> None:
