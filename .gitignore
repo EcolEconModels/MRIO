@@ -38,6 +38,9 @@ data/**/*.7z
 data/exiobase_concordance_sources/*
 !data/exiobase_concordance_sources/README.md
 
+# Allow EUROSTAT concordance source folder since it has open license.
+!data/eurostat_concordance_sources/
+
 outputs/
 figures/
 
