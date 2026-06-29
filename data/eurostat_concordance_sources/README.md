@@ -30,6 +30,13 @@ Between CPA 2.1 and CPA 2.2:
 Between NACE Rev. 2 and NACE Rev. 2.1:  
 <https://ec.europa.eu/eurostat/web/nace/correspondence-tables>
 
+## CPA 2.1 to 64 products A*64 concordance
+From <https://sdmx.org/sdmx-data-structure-definitions-for-national-accounts-sdmx-na/>  
+the relevant row is:  
+NA_SU — Supply/Use & Input/Output Tables  
+with the SDMX2.1/SDMX3.0 structure links and the V2021-04 Excel/template package at:
+<https://circabc.europa.eu/sd/a/c6a5c7e7-e491-48e1-b90a-746334923c5d/NASU_V2021-04.zip>
+
 ## CPA <-> EXIOBASE and CPA <-> SEIC/IEA(energy codes) concordances / correspondences
 
 ### from Research Data Leeds Repository
