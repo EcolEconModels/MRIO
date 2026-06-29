@@ -27,6 +27,15 @@ def test_official_generator_has_no_hard_coded_nsi_to_cpa_table() -> None:
     assert "No hard-coded NSI->CPA table" in text
 
 
+
+def test_target_dictionary_division_parser_does_not_treat_a64_as_division_64() -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_target_dictionary_parser")
+    for dictionary_name in ["eurostat_cpa64_products_dictionary.csv", "eurostat_cpa65_products_dictionary.csv"]:
+        _, division_to_targets = module.load_target_division_map(REPO_ROOT / "scripts" / "mappings" / dictionary_name)
+        assert division_to_targets["64"] == {"CPA_K64"}
+        assert "CPA_A01" not in division_to_targets["64"]
+        assert len(division_to_targets["68"]) == (2 if dictionary_name == "eurostat_cpa65_products_dictionary.csv" else 1)
+
 def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_generator")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
@@ -138,6 +147,7 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     ]) == 0
 
     generated = pd.read_csv(out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances.csv", dtype=str)
+    assert not (out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances_edge_audit.csv").exists()
     assert set(generated.loc[generated["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(generated.loc[generated["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(generated["target_version"]) == {"CPA_65"}

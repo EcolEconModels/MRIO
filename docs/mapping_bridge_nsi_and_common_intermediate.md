@@ -24,7 +24,7 @@ repo CPA64/CPA65 target dictionaries
   CPA2.1 two-digit division -> target aggregate
 ```
 
-No Layer-2 normalized concordance files are written as generated outputs: matrix-style and workbook-style source concordances are parsed internally and discarded after the Layer-3 EXIOBASE3 -> CPA mapping is built. This avoids accidentally reusing intermediate parse artifacts as source truth.
+No Layer-2 normalized concordance files are written as generated outputs by default: matrix-style and workbook-style source concordances are parsed internally and discarded after the Layer-3 EXIOBASE3 -> CPA mapping is built. This avoids accidentally reusing intermediate parse artifacts as source truth. For local debugging, an optional `--edge-audit-csv` can be pointed under `tmp/`, but that audit file is not part of the committed generated mapping contract.
 
 There is no hard-coded `NSI_PRODUCT_TO_CPA64` table. CPA64/CPA65 aggregation is
 derived from two-digit CPA2.1 divisions and the committed target dictionaries.

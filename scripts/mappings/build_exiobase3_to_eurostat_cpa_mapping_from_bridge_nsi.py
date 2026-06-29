@@ -415,8 +415,40 @@ def canonical_target_version_label(target_version: str) -> str:
     return target_version.upper()
 
 
+def parse_target_dictionary_divisions(target_code: object, description: object) -> set[str]:
+    """Derive target CPA divisions from structured dictionary metadata.
+
+    The dictionary descriptions contain both an A*64 label (for example
+    ``A*64 K64``) and the intended machine-usable phrase
+    ``NACE/CPA division 64``.  Only the latter phrase is used for parsing so the
+    ``64`` in ``A*64`` is never treated as an actual CPA division.  CPA65's
+    deliberate real-estate split is handled as a documented special case.
+    """
+
+    code = clean_text(target_code)
+    text = clean_text(description).strip('"')
+    divisions: set[str] = set()
+
+    phrase_match = re.search(r"NACE/CPA\s+divisions?\s+([^.;]+)", text, flags=re.IGNORECASE)
+    if phrase_match:
+        for token in re.findall(r"(?<!\d)\d{2}(?:[-_]\d{2})?(?!\d)", phrase_match.group(1)):
+            divisions.update(expand_division_token(token))
+
+    # CPA65 L68A/L68B encode the deliberate split of CPA division 68; the
+    # descriptions intentionally do not repeat a NACE/CPA division phrase.
+    if re.search(r"CPA[_-]?L68[A-Z]?", code, flags=re.IGNORECASE):
+        divisions.add("68")
+
+    if not divisions:
+        code_without_prefix = re.sub(r"^CPA[_-]?", "", code, flags=re.IGNORECASE)
+        for token in re.findall(r"(?<!\d)\d{2}(?:[-_]\d{2})?(?!\d)", code_without_prefix):
+            divisions.update(expand_division_token(token))
+
+    return divisions
+
+
 def load_target_division_map(path: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
-    """Load target labels and derive CPA division coverage from target codes/descriptions."""
+    """Load target labels and derive CPA division coverage from target dictionaries."""
 
     frame = pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
     missing = sorted({"code", "label", "description"} - set(frame.columns))
@@ -424,19 +456,29 @@ def load_target_division_map(path: Path) -> tuple[dict[str, str], dict[str, set[
         raise ValueError(f"Target dictionary {path} missing columns: {missing}")
     labels = dict(zip(frame["code"].astype(str).str.strip(), frame["label"].astype(str).str.strip(), strict=False))
     division_to_targets: dict[str, set[str]] = {}
+    targets_without_divisions: list[str] = []
     for row in frame.itertuples(index=False):
         target_code = clean_text(getattr(row, "code"))
         description = clean_text(getattr(row, "description"))
-        divisions: set[str] = set()
-        for token in re.findall(r"\b\d{2}(?:[-_]\d{2})?\b", target_code):
-            divisions.update(expand_division_token(token))
-        for token in re.findall(r"\b\d{2}(?:[-_]\d{2})?\b", description):
-            divisions.update(expand_division_token(token))
-        # CPA65 L68A/L68B encode the deliberate 65-sector split of CPA division 68.
-        if re.search(r"CPA[_-]?L68[A-Z]?", target_code, flags=re.IGNORECASE):
-            divisions.add("68")
+        divisions = parse_target_dictionary_divisions(target_code, description)
+        if not divisions:
+            targets_without_divisions.append(target_code)
         for division in divisions:
             division_to_targets.setdefault(division, set()).add(target_code)
+
+    if targets_without_divisions:
+        raise ValueError(
+            f"Target dictionary {path} has targets without parseable CPA divisions: "
+            + ", ".join(sorted(targets_without_divisions))
+        )
+
+    if "CPA_K64" in labels:
+        div64_targets = division_to_targets.get("64", set())
+        if div64_targets != {"CPA_K64"}:
+            raise ValueError(
+                "Target dictionary parser mapped CPA division 64 to unexpected targets: "
+                f"{sorted(div64_targets)}. Check that A*64 labels are not parsed as CPA divisions."
+            )
     return labels, division_to_targets
 
 
@@ -608,18 +650,32 @@ def build_official_mapping(
     return BuildResult(mapping=mapping, edges=edges, diagnostics=diagnostics_df, coverage=coverage)
 
 
-def write_outputs(result: BuildResult, *, out_dir: Path, target_version: str) -> dict[str, object]:
-    """Write mapping, edge audit, diagnostics, and manifest outputs."""
+def write_outputs(
+    result: BuildResult,
+    *,
+    out_dir: Path,
+    target_version: str,
+    edge_audit_csv: Path | None = None,
+) -> dict[str, object]:
+    """Write Layer-3 mapping outputs, diagnostics, manifest, and optional edge audit."""
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"exio_to_eurostat_{target_version.lower()}_products_from_official_concordances"
     mapping_path = out_dir / f"{stem}.csv"
-    edges_path = out_dir / f"{stem}_edge_audit.csv"
     diagnostics_path = out_dir / f"{stem}_diagnostics.csv"
     manifest_path = out_dir / f"{stem}_manifest.json"
     result.mapping.to_csv(mapping_path, index=False)
-    result.edges.to_csv(edges_path, index=False)
     result.diagnostics.to_csv(diagnostics_path, index=False)
+
+    output_files: dict[str, str] = {
+        "mapping": mapping_path.name,
+        "diagnostics": diagnostics_path.name,
+    }
+    if edge_audit_csv is not None:
+        edge_audit_csv.parent.mkdir(parents=True, exist_ok=True)
+        result.edges.to_csv(edge_audit_csv, index=False)
+        output_files["edge_audit"] = str(edge_audit_csv)
+
     manifest = {
         "mapping_name": stem,
         "created_utc": datetime.now(UTC).isoformat(),
@@ -629,13 +685,10 @@ def write_outputs(result: BuildResult, *, out_dir: Path, target_version: str) ->
             "EXIOBASE2 products are mapped to ESA59 old product groups from EXIOBASE20p_ESA59p.txt.",
             "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
             "CPA2.1 two-digit divisions are aggregated to the repo CPA64/CPA65 targets; CPA65 splits division 68 when target dictionary contains split real-estate targets.",
+            "No Layer-2 edge audit is written by default; --edge-audit-csv should point under tmp/ when local debugging is needed.",
         ],
         "coverage": result.coverage,
-        "output_files": {
-            "mapping": mapping_path.name,
-            "edge_audit": edges_path.name,
-            "diagnostics": diagnostics_path.name,
-        },
+        "output_files": output_files,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
@@ -653,6 +706,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
     parser.add_argument("--target-dictionary", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--edge-audit-csv", type=Path, default=None, help="Optional Layer-2 edge audit CSV; use a tmp/ path for local debugging.")
     parser.add_argument("--allow-diagnostics", action="store_true", help="Write outputs even if source-chain diagnostics are present.")
     parser.add_argument("--check-only", action="store_true")
     return parser.parse_args(argv)
@@ -710,7 +764,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     result = BuildResult(mapping=mapping, edges=result.edges, diagnostics=result.diagnostics, coverage=coverage)
     if not args.check_only:
-        write_outputs(result, out_dir=args.out_dir, target_version=args.target_version)
+        write_outputs(
+            result,
+            out_dir=args.out_dir,
+            target_version=args.target_version,
+            edge_audit_csv=args.edge_audit_csv,
+        )
     print(json.dumps({"coverage": result.coverage, "out_dir": str(args.out_dir), "wrote_outputs": not args.check_only}, indent=2, sort_keys=True))
     if result.coverage["diagnostic_rows"] and not args.allow_diagnostics:
         raise SystemExit("Official-concordance mapping has diagnostics; inspect diagnostics CSV or rerun with --allow-diagnostics after review.")
