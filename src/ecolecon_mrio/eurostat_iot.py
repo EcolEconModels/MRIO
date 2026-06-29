@@ -61,6 +61,18 @@ class EurostatDataset:
     raw_path: Path
 
 
+@dataclass(frozen=True)
+class EurostatMetadata:
+    """Dimension metadata for a cached or freshly downloaded Eurostat payload."""
+
+    dataset: str
+    filters: dict[str, tuple[str, ...]]
+    request_url: str
+    raw_path: Path
+    dimensions: dict[str, dict[str, str]]
+    dimension_order: dict[str, list[str]]
+
+
 def default_eurostat_storage_folder() -> Path:
     return default_data_root() / "eurostat"
 
@@ -190,6 +202,57 @@ def eurostat_dimensions(payload: Mapping[str, Any]) -> dict[str, dict[str, str]]
         else:
             out[str(d)] = {}
     return out
+
+
+def eurostat_dimension_order(payload: Mapping[str, Any]) -> dict[str, list[str]]:
+    """
+    Extract dimension category codes in the order declared by Eurostat metadata.
+
+    This keeps codelist-derived outputs deterministic without requiring callers
+    to inspect raw SDMX-JSON internals.
+    """
+    dim = payload.get("dimension", {})
+    ids = payload.get("id", []) or dim.get("id", [])
+    out: dict[str, list[str]] = {}
+    for d in ids:
+        entry = dim.get(d, {})
+        cat = entry.get("category", {})
+        index = cat.get("index", {}) or {}
+        if not isinstance(index, dict):
+            out[str(d)] = []
+            continue
+        out[str(d)] = [str(code) for code in sorted(index.keys(), key=lambda code: int(index[code]))]
+    return out
+
+
+def load_eurostat_metadata(
+    dataset: str,
+    *,
+    filters: Mapping[str, Any] | None = None,
+    storage_folder: str | Path | None = None,
+    force_download: bool = False,
+) -> EurostatMetadata:
+    """
+    Download/cache a Eurostat source payload and return official dimension metadata.
+
+    Only the raw SDMX-JSON response and request description are persisted.  This
+    function does not create or consume parsed/derived caches.
+    """
+    ds = download_eurostat_dataset(
+        dataset,
+        filters=filters,
+        storage_folder=storage_folder,
+        force_download=force_download,
+    )
+    payload = read_eurostat_raw(ds.raw_path)
+    return EurostatMetadata(
+        dataset=dataset,
+        filters=ds.filters,
+        request_url=ds.request_url,
+        raw_path=ds.raw_path,
+        dimensions=eurostat_dimensions(payload),
+        dimension_order=eurostat_dimension_order(payload),
+    )
 
 
 def sdmx_json_to_series(payload: Mapping[str, Any], *, value_key: str = "value") -> pd.Series:
