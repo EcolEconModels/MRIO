@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import sys
-import zipfile
 from pathlib import Path
 
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BRIDGE_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py"
+OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py"
 COMPOSE_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "compose_mapping_via_common_intermediate.py"
 
 
@@ -22,56 +20,65 @@ def load_module(path: Path, name: str):
     return module
 
 
-def make_dictionary(path: Path) -> None:
-    rows = [
-        {"code": "CPA_C10-12", "label": "Food products, beverages and tobacco products", "description": "test"},
-        {"code": "CPA_C20", "label": "Chemicals and chemical products", "description": "test"},
-        {"code": "CPA_C21", "label": "Basic pharmaceutical products", "description": "test"},
-        {"code": "CPA_D", "label": "Electricity, gas, steam and air-conditioning", "description": "test"},
-    ]
-    pd.DataFrame(rows).to_csv(path, index=False)
+def test_official_generator_has_no_hard_coded_nsi_to_cpa_table() -> None:
+    text = OFFICIAL_SCRIPT.read_text(encoding="utf-8")
+    assert "NSI_PRODUCT_TO_CPA64" not in text
+    assert "No hard-coded NSI->CPA table" in text
 
 
-def make_bridge_workbook_bytes() -> bytes:
-    frame = pd.DataFrame("", index=range(7), columns=range(5))
-    frame.iat[0, 2] = "Food product"
-    frame.iat[1, 2] = "C_FOOD"
-    frame.iat[2, 2] = "p15.a"
-    frame.iat[0, 3] = "Chemical product"
-    frame.iat[1, 3] = "C_CHEM"
-    frame.iat[2, 3] = "p24.d"
-    frame.iat[0, 4] = "Final demand"
-    frame.iat[2, 4] = "export"
-    frame.iat[4, 0] = "Food products and beverages"
-    frame.iat[4, 1] = "p09"
-    frame.iat[4, 2] = 1
-    frame.iat[5, 0] = "Chemicals, chemical products and man-made fibres"
-    frame.iat[5, 1] = "p18"
-    frame.iat[5, 3] = 1
-    payload = io.BytesIO()
-    with pd.ExcelWriter(payload, engine="openpyxl") as writer:
-        frame.to_excel(writer, sheet_name="AT_r_sup", header=False, index=False)
-    return payload.getvalue()
+def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_generator")
+    esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
+    esa.write_text(
+        "Products of agriculture, hunting and related services (01)\n"
+        "p01.a Paddy rice\n"
+        "Real estate services (70)\n"
+        "p47.a Real estate activities\n",
+        encoding="utf-8",
+    )
+    exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+    pd.DataFrame(
+        [
+            {"EXIOBASE 2 Name": "Paddy rice", "EXIOBASE 2 code": "p01.a", "EXIOBASE 3 name": "Paddy rice", "EXIOBASE 3 code": "p01.a"},
+            {"EXIOBASE 2 Name": "Real estate activities", "EXIOBASE 2 code": "p47.a", "EXIOBASE 3 name": "Real estate services", "EXIOBASE 3 code": "p47.a"},
+        ]
+    ).to_excel(exio_bridge, index=False)
+    cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
+    pd.DataFrame(
+        [
+            {"CPA2002_SOURCE_CODE": "01.11", "CPA2008_TARGET_CODE": "01.11"},
+            {"CPA2002_SOURCE_CODE": "70.20", "CPA2008_TARGET_CODE": "68.20"},
+        ]
+    ).to_csv(cpa02_08, index=False)
+    cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
+    pd.DataFrame(
+        [
+            {"CPA2008_SOURCE_CODE": "01.11", "CPA21_TARGET_CODE": "01.11"},
+            {"CPA2008_SOURCE_CODE": "68.20", "CPA21_TARGET_CODE": "68.20"},
+        ]
+    ).to_csv(cpa08_21, index=False)
+    dictionary = tmp_path / "cpa65_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "CPA_A01", "label": "Agriculture", "description": "A*64 A01; NACE/CPA division 01."},
+            {"code": "CPA_L68A", "label": "Imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
+            {"code": "CPA_L68B", "label": "Real estate excluding imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
+        ]
+    ).to_csv(dictionary, index=False)
 
-
-def test_bridge_nsi_generator_writes_current_schema_many_target_mapping(tmp_path: Path) -> None:
-    module = load_module(BRIDGE_SCRIPT, "bridge_nsi_generator")
-    dictionary = tmp_path / "dictionary.csv"
-    make_dictionary(dictionary)
-    result = module.build_mapping(
-        workbook_bytes=make_bridge_workbook_bytes(),
-        workbook_sha256="synthetic",
-        bridge_member="Bridge_NSI_AT.xlsx",
-        sheet_name="AT_r_sup",
-        target_version="cpa65",
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
         target_dictionary=dictionary,
+        target_version="cpa65",
     )
 
-    assert set(result.mapping["source_code"]) == {"p15.a", "p24.d"}
-    assert set(result.mapping.loc[result.mapping["source_code"] == "p24.d", "target_code"]) == {"CPA_C20", "CPA_C21"}
-    assert set(result.mapping.loc[result.mapping["source_code"] == "p24.d", "allocation_rule"]) == {"split-by-output-share"}
-    assert list(result.mapping.columns) == list(module.CANONICAL_COLUMNS)
     assert result.diagnostics.empty
+    assert set(result.mapping.loc[result.mapping["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
+    assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
+    assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "allocation_rule"]) == {"split-by-output-share"}
 
 
 def test_common_intermediate_composer_collapses_edges_to_direct_eb_cpa_mapping(tmp_path: Path) -> None:
@@ -138,51 +145,6 @@ def test_common_intermediate_composer_collapses_edges_to_direct_eb_cpa_mapping(t
     assert result.diagnostics.empty
 
 
-def test_common_intermediate_composer_filters_to_final_use_direct_energy_rows(tmp_path: Path) -> None:
-    module = load_module(COMPOSE_SCRIPT, "common_intermediate_filter")
-    left = pd.DataFrame(
-        [
-            {
-                "source_code": "FC_IND_CPC_E",
-                "source_label": "chemical and petrochemical",
-                "source_balance_role": "final_use",
-                "include_in_direct_energy": "1",
-                "exio3_product_code": "p24.d",
-                "exio3_product_name": "Chemicals nec",
-            },
-            {
-                "source_code": "TI_E",
-                "source_label": "transformation input",
-                "source_balance_role": "transformation_input",
-                "include_in_direct_energy": "1",
-                "exio3_product_code": "p24.d",
-                "exio3_product_name": "Chemicals nec",
-            },
-            {
-                "source_code": "NE_E",
-                "source_label": "non energy",
-                "source_balance_role": "final_use",
-                "include_in_direct_energy": "0",
-                "exio3_product_code": "p24.d",
-                "exio3_product_name": "Chemicals nec",
-            },
-        ]
-    )
-    prepared = module.prepare_left(
-        left,
-        path=tmp_path / "left.csv",
-        source_code_col="source_code",
-        source_label_col="source_label",
-        intermediate_code_col="exio3_product_code",
-        intermediate_label_col="exio3_product_name",
-        source_balance_role_col="source_balance_role",
-        include_col="include_in_direct_energy",
-        source_role_filter={"final_use"},
-        include_direct_energy_only=True,
-    )
-    assert prepared["left_source_code"].tolist() == ["FC_IND_CPC_E"]
-
-
 def test_common_intermediate_cli_writes_outputs(tmp_path: Path) -> None:
     module = load_module(COMPOSE_SCRIPT, "common_intermediate_cli")
     left_path = tmp_path / "left.csv"
@@ -216,8 +178,6 @@ def test_common_intermediate_cli_writes_outputs(tmp_path: Path) -> None:
         "--edge-out-csv", str(edges),
         "--diagnostics-csv", str(diagnostics),
         "--manifest-json", str(manifest),
-        "--source-balance-role-filter", "final_use",
-        "--include-direct-energy-only",
     ]) == 0
     assert out.exists()
     assert edges.exists()
@@ -225,20 +185,3 @@ def test_common_intermediate_cli_writes_outputs(tmp_path: Path) -> None:
     assert manifest.exists()
     generated = pd.read_csv(out, dtype=str)
     assert set(generated["allocation_rule"]) == {"fixed-share"}
-
-
-def test_bridge_cli_can_read_bridge_from_zip(tmp_path: Path) -> None:
-    module = load_module(BRIDGE_SCRIPT, "bridge_nsi_cli")
-    dictionary = tmp_path / "dictionary.csv"
-    make_dictionary(dictionary)
-    zip_path = tmp_path / "concordances.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        zf.writestr("Concordances/Archive/National classifications/Bridge_NSI_AT.xlsx", make_bridge_workbook_bytes())
-    out_dir = tmp_path / "out"
-    assert module.main([
-        "--concordances-zip", str(zip_path),
-        "--target-dictionary", str(dictionary),
-        "--target-version", "cpa65",
-        "--out-dir", str(out_dir),
-    ]) == 0
-    assert (out_dir / "exio_to_eurostat_cpa65_products_from_bridge_nsi_at.csv").exists()

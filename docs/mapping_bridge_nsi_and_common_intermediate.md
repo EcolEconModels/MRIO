@@ -1,117 +1,58 @@
-# Bridge-NSI and common-intermediate Energy Balance mappings
+# Official-concordance EXIOBASE and Energy Balance mappings
 
-This patch adds two generator scripts for the Route-B workflow in which Eurostat
-Energy Balance quantities/prices remain the numerical driver, while EXIOBASE
-concordances provide the mapping topology.
+This workflow keeps Eurostat Energy Balance quantities/prices as the numerical
+driver while using source concordance files only for topology.  The EXIOBASE raw
+concordance ZIP remains uncommitted, but the generator now reads only files under
+`data/exiobase_concordance_sources/` and `data/eurostat_concordance_sources/`.
 
-## Scripts
+## EXIOBASE3 -> CPA64/CPA65 generator
 
-1. `scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py`
-
-   Reads `Bridge_NSI_AT.xlsx` from the local concordance ZIP and writes a
-   current-schema EXIOBASE3 product -> Eurostat CPA weighted mapping.  The
-   default product bridge sheet is `AT_r_sup`.  The generated rows do not store
-   static split weights; many-target EXIO products use
-   `allocation_rule=split-by-output-share` so the existing mapping resolver can
-   compute weights from the selected Eurostat country/year/flow target-side
-   value reference.
-
-2. `scripts/mappings/compose_mapping_via_common_intermediate.py`
-
-   Composes two mappings through a common intermediate.  The default Route-B use
-   is:
-
-   ```text
-   Eurostat Energy Balance row -> EXIOBASE3 product -> Eurostat CPA target
-   ```
-
-   The output is a direct canonical `category-target` mapping.  The existing
-   Energy Balance mapping code can consume this direct EB -> CPA map without
-   carrying EXIOBASE through the runtime numerical pipeline.  The intermediate
-   edge table is written separately for audit.
-
-## Mathematics
-
-Let `s` index Energy Balance source rows, `e` index common intermediate products
-(EXIOBASE3 in the default use), and `c` index Eurostat CPA targets.  The two
-input relations are
+`scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py`
+now builds the EXIOBASE3 product -> Eurostat CPA target map from this source
+chain:
 
 ```text
-L_{s,e} in {0,1}
-R_{e,c} in {0,1}
+EXIOBASE20p_ESA59p.txt
+  EXIOBASE2 product -> ESA59 old product group / old CPA2002-style division
+EXIOBASE2 products comparison with EXIOBASE3 products.xlsx
+  EXIOBASE2 product -> EXIOBASE3 product
+RAMON CPA 2002 -> CPA 2008 correspondence
+RAMON CPA 2008 -> CPA 2.1 correspondence
+  old CPA division -> current CPA2.1 division
+repo CPA64/CPA65 target dictionaries
+  CPA2.1 two-digit division -> target aggregate
 ```
 
-The composed topology is
+There is no hard-coded `NSI_PRODUCT_TO_CPA64` table.  CPA64/CPA65 aggregation is
+derived from two-digit CPA2.1 divisions and the committed target dictionaries.
+For CPA65, division 68 is deliberately emitted to both real-estate split targets
+when the CPA65 dictionary contains `CPA_L68A` and `CPA_L68B`; runtime target-side
+output/use values must resolve the split.
+
+## Route-B composition
+
+The common-intermediate composer remains the second stage:
 
 ```text
-T_{s,c} = 1[ sum_e L_{s,e} R_{e,c} > 0 ].
+Eurostat Energy Balance row -> EXIOBASE3 product -> CPA64/CPA65 target
 ```
 
-For each source row `s`, the direct generator emits all `c` with `T_{s,c}=1`.
-If there is more than one target, it marks the row with
-`allocation_rule=split-by-energy-product-prd-use`.  The existing runtime resolver
-then computes weights from the selected Eurostat target-side value reference
-`v_c`:
-
-```text
-w_{s,c} = v_c / sum_{c': T_{s,c'}=1} v_{c'}.
-```
-
-The Energy Balance quantity/price side should remain separate.  If a source row
-has a resolved quantity `q_s` and price `p_s`, its monetary value is
-
-```text
-m_s = q_s p_s.
-```
-
-The mapped value assigned to target `c` is then
-
-```text
-m_{s,c} = m_s w_{s,c}.
-```
-
-Economically, this is valid as a relational concordance plus runtime allocation
-scheme when the intermediate relation is used to define admissible targets and
-Eurostat country/year/flow values resolve many-many splits.  It should not be
-interpreted as an empirical EXIOBASE weight unless an explicit empirical weight
-column is later added and documented.
+The direct EB -> CPA output is a current-schema `category-target` mapping.  It is
+suitable for the direct Energy Balance workbook path when generated with the
+final-use/direct-energy filters, but it is not a silent replacement for the
+technology-specific `energy_balance_pxp` split/reaggregation recipes.
 
 ## Example commands
 
-Build the bridge-derived EXIOBASE3 -> CPA65 mapping:
+Build the official-concordance EXIOBASE3 -> CPA65 mapping:
 
 ```bash
-/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
-  scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py \
-  --target-version cpa65
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python   scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py   --target-version cpa65   --out-dir scripts/mappings/generated
 ```
 
-Compose EB -> EXIOBASE3 and EXIOBASE3 -> CPA65 into a direct EB -> CPA map:
+Compose EB -> EXIOBASE3 and EXIOBASE3 -> CPA65 into a direct final-use EB -> CPA
+map for the direct workbook path:
 
 ```bash
-/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
-  scripts/mappings/compose_mapping_via_common_intermediate.py \
-  --source-balance-role-filter final_use \
-  --include-direct-energy-only
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python   scripts/mappings/compose_mapping_via_common_intermediate.py   --left-csv data/exiobase_concordance_sources/derived/eurostat_energy_balance_to_exiobase3/eb_to_exio3_products_collapsed.csv   --right-csv scripts/mappings/generated/exio_to_eurostat_cpa65_products_from_official_concordances.csv   --out-csv scripts/mappings/generated/energy_balance_to_cpa_from_common_intermediate/energy_balance_to_cpa65_products_from_official_concordances_final_use.csv   --edge-out-csv scripts/mappings/generated/energy_balance_to_cpa_from_common_intermediate/energy_balance_to_cpa65_products_from_official_concordances_final_use_edges.csv   --diagnostics-csv scripts/mappings/generated/energy_balance_to_cpa_from_common_intermediate/energy_balance_to_cpa65_products_from_official_concordances_final_use_diagnostics.csv   --manifest-json scripts/mappings/generated/energy_balance_to_cpa_from_common_intermediate/energy_balance_to_cpa65_products_from_official_concordances_final_use_manifest.json   --target-version CPA_65   --source-balance-role-filter final_use   --include-direct-energy-only
 ```
-
-Use the generated direct map with the existing direct Energy Balance workbook
-pipeline:
-
-```bash
-/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
-  scripts/build_energy_balances_65sectors_primary_sources.py \
-  --mapping scripts/mappings/generated/energy_balance_to_cpa_from_common_intermediate/energy_balance_to_cpa_products_from_common_intermediate.csv \
-  --with-diagnostics
-```
-
-The `energy_balance_pxp` split/reaggregation pipeline is more restrictive: its
-current split plan is a technology/product split for selected producer rows.  The
-direct EB -> CPA map generated here is therefore an input to the existing Energy
-Balance mapping APIs, not a silent replacement for technology-specific SIEC and
-price selector recipes.
-
-For the direct EB workbook path, filter to `final_use` rows and direct-energy rows.
-The workbook builder constructs a final-use-by-sector table; transformation inputs,
-transformation outputs, and energy-sector own-use rows should not be mixed into
-that direct final-use workbook map.

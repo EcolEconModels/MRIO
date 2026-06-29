@@ -1,34 +1,42 @@
 #!/usr/bin/env python3
-"""Build EXIOBASE3 -> Eurostat CPA mappings from Bridge_NSI_AT.xlsx.
+"""Build EXIOBASE3 -> Eurostat CPA mappings from official concordances.
 
-The bridge workbook is an Austria-specific EXIOBASE/XIO national-statistics
-bridge.  This generator converts the product bridge sheet into the current MRIO
-canonical weighted mapping schema.  Runtime code should still resolve omitted
-many-target weights from a selected Eurostat target-side value reference.
+This replaces the earlier Bridge_NSI_AT label-derived fallback.  The generator
+uses only source concordance files under ``data/exiobase_concordance_sources``
+and ``data/eurostat_concordance_sources``:
+
+* EXIOBASE20p -> ESA59p aggregation, with old CPA/NACE-style division codes;
+* EXIOBASE2 product -> EXIOBASE3 product bridge; and
+* RAMON/Eurostat CPA 2002 -> CPA 2008 -> CPA 2.1 correspondence tables.
+
+The final CPA64/CPA65 targets are generated from two-digit CPA 2.1 divisions and
+the committed CPA64/CPA65 target dictionaries.  CPA65 splits division 68 into the
+repo's two real-estate targets if those split targets are present.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
 import re
-import zipfile
-from collections.abc import Sequence
+import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, cast
 
 import pandas as pd
 
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
-DEFAULT_CONCORDANCES_ZIP: Final[Path] = REPO_ROOT / "data" / "exiobase_concordance_sources" / "exiobase_concordances.zip"
+DEFAULT_EXIOBASE_SOURCE_ROOT: Final[Path] = REPO_ROOT / "data" / "exiobase_concordance_sources"
+DEFAULT_EUROSTAT_SOURCE_ROOT: Final[Path] = REPO_ROOT / "data" / "eurostat_concordance_sources"
 DEFAULT_OUT_DIR: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "generated"
 DEFAULT_CPA64_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv"
 DEFAULT_CPA65_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv"
-DEFAULT_BRIDGE_MEMBER_SUFFIX: Final[str] = "Bridge_NSI_AT.xlsx"
-DEFAULT_BRIDGE_SHEET: Final[str] = "AT_r_sup"
+
+ESA59_SUFFIX: Final[str] = "EXIOBASE20p_ESA59p.txt"
+EXIO20_EXIO30_SUFFIX: Final[str] = "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
 
 CANONICAL_COLUMNS: Final[tuple[str, ...]] = (
     "order",
@@ -57,80 +65,11 @@ CANONICAL_COLUMNS: Final[tuple[str, ...]] = (
     "include_in_direct_energy",
 )
 
-# Bridge_NSI_AT.xlsx uses older NSI product rows.  This table is deliberately
-# transparent and conservative: broad old rows become many-target rows so the
-# existing weighted-mapping resolver can apply selected-country/year/flow
-# target-side value weights instead of static shares.
-NSI_PRODUCT_TO_CPA64: Final[dict[str, tuple[str, ...]]] = {
-    "p01": ("CPA_A01",),
-    "p02": ("CPA_A02",),
-    "p03": ("CPA_A03",),
-    "p04": ("CPA_B",),
-    "p05": ("CPA_B",),
-    "p06": ("CPA_B",),
-    "p07": ("CPA_B",),
-    "p08": ("CPA_B",),
-    "p09": ("CPA_C10-12",),
-    "p10": ("CPA_C10-12",),
-    "p11": ("CPA_C13-15",),
-    "p12": ("CPA_C13-15",),
-    "p13": ("CPA_C13-15",),
-    "p14": ("CPA_C16",),
-    "p15": ("CPA_C17",),
-    "p16": ("CPA_C18", "CPA_J58", "CPA_J59_60"),
-    "p17": ("CPA_C19",),
-    "p18": ("CPA_C20", "CPA_C21"),
-    "p19": ("CPA_C22",),
-    "p20": ("CPA_C23",),
-    "p21": ("CPA_C24",),
-    "p22": ("CPA_C25", "CPA_C33"),
-    "p23": ("CPA_C28",),
-    "p24": ("CPA_C26",),
-    "p25": ("CPA_C27",),
-    "p26": ("CPA_C26",),
-    "p27": ("CPA_C26",),
-    "p28": ("CPA_C29",),
-    "p29": ("CPA_C30",),
-    "p30": ("CPA_C31_32",),
-    "p31": ("CPA_E37-39",),
-    "p32": ("CPA_D",),
-    "p33": ("CPA_E36",),
-    "p34": ("CPA_F",),
-    "p35": ("CPA_G45", "CPA_G47"),
-    "p36": ("CPA_G46",),
-    "p37": ("CPA_G47", "CPA_S95"),
-    "p38": ("CPA_I",),
-    "p39": ("CPA_H49",),
-    "p40": ("CPA_H50",),
-    "p41": ("CPA_H51",),
-    "p42": ("CPA_H52", "CPA_N79"),
-    "p43": ("CPA_H53", "CPA_J61"),
-    "p44": ("CPA_K64",),
-    "p45": ("CPA_K65",),
-    "p46": ("CPA_K66",),
-    "p47": ("CPA_L68",),
-    "p48": ("CPA_N77",),
-    "p49": ("CPA_J62_63",),
-    "p50": ("CPA_M72",),
-    "p51": ("CPA_M69_70", "CPA_M71", "CPA_M73", "CPA_M74_75", "CPA_N78", "CPA_N80-82"),
-    "p52": ("CPA_O",),
-    "p53": ("CPA_P",),
-    "p54": ("CPA_Q86", "CPA_Q87_88"),
-    "p55": ("CPA_E37-39",),
-    "p56": ("CPA_S94",),
-    "p57": ("CPA_J59_60", "CPA_R90-92", "CPA_R93"),
-    "p58": ("CPA_S96",),
-    "p59": ("CPA_T",),
-}
-
-EXIO_CODE_ALIASES: Final[dict[str, str]] = {
-    "i23.3": "p23.3",
-    "p26.w.1": "p26.a.w",
-}
-
 
 @dataclass(frozen=True)
-class BridgeBuildResult:
+class BuildResult:
+    """Generated mapping tables and coverage metadata."""
+
     mapping: pd.DataFrame
     edges: pd.DataFrame
     diagnostics: pd.DataFrame
@@ -138,26 +77,17 @@ class BridgeBuildResult:
 
 
 def clean_text(value: object) -> str:
-    """Normalize a value into a stable one-line string key."""
+    """Normalize text for stable keys."""
 
-    if value is None:
+    if value is None or value is pd.NA:
         return ""
-    try:
-        if bool(pd.isna(value)):
-            return ""
-    except (TypeError, ValueError):
-        pass
+    if isinstance(value, float) and value != value:
+        return ""
     return " ".join(str(value).strip().split())
 
 
-def sha256_bytes(data: bytes) -> str:
-    """Return the SHA-256 digest of a byte payload."""
-
-    return hashlib.sha256(data).hexdigest()
-
-
 def sha256_file(path: Path) -> str:
-    """Return the SHA-256 digest of a local file."""
+    """Return the SHA-256 digest for a source file."""
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -166,226 +96,456 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def find_member_by_suffix(zf: zipfile.ZipFile, suffix: str) -> str:
-    """Find exactly one ZIP member whose normalized path ends with suffix."""
+def normalize_path_text(path: Path) -> str:
+    """Normalize a path for fuzzy source-file discovery."""
 
-    matches = [name for name in zf.namelist() if name.replace("\\", "/").endswith(suffix)]
-    if not matches:
-        raise FileNotFoundError(f"No zip member ending with {suffix!r}")
-    if len(matches) > 1:
-        raise RuntimeError(f"Multiple zip members ending with {suffix!r}: {matches}")
-    return matches[0]
+    return re.sub(r"[^a-z0-9]+", "", str(path).casefold())
 
 
-def load_bridge_workbook_bytes(concordances_zip: Path, member_suffix: str) -> tuple[bytes, str]:
-    """Read Bridge_NSI_AT.xlsx bytes from the concordance ZIP."""
+def find_one_file(root: Path, *, suffix: str | None = None, tokens: Sequence[str] = ()) -> Path:
+    """Find exactly one source file under ``root`` by suffix or filename tokens."""
 
-    if not concordances_zip.exists():
-        raise FileNotFoundError(f"Missing concordance archive: {concordances_zip}")
-    with zipfile.ZipFile(concordances_zip) as zf:
-        member = find_member_by_suffix(zf, member_suffix)
-        return zf.read(member), member
-
-
-def load_target_labels(dictionary_path: Path) -> dict[str, str]:
-    """Load target CPA code labels from the committed dictionary."""
-
-    if not dictionary_path.exists():
-        raise FileNotFoundError(f"Missing target dictionary: {dictionary_path}")
-    frame = pd.read_csv(dictionary_path, dtype=str).fillna("")
-    missing = sorted({"code", "label"} - set(frame.columns))
-    if missing:
-        raise ValueError(f"Dictionary {dictionary_path} missing columns: {missing}")
-    return dict(zip(frame["code"].astype(str).str.strip(), frame["label"].astype(str).str.strip(), strict=False))
-
-
-def target_codes_for_version(nsi_code: str, target_version: str) -> tuple[str, ...]:
-    """Return CPA64/CPA65 target codes for an old Bridge_NSI_AT product row."""
-
-    base = NSI_PRODUCT_TO_CPA64.get(nsi_code, tuple())
-    if target_version.casefold() != "cpa65":
-        return base
-    out: list[str] = []
-    for code in base:
-        if code == "CPA_L68":
-            out.extend(["CPA_L68A", "CPA_L68B"])
-        else:
-            out.append(code)
-    return tuple(out)
+    if not root.exists():
+        raise FileNotFoundError(f"Missing source root: {root}")
+    matches: list[Path] = []
+    token_norm = [re.sub(r"[^a-z0-9]+", "", token.casefold()) for token in tokens]
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        normalized = normalize_path_text(path.relative_to(root))
+        if suffix and path.name == suffix:
+            matches.append(path)
+        elif token_norm and all(token in normalized for token in token_norm):
+            matches.append(path)
+    unique = sorted(set(matches))
+    if not unique:
+        if suffix:
+            raise FileNotFoundError(f"No file named {suffix!r} found under {root}")
+        raise FileNotFoundError(f"No file matching tokens {tokens!r} found under {root}")
+    if len(unique) > 1:
+        rendered = "\n  ".join(str(path) for path in unique)
+        raise RuntimeError(f"Multiple source files matched {suffix or tokens!r}:\n  {rendered}")
+    return unique[0]
 
 
-def extract_bridge_product_edges(workbook_bytes: bytes, *, sheet_name: str) -> pd.DataFrame:
-    """Extract non-zero EXIO product -> NSI product row edges from a bridge sheet.
+def canonical_code(value: object) -> str:
+    """Return a compact classification code key, preserving only letters/digits."""
 
-    The workbook layout has four header rows.  Row 0 stores EXIO labels, row 2
-    stores EXIO product codes, and rows from 4 onward store NSI row labels/codes.
+    text = clean_text(value).upper()
+    text = text.replace("CPA", "").replace("NACE", "")
+    return re.sub(r"[^A-Z0-9]+", "", text)
+
+
+def cpa_division_from_code(value: object) -> str:
+    """Return the two-digit CPA division from a CPA code-like value."""
+
+    code = canonical_code(value)
+    match = re.search(r"(\d{2})", code)
+    if not match:
+        return ""
+    return match.group(1)
+
+
+def is_prefix_related(left: str, right: str) -> bool:
+    """Return True if two compact classification keys match by hierarchy prefix."""
+
+    return bool(left and right and (left == right or left.startswith(right) or right.startswith(left)))
+
+
+def read_esa59_mapping(path: Path) -> pd.DataFrame:
+    """Read EXIOBASE2 product -> ESA59 old-product-group mapping text.
+
+    The EXIOBASE aggregation text files use group headers containing old product
+    division codes in parentheses, followed by EXIOBASE2 product rows.  This
+    reader also accepts two/three-column tabular variants for testability and
+    for future upstream formatting changes.
     """
 
-    raw = pd.read_excel(io.BytesIO(workbook_bytes), sheet_name=sheet_name, header=None)
-    exio_columns: list[tuple[int, str, str, str]] = []
-    for col in range(2, raw.shape[1]):
-        raw_code = clean_text(raw.iat[2, col])
-        if not re.match(r"^[pi]\d", raw_code):
+    group_code = ""
+    group_label = ""
+    records: list[dict[str, str]] = []
+    for raw_line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
             continue
-        exio_code = EXIO_CODE_ALIASES.get(raw_code, raw_code)
-        exio_columns.append((col, raw_code, exio_code, clean_text(raw.iat[0, col])))
-
-    records: list[dict[str, object]] = []
-    for row_idx in range(4, raw.shape[0]):
-        nsi_code = clean_text(raw.iat[row_idx, 1])
-        if not re.match(r"^p\d{2}$", nsi_code):
+        header_match = re.search(r"\((\d{2})\)\s*$", line)
+        product_code_match = re.match(r"^([pi]\d[\w.\-]*)\b\s*(.*)$", line, flags=re.IGNORECASE)
+        if header_match and not product_code_match:
+            group_code = header_match.group(1)
+            group_label = line[: header_match.start()].strip()
             continue
-        nsi_label = clean_text(raw.iat[row_idx, 0])
-        for col, raw_exio_code, exio_code, exio_label in exio_columns:
-            value = pd.to_numeric(pd.Series([raw.iat[row_idx, col]]), errors="coerce").fillna(0.0).iloc[0]
-            if float(value) == 0.0:
-                continue
+        parts = [part.strip() for part in re.split(r"\t+|\s{2,}|,", line, maxsplit=2) if part.strip()]
+        exio_code = ""
+        exio_label = line
+        if product_code_match:
+            exio_code = product_code_match.group(1)
+            exio_label = clean_text(product_code_match.group(2)) or exio_code
+        elif len(parts) >= 2 and re.match(r"^[pi]\d", parts[0], flags=re.IGNORECASE):
+            exio_code = parts[0]
+            exio_label = parts[1]
+        if group_code and (exio_code or exio_label):
             records.append(
                 {
-                    "bridge_sheet": sheet_name,
-                    "bridge_value": float(value),
-                    "bridge_nsi_code": nsi_code,
-                    "bridge_nsi_label": nsi_label,
-                    "raw_exio_code": raw_exio_code,
-                    "exio3_product_code": exio_code,
-                    "exio3_product_name": exio_label,
-                    "code_normalized": raw_exio_code != exio_code,
+                    "exio20_product_code": clean_text(exio_code),
+                    "exio20_product_name": clean_text(exio_label),
+                    "esa59_product_code": group_code,
+                    "esa59_product_label": group_label,
                 }
             )
-    return pd.DataFrame.from_records(records)
+    frame = pd.DataFrame.from_records(records)
+    if frame.empty:
+        raise ValueError(f"No ESA59 product rows parsed from {path}")
+    return frame.drop_duplicates().reset_index(drop=True)
 
 
-def build_mapping(
+def read_exio20_to_exio30_bridge(path: Path) -> pd.DataFrame:
+    """Read EXIOBASE2 product -> EXIOBASE3 product bridge."""
+
+    frame = pd.read_excel(path, dtype=str).fillna("")
+    required = {"EXIOBASE 2 Name", "EXIOBASE 2 code", "EXIOBASE 3 name", "EXIOBASE 3 code"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"{path} missing required columns: {missing}")
+    out = frame.rename(
+        columns={
+            "EXIOBASE 2 Name": "exio20_product_name",
+            "EXIOBASE 2 code": "exio20_product_code",
+            "EXIOBASE 3 name": "exio3_product_name",
+            "EXIOBASE 3 code": "exio3_product_code",
+        }
+    ).copy()
+    for column in ["exio20_product_name", "exio20_product_code", "exio3_product_name", "exio3_product_code"]:
+        out[column] = out[column].map(clean_text)
+    out["exio20_product_name_norm"] = out["exio20_product_name"].map(lambda value: re.sub(r"\W+", "", value.casefold()))
+    return out.loc[:, ["exio20_product_name", "exio20_product_name_norm", "exio20_product_code", "exio3_product_name", "exio3_product_code"]].drop_duplicates()
+
+
+def read_any_table(path: Path) -> pd.DataFrame:
+    """Read a CSV/XLSX/XML correspondence table as strings."""
+
+    suffix = path.suffix.casefold()
+    if suffix in {".csv", ".txt", ".tsv"}:
+        try:
+            return pd.read_csv(path, dtype=str, sep=None, engine="python", keep_default_na=False).fillna("")
+        except UnicodeDecodeError:
+            return pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="latin-1", keep_default_na=False).fillna("")
+    if suffix in {".xlsx", ".xls"}:
+        sheets = pd.read_excel(path, dtype=str, sheet_name=None).values()
+        return pd.concat([sheet.fillna("") for sheet in sheets], ignore_index=True, sort=False).fillna("")
+    if suffix == ".xml":
+        try:
+            frame = pd.read_xml(path).fillna("")
+            if not frame.empty:
+                return frame.astype(str)
+        except Exception:
+            pass
+        root = ET.parse(path).getroot()
+        rows: list[dict[str, str]] = []
+        for element in root.iter():
+            attrs = {key: clean_text(value) for key, value in element.attrib.items()}
+            if len(attrs) >= 2:
+                rows.append(attrs)
+        return pd.DataFrame.from_records(rows).fillna("")
+    raise ValueError(f"Unsupported correspondence file type: {path}")
+
+
+def column_score(name: str, tokens: Iterable[str]) -> int:
+    """Score a correspondence-table column name for fuzzy source/target role."""
+
+    norm = re.sub(r"[^a-z0-9]+", "", name.casefold())
+    score = 0
+    for token in tokens:
+        if token in norm:
+            score += 10
+    if "code" in norm or norm.endswith("id"):
+        score += 3
+    if "label" in norm or "title" in norm or "name" in norm:
+        score -= 5
+    return score
+
+
+def choose_correspondence_columns(frame: pd.DataFrame, *, source_tokens: Sequence[str], target_tokens: Sequence[str], path: Path) -> tuple[str, str]:
+    """Choose source/target code columns from a RAMON correspondence table."""
+
+    columns = [str(column) for column in frame.columns]
+    source_ranked = sorted(((column_score(column, source_tokens), column) for column in columns), reverse=True)
+    target_ranked = sorted(((column_score(column, target_tokens), column) for column in columns), reverse=True)
+    if source_ranked and target_ranked and source_ranked[0][0] > 0 and target_ranked[0][0] > 0 and source_ranked[0][1] != target_ranked[0][1]:
+        return source_ranked[0][1], target_ranked[0][1]
+    code_like: list[str] = []
+    for column in columns:
+        values = frame[column].astype(str).head(100).map(canonical_code)
+        if values.map(lambda value: bool(re.search(r"\d{2}", value))).mean() > 0.5:
+            code_like.append(column)
+    if len(code_like) >= 2:
+        return code_like[0], code_like[1]
+    raise ValueError(f"Could not infer source/target code columns in {path}; columns={columns}")
+
+
+def read_correspondence(path: Path, *, source_tokens: Sequence[str], target_tokens: Sequence[str]) -> pd.DataFrame:
+    """Read a RAMON/Eurostat correspondence into normalized source/target code pairs."""
+
+    raw = read_any_table(path)
+    if raw.empty:
+        raise ValueError(f"Empty correspondence table: {path}")
+    source_col, target_col = choose_correspondence_columns(raw, source_tokens=source_tokens, target_tokens=target_tokens, path=path)
+    out = pd.DataFrame(
+        {
+            "source_code": raw[source_col].map(canonical_code),
+            "target_code": raw[target_col].map(canonical_code),
+            "source_raw": raw[source_col].map(clean_text),
+            "target_raw": raw[target_col].map(clean_text),
+        }
+    )
+    out = out.loc[(out["source_code"] != "") & (out["target_code"] != "")].drop_duplicates().reset_index(drop=True)
+    if out.empty:
+        raise ValueError(f"No usable source/target code pairs parsed from {path}")
+    return out
+
+
+def compose_old_division_to_cpa21_divisions(cpa2002_to_2008: pd.DataFrame, cpa2008_to_21: pd.DataFrame, *, old_division: str) -> tuple[set[str], list[str]]:
+    """Compose old CPA2002 division code to current CPA2.1 division codes."""
+
+    diagnostics: list[str] = []
+    old = canonical_code(old_division)
+    first = cpa2002_to_2008.loc[cpa2002_to_2008["source_code"].map(lambda code: is_prefix_related(code, old))].copy()
+    if first.empty:
+        diagnostics.append(f"No CPA2002->CPA2008 rows matched old division {old_division!r}")
+        return set(), diagnostics
+    cpa21_codes: set[str] = set()
+    for cpa2008_code in sorted(set(first["target_code"].astype(str))):
+        second = cpa2008_to_21.loc[cpa2008_to_21["source_code"].map(lambda code: is_prefix_related(code, cpa2008_code))].copy()
+        if second.empty:
+            diagnostics.append(f"No CPA2008->CPA2.1 rows matched CPA2008 code {cpa2008_code!r} from old division {old_division!r}")
+            continue
+        cpa21_codes.update(second["target_code"].astype(str).tolist())
+    divisions = {division for division in (cpa_division_from_code(code) for code in cpa21_codes) if division}
+    if not divisions:
+        diagnostics.append(f"No CPA2.1 divisions resolved for old division {old_division!r}")
+    return divisions, diagnostics
+
+
+def expand_division_token(token: str) -> set[str]:
+    """Expand a target-dictionary division token such as ``10-12`` or ``31_32``."""
+
+    token = token.strip().replace("_", "-")
+    if "-" in token:
+        left, right = token.split("-", 1)
+        if left.isdigit() and right.isdigit():
+            return {f"{value:02d}" for value in range(int(left), int(right) + 1)}
+    if token.isdigit():
+        return {f"{int(token):02d}"}
+    return set()
+
+
+def load_target_division_map(path: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
+    """Load target labels and derive CPA division coverage from target codes/descriptions."""
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
+    missing = sorted({"code", "label", "description"} - set(frame.columns))
+    if missing:
+        raise ValueError(f"Target dictionary {path} missing columns: {missing}")
+    labels = dict(zip(frame["code"].astype(str).str.strip(), frame["label"].astype(str).str.strip(), strict=False))
+    division_to_targets: dict[str, set[str]] = {}
+    for row in frame.itertuples(index=False):
+        target_code = clean_text(getattr(row, "code"))
+        description = clean_text(getattr(row, "description"))
+        divisions: set[str] = set()
+        for token in re.findall(r"\b\d{2}(?:[-_]\d{2})?\b", target_code):
+            divisions.update(expand_division_token(token))
+        for token in re.findall(r"\b\d{2}(?:[-_]\d{2})?\b", description):
+            divisions.update(expand_division_token(token))
+        # CPA65 L68A/L68B encode the deliberate 65-sector split of CPA division 68.
+        if re.search(r"CPA[_-]?L68[A-Z]?", target_code, flags=re.IGNORECASE):
+            divisions.add("68")
+        if target_code == "CPA_T":
+            divisions.update({"97", "98"})
+        if target_code == "CPA_U":
+            divisions.add("99")
+        if target_code == "CPA_B":
+            divisions.update({"05", "06", "07", "08", "09"})
+        if target_code == "CPA_F":
+            divisions.update({"41", "42", "43"})
+        if target_code == "CPA_I":
+            divisions.update({"55", "56"})
+        for division in divisions:
+            division_to_targets.setdefault(division, set()).add(target_code)
+    return labels, division_to_targets
+
+
+def build_official_mapping(
     *,
-    workbook_bytes: bytes,
-    workbook_sha256: str,
-    bridge_member: str,
-    sheet_name: str,
-    target_version: str,
+    esa59_path: Path,
+    exio20_exio30_path: Path,
+    cpa2002_cpa2008_path: Path,
+    cpa2008_cpa21_path: Path,
     target_dictionary: Path,
-) -> BridgeBuildResult:
-    """Build a canonical EXIOBASE3 -> CPA weighted mapping from Bridge_NSI_AT."""
+    target_version: str,
+) -> BuildResult:
+    """Build EXIOBASE3 -> CPA64/65 using official/source concordance chains."""
 
-    labels = load_target_labels(target_dictionary)
-    bridge_edges = extract_bridge_product_edges(workbook_bytes, sheet_name=sheet_name)
-    rows: list[dict[str, object]] = []
+    esa = read_esa59_mapping(esa59_path)
+    bridge = read_exio20_to_exio30_bridge(exio20_exio30_path)
+    cpa2002_to_2008 = read_correspondence(cpa2002_cpa2008_path, source_tokens=("source", "from", "2002"), target_tokens=("target", "to", "2008"))
+    cpa2008_to_21 = read_correspondence(cpa2008_cpa21_path, source_tokens=("source", "from", "2008"), target_tokens=("target", "to", "21", "2.1"))
+    labels, division_to_targets = load_target_division_map(target_dictionary)
+
+    esa = esa.copy()
+    esa["exio20_product_name_norm"] = esa["exio20_product_name"].map(lambda value: re.sub(r"\W+", "", value.casefold()))
+    with_code = esa.loc[esa["exio20_product_code"].astype(str).str.strip().ne("")].merge(
+        bridge,
+        on="exio20_product_code",
+        how="left",
+        validate="many_to_many",
+    )
+    without_code = esa.loc[esa["exio20_product_code"].astype(str).str.strip().eq("")].merge(
+        bridge,
+        on="exio20_product_name_norm",
+        how="left",
+        validate="many_to_many",
+        suffixes=("", "_bridge"),
+    )
+    joined = pd.concat([with_code, without_code], ignore_index=True, sort=False).fillna("")
+
     diagnostics: list[dict[str, object]] = []
-
-    for edge in bridge_edges.itertuples(index=False):
-        nsi_code = str(edge.bridge_nsi_code)
-        target_codes = target_codes_for_version(nsi_code, target_version)
-        if not target_codes:
+    edge_rows: list[dict[str, object]] = []
+    old_to_current_cache: dict[str, set[str]] = {}
+    for row in joined.itertuples(index=False):
+        exio3_code = clean_text(getattr(row, "exio3_product_code", ""))
+        if not exio3_code:
             diagnostics.append(
                 {
-                    "diagnostic_kind": "unmapped_nsi_product_row",
-                    "bridge_nsi_code": nsi_code,
-                    "bridge_nsi_label": str(edge.bridge_nsi_label),
-                    "exio3_product_code": str(edge.exio3_product_code),
-                    "message": "No NSI-product-row to CPA target rule is declared.",
+                    "diagnostic_kind": "exio20_without_exio3_bridge",
+                    "source_code": clean_text(getattr(row, "exio20_product_code", "")),
+                    "source_label": clean_text(getattr(row, "exio20_product_name", "")),
+                    "message": "ESA59 EXIOBASE2 product did not match the EXIOBASE2->EXIOBASE3 bridge.",
                 }
             )
             continue
-        for target_code in target_codes:
-            if target_code not in labels:
+        old_code = clean_text(getattr(row, "esa59_product_code"))
+        if old_code not in old_to_current_cache:
+            divisions, messages = compose_old_division_to_cpa21_divisions(cpa2002_to_2008, cpa2008_to_21, old_division=old_code)
+            old_to_current_cache[old_code] = divisions
+            for message in messages:
                 diagnostics.append(
                     {
-                        "diagnostic_kind": "target_missing_from_dictionary",
-                        "bridge_nsi_code": nsi_code,
-                        "bridge_nsi_label": str(edge.bridge_nsi_label),
-                        "exio3_product_code": str(edge.exio3_product_code),
-                        "message": f"Target {target_code!r} is not present in {target_dictionary}.",
+                        "diagnostic_kind": "old_cpa_to_cpa21_unresolved",
+                        "source_code": old_code,
+                        "source_label": clean_text(getattr(row, "esa59_product_label")),
+                        "message": message,
+                    }
+                )
+        for division in sorted(old_to_current_cache[old_code]):
+            targets = division_to_targets.get(division, set())
+            if not targets:
+                diagnostics.append(
+                    {
+                        "diagnostic_kind": "cpa21_division_without_target_aggregation",
+                        "source_code": old_code,
+                        "source_label": clean_text(getattr(row, "esa59_product_label")),
+                        "message": f"CPA2.1 division {division} has no target in {target_dictionary}.",
                     }
                 )
                 continue
-            rows.append(
-                {
-                    "source_code": str(edge.exio3_product_code),
-                    "source_label": str(edge.exio3_product_name),
-                    "target_code": target_code,
-                    "target_label": labels[target_code],
-                    "bridge_nsi_code": nsi_code,
-                    "bridge_nsi_label": str(edge.bridge_nsi_label),
-                    "raw_exio_code": str(edge.raw_exio_code),
-                    "bridge_value": float(edge.bridge_value),
-                    "code_normalized": bool(edge.code_normalized),
-                }
-            )
-
-    edge_frame = pd.DataFrame.from_records(rows)
-    if edge_frame.empty:
-        mapping = pd.DataFrame(columns=CANONICAL_COLUMNS)
+            for target_code in sorted(targets):
+                edge_rows.append(
+                    {
+                        "exio3_product_code": exio3_code,
+                        "exio3_product_name": clean_text(getattr(row, "exio3_product_name", "")),
+                        "exio20_product_code": clean_text(getattr(row, "exio20_product_code", "")) or clean_text(getattr(row, "exio20_product_code_bridge", "")),
+                        "exio20_product_name": clean_text(getattr(row, "exio20_product_name", "")) or clean_text(getattr(row, "exio20_product_name_bridge", "")),
+                        "esa59_product_code": old_code,
+                        "esa59_product_label": clean_text(getattr(row, "esa59_product_label", "")),
+                        "cpa21_division": division,
+                        "target_code": target_code,
+                        "target_label": labels.get(target_code, target_code),
+                    }
+                )
+    edges = pd.DataFrame.from_records(edge_rows)
+    if edges.empty:
+        mapping = pd.DataFrame(columns=list(CANONICAL_COLUMNS))
     else:
-        grouped = edge_frame.groupby(["source_code", "source_label", "target_code", "target_label"], as_index=False).agg(
-            bridge_nsi_codes=("bridge_nsi_code", lambda values: ";".join(sorted(set(map(str, values))))),
-            bridge_nsi_labels=("bridge_nsi_label", lambda values: " | ".join(sorted(set(map(str, values))))),
-            raw_exio_codes=("raw_exio_code", lambda values: ";".join(sorted(set(map(str, values))))),
-            bridge_values=("bridge_value", "sum"),
-            any_code_normalized=("code_normalized", "any"),
+        grouped = cast(
+            pd.DataFrame,
+            edges.groupby(["exio3_product_code", "exio3_product_name", "target_code", "target_label"], as_index=False).agg(
+                esa59_product_codes=("esa59_product_code", lambda values: ";".join(sorted(set(map(str, values))))),
+                esa59_product_labels=("esa59_product_label", lambda values: " | ".join(sorted(set(map(str, values))))),
+                cpa21_divisions=("cpa21_division", lambda values: ";".join(sorted(set(map(str, values))))),
+                exio20_product_codes=("exio20_product_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+            ),
         )
-        target_counts = grouped.groupby("source_code")["target_code"].transform("nunique").astype(int)
-        grouped["n_targets_for_exio3_product"] = target_counts
-        mapping_rows: list[dict[str, object]] = []
-        for order, row in enumerate(grouped.sort_values(["source_code", "target_code"]).itertuples(index=False), start=1):
-            allocation_rule = "split-by-output-share" if int(row.n_targets_for_exio3_product) > 1 else "direct-single-target"
-            mapping_rows.append(
+        target_counts = grouped.groupby("exio3_product_code")["target_code"].transform("nunique").astype(int)
+        grouped.loc[:, "n_targets_for_exio3_product"] = target_counts
+        rows: list[dict[str, object]] = []
+        sorted_grouped = cast(pd.DataFrame, grouped.sort_values(by=["exio3_product_code", "target_code"]))
+        grouped_records = cast(list[dict[str, Any]], sorted_grouped.to_dict(orient="records"))
+        for order, row in enumerate(grouped_records, start=1):
+            allocation_rule = "split-by-output-share" if int(row["n_targets_for_exio3_product"]) > 1 else "direct-single-target"
+            esa59_product_codes = clean_text(row.get("esa59_product_codes", ""))
+            esa59_product_labels = clean_text(row.get("esa59_product_labels", ""))
+            cpa21_divisions = clean_text(row.get("cpa21_divisions", ""))
+            exio20_product_codes = clean_text(row.get("exio20_product_codes", ""))
+            rows.append(
                 {
                     "order": order,
                     "kind": "weighted",
                     "source_dataset": "EXIOBASE",
                     "source_system": "pxp",
-                    "source_version": "3.10.2-compatible-code-normalized",
+                    "source_version": "EXIOBASE2-to-EXIOBASE3-source-concordance",
                     "source_level": "product",
                     "target_dataset": "Eurostat_IO",
                     "target_system": "pxp",
                     "target_version": target_version.upper(),
                     "target_level": "CPA_product",
-                    "source_code": row.source_code,
-                    "source_label": row.source_label,
-                    "target_code": row.target_code,
-                    "target_label": row.target_label,
+                    "source_code": clean_text(row.get("exio3_product_code", "")),
+                    "source_label": clean_text(row.get("exio3_product_name", "")),
+                    "target_code": clean_text(row.get("target_code", "")),
+                    "target_label": clean_text(row.get("target_label", "")),
                     "enabled": "1",
-                    "provenance": "Bridge_NSI_AT",
-                    "certainty": "at-nsi-bridge-relational",
+                    "provenance": "EXIOBASE_ESA59_and_Eurostat_RAMON_official_correspondence_chain",
+                    "certainty": "source-concordance-derived",
                     "allocation_rule": allocation_rule,
-                    "source_name": "Bridge_NSI_AT.xlsx",
-                    "official_source": bridge_member,
+                    "source_name": "EXIOBASE20p_ESA59p + EXIOBASE2->3 + RAMON CPA correspondences",
+                    "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
                     "notes": (
-                        f"AT NSI bridge row(s) {row.bridge_nsi_codes}: {row.bridge_nsi_labels}. "
-                        f"Bridge value sum={float(row.bridge_values):.12g}; raw EXIO code(s)={row.raw_exio_codes}. "
-                        "Weights are not static; many-target rows should be resolved from Eurostat target-side values."
+                        f"ESA59 old product group(s) {esa59_product_codes}: {esa59_product_labels}. "
+                        f"Resolved CPA2.1 division(s) {cpa21_divisions}. "
+                        f"EXIOBASE2 source code(s): {exio20_product_codes}. "
+                        "No manual NSI->CPA table is used; many-target rows are resolved from target-side values at runtime."
                     ),
                     "source_balance_role": "",
                     "target_sector_role": "",
                     "include_in_direct_energy": "1",
                 }
             )
-        mapping = pd.DataFrame(mapping_rows, columns=CANONICAL_COLUMNS)
+        mapping = pd.DataFrame(rows, columns=list(CANONICAL_COLUMNS))
 
-    diagnostics_df = pd.DataFrame.from_records(
-        diagnostics,
-        columns=["diagnostic_kind", "bridge_nsi_code", "bridge_nsi_label", "exio3_product_code", "message"],
-    ).fillna("")
+    diagnostics_df = pd.DataFrame.from_records(diagnostics, columns=["diagnostic_kind", "source_code", "source_label", "message"]).fillna("")
     coverage = {
-        "source_archive_or_workbook_sha256": workbook_sha256,
-        "bridge_member": bridge_member,
-        "bridge_sheet": sheet_name,
+        "esa59_path": str(esa59_path),
+        "esa59_sha256": sha256_file(esa59_path),
+        "exio20_exio30_path": str(exio20_exio30_path),
+        "exio20_exio30_sha256": sha256_file(exio20_exio30_path),
+        "cpa2002_cpa2008_path": str(cpa2002_cpa2008_path),
+        "cpa2002_cpa2008_sha256": sha256_file(cpa2002_cpa2008_path),
+        "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
+        "cpa2008_cpa21_sha256": sha256_file(cpa2008_cpa21_path),
         "target_version": target_version,
-        "raw_bridge_edges": int(len(bridge_edges)),
-        "mapped_edge_rows": int(len(edge_frame)),
+        "esa59_rows": int(len(esa)),
+        "edge_rows": int(len(edges)),
         "mapping_rows": int(len(mapping)),
         "distinct_exio3_products": int(mapping["source_code"].nunique()) if not mapping.empty else 0,
         "distinct_target_codes": int(mapping["target_code"].nunique()) if not mapping.empty else 0,
         "diagnostic_rows": int(len(diagnostics_df)),
-        "normalized_exio_codes": sorted(set(bridge_edges.loc[bridge_edges.get("code_normalized", False), "raw_exio_code"].astype(str))) if not bridge_edges.empty else [],
     }
-    return BridgeBuildResult(mapping=mapping, edges=edge_frame, diagnostics=diagnostics_df, coverage=coverage)
+    return BuildResult(mapping=mapping, edges=edges, diagnostics=diagnostics_df, coverage=coverage)
 
 
-def write_outputs(result: BridgeBuildResult, *, out_dir: Path, target_version: str) -> dict[str, object]:
+def write_outputs(result: BuildResult, *, out_dir: Path, target_version: str) -> dict[str, object]:
     """Write mapping, edge audit, diagnostics, and manifest outputs."""
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"exio_to_eurostat_{target_version.lower()}_products_from_bridge_nsi_at"
+    stem = f"exio_to_eurostat_{target_version.lower()}_products_from_official_concordances"
     mapping_path = out_dir / f"{stem}.csv"
     edges_path = out_dir / f"{stem}_edge_audit.csv"
     diagnostics_path = out_dir / f"{stem}_diagnostics.csv"
@@ -398,9 +558,10 @@ def write_outputs(result: BridgeBuildResult, *, out_dir: Path, target_version: s
         "created_utc": datetime.now(UTC).isoformat(),
         "created_by_script": "scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py",
         "method_notes": [
-            "Reads Bridge_NSI_AT.xlsx product bridge sheet and emits current-schema weighted EXIOBASE3->CPA mapping rows.",
-            "Old Bridge_NSI_AT product rows are mapped to current CPA targets by explicit transparent row rules.",
-            "Many-target rows omit static weights and use allocation_rule=split-by-output-share for runtime Eurostat target-side value weighting.",
+            "No hard-coded NSI->CPA table is used.",
+            "EXIOBASE2 products are mapped to ESA59 old product groups from EXIOBASE20p_ESA59p.txt.",
+            "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
+            "CPA2.1 two-digit divisions are aggregated to the repo CPA64/CPA65 targets; CPA65 splits division 68 when target dictionary contains split real-estate targets.",
         ],
         "coverage": result.coverage,
         "output_files": {
@@ -417,44 +578,44 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments."""
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--concordances-zip", type=Path, default=DEFAULT_CONCORDANCES_ZIP)
-    parser.add_argument("--bridge-xlsx", type=Path, default=None, help="Optional direct Bridge_NSI_AT.xlsx path; overrides --concordances-zip.")
-    parser.add_argument("--bridge-member-suffix", default=DEFAULT_BRIDGE_MEMBER_SUFFIX)
-    parser.add_argument("--bridge-sheet", default=DEFAULT_BRIDGE_SHEET)
+    parser.add_argument("--exiobase-source-root", type=Path, default=DEFAULT_EXIOBASE_SOURCE_ROOT)
+    parser.add_argument("--eurostat-source-root", type=Path, default=DEFAULT_EUROSTAT_SOURCE_ROOT)
+    parser.add_argument("--esa59-products", type=Path, default=None)
+    parser.add_argument("--exio20-exio30-products", type=Path, default=None)
+    parser.add_argument("--cpa2002-cpa2008", type=Path, default=None)
+    parser.add_argument("--cpa2008-cpa21", type=Path, default=None)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
     parser.add_argument("--target-dictionary", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--allow-diagnostics", action="store_true", help="Write outputs even if source-chain diagnostics are present.")
     parser.add_argument("--check-only", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the bridge-based mapping generator."""
+    """Run the official-concordance mapping generator."""
 
     args = parse_args(argv)
-    dictionary = args.target_dictionary
-    if dictionary is None:
-        dictionary = DEFAULT_CPA65_DICTIONARY if args.target_version == "cpa65" else DEFAULT_CPA64_DICTIONARY
-    if args.bridge_xlsx is not None:
-        workbook_bytes = args.bridge_xlsx.read_bytes()
-        bridge_member = str(args.bridge_xlsx)
-        workbook_sha = sha256_file(args.bridge_xlsx)
-    else:
-        workbook_bytes, bridge_member = load_bridge_workbook_bytes(args.concordances_zip, args.bridge_member_suffix)
-        workbook_sha = sha256_bytes(workbook_bytes)
-    result = build_mapping(
-        workbook_bytes=workbook_bytes,
-        workbook_sha256=workbook_sha,
-        bridge_member=bridge_member,
-        sheet_name=args.bridge_sheet,
+    target_dictionary = args.target_dictionary
+    if target_dictionary is None:
+        target_dictionary = DEFAULT_CPA65_DICTIONARY if args.target_version == "cpa65" else DEFAULT_CPA64_DICTIONARY
+    esa59_path = args.esa59_products or find_one_file(args.exiobase_source_root, suffix=ESA59_SUFFIX)
+    exio_bridge_path = args.exio20_exio30_products or find_one_file(args.exiobase_source_root, suffix=EXIO20_EXIO30_SUFFIX)
+    cpa2002_cpa2008_path = args.cpa2002_cpa2008 or find_one_file(args.eurostat_source_root, tokens=("cpa", "2002", "2008"))
+    cpa2008_cpa21_path = args.cpa2008_cpa21 or find_one_file(args.eurostat_source_root, tokens=("cpa", "2008", "21"))
+    result = build_official_mapping(
+        esa59_path=esa59_path,
+        exio20_exio30_path=exio_bridge_path,
+        cpa2002_cpa2008_path=cpa2002_cpa2008_path,
+        cpa2008_cpa21_path=cpa2008_cpa21_path,
+        target_dictionary=target_dictionary,
         target_version=args.target_version,
-        target_dictionary=dictionary,
     )
     if not args.check_only:
         write_outputs(result, out_dir=args.out_dir, target_version=args.target_version)
     print(json.dumps({"coverage": result.coverage, "out_dir": str(args.out_dir), "wrote_outputs": not args.check_only}, indent=2, sort_keys=True))
-    if result.coverage["diagnostic_rows"]:
-        raise SystemExit("Bridge NSI mapping has diagnostics; inspect the diagnostics CSV before runtime use.")
+    if result.coverage["diagnostic_rows"] and not args.allow_diagnostics:
+        raise SystemExit("Official-concordance mapping has diagnostics; inspect diagnostics CSV or rerun with --allow-diagnostics after review.")
     return 0
 
 
