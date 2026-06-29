@@ -37,6 +37,8 @@ Between NACE Rev. 2 and NACE Rev. 2.1:
 <https://archive.researchdata.leeds.ac.uk/544/>
 <https://archive.researchdata.leeds.ac.uk/544/1/2019_05_24_Data_Concordance_Matrices.xlsx>
 
-### Chapter 3 of below saved pdf is helpful as well:
+### SIEC - Standard International Energy Products Classification
+<https://unstats.un.org/unsd/classifications/siec>  
+Chapter 3 of below saved pdf is helpful as well:
 <https://unstats.un.org/unsd/energystats/methodology/documents/IRES-web.pdf>
 
