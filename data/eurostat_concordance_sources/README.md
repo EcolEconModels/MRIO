@@ -1,3 +1,5 @@
+# NACE and CPA concordances / correspondences between old and new versions from RAMON/Circabc archive
+
 Obtained the older CPA v1.1 to CPA v2 via the RAMON archives linked from the Eurostat page:  
 <https://ec.europa.eu/eurostat/web/metadata/classifications#Statistical%20classification%20of%20products%20by%20activity%20(CPA)>
 
@@ -18,3 +20,12 @@ Correspondence "CPA 2008 - CPA 2.1" is on page 4 leading to:
 Correspondence "NACE REV. 2 - NACE REV. 1.1"  on page 6 leading to:  
 <https://circabc.europa.eu/ui/group/c1b49c83-24a7-4ff2-951c-621ac0a89fd8/library/cc623377-21eb-4d4a-b9be-04d7f2bf6bbd?p=1&n=10&sort=modified_DESC>
 
+---------------------------
+
+# NACE and CPA concordances / correspondences between old and new versions from eurostat.eu
+
+Between CPA 2.1 and CPA 2.2:  
+<https://ec.europa.eu/eurostat/web/cpa/correspondence-tables>
+
+Between NACE Rev. 2 and NACE Rev. 2.1:  
+<https://ec.europa.eu/eurostat/web/nace/correspondence-tables>
