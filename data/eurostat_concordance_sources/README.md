@@ -22,8 +22,6 @@ Correspondence "CPA 2008 - CPA 2.1" is on page 4 leading to:
 Correspondence "NACE REV. 2 - NACE REV. 1.1"  on page 6 leading to:  
 <https://circabc.europa.eu/ui/group/c1b49c83-24a7-4ff2-951c-621ac0a89fd8/library/cc623377-21eb-4d4a-b9be-04d7f2bf6bbd?p=1&n=10&sort=modified_DESC>
 
----------------------------
-
 ## NACE and CPA concordances / correspondences between old and new versions from eurostat.eu
 
 Between CPA 2.1 and CPA 2.2:  
@@ -31,3 +29,14 @@ Between CPA 2.1 and CPA 2.2:
 
 Between NACE Rev. 2 and NACE Rev. 2.1:  
 <https://ec.europa.eu/eurostat/web/nace/correspondence-tables>
+
+## CPA <-> EXIOBASE and CPA <-> SEIC/IEA(energy codes) concordances / correspondences
+
+### from Research Data Leeds Repository
+ Brockway, Paul E., Owen, Anne, Brand-Correa, Lina I. and Hardt, Lukas (2019) Datasets for Nature Energy journal article 'Estimation of global final stage energy-return-on-investment for fossil fuels with comparison to renewable energy sources'. University of Leeds. [Dataset]<https://doi.org/10.5518/598>
+<https://archive.researchdata.leeds.ac.uk/544/>
+<https://archive.researchdata.leeds.ac.uk/544/1/2019_05_24_Data_Concordance_Matrices.xlsx>
+
+### Chapter 3 of below saved pdf is helpful as well:
+<https://unstats.un.org/unsd/energystats/methodology/documents/IRES-web.pdf>
+
