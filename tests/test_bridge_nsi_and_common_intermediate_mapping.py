@@ -28,13 +28,21 @@ def test_official_generator_has_no_hard_coded_nsi_to_cpa_table() -> None:
 
 
 
-def test_target_dictionary_division_parser_does_not_treat_a64_as_division_64() -> None:
-    module = load_module(OFFICIAL_SCRIPT, "official_target_dictionary_parser")
-    for dictionary_name in ["eurostat_cpa64_products_dictionary.csv", "eurostat_cpa65_products_dictionary.csv"]:
-        _, division_to_targets = module.load_target_division_map(REPO_ROOT / "scripts" / "mappings" / dictionary_name)
+def test_curated_target_division_maps_do_not_treat_a64_as_division_64() -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_target_division_map_loader")
+    cases = [
+        ("eurostat_cpa64_to_cpa21_divisions.csv", "eurostat_cpa64_products_dictionary.csv", 1),
+        ("eurostat_cpa65_to_cpa21_divisions.csv", "eurostat_cpa65_products_dictionary.csv", 2),
+    ]
+    for map_name, dictionary_name, expected_div68_targets in cases:
+        labels, division_to_targets = module.load_target_division_map(
+            REPO_ROOT / "scripts" / "mappings" / map_name,
+            target_dictionary=REPO_ROOT / "scripts" / "mappings" / dictionary_name,
+        )
+        assert labels["CPA_K64"] == "Financial services, except insurance and pension funding"
         assert division_to_targets["64"] == {"CPA_K64"}
         assert "CPA_A01" not in division_to_targets["64"]
-        assert len(division_to_targets["68"]) == (2 if dictionary_name == "eurostat_cpa65_products_dictionary.csv" else 1)
+        assert len(division_to_targets["68"]) == expected_div68_targets
 
 def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_generator")
@@ -69,11 +77,19 @@ def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path
     dictionary = tmp_path / "cpa65_dictionary.csv"
     pd.DataFrame(
         [
-            {"code": "CPA_A01", "label": "Agriculture", "description": "A*64 A01; NACE/CPA division 01."},
-            {"code": "CPA_L68A", "label": "Imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
-            {"code": "CPA_L68B", "label": "Real estate excluding imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
+            {"code": "CPA_A01", "label": "Agriculture", "description": "dictionary text is not parsed"},
+            {"code": "CPA_L68A", "label": "Imputed rents", "description": "dictionary text is not parsed"},
+            {"code": "CPA_L68B", "label": "Real estate excluding imputed rents", "description": "dictionary text is not parsed"},
         ]
     ).to_csv(dictionary, index=False)
+    division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
+    pd.DataFrame(
+        [
+            {"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"},
+            {"target_version": "CPA_65", "target_code": "CPA_L68A", "target_label": "Imputed rents", "iot_a64_code": "L68", "cpa21_division": "68"},
+            {"target_version": "CPA_65", "target_code": "CPA_L68B", "target_label": "Real estate excluding imputed rents", "iot_a64_code": "L68", "cpa21_division": "68"},
+        ]
+    ).to_csv(division_map, index=False)
 
     result = module.build_official_mapping(
         esa59_path=esa,
@@ -81,6 +97,7 @@ def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path
         cpa2002_cpa2008_path=cpa02_08,
         cpa2008_cpa21_path=cpa08_21,
         target_dictionary=dictionary,
+        target_division_map=division_map,
         target_version="cpa65",
     )
 
@@ -130,11 +147,19 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     dictionary = tmp_path / "cpa65_dictionary.csv"
     pd.DataFrame(
         [
-            {"code": "CPA_A01", "label": "Agriculture", "description": "A*64 A01; NACE/CPA division 01."},
-            {"code": "CPA_L68A", "label": "Imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
-            {"code": "CPA_L68B", "label": "Real estate excluding imputed rents", "description": "CPA_65 real-estate split of A*64 L68."},
+            {"code": "CPA_A01", "label": "Agriculture", "description": "dictionary text is not parsed"},
+            {"code": "CPA_L68A", "label": "Imputed rents", "description": "dictionary text is not parsed"},
+            {"code": "CPA_L68B", "label": "Real estate excluding imputed rents", "description": "dictionary text is not parsed"},
         ]
     ).to_csv(dictionary, index=False)
+    division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
+    pd.DataFrame(
+        [
+            {"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"},
+            {"target_version": "CPA_65", "target_code": "CPA_L68A", "target_label": "Imputed rents", "iot_a64_code": "L68", "cpa21_division": "68"},
+            {"target_version": "CPA_65", "target_code": "CPA_L68B", "target_label": "Real estate excluding imputed rents", "iot_a64_code": "L68", "cpa21_division": "68"},
+        ]
+    ).to_csv(division_map, index=False)
     out_dir = tmp_path / "out"
 
     assert module.main([
@@ -142,6 +167,7 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
         "--cpa2002-cpa2008", str(cpa02_08),
         "--cpa2008-cpa21", str(cpa08_21),
         "--target-dictionary", str(dictionary),
+        "--target-division-map", str(division_map),
         "--target-version", "cpa65",
         "--out-dir", str(out_dir),
     ]) == 0

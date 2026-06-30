@@ -20,17 +20,21 @@ data/eurostat_concordance_sources/CPA_2002_to_CPA_2008.csv
   CPA 2002 -> CPA 2008
 data/eurostat_concordance_sources/CPA_2008_to_CPA_21.csv
   CPA 2008 -> CPA 2.1
-repo CPA64/CPA65 target dictionaries
+scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or
+scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv
   CPA2.1 two-digit division -> target aggregate
+repo CPA64/CPA65 target dictionaries
+  target labels and human-readable descriptions only
 ```
 
 No Layer-2 normalized concordance files are written as generated outputs by default: matrix-style and workbook-style source concordances are parsed internally and discarded after the Layer-3 EXIOBASE3 -> CPA mapping is built. This avoids accidentally reusing intermediate parse artifacts as source truth. For local debugging, an optional `--edge-audit-csv` can be pointed under `tmp/`, but that audit file is not part of the committed generated mapping contract.
 
 There is no hard-coded `NSI_PRODUCT_TO_CPA64` table. CPA64/CPA65 aggregation is
-derived from two-digit CPA2.1 divisions and the committed target dictionaries.
-For CPA65, division 68 is deliberately emitted to both real-estate split targets
-when the CPA65 dictionary contains `CPA_L68A` and `CPA_L68B`; runtime target-side
-output/use values must resolve the split.
+derived from two-digit CPA2.1 divisions and the committed curated target-division
+bridge files, not by parsing target dictionary descriptions.  For CPA65, division
+68 is deliberately emitted to both real-estate split targets in
+`eurostat_cpa65_to_cpa21_divisions.csv`; runtime target-side output/use values
+must resolve the split.
 
 ## Route-B composition
 
@@ -56,6 +60,7 @@ Build the official-concordance EXIOBASE3 -> CPA65 mapping:
   --cpa2002-cpa2008 data/eurostat_concordance_sources/CPA_2002_to_CPA_2008.csv \
   --cpa2008-cpa21 data/eurostat_concordance_sources/CPA_2008_to_CPA_21.csv \
   --target-version cpa65 \
+  --target-division-map scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv \
   --out-dir scripts/mappings/generated/official_concordances
 ```
 

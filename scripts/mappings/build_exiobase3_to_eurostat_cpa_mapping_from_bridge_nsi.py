@@ -10,8 +10,9 @@ and ``data/eurostat_concordance_sources``:
 * RAMON/Eurostat CPA 2002 -> CPA 2008 -> CPA 2.1 correspondence tables.
 
 The final CPA64/CPA65 targets are generated from two-digit CPA 2.1 divisions and
-the committed CPA64/CPA65 target dictionaries.  CPA65 splits division 68 into the
-repo's two real-estate targets if those split targets are present.
+the committed curated target-division bridge CSVs.  CPA65 splits division 68 into
+the repo's two real-estate targets through that bridge; dictionary descriptions are
+not parsed for machine topology.
 """
 from __future__ import annotations
 
@@ -39,6 +40,8 @@ DEFAULT_CPA2008_CPA21: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA_2008_to
 DEFAULT_OUT_DIR: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "generated"
 DEFAULT_CPA64_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv"
 DEFAULT_CPA65_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv"
+DEFAULT_CPA64_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_to_cpa21_divisions.csv"
+DEFAULT_CPA65_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_to_cpa21_divisions.csv"
 
 ESA59_SUFFIX: Final[str] = "EXIOBASE20p_ESA59p.txt"
 EXIO20_EXIO30_SUFFIX: Final[str] = "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
@@ -415,70 +418,104 @@ def canonical_target_version_label(target_version: str) -> str:
     return target_version.upper()
 
 
-def parse_target_dictionary_divisions(target_code: object, description: object) -> set[str]:
-    """Derive target CPA divisions from structured dictionary metadata.
-
-    The dictionary descriptions contain both an A*64 label (for example
-    ``A*64 K64``) and the intended machine-usable phrase
-    ``NACE/CPA division 64``.  Only the latter phrase is used for parsing so the
-    ``64`` in ``A*64`` is never treated as an actual CPA division.  CPA65's
-    deliberate real-estate split is handled as a documented special case.
-    """
-
-    code = clean_text(target_code)
-    text = clean_text(description).strip('"')
-    divisions: set[str] = set()
-
-    phrase_match = re.search(r"NACE/CPA\s+divisions?\s+([^.;]+)", text, flags=re.IGNORECASE)
-    if phrase_match:
-        for token in re.findall(r"(?<!\d)\d{2}(?:[-_]\d{2})?(?!\d)", phrase_match.group(1)):
-            divisions.update(expand_division_token(token))
-
-    # CPA65 L68A/L68B encode the deliberate split of CPA division 68; the
-    # descriptions intentionally do not repeat a NACE/CPA division phrase.
-    if re.search(r"CPA[_-]?L68[A-Z]?", code, flags=re.IGNORECASE):
-        divisions.add("68")
-
-    if not divisions:
-        code_without_prefix = re.sub(r"^CPA[_-]?", "", code, flags=re.IGNORECASE)
-        for token in re.findall(r"(?<!\d)\d{2}(?:[-_]\d{2})?(?!\d)", code_without_prefix):
-            divisions.update(expand_division_token(token))
-
-    return divisions
+TARGET_DIVISION_MAP_COLUMNS: Final[set[str]] = {
+    "target_version",
+    "target_code",
+    "target_label",
+    "iot_a64_code",
+    "cpa21_division",
+}
 
 
-def load_target_division_map(path: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
-    """Load target labels and derive CPA division coverage from target dictionaries."""
+def _read_dictionary_label_map(path: Path) -> dict[str, str]:
+    """Read target dictionary labels for lock-step validation only."""
 
     frame = pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
-    missing = sorted({"code", "label", "description"} - set(frame.columns))
+    missing = sorted({"code", "label"} - set(frame.columns))
     if missing:
         raise ValueError(f"Target dictionary {path} missing columns: {missing}")
-    labels = dict(zip(frame["code"].astype(str).str.strip(), frame["label"].astype(str).str.strip(), strict=False))
-    division_to_targets: dict[str, set[str]] = {}
-    targets_without_divisions: list[str] = []
+    labels: dict[str, str] = {}
     for row in frame.itertuples(index=False):
-        target_code = clean_text(getattr(row, "code"))
-        description = clean_text(getattr(row, "description"))
-        divisions = parse_target_dictionary_divisions(target_code, description)
-        if not divisions:
-            targets_without_divisions.append(target_code)
-        for division in divisions:
-            division_to_targets.setdefault(division, set()).add(target_code)
+        code = clean_text(getattr(row, "code"))
+        label = clean_text(getattr(row, "label"))
+        if not code or not label:
+            continue
+        if code in labels and labels[code] != label:
+            raise ValueError(f"Target dictionary {path} has inconsistent labels for {code}")
+        labels[code] = label
+    return labels
 
-    if targets_without_divisions:
-        raise ValueError(
-            f"Target dictionary {path} has targets without parseable CPA divisions: "
-            + ", ".join(sorted(targets_without_divisions))
-        )
 
-    if "CPA_K64" in labels:
-        div64_targets = division_to_targets.get("64", set())
-        if div64_targets != {"CPA_K64"}:
+def load_target_division_map(
+    path: Path,
+    *,
+    target_dictionary: Path | None = None,
+) -> tuple[dict[str, str], dict[str, set[str]]]:
+    """Load the curated CPA target -> CPA2.1 division bridge.
+
+    This file is the machine-readable target topology source.  The CPA64/CPA65
+    dictionaries remain label/description dictionaries and are used only for
+    optional lock-step validation, never for parsing division coverage.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
+    missing = sorted(TARGET_DIVISION_MAP_COLUMNS - set(frame.columns))
+    if missing:
+        raise ValueError(f"Target division map {path} missing columns: {missing}")
+
+    labels: dict[str, str] = {}
+    division_to_targets: dict[str, set[str]] = {}
+    bad_rows: list[str] = []
+    for row in frame.itertuples(index=False):
+        target_code = clean_text(getattr(row, "target_code"))
+        target_label = clean_text(getattr(row, "target_label"))
+        division = clean_text(getattr(row, "cpa21_division"))
+        if not target_code or not target_label or not division:
+            bad_rows.append(f"blank required field in row for target={target_code!r} division={division!r}")
+            continue
+        if not re.fullmatch(r"\d{2}", division):
+            bad_rows.append(f"invalid CPA2.1 division {division!r} for {target_code}")
+            continue
+        old_label = labels.get(target_code)
+        if old_label is not None and old_label != target_label:
+            bad_rows.append(f"inconsistent labels for {target_code}: {old_label!r} vs {target_label!r}")
+            continue
+        labels[target_code] = target_label
+        division_to_targets.setdefault(division, set()).add(target_code)
+
+    if bad_rows:
+        raise ValueError(f"Invalid target division map {path}: " + "; ".join(bad_rows[:20]))
+    if not labels:
+        raise ValueError(f"Target division map {path} contains no usable target rows")
+
+    if target_dictionary is not None:
+        dictionary_labels = _read_dictionary_label_map(target_dictionary)
+        missing_from_dictionary = sorted(set(labels) - set(dictionary_labels))
+        if missing_from_dictionary:
             raise ValueError(
-                "Target dictionary parser mapped CPA division 64 to unexpected targets: "
-                f"{sorted(div64_targets)}. Check that A*64 labels are not parsed as CPA divisions."
+                f"Target division map {path} contains targets missing from dictionary {target_dictionary}: "
+                f"{missing_from_dictionary[:50]}"
             )
+        mismatched = sorted(
+            code for code, label in labels.items()
+            if clean_text(dictionary_labels.get(code, "")) != clean_text(label)
+        )
+        if mismatched:
+            sample = [f"{code}: map={labels[code]!r} dictionary={dictionary_labels.get(code, '')!r}" for code in mismatched[:20]]
+            raise ValueError(
+                f"Target division map {path} labels do not match dictionary {target_dictionary}: "
+                + "; ".join(sample)
+            )
+
+    # Partial synthetic fixtures do not need to cover all CPA divisions.  When
+    # division 64 is present, however, it must map only to CPA_K64; this keeps the
+    # original A*64 false-positive guard without rejecting valid small test maps.
+    div64_targets = division_to_targets.get("64", set())
+    if div64_targets and div64_targets != {"CPA_K64"}:
+        raise ValueError(
+            "Target division map mapped CPA2.1 division 64 to unexpected targets: "
+            f"{sorted(div64_targets)}. Check that A*64 labels are not being parsed as CPA divisions."
+        )
     return labels, division_to_targets
 
 
@@ -489,6 +526,7 @@ def build_official_mapping(
     cpa2002_cpa2008_path: Path,
     cpa2008_cpa21_path: Path,
     target_dictionary: Path,
+    target_division_map: Path,
     target_version: str,
 ) -> BuildResult:
     """Build EXIOBASE3 -> CPA64/65 using official/source concordance chains."""
@@ -497,7 +535,7 @@ def build_official_mapping(
     bridge = read_exio20_to_exio30_bridge(exio20_exio30_path)
     cpa2002_to_2008 = read_correspondence(cpa2002_cpa2008_path, source_tokens=("source", "from", "2002"), target_tokens=("target", "to", "2008"))
     cpa2008_to_21 = read_correspondence(cpa2008_cpa21_path, source_tokens=("source", "from", "2008"), target_tokens=("target", "to", "21", "2.1"))
-    labels, division_to_targets = load_target_division_map(target_dictionary)
+    labels, division_to_targets = load_target_division_map(target_division_map, target_dictionary=target_dictionary)
 
     esa = esa.copy()
     esa["exio20_product_name_norm"] = esa["exio20_product_name"].map(lambda value: re.sub(r"\W+", "", value.casefold()))
@@ -552,7 +590,7 @@ def build_official_mapping(
                         "diagnostic_kind": "cpa21_division_without_target_aggregation",
                         "source_code": old_code,
                         "source_label": clean_text(getattr(row, "esa59_product_label")),
-                        "message": f"CPA2.1 division {division} has no target in {target_dictionary}.",
+                        "message": f"CPA2.1 division {division} has no target in {target_division_map}.",
                     }
                 )
                 continue
@@ -605,6 +643,8 @@ def build_official_mapping(
                     "target_dataset": "Eurostat_IO",
                     "target_system": "pxp",
                     "target_version": canonical_target_version_label(target_version),
+        "target_division_map_path": str(target_division_map),
+        "target_division_map_sha256": sha256_file(target_division_map),
                     "target_level": "CPA_product",
                     "source_code": clean_text(row.get("exio3_product_code", "")),
                     "source_label": clean_text(row.get("exio3_product_name", "")),
@@ -640,6 +680,8 @@ def build_official_mapping(
         "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
         "cpa2008_cpa21_sha256": sha256_file(cpa2008_cpa21_path),
         "target_version": canonical_target_version_label(target_version),
+        "target_division_map_path": str(target_division_map),
+        "target_division_map_sha256": sha256_file(target_division_map),
         "esa59_rows": int(len(esa)),
         "edge_rows": int(len(edges)),
         "mapping_rows": int(len(mapping)),
@@ -684,7 +726,8 @@ def write_outputs(
             "No hard-coded NSI->CPA table is used.",
             "EXIOBASE2 products are mapped to ESA59 old product groups from EXIOBASE20p_ESA59p.txt.",
             "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
-            "CPA2.1 two-digit divisions are aggregated to the repo CPA64/CPA65 targets; CPA65 splits division 68 when target dictionary contains split real-estate targets.",
+            "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
+            "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
             "No Layer-2 edge audit is written by default; --edge-audit-csv should point under tmp/ when local debugging is needed.",
         ],
         "coverage": result.coverage,
@@ -705,6 +748,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cpa2008-cpa21", type=Path, default=DEFAULT_CPA2008_CPA21)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
     parser.add_argument("--target-dictionary", type=Path, default=None)
+    parser.add_argument("--target-division-map", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--edge-audit-csv", type=Path, default=None, help="Optional Layer-2 edge audit CSV; use a tmp/ path for local debugging.")
     parser.add_argument("--allow-diagnostics", action="store_true", help="Write outputs even if source-chain diagnostics are present.")
@@ -719,6 +763,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     target_dictionary = args.target_dictionary
     if target_dictionary is None:
         target_dictionary = DEFAULT_CPA65_DICTIONARY if args.target_version == "cpa65" else DEFAULT_CPA64_DICTIONARY
+    target_division_map = args.target_division_map
+    if target_division_map is None:
+        target_division_map = DEFAULT_CPA65_DIVISION_MAP if args.target_version == "cpa65" else DEFAULT_CPA64_DIVISION_MAP
 
     esa59_bytes, esa59_member = read_zip_member_bytes(args.concordances_zip, args.esa59_member)
     exio_bridge_bytes, exio_bridge_member = read_zip_member_bytes(args.concordances_zip, args.exio20_exio30_member)
@@ -735,6 +782,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cpa2002_cpa2008_path=args.cpa2002_cpa2008,
             cpa2008_cpa21_path=args.cpa2008_cpa21,
             target_dictionary=target_dictionary,
+            target_division_map=target_division_map,
             target_version=args.target_version,
         )
 
@@ -744,6 +792,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{args.concordances_zip}::{exio_bridge_member}",
             str(args.cpa2002_cpa2008),
             str(args.cpa2008_cpa21),
+            str(target_division_map),
         ]
     )
     mapping = result.mapping.copy()
@@ -760,6 +809,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "exio20_exio30_member": exio_bridge_member,
             "exio20_exio30_path": f"{args.concordances_zip}::{exio_bridge_member}",
             "exio20_exio30_sha256": sha256_bytes(exio_bridge_bytes),
+            "target_division_map_path": str(target_division_map),
+            "target_division_map_sha256": sha256_file(target_division_map),
         }
     )
     result = BuildResult(mapping=mapping, edges=result.edges, diagnostics=result.diagnostics, coverage=coverage)

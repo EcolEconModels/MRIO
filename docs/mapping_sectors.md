@@ -25,6 +25,10 @@ These are the only mapping CSVs that should be used by code and by humans:
   - same split template, but electricity rows are grouped
 - `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
   - legacy filename retained for compatibility; the bridge itself maps Eurostat energy-balance rows, whose official row definitions are often activity-based, to the repo's 65-product CPA-based IO targets plus `Households`, including explicit direct-combustion transformation rows for `CPA_C19` and `CPA_D`
+- `scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv`
+  - curated machine-readable bridge from the repo's CPA_64 IO target dictionary to CPA 2.1 two-digit divisions
+- `scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv`
+  - curated machine-readable bridge from the repo's CPA_65 compatibility target dictionary to CPA 2.1 two-digit divisions; division 68 deliberately maps to both real-estate split targets
 - `scripts/pipelines/fuels_split.csv`
   - split manifest for the fuels pipeline
 - `scripts/pipelines/fuels_more_split.csv`
@@ -201,12 +205,18 @@ The meanings below apply to the full-schema family. The reduced EXIO concordance
 
 For the weighted EXIO concordance, split rows are rule-driven: the CSV now carries the split rule in `transformation_rule`, while the loader derives the actual shares from the year-specific output reference at runtime.
 
-## Generation
+## Generation and curated target topology
 
 The canonical mapping CSVs are curated and checked in under `scripts/mappings/`.
 They are not regenerated as part of normal repo use.
 
-If you need to inspect or edit the canonical rows, work directly with the checked-in CSVs.
+The CPA_64 and CPA_65 top-level product dictionaries are also curated operational dictionaries.
+Their `description` fields are human-readable documentation only and must not be parsed by code
+to infer CPA division coverage.  Machine-readable target topology lives in the curated bridge
+files `eurostat_cpa64_to_cpa21_divisions.csv` and `eurostat_cpa65_to_cpa21_divisions.csv`.
+
+If you need to inspect or edit the canonical rows, work directly with the checked-in CSVs and keep
+the dictionaries and target-division bridge files in lock-step.
 
 ## Validation
 
