@@ -17,6 +17,16 @@ EXIO sector, NACE/CPA/PRODCOM/CN code, or final-demand code may be hard-coded in
 Python. All such information must come from dictionaries, mapping files, split
 recipes, and reaggregation recipes.
 
+## Economic methods dependency
+
+The scientific/economic method is specified independently in
+`docs/economic_methods/generalized_energy_disaggregation_methods.md`. This API
+specification remains the software-facing orchestration contract: it defines the
+profile files, provider interfaces, execution routes, diagnostics, validation
+hooks, and migration rules needed to implement that methods document. The API
+spec must not weaken, replace, or silently alter the economic equations and
+accounting identities in the standalone methods spec.
+
 ## Existing repo abstractions to preserve
 
 The existing low-level abstraction `SplitProfiles` is the common contract. A
