@@ -289,6 +289,51 @@ def read_exio20_to_exio30_bridge(path: Path) -> pd.DataFrame:
     return out.loc[:, ["exio20_product_name", "exio20_product_name_norm", "exio20_product_code", "exio3_product_name", "exio3_product_code"]].drop_duplicates()
 
 
+def summarize_exio20_to_exio30_bridge_multiplicity(bridge: pd.DataFrame) -> dict[str, list[dict[str, str]]]:
+    """Return EXIOBASE2->3 bridge rows that are not one-to-one."""
+
+    exio20_to_3: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    exio3_to_20: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for row in bridge.itertuples(index=False):
+        exio20 = (clean_text(getattr(row, "exio20_product_code")), clean_text(getattr(row, "exio20_product_name")))
+        exio3 = (clean_text(getattr(row, "exio3_product_code")), clean_text(getattr(row, "exio3_product_name")))
+        if not exio20[0] or not exio3[0]:
+            continue
+        exio20_to_3.setdefault(exio20, set()).add(exio3)
+        exio3_to_20.setdefault(exio3, set()).add(exio20)
+
+    one_to_many = [
+        {
+            "exio20_product_code": code,
+            "exio20_product_name": name,
+            "exio3_targets": ";".join(f"{target_code}:{target_name}" for target_code, target_name in sorted(targets)),
+        }
+        for (code, name), targets in sorted(exio20_to_3.items())
+        if len(targets) > 1
+    ]
+    many_to_one = [
+        {
+            "exio3_product_code": code,
+            "exio3_product_name": name,
+            "exio20_sources": ";".join(f"{source_code}:{source_name}" for source_code, source_name in sorted(sources)),
+        }
+        for (code, name), sources in sorted(exio3_to_20.items())
+        if len(sources) > 1
+    ]
+    return {"exio20_to_many_exio3": one_to_many, "many_exio20_to_exio3": many_to_one}
+
+
+def print_exio20_to_exio30_bridge_multiplicity(bridge: pd.DataFrame) -> None:
+    """Print non-one-to-one EXIOBASE2<->EXIOBASE3 bridge rows for CLI review."""
+
+    report = summarize_exio20_to_exio30_bridge_multiplicity(bridge)
+    if not report["exio20_to_many_exio3"] and not report["many_exio20_to_exio3"]:
+        print("EXIOBASE2->3 bridge multiplicity: all mapped product codes are one-to-one.")
+        return
+    print("EXIOBASE2->3 bridge multiplicity: non-one-to-one mappings found:")
+    print(json.dumps(report, indent=2, sort_keys=True))
+
+
 def read_any_table(path: Path) -> pd.DataFrame:
     """Read a CSV/XLSX/XML correspondence table as strings."""
 
@@ -450,6 +495,7 @@ def load_target_division_map(
     path: Path,
     *,
     target_dictionary: Path | None = None,
+    target_version: str | None = None,
 ) -> tuple[dict[str, str], dict[str, set[str]]]:
     """Load the curated CPA target -> CPA2.1 division bridge.
 
@@ -462,14 +508,19 @@ def load_target_division_map(
     missing = sorted(TARGET_DIVISION_MAP_COLUMNS - set(frame.columns))
     if missing:
         raise ValueError(f"Target division map {path} missing columns: {missing}")
+    expected_target_version = canonical_target_version_label(target_version) if target_version is not None else ""
 
     labels: dict[str, str] = {}
     division_to_targets: dict[str, set[str]] = {}
     bad_rows: list[str] = []
     for row in frame.itertuples(index=False):
+        row_target_version = clean_text(getattr(row, "target_version"))
         target_code = clean_text(getattr(row, "target_code"))
         target_label = clean_text(getattr(row, "target_label"))
         division = clean_text(getattr(row, "cpa21_division"))
+        if expected_target_version and row_target_version != expected_target_version:
+            bad_rows.append(f"target_version {row_target_version!r} for {target_code or '<blank>'} does not match expected {expected_target_version!r}")
+            continue
         if not target_code or not target_label or not division:
             bad_rows.append(f"blank required field in row for target={target_code!r} division={division!r}")
             continue
@@ -490,11 +541,15 @@ def load_target_division_map(
 
     if target_dictionary is not None:
         dictionary_labels = _read_dictionary_label_map(target_dictionary)
-        missing_from_dictionary = sorted(set(labels) - set(dictionary_labels))
-        if missing_from_dictionary:
+        map_codes = set(labels)
+        dictionary_codes = set(dictionary_labels)
+        missing_from_dictionary = sorted(map_codes - dictionary_codes)
+        missing_from_map = sorted(dictionary_codes - map_codes)
+        if missing_from_dictionary or missing_from_map:
             raise ValueError(
-                f"Target division map {path} contains targets missing from dictionary {target_dictionary}: "
-                f"{missing_from_dictionary[:50]}"
+                f"Target division map {path} and dictionary {target_dictionary} are not in lock-step: "
+                f"missing_from_dictionary={missing_from_dictionary[:50]} "
+                f"missing_from_map={missing_from_map[:50]}"
             )
         mismatched = sorted(
             code for code, label in labels.items()
@@ -535,7 +590,7 @@ def build_official_mapping(
     bridge = read_exio20_to_exio30_bridge(exio20_exio30_path)
     cpa2002_to_2008 = read_correspondence(cpa2002_cpa2008_path, source_tokens=("source", "from", "2002"), target_tokens=("target", "to", "2008"))
     cpa2008_to_21 = read_correspondence(cpa2008_cpa21_path, source_tokens=("source", "from", "2008"), target_tokens=("target", "to", "21", "2.1"))
-    labels, division_to_targets = load_target_division_map(target_division_map, target_dictionary=target_dictionary)
+    labels, division_to_targets = load_target_division_map(target_division_map, target_dictionary=target_dictionary, target_version=target_version)
 
     esa = esa.copy()
     esa["exio20_product_name_norm"] = esa["exio20_product_name"].map(lambda value: re.sub(r"\W+", "", value.casefold()))
@@ -643,8 +698,6 @@ def build_official_mapping(
                     "target_dataset": "Eurostat_IO",
                     "target_system": "pxp",
                     "target_version": canonical_target_version_label(target_version),
-        "target_division_map_path": str(target_division_map),
-        "target_division_map_sha256": sha256_file(target_division_map),
                     "target_level": "CPA_product",
                     "source_code": clean_text(row.get("exio3_product_code", "")),
                     "source_label": clean_text(row.get("exio3_product_name", "")),
@@ -713,10 +766,12 @@ def write_outputs(
         "mapping": mapping_path.name,
         "diagnostics": diagnostics_path.name,
     }
-    if edge_audit_csv is not None:
-        edge_audit_csv.parent.mkdir(parents=True, exist_ok=True)
-        result.edges.to_csv(edge_audit_csv, index=False)
-        output_files["edge_audit"] = str(edge_audit_csv)
+    edge_audit_path = edge_audit_csv
+    if edge_audit_path is None:
+        edge_audit_path = out_dir / "diagnostics" / f"{stem}_edges.csv"
+    edge_audit_path.parent.mkdir(parents=True, exist_ok=True)
+    result.edges.to_csv(edge_audit_path, index=False)
+    output_files["edge_audit"] = str(edge_audit_path)
 
     manifest = {
         "mapping_name": stem,
@@ -728,7 +783,7 @@ def write_outputs(
             "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
             "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
             "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
-            "No Layer-2 edge audit is written by default; --edge-audit-csv should point under tmp/ when local debugging is needed.",
+            "The internal EXIOBASE3/ESA59/CPA2.1 edge audit is written under out-dir/diagnostics by default; --edge-audit-csv may override the path.",
         ],
         "coverage": result.coverage,
         "output_files": output_files,
@@ -750,7 +805,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-dictionary", type=Path, default=None)
     parser.add_argument("--target-division-map", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--edge-audit-csv", type=Path, default=None, help="Optional Layer-2 edge audit CSV; use a tmp/ path for local debugging.")
+    parser.add_argument("--edge-audit-csv", type=Path, default=None, help="Optional override for the internal edge diagnostic CSV; defaults to out-dir/diagnostics/<stem>_edges.csv.")
     parser.add_argument("--allow-diagnostics", action="store_true", help="Write outputs even if source-chain diagnostics are present.")
     parser.add_argument("--check-only", action="store_true")
     return parser.parse_args(argv)
@@ -776,6 +831,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exio_bridge_path = tmpdir / EXIO20_EXIO30_SUFFIX
         esa59_path.write_text(esa59_bytes.decode("utf-8-sig", errors="replace"), encoding="utf-8")
         exio_bridge_path.write_bytes(exio_bridge_bytes)
+        print_exio20_to_exio30_bridge_multiplicity(read_exio20_to_exio30_bridge(exio_bridge_path))
         result = build_official_mapping(
             esa59_path=esa59_path,
             exio20_exio30_path=exio_bridge_path,

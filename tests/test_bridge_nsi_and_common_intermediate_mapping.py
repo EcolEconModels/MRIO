@@ -173,7 +173,10 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     ]) == 0
 
     generated = pd.read_csv(out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances.csv", dtype=str)
-    assert not (out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances_edge_audit.csv").exists()
+    edge_audit = out_dir / "diagnostics" / "exio_to_eurostat_cpa65_products_from_official_concordances_edges.csv"
+    assert edge_audit.exists()
+    edge_rows = pd.read_csv(edge_audit, dtype=str)
+    assert {"exio3_product_code", "target_code", "cpa21_division"} <= set(edge_rows.columns)
     assert set(generated.loc[generated["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(generated.loc[generated["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(generated["target_version"]) == {"CPA_65"}

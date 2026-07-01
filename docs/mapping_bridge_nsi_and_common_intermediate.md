@@ -27,7 +27,7 @@ repo CPA64/CPA65 target dictionaries
   target labels and human-readable descriptions only
 ```
 
-No Layer-2 normalized concordance files are written as generated outputs by default: matrix-style and workbook-style source concordances are parsed internally and discarded after the Layer-3 EXIOBASE3 -> CPA mapping is built. This avoids accidentally reusing intermediate parse artifacts as source truth. For local debugging, an optional `--edge-audit-csv` can be pointed under `tmp/`, but that audit file is not part of the committed generated mapping contract.
+No Layer-2 normalized source-concordance files are written as generated mapping outputs: matrix-style and workbook-style source concordances are parsed internally and discarded after the Layer-3 EXIOBASE3 -> CPA mapping is built. For auditability, the internal EXIOBASE3/ESA59/CPA2.1 edge table is written under `scripts/mappings/generated/official_concordances/diagnostics/` by default, and `--edge-audit-csv` can override that path.
 
 There is no hard-coded `NSI_PRODUCT_TO_CPA64` table. CPA64/CPA65 aggregation is
 derived from two-digit CPA2.1 divisions and the committed curated target-division
@@ -68,6 +68,9 @@ This writes:
 
 ```text
 scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances.csv
+scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_diagnostics.csv
+scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_manifest.json
+scripts/mappings/generated/official_concordances/diagnostics/exio_to_eurostat_cpa65_products_from_official_concordances_edges.csv
 ```
 
 Compose EB -> EXIOBASE3 and EXIOBASE3 -> CPA65 into a direct final-use EB -> CPA
