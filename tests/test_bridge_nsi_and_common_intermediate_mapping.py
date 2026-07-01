@@ -435,8 +435,10 @@ def test_first_step_closure_fails_on_two_digit_inconsistency(tmp_path: Path) -> 
         raise AssertionError("Expected coarse first-step inconsistency to fail")
 
 
-def test_first_step_closure_fails_on_missing_right_side_old_cpa_code(tmp_path: Path) -> None:
-    module = load_module(OFFICIAL_SCRIPT, "official_concordance_right_side_fail")
+
+
+def test_first_step_closure_warns_on_one_source_codomain_gap_when_closed_union_maps(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_right_side_warning")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
     esa.write_text(
         "\tPrivate households with employed persons (95)\n"
@@ -445,7 +447,14 @@ def test_first_step_closure_fails_on_missing_right_side_old_cpa_code(tmp_path: P
     )
     exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
     pd.DataFrame(
-        [{"EXIOBASE 2 Name": "Private households with employed persons", "EXIOBASE 2 code": "p95", "EXIOBASE 3 name": "Private households with employed persons", "EXIOBASE 3 code": "p95"}]
+        [
+            {
+                "EXIOBASE 2 Name": "Private households with employed persons",
+                "EXIOBASE 2 code": "p95",
+                "EXIOBASE 3 name": "Private households with employed persons",
+                "EXIOBASE 3 code": "p95",
+            }
+        ]
     ).to_excel(exio_bridge, index=False)
     direct = tmp_path / "CPA2002_6digit_EXIOBASE_FINAL.xlsx"
     _write_cpa2002_exiobase_workbook(
@@ -453,35 +462,50 @@ def test_first_step_closure_fails_on_missing_right_side_old_cpa_code(tmp_path: P
         [
             {"CPA 2002": "Domestic personnel services", "CPA 2002.1": "95.00.10", "CPA 2002.2": "950010", "EXIOBASE_2.0": "p95"},
             {"CPA 2002": "Own-use household goods", "CPA 2002.1": "96.00.10", "CPA 2002.2": "960010", "EXIOBASE_2.0": "p95"},
+            {"CPA 2002": "Own-use household services", "CPA 2002.1": "97.00.10", "CPA 2002.2": "970010", "EXIOBASE_2.0": "p95"},
         ],
     )
     cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
-    pd.DataFrame([{"CPA2002_SOURCE_CODE": "95.00", "CPA2008_TARGET_CODE": "97.00"}]).to_csv(cpa02_08, index=False)
+    pd.DataFrame(
+        [
+            {"CPA2002_SOURCE_CODE": "95.00", "CPA2008_TARGET_CODE": "97.00"},
+            {"CPA2002_SOURCE_CODE": "96.00", "CPA2008_TARGET_CODE": "98.00"},
+            {"CPA2002_SOURCE_CODE": "97.00", "CPA2008_TARGET_CODE": "98.00"},
+        ]
+    ).to_csv(cpa02_08, index=False)
     cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
-    pd.DataFrame([{"CPA2008_SOURCE_CODE": "97.00", "CPA21_TARGET_CODE": "97.00"}]).to_csv(cpa08_21, index=False)
+    pd.DataFrame(
+        [
+            {"CPA2008_SOURCE_CODE": "97.00", "CPA21_TARGET_CODE": "97.00"},
+            {"CPA2008_SOURCE_CODE": "98.00", "CPA21_TARGET_CODE": "98.00"},
+        ]
+    ).to_csv(cpa08_21, index=False)
     dictionary = tmp_path / "cpa65_dictionary.csv"
-    pd.DataFrame([{"code": "CPA_T", "label": "Household services", "description": "dictionary text is not parsed"}]).to_csv(dictionary, index=False)
+    pd.DataFrame(
+        [{"code": "CPA_T", "label": "Household services", "description": "dictionary text is not parsed"}]
+    ).to_csv(dictionary, index=False)
     division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
     pd.DataFrame(
-        [{"target_version": "CPA_65", "target_code": "CPA_T", "target_label": "Household services", "iot_a64_code": "T", "cpa21_division": "97"}]
+        [
+            {"target_version": "CPA_65", "target_code": "CPA_T", "target_label": "Household services", "iot_a64_code": "T", "cpa21_division": "97"},
+            {"target_version": "CPA_65", "target_code": "CPA_T", "target_label": "Household services", "iot_a64_code": "T", "cpa21_division": "98"},
+        ]
     ).to_csv(division_map, index=False)
 
-    try:
-        module.build_official_mapping(
-            esa59_path=esa,
-            exio20_exio30_path=exio_bridge,
-            cpa2002_cpa2008_path=cpa02_08,
-            cpa2008_cpa21_path=cpa08_21,
-            target_dictionary=dictionary,
-            target_division_map=division_map,
-            target_version="cpa65",
-            cpa2002_exiobase_path=direct,
-        )
-    except ValueError as exc:
-        assert "First-step EXIOBASE2->old-CPA two-source closure failed" in str(exc)
-    else:
-        raise AssertionError("Expected missing right-side old CPA code to fail")
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
 
+    assert result.diagnostics.empty
+    assert set(result.edges.loc[result.edges["exio20_product_code"] == "p95", "esa59_product_code"]) == {"95", "96", "97"}
+    assert set(result.mapping.loc[result.mapping["source_code"] == "p95", "target_code"]) == {"CPA_T"}
 
 def test_intermediate_mapping_step_fails_on_unmapped_required_source(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_intermediate_fail")

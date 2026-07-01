@@ -42,6 +42,7 @@ DEFAULT_CPA64_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eu
 DEFAULT_CPA65_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv"
 DEFAULT_CPA64_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_to_cpa21_divisions.csv"
 DEFAULT_CPA65_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_to_cpa21_divisions.csv"
+DEFAULT_FIRST_STEP_CONCILIATION: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "exiobase2_old_cpa2002_first_step_conciliation.csv"
 
 ESA59_SUFFIX: Final[str] = "EXIOBASE20p_ESA59p.txt"
 EXIO20_EXIO30_SUFFIX: Final[str] = "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
@@ -309,6 +310,17 @@ def read_cpa2002_exiobase_mapping(path: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"{path} missing required columns: {missing}")
 
+    # Treat the archived direct CPA2002 workbook as a real mapping table:
+    # every CPA row used by the workbook must name at least one EXIOBASE2
+    # product, and every EXIOBASE2 cell must have a CPA code.  This catches
+    # one-sided rows before the parser expands semicolon-delimited targets.
+    assert_raw_edge_table_complete(
+        step_name=f"CPA2002 direct EXIOBASE mapping [{path}]",
+        frame=frame,
+        source_col="CPA 2002.1",
+        target_col="EXIOBASE_2.0",
+    )
+
     rows: list[dict[str, str]] = []
     for _, source_row in frame.iterrows():
         cpa_label = clean_text(source_row.get("CPA 2002", ""))
@@ -535,14 +547,107 @@ def _direct_cpa2002_summary(direct_cpa2002: pd.DataFrame) -> dict[str, dict[str,
     return summary
 
 
-def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direct_cpa2002: pd.DataFrame) -> pd.DataFrame:
+CONCILIATION_COLUMNS: Final[set[str]] = {
+    "exio20_product_code",
+    "exio20_product_label",
+    "chosen_old_cpa2002_divisions",
+    "chosen_old_cpa2002_labels",
+    "conciliation_basis",
+    "esa59_old_cpa2002_divisions",
+    "direct_old_cpa2002_divisions",
+    "notes",
+}
+
+
+def _split_semicolon_codes(value: object) -> list[str]:
+    """Split a curated semicolon code cell without inventing classifications."""
+
+    return [clean_text(part) for part in clean_text(value).split(";") if clean_text(part)]
+
+
+def read_first_step_conciliation_map(path: Path | None) -> pd.DataFrame:
+    """Read the curated EXIOBASE2 old-CPA first-step conflict conciliation map.
+
+    Economics purpose: the two official first-step sources sometimes disagree for
+    the same EXIOBASE2 product.  The generator must not hard-code which source wins
+    for those cases.  This small curated table records the explicit product-level
+    decision, the rejected source alternatives, and the economic rationale.
+    """
+
+    columns = [
+        "exio20_product_code",
+        "exio20_product_label",
+        "chosen_old_cpa2002_divisions",
+        "chosen_old_cpa2002_labels",
+        "conciliation_basis",
+        "esa59_old_cpa2002_divisions",
+        "direct_old_cpa2002_divisions",
+        "notes",
+    ]
+    if path is None:
+        return pd.DataFrame(columns=columns)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing first-step conciliation map: {path}")
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
+    missing = sorted(CONCILIATION_COLUMNS - set(frame.columns))
+    if missing:
+        raise ValueError(f"First-step conciliation map {path} missing columns: {missing}")
+    rows: list[dict[str, str]] = []
+    bad_rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in frame.itertuples(index=False):
+        code = clean_text(getattr(row, "exio20_product_code"))
+        chosen = _split_semicolon_codes(getattr(row, "chosen_old_cpa2002_divisions"))
+        basis = clean_text(getattr(row, "conciliation_basis"))
+        if not code or not chosen or not basis:
+            bad_rows.append({"exio20_product_code": code, "message": "blank product code, chosen divisions, or basis"})
+            continue
+        if code in seen:
+            bad_rows.append({"exio20_product_code": code, "message": "duplicate conciliation row"})
+            continue
+        seen.add(code)
+        rows.append({column: clean_text(getattr(row, column)) for column in columns})
+    _print_mapping_rows("First-step conciliation map invalid rows:", bad_rows)
+    if bad_rows:
+        raise ValueError(f"Invalid first-step conciliation map {path}; see printed rows above.")
+    out = pd.DataFrame.from_records(rows, columns=columns).drop_duplicates().reset_index(drop=True)
+    print(f"Read first-step conciliation map {path}: rows={len(out)}")
+    return out
+
+
+def _first_step_conciliation_by_code(conciliation: pd.DataFrame | None, *, bridge_codes: set[str]) -> dict[str, dict[str, object]]:
+    """Return curated conflict decisions for EXIOBASE2 codes in this bridge."""
+
+    decisions: dict[str, dict[str, object]] = {}
+    if conciliation is None or conciliation.empty:
+        return decisions
+    for row in conciliation.itertuples(index=False):
+        code = clean_text(getattr(row, "exio20_product_code"))
+        if not code or code not in bridge_codes:
+            continue
+        divisions = set(_split_semicolon_codes(getattr(row, "chosen_old_cpa2002_divisions")))
+        labels = _split_semicolon_codes(getattr(row, "chosen_old_cpa2002_labels"))
+        label_by_division = {division: labels[index] if index < len(labels) else "" for index, division in enumerate(sorted(divisions))}
+        decisions[code] = {
+            "divisions": divisions,
+            "label_by_division": label_by_division,
+            "basis": clean_text(getattr(row, "conciliation_basis")),
+            "notes": clean_text(getattr(row, "notes")),
+            "esa59_old_cpa2002_divisions": set(_split_semicolon_codes(getattr(row, "esa59_old_cpa2002_divisions"))),
+            "direct_old_cpa2002_divisions": set(_split_semicolon_codes(getattr(row, "direct_old_cpa2002_divisions"))),
+        }
+    return decisions
+
+
+def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direct_cpa2002: pd.DataFrame, conciliation: pd.DataFrame | None = None) -> pd.DataFrame:
     """Close and validate the two EXIOBASE2->old-CPA first-step mappings.
 
     Economics purpose: ESA59 is the aggregation path used by the generator, while
     CPA2002_6digit_EXIOBASE_FINAL.xlsx is a direct product concordance. Product
-    coverage gaps in either source can be filled from the other source, but the
-    two sources must agree on the old two-digit CPA codomain and on all products
-    covered by both before any CPA2002->CPA2008 bridge is used.
+    and codomain gaps in one source are warnings when the closed union remains
+    complete. Product-level disagreements are different: they require an explicit
+    curated conciliation row because choosing either source changes the economic
+    product boundary passed into the CPA2002->CPA2008 chain.
     """
 
     joined = _join_esa59_to_exio_bridge(esa, bridge)
@@ -582,6 +687,7 @@ def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direc
         for division, examples in labels_by_division.items():
             direct_division_labels.setdefault(division, " | ".join(sorted(examples)[:6]))
     old_division_universe = set(esa_division_labels) | set(direct_division_labels)
+    conciliation_by_code = _first_step_conciliation_by_code(conciliation, bridge_codes=bridge_codes)
 
     # Product-side gaps are printed and allowed only when the peer official source
     # closes them. This is the intentional two-source completion step.
@@ -670,27 +776,88 @@ def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direc
     _print_mapping_rows("First-step direct CPA2002 missing old CPA2002 two-digit codes present in ESA59:", direct_missing_division_rows)
     _print_mapping_rows("First-step ESA59/direct CPA2002 product-level two-digit inconsistencies:", mismatch_rows)
 
-    # The closed first-step mapping must cover every EXIOBASE2 product and every
-    # old-CPA division reached by either official source. Single-source product
-    # gaps are allowed only when the other source closes them; codomain gaps and
-    # pairwise disagreements are not repairable without inventing a mapping.
-    hard_errors = direct_extra_rows + unclosed_rows + esa_without_bridge + esa_missing_division_rows + direct_missing_division_rows + mismatch_rows
+    # Source-specific gaps are warnings: the economic requirement is that the
+    # closed union of official first-step sources preserves every EXIOBASE2 product
+    # and every old-CPA division before downstream correspondence is composed.
+    # Actual product-level disagreements still require a curated row; otherwise the
+    # generator would be silently choosing between incompatible product boundaries.
+    mismatch_codes = {row["exio20_code"] for row in mismatch_rows}
+    resolved_mismatch_rows: list[dict[str, str]] = []
+    unresolved_mismatch_rows: list[dict[str, str]] = []
+    bad_conciliation_rows: list[dict[str, str]] = []
+    for code in sorted(mismatch_codes):
+        info = bridge_labels[code]
+        resolution = conciliation_by_code.get(code)
+        esa_divisions = {target_code for target_code, _ in esa_by_code.get(code, set())}
+        direct_entry = direct_by_code.get(code, {"divisions": set(), "labels_by_division": {}})
+        direct_divisions = cast(set[str], direct_entry.get("divisions", set()))
+        observed_union = esa_divisions | direct_divisions
+        if resolution is None:
+            unresolved_mismatch_rows.append(
+                {
+                    "exio20_code": code,
+                    "exio20_label": info["exio20_product_name"],
+                    "message": "missing curated conciliation row for ESA59/direct CPA2002 conflict",
+                }
+            )
+            continue
+        chosen = cast(set[str], resolution["divisions"])
+        invented = sorted(chosen - observed_union)
+        if invented:
+            bad_conciliation_rows.append(
+                {
+                    "exio20_code": code,
+                    "exio20_label": info["exio20_product_name"],
+                    "invented_old_cpa2002_divisions": ";".join(invented),
+                    "observed_old_cpa2002_divisions": ";".join(sorted(observed_union)),
+                }
+            )
+            continue
+        resolved_mismatch_rows.append(
+            {
+                "exio20_code": code,
+                "exio20_label": info["exio20_product_name"],
+                "chosen_old_cpa2002_divisions": ";".join(sorted(chosen)),
+                "conciliation_basis": clean_text(resolution.get("basis", "")),
+            }
+        )
+
+    stale_conciliation_rows = [
+        {
+            "exio20_code": code,
+            "exio20_label": bridge_labels[code]["exio20_product_name"],
+            "message": "conciliation row applies to this bridge product but no current ESA59/direct conflict exists",
+        }
+        for code in sorted((set(conciliation_by_code) & bridge_codes) - mismatch_codes)
+    ]
+    _print_mapping_rows("First-step ESA59/direct CPA2002 product-level conflicts resolved by curated conciliation:", resolved_mismatch_rows)
+    _print_mapping_rows("First-step ESA59/direct CPA2002 conflicts missing curated conciliation:", unresolved_mismatch_rows)
+    _print_mapping_rows("First-step curated conciliation rows with non-observed old CPA divisions:", bad_conciliation_rows)
+    _print_mapping_rows("First-step stale curated conciliation rows:", stale_conciliation_rows)
+
+    hard_errors = direct_extra_rows + unclosed_rows + esa_without_bridge + unresolved_mismatch_rows + bad_conciliation_rows + stale_conciliation_rows
     if hard_errors:
         raise ValueError("First-step EXIOBASE2->old-CPA two-source closure failed; see printed coverage/inconsistency rows above.")
 
     records: list[dict[str, str]] = []
     for exio_code in sorted(bridge_codes):
         info = bridge_labels[exio_code]
-        targets = sorted(esa_by_code.get(exio_code, set()))
-        source = "ESA59_EXIOBASE20p_ESA59p"
-        if not targets:
-            direct_entry = direct_by_code.get(exio_code, {"divisions": set(), "labels_by_division": {}})
-            labels_by_division = cast(dict[str, set[str]], direct_entry.get("labels_by_division", {}))
-            targets = [
-                (division, "CPA2002 direct fallback: " + " | ".join(sorted(labels_by_division.get(division, set()))[:8]))
-                for division in sorted(cast(set[str], direct_entry.get("divisions", set())))
-            ]
-            source = "CPA2002_6digit_EXIOBASE_FINAL_fallback"
+        if exio_code in mismatch_codes:
+            resolution = conciliation_by_code[exio_code]
+            label_by_division = cast(dict[str, str], resolution.get("label_by_division", {}))
+            targets = [(division, label_by_division.get(division, "")) for division in sorted(cast(set[str], resolution["divisions"]))]
+            source = "curated_first_step_conciliation"
+        else:
+            targets = sorted(esa_by_code.get(exio_code, set()))
+            source = "ESA59_EXIOBASE20p_ESA59p"
+            if not targets:
+                direct_entry = direct_by_code.get(exio_code, {"divisions": set(), "labels_by_division": {}})
+                labels_by_division = cast(dict[str, set[str]], direct_entry.get("labels_by_division", {}))
+                targets = [
+                    (division, "CPA2002 direct fallback: " + " | ".join(sorted(labels_by_division.get(division, set()))[:8]))
+                    for division in sorted(cast(set[str], direct_entry.get("divisions", set())))
+                ]
+                source = "CPA2002_6digit_EXIOBASE_FINAL_fallback"
         for old_code, old_label in targets:
             records.append(
                 {
@@ -1112,6 +1279,7 @@ def build_official_mapping(
     target_division_map: Path,
     target_version: str,
     cpa2002_exiobase_path: Path | None = None,
+    first_step_conciliation_path: Path | None = None,
 ) -> BuildResult:
     """Build EXIOBASE3 -> CPA64/65 using official/source concordance chains."""
 
@@ -1121,8 +1289,10 @@ def build_official_mapping(
     cpa2008_to_21 = read_correspondence(cpa2008_cpa21_path, source_tokens=("source", "from", "2008"), target_tokens=("target", "to", "21", "2.1"))
     labels, division_to_targets = load_target_division_map(target_division_map, target_dictionary=target_dictionary, target_version=target_version)
     direct_cpa2002 = read_cpa2002_exiobase_mapping(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else pd.DataFrame()
+    conciliation_path = first_step_conciliation_path if first_step_conciliation_path is not None else DEFAULT_FIRST_STEP_CONCILIATION
+    first_step_conciliation = read_first_step_conciliation_map(conciliation_path)
 
-    joined = build_closed_first_step_edges(esa, bridge, direct_cpa2002)
+    joined = build_closed_first_step_edges(esa, bridge, direct_cpa2002, first_step_conciliation)
 
     old_division_labels = {
         clean_text(getattr(row, "esa59_product_code")): clean_text(getattr(row, "esa59_product_label"))
@@ -1222,8 +1392,8 @@ def build_official_mapping(
                     "provenance": "EXIOBASE_ESA59_and_Eurostat_RAMON_official_correspondence_chain",
                     "certainty": "source-concordance-derived",
                     "allocation_rule": allocation_rule,
-                    "source_name": "EXIOBASE20p_ESA59p + EXIOBASE2->3 + RAMON CPA correspondences",
-                    "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
+                    "source_name": "EXIOBASE20p_ESA59p + CPA2002_6digit_EXIOBASE_FINAL + EXIOBASE2->3 + RAMON CPA correspondences",
+                    "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_exiobase_path or "", conciliation_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
                     "notes": (
                         f"ESA59 old product group(s) {esa59_product_codes}: {esa59_product_labels}. "
                         f"Resolved CPA2.1 division(s) {cpa21_divisions}. "
@@ -1245,6 +1415,8 @@ def build_official_mapping(
         "exio20_exio30_sha256": sha256_file(exio20_exio30_path),
         "cpa2002_exiobase_path": str(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else "",
         "cpa2002_exiobase_sha256": sha256_file(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else "",
+        "first_step_conciliation_path": str(conciliation_path),
+        "first_step_conciliation_sha256": sha256_file(conciliation_path),
         "cpa2002_cpa2008_path": str(cpa2002_cpa2008_path),
         "cpa2002_cpa2008_sha256": sha256_file(cpa2002_cpa2008_path),
         "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
@@ -1296,7 +1468,7 @@ def write_outputs(
         "created_by_script": "scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py",
         "method_notes": [
             "No hard-coded NSI->CPA table is used.",
-            "EXIOBASE2 products are mapped through a closed first-step comparison of EXIOBASE20p_ESA59p.txt and CPA2002_6digit_EXIOBASE_FINAL.xlsx.",
+            "EXIOBASE2 products are mapped through a closed first-step comparison of EXIOBASE20p_ESA59p.txt and CPA2002_6digit_EXIOBASE_FINAL.xlsx, with product-level conflicts resolved only by scripts/mappings/exiobase2_old_cpa2002_first_step_conciliation.csv.",
             "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
             "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
             "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
@@ -1317,6 +1489,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--esa59-member", default=ESA59_MEMBER)
     parser.add_argument("--exio20-exio30-member", default=EXIO20_EXIO30_MEMBER)
     parser.add_argument("--cpa2002-exiobase-member", default=CPA2002_EXIOBASE_MEMBER)
+    parser.add_argument("--first-step-conciliation", type=Path, default=DEFAULT_FIRST_STEP_CONCILIATION)
     parser.add_argument("--cpa2002-cpa2008", type=Path, default=DEFAULT_CPA2002_CPA2008)
     parser.add_argument("--cpa2008-cpa21", type=Path, default=DEFAULT_CPA2008_CPA21)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
@@ -1362,6 +1535,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_division_map=target_division_map,
             target_version=args.target_version,
             cpa2002_exiobase_path=cpa2002_exiobase_path,
+            first_step_conciliation_path=args.first_step_conciliation,
         )
 
     official_source = "; ".join(
@@ -1371,6 +1545,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{args.concordances_zip}::{cpa2002_exiobase_member}",
             str(args.cpa2002_cpa2008),
             str(args.cpa2008_cpa21),
+            str(args.first_step_conciliation),
             str(target_division_map),
         ]
     )
@@ -1391,6 +1566,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "cpa2002_exiobase_member": cpa2002_exiobase_member,
             "cpa2002_exiobase_path": f"{args.concordances_zip}::{cpa2002_exiobase_member}",
             "cpa2002_exiobase_sha256": sha256_bytes(cpa2002_exiobase_bytes),
+            "first_step_conciliation_path": str(args.first_step_conciliation),
+            "first_step_conciliation_sha256": sha256_file(args.first_step_conciliation),
             "target_division_map_path": str(target_division_map),
             "target_division_map_sha256": sha256_file(target_division_map),
         }
