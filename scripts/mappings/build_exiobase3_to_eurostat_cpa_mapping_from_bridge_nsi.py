@@ -89,6 +89,18 @@ class BuildResult:
     coverage: dict[str, object]
 
 
+@dataclass(frozen=True)
+class DivisionStepAudit:
+    """Two-digit source/target universes derived from one correspondence file."""
+
+    name: str
+    edges: pd.DataFrame
+    source_universe: set[str]
+    target_universe: set[str]
+    source_labels: dict[str, str]
+    target_labels: dict[str, str]
+
+
 def clean_text(value: object) -> str:
     """Normalize text for stable keys."""
 
@@ -292,8 +304,6 @@ def read_exio20_to_exio30_bridge(path: Path) -> pd.DataFrame:
     return out.loc[:, ["exio20_product_name", "exio20_product_name_norm", "exio20_product_code", "exio3_product_name", "exio3_product_code"]].drop_duplicates()
 
 
-
-
 def read_cpa2002_exiobase_mapping(path: Path) -> pd.DataFrame:
     """Read the archived direct CPA2002 6-digit -> EXIOBASE2 product mapping.
 
@@ -322,11 +332,15 @@ def read_cpa2002_exiobase_mapping(path: Path) -> pd.DataFrame:
     )
 
     rows: list[dict[str, str]] = []
+    bad_code_rows: list[dict[str, str]] = []
     for _, source_row in frame.iterrows():
         cpa_label = clean_text(source_row.get("CPA 2002", ""))
         cpa_code = clean_text(source_row.get("CPA 2002.1", ""))
         compact_code = clean_text(source_row.get("CPA 2002.2", ""))
         division = cpa_division_from_code(cpa_code)
+        if cpa_code and not division:
+            bad_code_rows.append({"cpa2002_code": cpa_code, "cpa2002_label": cpa_label, "exio20_cell": clean_text(source_row.get("EXIOBASE_2.0", ""))})
+            continue
         if not division:
             continue
         # The source workbook uses semicolon-separated EXIOBASE2 codes for some
@@ -345,6 +359,10 @@ def read_cpa2002_exiobase_mapping(path: Path) -> pd.DataFrame:
                     "cpa2002_division": division,
                 }
             )
+    _print_mapping_rows("CPA2002 direct EXIOBASE rows with unparsable CPA code:", bad_code_rows)
+    if bad_code_rows:
+        raise ValueError(f"CPA2002 direct EXIOBASE mapping {path} contains nonblank CPA codes without a two-digit division.")
+
     out = pd.DataFrame.from_records(
         rows,
         columns=[
@@ -621,23 +639,49 @@ def _first_step_conciliation_by_code(conciliation: pd.DataFrame | None, *, bridg
     decisions: dict[str, dict[str, object]] = {}
     if conciliation is None or conciliation.empty:
         return decisions
+    outside_bridge_rows: list[dict[str, str]] = []
+    bad_rows: list[dict[str, str]] = []
     for row in conciliation.itertuples(index=False):
         code = clean_text(getattr(row, "exio20_product_code"))
-        if not code or code not in bridge_codes:
+        if not code:
             continue
-        divisions = set(_split_semicolon_codes(getattr(row, "chosen_old_cpa2002_divisions")))
-        labels = _split_semicolon_codes(getattr(row, "chosen_old_cpa2002_labels"))
-        label_by_division = {division: labels[index] if index < len(labels) else "" for index, division in enumerate(sorted(divisions))}
+        if code not in bridge_codes:
+            # The default curated conciliation file is for the full official
+            # EXIOBASE2 bridge, while unit tests and ad-hoc calls often use small
+            # bridge subsets.  Rows outside the current subset are therefore not
+            # stale for this run; print them for auditability and ignore them.
+            outside_bridge_rows.append({"exio20_product_code": code, "message": "conciliation product code not present in this EXIOBASE2 bridge subset; ignored"})
+            continue
+        divisions_ordered = _split_semicolon_codes(getattr(row, "chosen_old_cpa2002_divisions"))
+        labels_ordered = _split_semicolon_codes(getattr(row, "chosen_old_cpa2002_labels"))
+        if labels_ordered and len(labels_ordered) != len(divisions_ordered):
+            bad_rows.append(
+                {
+                    "exio20_product_code": code,
+                    "chosen_old_cpa2002_divisions": ";".join(divisions_ordered),
+                    "message": "chosen division/label counts differ",
+                }
+            )
+            continue
+        divisions = set(divisions_ordered)
+        label_by_division = {
+            division: labels_ordered[index] if index < len(labels_ordered) else ""
+            for index, division in enumerate(divisions_ordered)
+        }
         decisions[code] = {
             "divisions": divisions,
+            "divisions_ordered": divisions_ordered,
             "label_by_division": label_by_division,
             "basis": clean_text(getattr(row, "conciliation_basis")),
             "notes": clean_text(getattr(row, "notes")),
             "esa59_old_cpa2002_divisions": set(_split_semicolon_codes(getattr(row, "esa59_old_cpa2002_divisions"))),
             "direct_old_cpa2002_divisions": set(_split_semicolon_codes(getattr(row, "direct_old_cpa2002_divisions"))),
         }
+    _print_mapping_rows("First-step conciliation rows outside current EXIOBASE2 bridge subset; ignored:", outside_bridge_rows)
+    _print_mapping_rows("First-step conciliation rows with malformed labels:", bad_rows)
+    if bad_rows:
+        raise ValueError("Invalid first-step conciliation map; see printed rows above.")
     return decisions
-
 
 def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direct_cpa2002: pd.DataFrame, conciliation: pd.DataFrame | None = None) -> pd.DataFrame:
     """Close and validate the two EXIOBASE2->old-CPA first-step mappings.
@@ -802,16 +846,27 @@ def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direc
             )
             continue
         chosen = cast(set[str], resolution["divisions"])
+        recorded_esa = cast(set[str], resolution.get("esa59_old_cpa2002_divisions", set()))
+        recorded_direct = cast(set[str], resolution.get("direct_old_cpa2002_divisions", set()))
         invented = sorted(chosen - observed_union)
-        if invented:
-            bad_conciliation_rows.append(
-                {
-                    "exio20_code": code,
-                    "exio20_label": info["exio20_product_name"],
-                    "invented_old_cpa2002_divisions": ";".join(invented),
-                    "observed_old_cpa2002_divisions": ";".join(sorted(observed_union)),
-                }
-            )
+        evidence_mismatch = recorded_esa != esa_divisions or recorded_direct != direct_divisions
+        if invented or evidence_mismatch:
+            row = {
+                "exio20_code": code,
+                "exio20_label": info["exio20_product_name"],
+                "invented_old_cpa2002_divisions": ";".join(invented),
+                "observed_old_cpa2002_divisions": ";".join(sorted(observed_union)),
+            }
+            if evidence_mismatch:
+                row.update(
+                    {
+                        "recorded_esa59_old_cpa2002_divisions": ";".join(sorted(recorded_esa)),
+                        "actual_esa59_old_cpa2002_divisions": ";".join(sorted(esa_divisions)),
+                        "recorded_direct_old_cpa2002_divisions": ";".join(sorted(recorded_direct)),
+                        "actual_direct_old_cpa2002_divisions": ";".join(sorted(direct_divisions)),
+                    }
+                )
+            bad_conciliation_rows.append(row)
             continue
         resolved_mismatch_rows.append(
             {
@@ -906,6 +961,119 @@ def _active_prefix_edges(
     return pd.DataFrame.from_records(records, columns=["required_source_code", "source_code", "target_code", "source_raw", "target_raw"])
 
 
+def _correspondence_division_edges(frame: pd.DataFrame, *, step_name: str) -> pd.DataFrame:
+    """Normalize one source/target correspondence table to two-digit division edges."""
+
+    records: list[dict[str, str]] = []
+    bad_rows: list[dict[str, str]] = []
+    for row in frame.itertuples(index=False):
+        source_code = clean_text(getattr(row, "source_code"))
+        target_code = clean_text(getattr(row, "target_code"))
+        source_raw = clean_text(getattr(row, "source_raw", ""))
+        target_raw = clean_text(getattr(row, "target_raw", ""))
+        source_division = cpa_division_from_code(source_code)
+        target_division = cpa_division_from_code(target_code)
+        if source_code and not source_division:
+            bad_rows.append({"source_code": source_code, "target_code": target_code, "message": "source code has no two-digit division"})
+        if target_code and not target_division:
+            bad_rows.append({"source_code": source_code, "target_code": target_code, "message": "target code has no two-digit division"})
+        if source_division and target_division:
+            records.append(
+                {
+                    "source_division": source_division,
+                    "target_division": target_division,
+                    "source_raw": source_raw or source_code,
+                    "target_raw": target_raw or target_code,
+                }
+            )
+    _print_mapping_rows(f"Correspondence rows without two-digit divisions [{step_name}]:", bad_rows)
+    if bad_rows:
+        raise ValueError(f"Correspondence {step_name!r} contains codes that cannot be normalized to two-digit divisions.")
+    edges = pd.DataFrame.from_records(records, columns=["source_division", "target_division", "source_raw", "target_raw"]).drop_duplicates()
+    if edges.empty:
+        raise ValueError(f"Correspondence {step_name!r} produced no two-digit division edges.")
+    return edges.reset_index(drop=True)
+
+
+def _division_labels_from_edges(edges: pd.DataFrame, *, code_col: str, label_col: str) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for row in edges.itertuples(index=False):
+        code = clean_text(getattr(row, code_col))
+        label = clean_text(getattr(row, label_col, ""))
+        if code and label:
+            labels.setdefault(code, label)
+    return labels
+
+
+def audit_correspondence_division_step(frame: pd.DataFrame, *, step_name: str) -> DivisionStepAudit:
+    """Audit one official correspondence using that file's own two-digit universe."""
+
+    edges = _correspondence_division_edges(frame, step_name=step_name)
+    source_universe = _code_set(edges["source_division"].astype(str).tolist())
+    target_universe = _code_set(edges["target_division"].astype(str).tolist())
+    source_labels = _division_labels_from_edges(edges, code_col="source_division", label_col="source_raw")
+    target_labels = _division_labels_from_edges(edges, code_col="target_division", label_col="target_raw")
+    assert_mapping_step_coverage(
+        step_name=step_name,
+        required_left_codes=source_universe,
+        mapped_left_codes=edges["source_division"].astype(str).tolist(),
+        required_right_codes=target_universe,
+        mapped_right_codes=edges["target_division"].astype(str).tolist(),
+        left_labels=source_labels,
+        right_labels=target_labels,
+    )
+    return DivisionStepAudit(
+        name=step_name,
+        edges=edges,
+        source_universe=source_universe,
+        target_universe=target_universe,
+        source_labels=source_labels,
+        target_labels=target_labels,
+    )
+
+
+def assert_code_universes_equal(
+    *,
+    boundary_name: str,
+    left_codes: Iterable[str],
+    right_codes: Iterable[str],
+    left_labels: dict[str, str] | None = None,
+    right_labels: dict[str, str] | None = None,
+) -> None:
+    """Require exact equality between adjacent normalized classification universes."""
+
+    left = _code_set(left_codes)
+    right = _code_set(right_codes)
+    left_label_map = left_labels or {}
+    right_label_map = right_labels or {}
+    left_only = sorted(left - right)
+    right_only = sorted(right - left)
+    print(
+        f"Cross-step universe equality [{boundary_name}]: "
+        f"left={len(left)} right={len(right)} left_only={len(left_only)} right_only={len(right_only)}"
+    )
+    _print_mapping_rows(
+        f"Cross-step codes only on left [{boundary_name}]:",
+        [{"code": code, "label": left_label_map.get(code, "")} for code in left_only],
+    )
+    _print_mapping_rows(
+        f"Cross-step codes only on right [{boundary_name}]:",
+        [{"code": code, "label": right_label_map.get(code, "")} for code in right_only],
+    )
+    if left_only or right_only:
+        raise ValueError(f"Cross-step universe mismatch [{boundary_name}]; see printed code rows above.")
+
+
+def _targets_by_source_division(edges: pd.DataFrame) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for row in edges.itertuples(index=False):
+        source = clean_text(getattr(row, "source_division"))
+        target = clean_text(getattr(row, "target_division"))
+        if source and target:
+            out.setdefault(source, set()).add(target)
+    return out
+
+
 def compose_old_divisions_to_cpa21_divisions_checked(
     cpa2002_to_2008: pd.DataFrame,
     cpa2008_to_21: pd.DataFrame,
@@ -914,81 +1082,67 @@ def compose_old_divisions_to_cpa21_divisions_checked(
     division_to_targets: dict[str, set[str]],
     target_labels: dict[str, str],
 ) -> dict[str, set[str]]:
-    """Compose old CPA divisions to CPA2.1 divisions with full edge checks."""
+    """Compose old CPA divisions to CPA2.1 divisions with explicit universe checks.
+
+    The code universes for intermediate classifications are the official
+    correspondence files themselves, normalized to two-digit divisions.  We do not
+    introduce separate CPA2002/CPA2008/CPA2.1 dictionaries here.
+    """
 
     old_required = {clean_text(code) for code in old_division_labels if clean_text(code)}
-    old_to_2008_edges = _active_prefix_edges(cpa2002_to_2008, required_left_codes=old_required)
-    old_to_cpa2008: dict[str, set[str]] = {}
-    cpa2008_labels: dict[str, str] = {}
-    for row in old_to_2008_edges.itertuples(index=False):
-        required_code = clean_text(getattr(row, "required_source_code"))
-        target_code = clean_text(getattr(row, "target_code"))
-        if required_code and target_code:
-            old_to_cpa2008.setdefault(required_code, set()).add(target_code)
-            cpa2008_labels.setdefault(target_code, clean_text(getattr(row, "target_raw", "")))
-    cpa2008_required = set().union(*old_to_cpa2008.values()) if old_to_cpa2008 else set()
-    assert_mapping_step_coverage(
-        step_name="old CPA2002 division -> CPA2008",
-        required_left_codes=old_required,
-        mapped_left_codes={code for code, targets in old_to_cpa2008.items() if targets},
-        required_right_codes=cpa2008_required,
-        mapped_right_codes=old_to_2008_edges["target_code"].astype(str).tolist(),
+    old_to_2008_audit = audit_correspondence_division_step(
+        cpa2002_to_2008,
+        step_name="CPA2002 -> CPA2008 two-digit correspondence-file universe",
+    )
+    cpa2008_to_21_audit = audit_correspondence_division_step(
+        cpa2008_to_21,
+        step_name="CPA2008 -> CPA2.1 two-digit correspondence-file universe",
+    )
+
+    assert_code_universes_equal(
+        boundary_name="closed first-step old CPA divisions -> CPA2002->CPA2008 source divisions",
+        left_codes=old_required,
+        right_codes=old_to_2008_audit.source_universe,
         left_labels=old_division_labels,
-        right_labels=cpa2008_labels,
+        right_labels=old_to_2008_audit.source_labels,
     )
-    assert_active_targets_consumable(
-        boundary_name="CPA2002->CPA2008 targets consumed by CPA2008->CPA2.1 sources",
-        produced_right_codes=cpa2008_required,
-        next_left_codes=cpa2008_to_21["source_code"].astype(str).tolist(),
-        produced_labels=cpa2008_labels,
-    )
-
-    cpa2008_to_21_edges = _active_prefix_edges(cpa2008_to_21, required_left_codes=cpa2008_required)
-    cpa2008_to_cpa21: dict[str, set[str]] = {}
-    cpa21_labels: dict[str, str] = {}
-    for row in cpa2008_to_21_edges.itertuples(index=False):
-        required_code = clean_text(getattr(row, "required_source_code"))
-        target_code = clean_text(getattr(row, "target_code"))
-        if required_code and target_code:
-            cpa2008_to_cpa21.setdefault(required_code, set()).add(target_code)
-            cpa21_labels.setdefault(target_code, clean_text(getattr(row, "target_raw", "")))
-    cpa21_codes = set().union(*cpa2008_to_cpa21.values()) if cpa2008_to_cpa21 else set()
-    assert_mapping_step_coverage(
-        step_name="CPA2008 -> CPA2.1",
-        required_left_codes=cpa2008_required,
-        mapped_left_codes={code for code, targets in cpa2008_to_cpa21.items() if targets},
-        required_right_codes=cpa21_codes,
-        mapped_right_codes=cpa2008_to_21_edges["target_code"].astype(str).tolist(),
-        left_labels=cpa2008_labels,
-        right_labels=cpa21_labels,
+    assert_code_universes_equal(
+        boundary_name="CPA2002->CPA2008 target divisions -> CPA2008->CPA2.1 source divisions",
+        left_codes=old_to_2008_audit.target_universe,
+        right_codes=cpa2008_to_21_audit.source_universe,
+        left_labels=old_to_2008_audit.target_labels,
+        right_labels=cpa2008_to_21_audit.source_labels,
     )
 
-    cpa21_divisions = {division for division in (cpa_division_from_code(code) for code in cpa21_codes) if division}
-    cpa21_division_labels = {division: cpa21_labels.get(code, "") for code in cpa21_codes for division in [cpa_division_from_code(code)] if division}
-    assert_active_targets_consumable(
-        boundary_name="CPA2008->CPA2.1 target divisions consumed by CPA64/CPA65 target bridge",
-        produced_right_codes=cpa21_divisions,
-        next_left_codes=division_to_targets.keys(),
-        produced_labels=cpa21_division_labels,
-    )
-
-    target_codes_reached = {target for division in cpa21_divisions for target in division_to_targets.get(division, set())}
+    final_source_universe = _code_set(division_to_targets.keys())
+    final_target_universe = _code_set(target_labels.keys())
+    final_mapped_left = {division for division, targets in division_to_targets.items() if _code_set(targets)}
+    final_mapped_right = {target for targets in division_to_targets.values() for target in _code_set(targets)}
     assert_mapping_step_coverage(
         step_name="CPA2.1 division -> CPA64/CPA65 target",
-        required_left_codes=cpa21_divisions,
-        mapped_left_codes={division for division in cpa21_divisions if division_to_targets.get(division)},
-        required_right_codes=target_labels.keys(),
-        mapped_right_codes=target_codes_reached,
-        left_labels=cpa21_division_labels,
+        required_left_codes=final_source_universe,
+        mapped_left_codes=final_mapped_left,
+        required_right_codes=final_target_universe,
+        mapped_right_codes=final_mapped_right,
+        left_labels=cpa2008_to_21_audit.target_labels,
         right_labels=target_labels,
     )
+    assert_code_universes_equal(
+        boundary_name="CPA2008->CPA2.1 target divisions -> CPA64/CPA65 source divisions",
+        left_codes=cpa2008_to_21_audit.target_universe,
+        right_codes=final_source_universe,
+        left_labels=cpa2008_to_21_audit.target_labels,
+        right_labels={division: ";".join(sorted(division_to_targets.get(division, set()))) for division in final_source_universe},
+    )
 
+    old_to_2008 = _targets_by_source_division(old_to_2008_audit.edges)
+    cpa2008_to_21 = _targets_by_source_division(cpa2008_to_21_audit.edges)
     old_to_current: dict[str, set[str]] = {}
-    for old_code, cpa2008_codes in old_to_cpa2008.items():
+    for old_code in sorted(old_required):
         current_codes: set[str] = set()
-        for cpa2008_code in cpa2008_codes:
-            current_codes.update(cpa2008_to_cpa21.get(cpa2008_code, set()))
-        old_to_current[old_code] = {division for division in (cpa_division_from_code(code) for code in current_codes) if division}
+        for cpa2008_code in old_to_2008.get(old_code, set()):
+            current_codes.update(cpa2008_to_21.get(cpa2008_code, set()))
+        old_to_current[old_code] = current_codes
     return old_to_current
 
 def summarize_exio20_to_exio30_bridge_multiplicity(bridge: pd.DataFrame) -> dict[str, list[dict[str, str]]]:
