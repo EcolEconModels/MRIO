@@ -45,8 +45,10 @@ DEFAULT_CPA65_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "
 
 ESA59_SUFFIX: Final[str] = "EXIOBASE20p_ESA59p.txt"
 EXIO20_EXIO30_SUFFIX: Final[str] = "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+CPA2002_EXIOBASE_SUFFIX: Final[str] = "CPA2002_6digit_EXIOBASE_FINAL.xlsx"
 ESA59_MEMBER: Final[str] = "Concordances/Different aggregations/EXIOBASE20p_ESA59p.txt"
 EXIO20_EXIO30_MEMBER: Final[str] = "Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+CPA2002_EXIOBASE_MEMBER: Final[str] = "Concordances/Archive/International classifications/CPA2002_6digit_EXIOBASE_FINAL.xlsx"
 
 CANONICAL_COLUMNS: Final[tuple[str, ...]] = (
     "order",
@@ -289,6 +291,539 @@ def read_exio20_to_exio30_bridge(path: Path) -> pd.DataFrame:
     return out.loc[:, ["exio20_product_name", "exio20_product_name_norm", "exio20_product_code", "exio3_product_name", "exio3_product_code"]].drop_duplicates()
 
 
+
+
+def read_cpa2002_exiobase_mapping(path: Path) -> pd.DataFrame:
+    """Read the archived direct CPA2002 6-digit -> EXIOBASE2 product mapping.
+
+    Economics purpose: this workbook is an independent product-classification
+    concordance for the first EXIOBASE2-product classification step. It is not an
+    allocation-share table. Some rows point to several EXIOBASE2 products with
+    semicolon-separated codes, so the parser expands those cells before any
+    coverage or consistency check.
+    """
+
+    frame = pd.read_excel(path, dtype=str).fillna("")
+    required = {"CPA 2002", "CPA 2002.1", "EXIOBASE_2.0"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"{path} missing required columns: {missing}")
+
+    rows: list[dict[str, str]] = []
+    for _, source_row in frame.iterrows():
+        cpa_label = clean_text(source_row.get("CPA 2002", ""))
+        cpa_code = clean_text(source_row.get("CPA 2002.1", ""))
+        compact_code = clean_text(source_row.get("CPA 2002.2", ""))
+        division = cpa_division_from_code(cpa_code)
+        if not division:
+            continue
+        # The source workbook uses semicolon-separated EXIOBASE2 codes for some
+        # many-product CPA rows. Split only on explicit source delimiters; do not
+        # infer extra product codes from labels.
+        for part in clean_text(source_row.get("EXIOBASE_2.0", "")).split(";"):
+            exio_code = clean_text(part)
+            if not exio_code:
+                continue
+            rows.append(
+                {
+                    "exio20_product_code": exio_code,
+                    "cpa2002_code": cpa_code,
+                    "cpa2002_compact_code": compact_code,
+                    "cpa2002_label": cpa_label,
+                    "cpa2002_division": division,
+                }
+            )
+    out = pd.DataFrame.from_records(
+        rows,
+        columns=[
+            "exio20_product_code",
+            "cpa2002_code",
+            "cpa2002_compact_code",
+            "cpa2002_label",
+            "cpa2002_division",
+        ],
+    ).drop_duplicates()
+    if out.empty:
+        raise ValueError(f"No usable CPA2002->EXIOBASE2 rows parsed from {path}")
+    return out.reset_index(drop=True)
+
+
+def _mapping_label(code: str, label: str) -> str:
+    """Render a compact code+label cell for diagnostics."""
+
+    return f"{code}: {label}" if label else code
+
+
+def _print_mapping_rows(title: str, rows: list[dict[str, str]]) -> None:
+    """Print coverage rows in a stable human-readable form."""
+
+    print(title)
+    if not rows:
+        print("  none")
+        return
+    for row in rows:
+        rendered = "; ".join(f"{key}={value}" for key, value in row.items() if value)
+        print(f"  - {rendered}")
+
+
+def _code_set(values: Iterable[object]) -> set[str]:
+    """Normalize a sequence of classification codes into a non-empty-code set."""
+
+    return {clean_text(value) for value in values if clean_text(value)}
+
+
+def assert_mapping_step_coverage(
+    *,
+    step_name: str,
+    required_left_codes: Iterable[str],
+    mapped_left_codes: Iterable[str],
+    required_right_codes: Iterable[str],
+    mapped_right_codes: Iterable[str],
+    left_labels: dict[str, str] | None = None,
+    right_labels: dict[str, str] | None = None,
+) -> None:
+    """Print and enforce both-side coverage for a declared mapping universe.
+
+    Economics purpose: a concordance step is only valid over the code universe it
+    claims to classify. If a source-side code has no target, output disappears; if
+    a required target-side code has no source, the target classification is not
+    actually reachable. The universes are passed in from source data or adjacent
+    official mappings, never hard-coded into this helper.
+    """
+
+    left_label_map = left_labels or {}
+    right_label_map = right_labels or {}
+    required_left = _code_set(required_left_codes)
+    mapped_left = _code_set(mapped_left_codes)
+    required_right = _code_set(required_right_codes)
+    mapped_right = _code_set(mapped_right_codes)
+    missing_left = sorted(required_left - mapped_left)
+    missing_right = sorted(required_right - mapped_right)
+    print(
+        f"Mapping-step coverage [{step_name}]: "
+        f"required_left={len(required_left)} mapped_left={len(mapped_left & required_left)} "
+        f"required_right={len(required_right)} mapped_right={len(mapped_right & required_right)}"
+    )
+    _print_mapping_rows(
+        f"Mapping-step missing left codes [{step_name}]:",
+        [{"code": code, "label": left_label_map.get(code, "")} for code in missing_left],
+    )
+    _print_mapping_rows(
+        f"Mapping-step missing right codes [{step_name}]:",
+        [{"code": code, "label": right_label_map.get(code, "")} for code in missing_right],
+    )
+    if missing_left or missing_right:
+        raise ValueError(f"Mapping step {step_name!r} has unmapped required codes; see printed coverage rows above.")
+
+
+def assert_raw_edge_table_complete(
+    *,
+    step_name: str,
+    frame: pd.DataFrame,
+    source_col: str,
+    target_col: str,
+) -> None:
+    """Fail if a raw correspondence table has one-sided rows before filtering.
+
+    Software purpose: the old implementation silently dropped rows where one side
+    of a RAMON correspondence was blank. Dropping a row is itself a mapping
+    decision, so the generator now reports those rows and stops instead.
+    """
+
+    raw_source = frame[source_col].map(canonical_code)
+    raw_target = frame[target_col].map(canonical_code)
+    missing_source = [
+        {"source": clean_text(source), "target": clean_text(target)}
+        for source, target in zip(raw_source.tolist(), raw_target.tolist(), strict=False)
+        if not clean_text(source) and clean_text(target)
+    ]
+    missing_target = [
+        {"source": clean_text(source), "target": clean_text(target)}
+        for source, target in zip(raw_source.tolist(), raw_target.tolist(), strict=False)
+        if clean_text(source) and not clean_text(target)
+    ]
+    print(
+        f"Raw mapping-table completeness [{step_name}]: "
+        f"rows={len(frame)} source_codes={len(_code_set(raw_source.tolist()))} target_codes={len(_code_set(raw_target.tolist()))}"
+    )
+    _print_mapping_rows(f"Raw mapping rows with missing source [{step_name}]:", missing_source)
+    _print_mapping_rows(f"Raw mapping rows with missing target [{step_name}]:", missing_target)
+    if missing_source or missing_target:
+        raise ValueError(f"Raw mapping table {step_name!r} contains one-sided correspondence rows.")
+
+
+def _prefix_related_any(code: str, candidates: Iterable[str]) -> bool:
+    """Return True when a code can be consumed by at least one hierarchical peer."""
+
+    return any(is_prefix_related(clean_text(code), clean_text(candidate)) for candidate in candidates)
+
+
+def assert_active_targets_consumable(
+    *,
+    boundary_name: str,
+    produced_right_codes: Iterable[str],
+    next_left_codes: Iterable[str],
+    produced_labels: dict[str, str] | None = None,
+) -> None:
+    """Ensure target codes produced by one active step are accepted downstream.
+
+    This is the cross-step no-loss invariant. It complements full table
+    completeness: an official mapping table can be internally complete while still
+    producing active targets that the next official table cannot consume.
+    """
+
+    labels = produced_labels or {}
+    produced = _code_set(produced_right_codes)
+    next_left = _code_set(next_left_codes)
+    unconsumed = sorted(code for code in produced if not _prefix_related_any(code, next_left))
+    print(
+        f"Cross-step no-loss [{boundary_name}]: "
+        f"produced_right={len(produced)} next_left_available={len(next_left)} unconsumed={len(unconsumed)}"
+    )
+    _print_mapping_rows(
+        f"Cross-step unconsumed produced codes [{boundary_name}]:",
+        [{"code": code, "label": labels.get(code, "")} for code in unconsumed],
+    )
+    if unconsumed:
+        raise ValueError(f"Cross-step boundary {boundary_name!r} loses produced mapping codes.")
+
+
+def _join_esa59_to_exio_bridge(esa: pd.DataFrame, bridge: pd.DataFrame) -> pd.DataFrame:
+    """Attach EXIOBASE2/3 codes to ESA59 rows using code first, then name.
+
+    The official ESA59 file is normally a matrix keyed by EXIOBASE2 product name
+    only. The EXIOBASE2->3 bridge supplies stable product codes. Keeping this as
+    one explicit boundary prevents later mapping steps from relying on implicit row
+    position or on labels after a code has become available.
+    """
+
+    esa = esa.copy()
+    esa["exio20_product_name_norm"] = esa["exio20_product_name"].map(lambda value: re.sub(r"\W+", "", value.casefold()))
+    with_code = esa.loc[esa["exio20_product_code"].astype(str).str.strip().ne("")].merge(
+        bridge,
+        on="exio20_product_code",
+        how="left",
+        validate="many_to_many",
+    )
+    without_code = esa.loc[esa["exio20_product_code"].astype(str).str.strip().eq("")].merge(
+        bridge,
+        on="exio20_product_name_norm",
+        how="left",
+        validate="many_to_many",
+        suffixes=("", "_bridge"),
+    )
+    return pd.concat([with_code, without_code], ignore_index=True, sort=False).fillna("")
+
+
+def _direct_cpa2002_summary(direct_cpa2002: pd.DataFrame) -> dict[str, dict[str, object]]:
+    """Collapse direct CPA2002 rows to EXIOBASE2-code diagnostics."""
+
+    summary: dict[str, dict[str, object]] = {}
+    if direct_cpa2002.empty:
+        return summary
+    for row in direct_cpa2002.itertuples(index=False):
+        exio_code = clean_text(getattr(row, "exio20_product_code"))
+        division = clean_text(getattr(row, "cpa2002_division"))
+        cpa_code = clean_text(getattr(row, "cpa2002_code"))
+        cpa_label = clean_text(getattr(row, "cpa2002_label"))
+        if not exio_code or not division:
+            continue
+        entry = summary.setdefault(exio_code, {"divisions": set(), "labels_by_division": {}})
+        cast(set[str], entry["divisions"]).add(division)
+        labels_by_division = cast(dict[str, set[str]], entry["labels_by_division"])
+        labels_by_division.setdefault(division, set()).add(_mapping_label(cpa_code, cpa_label))
+    return summary
+
+
+def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direct_cpa2002: pd.DataFrame) -> pd.DataFrame:
+    """Close and validate the two EXIOBASE2->old-CPA first-step mappings.
+
+    Economics purpose: ESA59 is the aggregation path used by the generator, while
+    CPA2002_6digit_EXIOBASE_FINAL.xlsx is a direct product concordance. Product
+    coverage gaps in either source can be filled from the other source, but the
+    two sources must agree on the old two-digit CPA codomain and on all products
+    covered by both before any CPA2002->CPA2008 bridge is used.
+    """
+
+    joined = _join_esa59_to_exio_bridge(esa, bridge)
+    bridge_codes = {clean_text(value) for value in bridge["exio20_product_code"].astype(str) if clean_text(value)}
+    bridge_labels = {
+        clean_text(getattr(row, "exio20_product_code")): {
+            "exio20_product_name": clean_text(getattr(row, "exio20_product_name")),
+            "exio3_product_code": clean_text(getattr(row, "exio3_product_code")),
+            "exio3_product_name": clean_text(getattr(row, "exio3_product_name")),
+        }
+        for row in bridge.itertuples(index=False)
+        if clean_text(getattr(row, "exio20_product_code"))
+    }
+
+    esa_by_code: dict[str, set[tuple[str, str]]] = {}
+    esa_without_bridge: list[dict[str, str]] = []
+    for row in joined.itertuples(index=False):
+        exio_code = clean_text(getattr(row, "exio20_product_code", "")) or clean_text(getattr(row, "exio20_product_code_bridge", ""))
+        esa_code = clean_text(getattr(row, "esa59_product_code", ""))
+        esa_label = clean_text(getattr(row, "esa59_product_label", ""))
+        if not exio_code:
+            esa_without_bridge.append({"esa_code": esa_code, "esa_label": esa_label, "exio20_name": clean_text(getattr(row, "exio20_product_name", ""))})
+            continue
+        if esa_code:
+            esa_by_code.setdefault(exio_code, set()).add((esa_code, esa_label))
+
+    direct_by_code = _direct_cpa2002_summary(direct_cpa2002)
+    direct_codes = set(direct_by_code)
+    esa_codes = set(esa_by_code)
+    esa_division_labels: dict[str, str] = {}
+    for values in esa_by_code.values():
+        for division, label in values:
+            esa_division_labels.setdefault(division, label)
+    direct_division_labels: dict[str, str] = {}
+    for entry in direct_by_code.values():
+        labels_by_division = cast(dict[str, set[str]], entry.get("labels_by_division", {}))
+        for division, examples in labels_by_division.items():
+            direct_division_labels.setdefault(division, " | ".join(sorted(examples)[:6]))
+    old_division_universe = set(esa_division_labels) | set(direct_division_labels)
+
+    # Product-side gaps are printed and allowed only when the peer official source
+    # closes them. This is the intentional two-source completion step.
+    missing_direct_rows: list[dict[str, str]] = []
+    for code in sorted(bridge_codes - direct_codes):
+        info = bridge_labels[code]
+        esa_targets = sorted(esa_by_code.get(code, set()))
+        missing_direct_rows.append(
+            {
+                "exio20_code": code,
+                "exio20_label": info["exio20_product_name"],
+                "filled_from_esa59_old_cpa": " | ".join(_mapping_label(target_code, target_label) for target_code, target_label in esa_targets),
+            }
+        )
+
+    missing_esa_rows: list[dict[str, str]] = []
+    for code in sorted(bridge_codes - esa_codes):
+        info = bridge_labels[code]
+        direct_entry = direct_by_code.get(code, {"divisions": set(), "labels_by_division": {}})
+        labels_by_division = cast(dict[str, set[str]], direct_entry.get("labels_by_division", {}))
+        direct_targets = []
+        for division in sorted(cast(set[str], direct_entry.get("divisions", set()))):
+            examples = " | ".join(sorted(labels_by_division.get(division, set()))[:6])
+            direct_targets.append(_mapping_label(division, examples))
+        missing_esa_rows.append(
+            {
+                "exio20_code": code,
+                "exio20_label": info["exio20_product_name"],
+                "filled_from_direct_cpa2002_old_cpa": " || ".join(direct_targets),
+            }
+        )
+
+    direct_extra_rows = [
+        {"exio20_code": code, "message": "Direct CPA2002 workbook refers to an EXIOBASE2 code absent from the EXIOBASE2->3 bridge."}
+        for code in sorted(direct_codes - bridge_codes)
+    ]
+    unclosed_rows = [
+        {"exio20_code": code, "exio20_label": bridge_labels[code]["exio20_product_name"]}
+        for code in sorted(bridge_codes - (esa_codes | direct_codes))
+    ]
+
+    esa_missing_division_rows = [
+        {"old_cpa2002_division": code, "direct_cpa2002_label_examples": direct_division_labels.get(code, "")}
+        for code in sorted(old_division_universe - set(esa_division_labels))
+    ]
+    direct_missing_division_rows = [
+        {"old_cpa2002_division": code, "esa59_label": esa_division_labels.get(code, "")}
+        for code in sorted(old_division_universe - set(direct_division_labels))
+    ]
+
+    mismatch_rows: list[dict[str, str]] = []
+    for code in sorted(bridge_codes & esa_codes & direct_codes):
+        esa_targets = esa_by_code[code]
+        esa_divisions = {target_code for target_code, _ in esa_targets}
+        direct_entry = direct_by_code[code]
+        direct_divisions = cast(set[str], direct_entry["divisions"])
+        if esa_divisions == direct_divisions:
+            continue
+        labels_by_division = cast(dict[str, set[str]], direct_entry["labels_by_division"])
+        direct_rendered = []
+        for division in sorted(direct_divisions):
+            examples = " | ".join(sorted(labels_by_division.get(division, set()))[:8])
+            direct_rendered.append(_mapping_label(division, examples))
+        info = bridge_labels[code]
+        mismatch_rows.append(
+            {
+                "exio20_code": code,
+                "exio20_label": info["exio20_product_name"],
+                "esa59_old_cpa": " | ".join(_mapping_label(target_code, target_label) for target_code, target_label in sorted(esa_targets)),
+                "direct_cpa2002_old_cpa": " || ".join(direct_rendered),
+            }
+        )
+
+    closed_codes = bridge_codes & (esa_codes | direct_codes)
+    print(
+        "First-step EXIOBASE2 coverage: "
+        f"bridge={len(bridge_codes)} ESA59_products={len(esa_codes)} direct_CPA2002_products={len(direct_codes)} "
+        f"closed_products={len(closed_codes)} ESA59_old_divisions={len(esa_division_labels)} "
+        f"direct_old_divisions={len(direct_division_labels)} old_division_union={len(old_division_universe)}"
+    )
+    _print_mapping_rows("First-step direct CPA2002 missing EXIOBASE2 products; filled from ESA59 where possible:", missing_direct_rows)
+    _print_mapping_rows("First-step ESA59 missing EXIOBASE2 products; filled from direct CPA2002 where possible:", missing_esa_rows)
+    _print_mapping_rows("First-step direct CPA2002 EXIOBASE2 codes absent from bridge:", direct_extra_rows)
+    _print_mapping_rows("First-step EXIOBASE2 products still unmapped after closure:", unclosed_rows)
+    _print_mapping_rows("First-step ESA59 missing old CPA2002 two-digit codes present in direct CPA2002:", esa_missing_division_rows)
+    _print_mapping_rows("First-step direct CPA2002 missing old CPA2002 two-digit codes present in ESA59:", direct_missing_division_rows)
+    _print_mapping_rows("First-step ESA59/direct CPA2002 product-level two-digit inconsistencies:", mismatch_rows)
+
+    # The closed first-step mapping must cover every EXIOBASE2 product and every
+    # old-CPA division reached by either official source. Single-source product
+    # gaps are allowed only when the other source closes them; codomain gaps and
+    # pairwise disagreements are not repairable without inventing a mapping.
+    hard_errors = direct_extra_rows + unclosed_rows + esa_without_bridge + esa_missing_division_rows + direct_missing_division_rows + mismatch_rows
+    if hard_errors:
+        raise ValueError("First-step EXIOBASE2->old-CPA two-source closure failed; see printed coverage/inconsistency rows above.")
+
+    records: list[dict[str, str]] = []
+    for exio_code in sorted(bridge_codes):
+        info = bridge_labels[exio_code]
+        targets = sorted(esa_by_code.get(exio_code, set()))
+        source = "ESA59_EXIOBASE20p_ESA59p"
+        if not targets:
+            direct_entry = direct_by_code.get(exio_code, {"divisions": set(), "labels_by_division": {}})
+            labels_by_division = cast(dict[str, set[str]], direct_entry.get("labels_by_division", {}))
+            targets = [
+                (division, "CPA2002 direct fallback: " + " | ".join(sorted(labels_by_division.get(division, set()))[:8]))
+                for division in sorted(cast(set[str], direct_entry.get("divisions", set())))
+            ]
+            source = "CPA2002_6digit_EXIOBASE_FINAL_fallback"
+        for old_code, old_label in targets:
+            records.append(
+                {
+                    "exio20_product_code": exio_code,
+                    "exio20_product_name": info["exio20_product_name"],
+                    "exio3_product_code": info["exio3_product_code"],
+                    "exio3_product_name": info["exio3_product_name"],
+                    "esa59_product_code": old_code,
+                    "esa59_product_label": old_label,
+                    "first_step_source": source,
+                }
+            )
+    closed = pd.DataFrame.from_records(records).drop_duplicates().reset_index(drop=True)
+    assert_mapping_step_coverage(
+        step_name="closed EXIOBASE2 product -> old CPA2002 division",
+        required_left_codes=bridge_codes,
+        mapped_left_codes=closed["exio20_product_code"].astype(str).tolist(),
+        required_right_codes=old_division_universe,
+        mapped_right_codes=closed["esa59_product_code"].astype(str).tolist(),
+        left_labels={code: info["exio20_product_name"] for code, info in bridge_labels.items()},
+        right_labels={**esa_division_labels, **direct_division_labels},
+    )
+    return closed
+
+
+def _active_prefix_edges(
+    frame: pd.DataFrame,
+    *,
+    required_left_codes: Iterable[str],
+) -> pd.DataFrame:
+    """Return active source->target rows selected by hierarchical prefix logic."""
+
+    records: list[dict[str, str]] = []
+    for required_code in sorted(_code_set(required_left_codes)):
+        matches = frame.loc[frame["source_code"].map(lambda code: is_prefix_related(str(code), required_code))]
+        for row in matches.itertuples(index=False):
+            records.append(
+                {
+                    "required_source_code": required_code,
+                    "source_code": clean_text(getattr(row, "source_code")),
+                    "target_code": clean_text(getattr(row, "target_code")),
+                    "source_raw": clean_text(getattr(row, "source_raw", "")),
+                    "target_raw": clean_text(getattr(row, "target_raw", "")),
+                }
+            )
+    return pd.DataFrame.from_records(records, columns=["required_source_code", "source_code", "target_code", "source_raw", "target_raw"])
+
+
+def compose_old_divisions_to_cpa21_divisions_checked(
+    cpa2002_to_2008: pd.DataFrame,
+    cpa2008_to_21: pd.DataFrame,
+    *,
+    old_division_labels: dict[str, str],
+    division_to_targets: dict[str, set[str]],
+    target_labels: dict[str, str],
+) -> dict[str, set[str]]:
+    """Compose old CPA divisions to CPA2.1 divisions with full edge checks."""
+
+    old_required = {clean_text(code) for code in old_division_labels if clean_text(code)}
+    old_to_2008_edges = _active_prefix_edges(cpa2002_to_2008, required_left_codes=old_required)
+    old_to_cpa2008: dict[str, set[str]] = {}
+    cpa2008_labels: dict[str, str] = {}
+    for row in old_to_2008_edges.itertuples(index=False):
+        required_code = clean_text(getattr(row, "required_source_code"))
+        target_code = clean_text(getattr(row, "target_code"))
+        if required_code and target_code:
+            old_to_cpa2008.setdefault(required_code, set()).add(target_code)
+            cpa2008_labels.setdefault(target_code, clean_text(getattr(row, "target_raw", "")))
+    cpa2008_required = set().union(*old_to_cpa2008.values()) if old_to_cpa2008 else set()
+    assert_mapping_step_coverage(
+        step_name="old CPA2002 division -> CPA2008",
+        required_left_codes=old_required,
+        mapped_left_codes={code for code, targets in old_to_cpa2008.items() if targets},
+        required_right_codes=cpa2008_required,
+        mapped_right_codes=old_to_2008_edges["target_code"].astype(str).tolist(),
+        left_labels=old_division_labels,
+        right_labels=cpa2008_labels,
+    )
+    assert_active_targets_consumable(
+        boundary_name="CPA2002->CPA2008 targets consumed by CPA2008->CPA2.1 sources",
+        produced_right_codes=cpa2008_required,
+        next_left_codes=cpa2008_to_21["source_code"].astype(str).tolist(),
+        produced_labels=cpa2008_labels,
+    )
+
+    cpa2008_to_21_edges = _active_prefix_edges(cpa2008_to_21, required_left_codes=cpa2008_required)
+    cpa2008_to_cpa21: dict[str, set[str]] = {}
+    cpa21_labels: dict[str, str] = {}
+    for row in cpa2008_to_21_edges.itertuples(index=False):
+        required_code = clean_text(getattr(row, "required_source_code"))
+        target_code = clean_text(getattr(row, "target_code"))
+        if required_code and target_code:
+            cpa2008_to_cpa21.setdefault(required_code, set()).add(target_code)
+            cpa21_labels.setdefault(target_code, clean_text(getattr(row, "target_raw", "")))
+    cpa21_codes = set().union(*cpa2008_to_cpa21.values()) if cpa2008_to_cpa21 else set()
+    assert_mapping_step_coverage(
+        step_name="CPA2008 -> CPA2.1",
+        required_left_codes=cpa2008_required,
+        mapped_left_codes={code for code, targets in cpa2008_to_cpa21.items() if targets},
+        required_right_codes=cpa21_codes,
+        mapped_right_codes=cpa2008_to_21_edges["target_code"].astype(str).tolist(),
+        left_labels=cpa2008_labels,
+        right_labels=cpa21_labels,
+    )
+
+    cpa21_divisions = {division for division in (cpa_division_from_code(code) for code in cpa21_codes) if division}
+    cpa21_division_labels = {division: cpa21_labels.get(code, "") for code in cpa21_codes for division in [cpa_division_from_code(code)] if division}
+    assert_active_targets_consumable(
+        boundary_name="CPA2008->CPA2.1 target divisions consumed by CPA64/CPA65 target bridge",
+        produced_right_codes=cpa21_divisions,
+        next_left_codes=division_to_targets.keys(),
+        produced_labels=cpa21_division_labels,
+    )
+
+    target_codes_reached = {target for division in cpa21_divisions for target in division_to_targets.get(division, set())}
+    assert_mapping_step_coverage(
+        step_name="CPA2.1 division -> CPA64/CPA65 target",
+        required_left_codes=cpa21_divisions,
+        mapped_left_codes={division for division in cpa21_divisions if division_to_targets.get(division)},
+        required_right_codes=target_labels.keys(),
+        mapped_right_codes=target_codes_reached,
+        left_labels=cpa21_division_labels,
+        right_labels=target_labels,
+    )
+
+    old_to_current: dict[str, set[str]] = {}
+    for old_code, cpa2008_codes in old_to_cpa2008.items():
+        current_codes: set[str] = set()
+        for cpa2008_code in cpa2008_codes:
+            current_codes.update(cpa2008_to_cpa21.get(cpa2008_code, set()))
+        old_to_current[old_code] = {division for division in (cpa_division_from_code(code) for code in current_codes) if division}
+    return old_to_current
+
 def summarize_exio20_to_exio30_bridge_multiplicity(bridge: pd.DataFrame) -> dict[str, list[dict[str, str]]]:
     """Return EXIOBASE2->3 bridge rows that are not one-to-one."""
 
@@ -403,6 +938,7 @@ def read_correspondence(path: Path, *, source_tokens: Sequence[str], target_toke
     if raw.empty:
         raise ValueError(f"Empty correspondence table: {path}")
     source_col, target_col = choose_correspondence_columns(raw, source_tokens=source_tokens, target_tokens=target_tokens, path=path)
+    assert_raw_edge_table_complete(step_name=str(path), frame=raw, source_col=source_col, target_col=target_col)
     out = pd.DataFrame(
         {
             "source_code": raw[source_col].map(canonical_code),
@@ -414,6 +950,7 @@ def read_correspondence(path: Path, *, source_tokens: Sequence[str], target_toke
     out = out.loc[(out["source_code"] != "") & (out["target_code"] != "")].drop_duplicates().reset_index(drop=True)
     if out.empty:
         raise ValueError(f"No usable source/target code pairs parsed from {path}")
+    print(f"Read correspondence {path}: source_codes={out['source_code'].nunique()} target_codes={out['target_code'].nunique()} rows={len(out)}")
     return out
 
 
@@ -562,15 +1099,6 @@ def load_target_division_map(
                 + "; ".join(sample)
             )
 
-    # Partial synthetic fixtures do not need to cover all CPA divisions.  When
-    # division 64 is present, however, it must map only to CPA_K64; this keeps the
-    # original A*64 false-positive guard without rejecting valid small test maps.
-    div64_targets = division_to_targets.get("64", set())
-    if div64_targets and div64_targets != {"CPA_K64"}:
-        raise ValueError(
-            "Target division map mapped CPA2.1 division 64 to unexpected targets: "
-            f"{sorted(div64_targets)}. Check that A*64 labels are not being parsed as CPA divisions."
-        )
     return labels, division_to_targets
 
 
@@ -583,6 +1111,7 @@ def build_official_mapping(
     target_dictionary: Path,
     target_division_map: Path,
     target_version: str,
+    cpa2002_exiobase_path: Path | None = None,
 ) -> BuildResult:
     """Build EXIOBASE3 -> CPA64/65 using official/source concordance chains."""
 
@@ -591,27 +1120,25 @@ def build_official_mapping(
     cpa2002_to_2008 = read_correspondence(cpa2002_cpa2008_path, source_tokens=("source", "from", "2002"), target_tokens=("target", "to", "2008"))
     cpa2008_to_21 = read_correspondence(cpa2008_cpa21_path, source_tokens=("source", "from", "2008"), target_tokens=("target", "to", "21", "2.1"))
     labels, division_to_targets = load_target_division_map(target_division_map, target_dictionary=target_dictionary, target_version=target_version)
+    direct_cpa2002 = read_cpa2002_exiobase_mapping(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else pd.DataFrame()
 
-    esa = esa.copy()
-    esa["exio20_product_name_norm"] = esa["exio20_product_name"].map(lambda value: re.sub(r"\W+", "", value.casefold()))
-    with_code = esa.loc[esa["exio20_product_code"].astype(str).str.strip().ne("")].merge(
-        bridge,
-        on="exio20_product_code",
-        how="left",
-        validate="many_to_many",
+    joined = build_closed_first_step_edges(esa, bridge, direct_cpa2002)
+
+    old_division_labels = {
+        clean_text(getattr(row, "esa59_product_code")): clean_text(getattr(row, "esa59_product_label"))
+        for row in joined.itertuples(index=False)
+        if clean_text(getattr(row, "esa59_product_code"))
+    }
+    old_to_current_cache = compose_old_divisions_to_cpa21_divisions_checked(
+        cpa2002_to_2008,
+        cpa2008_to_21,
+        old_division_labels=old_division_labels,
+        division_to_targets=division_to_targets,
+        target_labels=labels,
     )
-    without_code = esa.loc[esa["exio20_product_code"].astype(str).str.strip().eq("")].merge(
-        bridge,
-        on="exio20_product_name_norm",
-        how="left",
-        validate="many_to_many",
-        suffixes=("", "_bridge"),
-    )
-    joined = pd.concat([with_code, without_code], ignore_index=True, sort=False).fillna("")
 
     diagnostics: list[dict[str, object]] = []
     edge_rows: list[dict[str, object]] = []
-    old_to_current_cache: dict[str, set[str]] = {}
     for row in joined.itertuples(index=False):
         exio3_code = clean_text(getattr(row, "exio3_product_code", ""))
         if not exio3_code:
@@ -625,18 +1152,6 @@ def build_official_mapping(
             )
             continue
         old_code = clean_text(getattr(row, "esa59_product_code"))
-        if old_code not in old_to_current_cache:
-            divisions, messages = compose_old_division_to_cpa21_divisions(cpa2002_to_2008, cpa2008_to_21, old_division=old_code)
-            old_to_current_cache[old_code] = divisions
-            for message in messages:
-                diagnostics.append(
-                    {
-                        "diagnostic_kind": "old_cpa_to_cpa21_unresolved",
-                        "source_code": old_code,
-                        "source_label": clean_text(getattr(row, "esa59_product_label")),
-                        "message": message,
-                    }
-                )
         for division in sorted(old_to_current_cache[old_code]):
             targets = division_to_targets.get(division, set())
             if not targets:
@@ -728,6 +1243,8 @@ def build_official_mapping(
         "esa59_sha256": sha256_file(esa59_path),
         "exio20_exio30_path": str(exio20_exio30_path),
         "exio20_exio30_sha256": sha256_file(exio20_exio30_path),
+        "cpa2002_exiobase_path": str(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else "",
+        "cpa2002_exiobase_sha256": sha256_file(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else "",
         "cpa2002_cpa2008_path": str(cpa2002_cpa2008_path),
         "cpa2002_cpa2008_sha256": sha256_file(cpa2002_cpa2008_path),
         "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
@@ -779,7 +1296,7 @@ def write_outputs(
         "created_by_script": "scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py",
         "method_notes": [
             "No hard-coded NSI->CPA table is used.",
-            "EXIOBASE2 products are mapped to ESA59 old product groups from EXIOBASE20p_ESA59p.txt.",
+            "EXIOBASE2 products are mapped through a closed first-step comparison of EXIOBASE20p_ESA59p.txt and CPA2002_6digit_EXIOBASE_FINAL.xlsx.",
             "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
             "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
             "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
@@ -799,6 +1316,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--concordances-zip", type=Path, default=DEFAULT_CONCORDANCES_ZIP)
     parser.add_argument("--esa59-member", default=ESA59_MEMBER)
     parser.add_argument("--exio20-exio30-member", default=EXIO20_EXIO30_MEMBER)
+    parser.add_argument("--cpa2002-exiobase-member", default=CPA2002_EXIOBASE_MEMBER)
     parser.add_argument("--cpa2002-cpa2008", type=Path, default=DEFAULT_CPA2002_CPA2008)
     parser.add_argument("--cpa2008-cpa21", type=Path, default=DEFAULT_CPA2008_CPA21)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
@@ -824,13 +1342,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     esa59_bytes, esa59_member = read_zip_member_bytes(args.concordances_zip, args.esa59_member)
     exio_bridge_bytes, exio_bridge_member = read_zip_member_bytes(args.concordances_zip, args.exio20_exio30_member)
+    cpa2002_exiobase_bytes, cpa2002_exiobase_member = read_zip_member_bytes(args.concordances_zip, args.cpa2002_exiobase_member)
 
     with tempfile.TemporaryDirectory(prefix="exio_cpa_official_sources_") as tmpdir_text:
         tmpdir = Path(tmpdir_text)
         esa59_path = tmpdir / ESA59_SUFFIX
         exio_bridge_path = tmpdir / EXIO20_EXIO30_SUFFIX
+        cpa2002_exiobase_path = tmpdir / CPA2002_EXIOBASE_SUFFIX
         esa59_path.write_text(esa59_bytes.decode("utf-8-sig", errors="replace"), encoding="utf-8")
         exio_bridge_path.write_bytes(exio_bridge_bytes)
+        cpa2002_exiobase_path.write_bytes(cpa2002_exiobase_bytes)
         print_exio20_to_exio30_bridge_multiplicity(read_exio20_to_exio30_bridge(exio_bridge_path))
         result = build_official_mapping(
             esa59_path=esa59_path,
@@ -840,12 +1361,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_dictionary=target_dictionary,
             target_division_map=target_division_map,
             target_version=args.target_version,
+            cpa2002_exiobase_path=cpa2002_exiobase_path,
         )
 
     official_source = "; ".join(
         [
             f"{args.concordances_zip}::{esa59_member}",
             f"{args.concordances_zip}::{exio_bridge_member}",
+            f"{args.concordances_zip}::{cpa2002_exiobase_member}",
             str(args.cpa2002_cpa2008),
             str(args.cpa2008_cpa21),
             str(target_division_map),
@@ -865,6 +1388,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "exio20_exio30_member": exio_bridge_member,
             "exio20_exio30_path": f"{args.concordances_zip}::{exio_bridge_member}",
             "exio20_exio30_sha256": sha256_bytes(exio_bridge_bytes),
+            "cpa2002_exiobase_member": cpa2002_exiobase_member,
+            "cpa2002_exiobase_path": f"{args.concordances_zip}::{cpa2002_exiobase_member}",
+            "cpa2002_exiobase_sha256": sha256_bytes(cpa2002_exiobase_bytes),
             "target_division_map_path": str(target_division_map),
             "target_division_map_sha256": sha256_file(target_division_map),
         }
