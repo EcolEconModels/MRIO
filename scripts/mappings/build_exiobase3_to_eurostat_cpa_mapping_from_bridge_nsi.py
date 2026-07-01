@@ -1135,13 +1135,13 @@ def compose_old_divisions_to_cpa21_divisions_checked(
         right_labels={division: ";".join(sorted(division_to_targets.get(division, set()))) for division in final_source_universe},
     )
 
-    old_to_2008 = _targets_by_source_division(old_to_2008_audit.edges)
-    cpa2008_to_21 = _targets_by_source_division(cpa2008_to_21_audit.edges)
+    old_to_2008_targets = _targets_by_source_division(old_to_2008_audit.edges)
+    cpa2008_to_21_targets = _targets_by_source_division(cpa2008_to_21_audit.edges)
     old_to_current: dict[str, set[str]] = {}
     for old_code in sorted(old_required):
         current_codes: set[str] = set()
-        for cpa2008_code in old_to_2008.get(old_code, set()):
-            current_codes.update(cpa2008_to_21.get(cpa2008_code, set()))
+        for cpa2008_code in old_to_2008_targets.get(old_code, set()):
+            current_codes.update(cpa2008_to_21_targets.get(cpa2008_code, set()))
         old_to_current[old_code] = current_codes
     return old_to_current
 
