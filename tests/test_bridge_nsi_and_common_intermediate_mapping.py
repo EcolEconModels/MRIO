@@ -50,6 +50,78 @@ def test_curated_target_division_maps_do_not_treat_a64_as_division_64() -> None:
         assert len(division_to_targets["68"]) == expected_div68_targets
 
 
+def test_final_aggregation_marks_multi_target_products_for_output_share_split(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_final_aggregation_split")
+    esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
+    esa.write_text(
+        "\tReal estate services (70)\n"
+        "Real estate services\t1\n",
+        encoding="utf-8",
+    )
+    exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "EXIOBASE 2 Name": "Real estate services",
+                "EXIOBASE 2 code": "p70",
+                "EXIOBASE 3 name": "Real estate services",
+                "EXIOBASE 3 code": "p70",
+            }
+        ]
+    ).to_excel(exio_bridge, index=False)
+    direct = tmp_path / "CPA2002_6digit_EXIOBASE_FINAL.xlsx"
+    _write_cpa2002_exiobase_workbook(
+        direct,
+        [
+            {
+                "CPA 2002": "Real estate services on a fee or contract basis",
+                "CPA 2002.1": "70.20.10",
+                "CPA 2002.2": "702010",
+                "EXIOBASE_2.0": "p70",
+            }
+        ],
+    )
+    cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
+    pd.DataFrame([{"CPA2002_SOURCE_CODE": "70.20", "CPA2008_TARGET_CODE": "68.20"}]).to_csv(cpa02_08, index=False)
+    cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
+    pd.DataFrame([{"CPA2008_SOURCE_CODE": "68.20", "CPA21_TARGET_CODE": "68.20"}]).to_csv(cpa08_21, index=False)
+    dictionary = tmp_path / "cpa65_dictionary.csv"
+    pd.DataFrame(
+        [
+            {"code": "CPA_L68A", "label": "Imputed rents of owner-occupied dwellings", "description": "dictionary text is not parsed"},
+            {"code": "CPA_L68B", "label": "Real estate services excluding imputed rents", "description": "dictionary text is not parsed"},
+        ]
+    ).to_csv(dictionary, index=False)
+    division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
+    pd.DataFrame(
+        [
+            {"target_version": "CPA_65", "target_code": "CPA_L68A", "target_label": "Imputed rents of owner-occupied dwellings", "iot_a64_code": "L68A", "cpa21_division": "68"},
+            {"target_version": "CPA_65", "target_code": "CPA_L68B", "target_label": "Real estate services excluding imputed rents", "iot_a64_code": "L68B", "cpa21_division": "68"},
+        ]
+    ).to_csv(division_map, index=False)
+
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
+
+    assert result.diagnostics.empty
+    assert set(result.mapping["target_code"]) == {"CPA_L68A", "CPA_L68B"}
+    assert set(result.mapping["allocation_rule"]) == {"split-by-output-share"}
+    notes = " ".join(result.mapping["notes"].astype(str))
+    assert module.TARGET_DIVISION_SPLIT_WARNING in notes
+    assert module.FINAL_AGGREGATION_SPLIT_WARNING in notes
+    assert result.coverage["target_division_split_edge_rows"] == 2
+    assert result.coverage["final_output_share_split_mapping_rows"] == 2
+    assert result.coverage["distinct_exio3_products_requiring_output_share_split"] == 1
+
+
 def test_default_eurostat_correspondence_paths_are_tracked_renamed_csvs() -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_default_paths")
     assert module.DEFAULT_CPA2002_CPA2008.name == "CPA 2002 - CPA 2008 (CSV format).csv"

@@ -1533,6 +1533,8 @@ def audit_correspondence_level_step(frame: pd.DataFrame, *, step_name: str) -> C
 
 
 NUMERIC_CORRESPONDENCE_LEVELS: Final[set[str]] = {"division", "group", "class", "category", "subcategory", "aggregate"}
+TARGET_DIVISION_SPLIT_WARNING: Final[str] = "CPA2.1 division maps to multiple CPA64/CPA65 targets; runtime output-share split required."
+FINAL_AGGREGATION_SPLIT_WARNING: Final[str] = "EXIOBASE3 product maps to multiple CPA64/CPA65 targets; runtime output-share split required."
 
 
 def numeric_code_ancestors(code: object) -> list[str]:
@@ -1554,6 +1556,16 @@ def numeric_code_ancestors(code: object) -> list[str]:
             break
         current = current[:-1]
     return out
+
+
+def _append_economic_warning(existing: object, warning: str) -> str:
+    """Append a semicolon-separated economic warning without duplicates."""
+
+    current = [part.strip() for part in clean_text(existing).split(" | ") if part.strip()]
+    warning_text = clean_text(warning)
+    if warning_text and warning_text not in current:
+        current.append(warning_text)
+    return " | ".join(current)
 
 
 def _records_by_source_code(frame: pd.DataFrame) -> dict[str, list[dict[str, str]]]:
@@ -2067,7 +2079,7 @@ def build_official_mapping(
             continue
         economic_warning = ""
         if len(targets) > 1:
-            economic_warning = "CPA2.1 division maps to multiple CPA64/CPA65 targets; runtime output-share split required."
+            economic_warning = TARGET_DIVISION_SPLIT_WARNING
         for target_code in sorted(targets):
             edge_rows.append(
                 {
@@ -2099,6 +2111,38 @@ def build_official_mapping(
                 }
             )
     edges = pd.DataFrame.from_records(edge_rows)
+    target_division_split_edge_rows = 0
+    curated_product_anchor_edge_rows = 0
+    exio20_products_with_multiple_cpa2002_anchors = 0
+    final_output_share_split_mapping_rows = 0
+    distinct_exio3_products_requiring_output_share_split = 0
+    if not edges.empty:
+        target_division_split_edge_rows = int((edges["economic_warning"].astype(str) == TARGET_DIVISION_SPLIT_WARNING).sum())
+        curated_product_anchor_edge_rows = int((edges["cpa2002_anchor_source"].astype(str) == "curated_CPA2002_product_anchor").sum())
+        anchor_counts = cast(pd.Series, edges.groupby("exio20_product_code")["cpa2002_anchor_display_code"].nunique())
+        exio20_products_with_multiple_cpa2002_anchors = int((anchor_counts > 1).sum())
+        _print_mapping_rows(
+            "Final CPA64/CPA65 target-division split edge rows:",
+            cast(
+                list[dict[str, str]],
+                edges.loc[edges["economic_warning"].astype(str) == TARGET_DIVISION_SPLIT_WARNING,
+                          ["exio3_product_code", "exio3_product_name", "cpa21_division", "target_code", "target_label"]]
+                .drop_duplicates()
+                .head(50)
+                .to_dict(orient="records"),
+            ),
+        )
+        _print_mapping_rows(
+            "Curated CPA2002 product-anchor edge rows:",
+            cast(
+                list[dict[str, str]],
+                edges.loc[edges["cpa2002_anchor_source"].astype(str) == "curated_CPA2002_product_anchor",
+                          ["exio20_product_code", "exio20_product_name", "cpa2002_anchor_display_code", "cpa2002_anchor_basis", "target_code"]]
+                .drop_duplicates()
+                .head(50)
+                .to_dict(orient="records"),
+            ),
+        )
     if edges.empty:
         mapping = pd.DataFrame(columns=list(CANONICAL_COLUMNS))
     else:
@@ -2123,6 +2167,25 @@ def build_official_mapping(
         )
         target_counts = grouped.groupby("exio3_product_code")["target_code"].transform("nunique").astype(int)
         grouped.loc[:, "n_targets_for_exio3_product"] = target_counts
+        split_mask = grouped["n_targets_for_exio3_product"].astype(int) > 1
+        if bool(split_mask.any()):
+            for idx in list(grouped.index[split_mask]):
+                grouped.at[idx, "economic_warnings"] = _append_economic_warning(
+                    grouped.at[idx, "economic_warnings"],
+                    FINAL_AGGREGATION_SPLIT_WARNING,
+                )
+            final_output_share_split_mapping_rows = int(split_mask.sum())
+            distinct_exio3_products_requiring_output_share_split = int(grouped.loc[split_mask, "exio3_product_code"].nunique())
+        _print_mapping_rows(
+            "Final CPA64/CPA65 output-share split mapping rows:",
+            cast(
+                list[dict[str, str]],
+                grouped.loc[split_mask, ["exio3_product_code", "exio3_product_name", "target_code", "target_label", "cpa21_divisions", "economic_warnings"]]
+                .drop_duplicates()
+                .head(50)
+                .to_dict(orient="records"),
+            ),
+        )
         rows: list[dict[str, object]] = []
         sorted_grouped = cast(pd.DataFrame, grouped.sort_values(by=["exio3_product_code", "target_code"]))
         grouped_records = cast(list[dict[str, Any]], sorted_grouped.to_dict(orient="records"))
@@ -2206,6 +2269,11 @@ def build_official_mapping(
         "mapping_rows": int(len(mapping)),
         "distinct_exio3_products": int(mapping["source_code"].nunique()) if not mapping.empty else 0,
         "distinct_target_codes": int(mapping["target_code"].nunique()) if not mapping.empty else 0,
+        "target_division_split_edge_rows": target_division_split_edge_rows,
+        "curated_product_anchor_edge_rows": curated_product_anchor_edge_rows,
+        "exio20_products_with_multiple_cpa2002_anchors": exio20_products_with_multiple_cpa2002_anchors,
+        "final_output_share_split_mapping_rows": final_output_share_split_mapping_rows,
+        "distinct_exio3_products_requiring_output_share_split": distinct_exio3_products_requiring_output_share_split,
         "diagnostic_rows": int(len(diagnostics_df)),
     }
     return BuildResult(mapping=mapping, edges=edges, diagnostics=diagnostics_df, coverage=coverage)
@@ -2249,6 +2317,7 @@ def write_outputs(
             "After first-step division closure, direct detailed CPA2002 anchors and curated product-anchor rows for ESA-only broad products are composed through level-aware RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
             "ESA-only broad CPA2002 division anchors are not fanned out implicitly; they require scripts/mappings/exiobase2_cpa2002_product_anchor_conciliation.csv.",
             "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
+            "Products reaching multiple final CPA64/CPA65 targets are retained as explicit weighted mapping rows and marked split-by-output-share for runtime monetary allocation.",
             "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
             "The internal EXIOBASE3/ESA59/CPA2.1 edge audit is written under out-dir/diagnostics by default; --edge-audit-csv may override the path.",
         ],
