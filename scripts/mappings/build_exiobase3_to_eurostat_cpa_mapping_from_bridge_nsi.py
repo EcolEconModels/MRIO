@@ -35,8 +35,8 @@ REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 DEFAULT_EXIOBASE_SOURCE_ROOT: Final[Path] = REPO_ROOT / "data" / "exiobase_concordance_sources"
 DEFAULT_EUROSTAT_SOURCE_ROOT: Final[Path] = REPO_ROOT / "data" / "eurostat_concordance_sources"
 DEFAULT_CONCORDANCES_ZIP: Final[Path] = DEFAULT_EXIOBASE_SOURCE_ROOT / "exiobase_concordances.zip"
-DEFAULT_CPA2002_CPA2008: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA_2002_to_CPA_2008.csv"
-DEFAULT_CPA2008_CPA21: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA_2008_to_CPA_21.csv"
+DEFAULT_CPA2002_CPA2008: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA 2002 - CPA 2008 (CSV format).csv"
+DEFAULT_CPA2008_CPA21: Final[Path] = DEFAULT_EUROSTAT_SOURCE_ROOT / "CPA 2008 - CPA 2.1.csv"
 DEFAULT_OUT_DIR: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "generated"
 DEFAULT_CPA64_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_products_dictionary.csv"
 DEFAULT_CPA65_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_products_dictionary.csv"
@@ -99,6 +99,18 @@ class DivisionStepAudit:
     target_universe: set[str]
     source_labels: dict[str, str]
     target_labels: dict[str, str]
+
+
+@dataclass(frozen=True)
+class CorrespondenceLevelAudit:
+    """Original-level source/target universes derived from one correspondence file."""
+
+    name: str
+    edges: pd.DataFrame
+    source_level_counts: dict[str, int]
+    target_level_counts: dict[str, int]
+    edge_kind_counts: dict[str, int]
+    mixed_level_edges: pd.DataFrame
 
 
 def clean_text(value: object) -> str:
@@ -172,6 +184,48 @@ def cpa_division_from_code(value: object) -> str:
     if not match:
         return ""
     return match.group(1)
+
+
+def classify_correspondence_code(value: object) -> dict[str, str]:
+    """Classify a CPA correspondence endpoint without collapsing its level.
+
+    RAMON correspondence files contain mixed hierarchy levels, including section
+    letters (``A``), divisions (``01``), detailed product codes (``01.11.11``),
+    and occasional broad-to-detailed rows such as ``C -> 09.90.19``.  This helper
+    preserves that source evidence for Phase 2 composition instead of forcing all
+    rows into two-digit divisions.
+    """
+
+    raw = clean_text(value).strip('"')
+    code = canonical_code(raw)
+    if not raw or not code:
+        return {"raw": raw, "code": code, "level": "blank", "division": "", "display_code": raw}
+    if code in {"SOURCE", "TARGET", "FROM", "TO"}:
+        return {"raw": raw, "code": code, "level": "header", "division": "", "display_code": raw}
+    if re.fullmatch(r"[A-Z]", code):
+        return {"raw": raw, "code": code, "level": "section", "division": "", "display_code": raw}
+    if re.fullmatch(r"\d+", code):
+        level_by_length = {
+            2: "division",
+            3: "group",
+            4: "class",
+            5: "category",
+        }
+        level = level_by_length.get(len(code), "subcategory" if len(code) >= 6 else "numeric_unknown")
+        division = code[:2] if len(code) >= 2 else ""
+        return {"raw": raw, "code": code, "level": level, "division": division, "display_code": raw or code}
+    division = cpa_division_from_code(code)
+    if division:
+        return {"raw": raw, "code": code, "level": "aggregate", "division": division, "display_code": raw or code}
+    return {"raw": raw, "code": code, "level": "non_code_label", "division": "", "display_code": raw}
+
+
+def correspondence_edge_kind(source_level: str, target_level: str) -> str:
+    """Return a stable level-aware edge-kind label for diagnostics."""
+
+    if source_level in {"blank", "header", "non_code_label"} or target_level in {"blank", "header", "non_code_label"}:
+        return "non_mapping_row"
+    return f"{source_level}_to_{target_level}"
 
 
 def is_prefix_related(left: str, right: str) -> bool:
@@ -1253,26 +1307,132 @@ def choose_correspondence_columns(frame: pd.DataFrame, *, source_tokens: Sequenc
 
 
 def read_correspondence(path: Path, *, source_tokens: Sequence[str], target_tokens: Sequence[str]) -> pd.DataFrame:
-    """Read a RAMON/Eurostat correspondence into normalized source/target code pairs."""
+    """Read a RAMON/Eurostat correspondence preserving original code levels.
+
+    The returned frame intentionally keeps detailed, division-level, section-level,
+    and mixed-level rows.  Later economic composition must decide which rows are
+    admissible; this parser must not discard official broad/detailed evidence such
+    as ``C -> 09.90.19`` merely because it cannot be represented as a two-digit
+    division edge.
+    """
 
     raw = read_any_table(path)
     if raw.empty:
         raise ValueError(f"Empty correspondence table: {path}")
     source_col, target_col = choose_correspondence_columns(raw, source_tokens=source_tokens, target_tokens=target_tokens, path=path)
     assert_raw_edge_table_complete(step_name=str(path), frame=raw, source_col=source_col, target_col=target_col)
-    out = pd.DataFrame(
-        {
-            "source_code": raw[source_col].map(canonical_code),
-            "target_code": raw[target_col].map(canonical_code),
-            "source_raw": raw[source_col].map(clean_text),
-            "target_raw": raw[target_col].map(clean_text),
-        }
-    )
-    out = out.loc[(out["source_code"] != "") & (out["target_code"] != "")].drop_duplicates().reset_index(drop=True)
+
+    records: list[dict[str, str]] = []
+    skipped_rows: list[dict[str, str]] = []
+    bad_rows: list[dict[str, str]] = []
+    for index, row in raw.reset_index(drop=True).iterrows():
+        source = classify_correspondence_code(row.get(source_col, ""))
+        target = classify_correspondence_code(row.get(target_col, ""))
+        edge_kind = correspondence_edge_kind(source["level"], target["level"])
+        if edge_kind == "non_mapping_row":
+            if source["level"] == "header" or target["level"] == "header":
+                skipped_rows.append(
+                    {
+                        "row_index": str(index),
+                        "source_raw": source["raw"],
+                        "target_raw": target["raw"],
+                        "message": "header/source-target row skipped",
+                    }
+                )
+                continue
+            bad_rows.append(
+                {
+                    "row_index": str(index),
+                    "source_raw": source["raw"],
+                    "target_raw": target["raw"],
+                    "source_level": source["level"],
+                    "target_level": target["level"],
+                    "message": "nonblank row is not a recognized correspondence code edge",
+                }
+            )
+            continue
+        records.append(
+            {
+                "source_code": source["code"],
+                "target_code": target["code"],
+                "source_raw": source["raw"],
+                "target_raw": target["raw"],
+                "source_display_code": source["display_code"],
+                "target_display_code": target["display_code"],
+                "source_level": source["level"],
+                "target_level": target["level"],
+                "source_division": source["division"],
+                "target_division": target["division"],
+                "edge_kind": edge_kind,
+            }
+        )
+    _print_mapping_rows(f"Correspondence header/non-edge rows skipped [{path}]:", skipped_rows)
+    _print_mapping_rows(f"Correspondence unrecognized code rows [{path}]:", bad_rows)
+    if bad_rows:
+        raise ValueError(f"Correspondence {path} contains nonblank rows that are not recognized as classification-code edges.")
+    out = pd.DataFrame.from_records(
+        records,
+        columns=[
+            "source_code",
+            "target_code",
+            "source_raw",
+            "target_raw",
+            "source_display_code",
+            "target_display_code",
+            "source_level",
+            "target_level",
+            "source_division",
+            "target_division",
+            "edge_kind",
+        ],
+    ).drop_duplicates().reset_index(drop=True)
     if out.empty:
         raise ValueError(f"No usable source/target code pairs parsed from {path}")
-    print(f"Read correspondence {path}: source_codes={out['source_code'].nunique()} target_codes={out['target_code'].nunique()} rows={len(out)}")
+    print(
+        f"Read correspondence {path}: source_codes={out['source_code'].nunique()} "
+        f"target_codes={out['target_code'].nunique()} rows={len(out)} "
+        f"edge_kinds={dict(sorted(out['edge_kind'].value_counts().to_dict().items()))}"
+    )
     return out
+
+
+def audit_correspondence_level_step(frame: pd.DataFrame, *, step_name: str) -> CorrespondenceLevelAudit:
+    """Summarize original-level correspondence edges without reducing to divisions."""
+
+    required = {"source_code", "target_code", "source_level", "target_level", "edge_kind"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"Level-aware correspondence audit {step_name!r} missing columns: {missing}")
+    edge_kind_counts = {str(key): int(value) for key, value in frame["edge_kind"].value_counts().sort_index().items()}
+    source_level_counts = {str(key): int(value) for key, value in frame["source_level"].value_counts().sort_index().items()}
+    target_level_counts = {str(key): int(value) for key, value in frame["target_level"].value_counts().sort_index().items()}
+    mixed = frame.loc[frame["source_level"].astype(str) != frame["target_level"].astype(str)].copy()
+    print(
+        f"Level-aware correspondence audit [{step_name}]: rows={len(frame)} "
+        f"source_levels={source_level_counts} target_levels={target_level_counts} "
+        f"edge_kinds={edge_kind_counts} mixed_level_edges={len(mixed)}"
+    )
+    _print_mapping_rows(
+        f"Level-aware mixed correspondence edge examples [{step_name}]:",
+        [
+            {
+                "source_raw": clean_text(row.get("source_raw", "")),
+                "source_level": clean_text(row.get("source_level", "")),
+                "target_raw": clean_text(row.get("target_raw", "")),
+                "target_level": clean_text(row.get("target_level", "")),
+                "edge_kind": clean_text(row.get("edge_kind", "")),
+            }
+            for row in mixed.head(25).to_dict(orient="records")
+        ],
+    )
+    return CorrespondenceLevelAudit(
+        name=step_name,
+        edges=frame.copy(),
+        source_level_counts=source_level_counts,
+        target_level_counts=target_level_counts,
+        edge_kind_counts=edge_kind_counts,
+        mixed_level_edges=mixed.reset_index(drop=True),
+    )
 
 
 def compose_old_division_to_cpa21_divisions(cpa2002_to_2008: pd.DataFrame, cpa2008_to_21: pd.DataFrame, *, old_division: str) -> tuple[set[str], list[str]]:

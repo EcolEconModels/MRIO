@@ -49,6 +49,65 @@ def test_curated_target_division_maps_do_not_treat_a64_as_division_64() -> None:
         assert "CPA_A01" not in division_to_targets["64"]
         assert len(division_to_targets["68"]) == expected_div68_targets
 
+
+def test_default_eurostat_correspondence_paths_are_tracked_renamed_csvs() -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_default_paths")
+    assert module.DEFAULT_CPA2002_CPA2008.name == "CPA 2002 - CPA 2008 (CSV format).csv"
+    assert module.DEFAULT_CPA2008_CPA21.name == "CPA 2008 - CPA 2.1.csv"
+    assert module.DEFAULT_CPA2002_CPA2008.exists()
+    assert module.DEFAULT_CPA2008_CPA21.exists()
+
+
+def test_real_ramon_correspondence_files_parse_as_level_aware_edges() -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_real_level_parser")
+    old_to_2008 = module.read_correspondence(
+        module.DEFAULT_CPA2002_CPA2008,
+        source_tokens=("source", "from", "2002"),
+        target_tokens=("target", "to", "2008"),
+    )
+    current_to_21 = module.read_correspondence(
+        module.DEFAULT_CPA2008_CPA21,
+        source_tokens=("source", "from", "2008"),
+        target_tokens=("target", "to", "21", "2.1"),
+    )
+
+    required = {"source_level", "target_level", "source_division", "target_division", "edge_kind"}
+    assert required <= set(old_to_2008.columns)
+    assert required <= set(current_to_21.columns)
+    assert not old_to_2008.loc[(old_to_2008["source_raw"] == "01.11.11") & (old_to_2008["target_raw"] == "01.64.10")].empty
+    assert not old_to_2008.loc[(old_to_2008["source_level"] == "section") & (old_to_2008["target_level"] == "subcategory")].empty
+    assert not old_to_2008.loc[(old_to_2008["source_raw"] == "C") & (old_to_2008["target_raw"] == "09.90.19")].empty
+    assert not current_to_21.loc[(current_to_21["source_raw"] == "A") & (current_to_21["target_raw"] == "A")].empty
+    assert not current_to_21.loc[(current_to_21["source_raw"] == "01") & (current_to_21["target_raw"] == "01")].empty
+
+    old_audit = module.audit_correspondence_level_step(old_to_2008, step_name="real CPA2002 -> CPA2008")
+    current_audit = module.audit_correspondence_level_step(current_to_21, step_name="real CPA2008 -> CPA2.1")
+    assert old_audit.edge_kind_counts["subcategory_to_subcategory"] > 0
+    assert old_audit.edge_kind_counts["section_to_subcategory"] > 0
+    assert current_audit.edge_kind_counts["section_to_section"] > 0
+    assert current_audit.edge_kind_counts["division_to_division"] > 0
+
+
+def test_legacy_two_digit_audit_rejects_mixed_level_edges_without_silent_skip() -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_legacy_two_digit_rejects_mixed")
+    frame = pd.DataFrame(
+        [
+            {
+                "source_code": "C",
+                "target_code": "099019",
+                "source_raw": "C",
+                "target_raw": "09.90.19",
+            }
+        ]
+    )
+    try:
+        module.audit_correspondence_division_step(frame, step_name="mixed-level row must not be silently skipped")
+    except ValueError as exc:
+        assert "cannot be normalized to two-digit divisions" in str(exc)
+    else:
+        raise AssertionError("Expected legacy two-digit audit to reject mixed-level edge")
+
+
 def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_generator")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
