@@ -561,10 +561,11 @@ def test_first_step_closure_warns_on_one_source_codomain_gap_when_closed_union_m
 
     assert result.diagnostics.empty
     assert set(result.edges.loc[result.edges["exio20_product_code"] == "p95", "esa59_product_code"]) == {"95", "96", "97"}
+    assert set(result.edges.loc[result.edges["exio20_product_code"] == "p95", "cpa2002_anchor_display_code"]) == {"95.00.10", "96.00.10", "97.00.10"}
     assert set(result.mapping.loc[result.mapping["source_code"] == "p95", "target_code"]) == {"CPA_T"}
 
-def test_intermediate_mapping_step_fails_on_unmapped_required_source(tmp_path: Path) -> None:
-    module = load_module(OFFICIAL_SCRIPT, "official_concordance_intermediate_fail")
+def test_level_aware_composition_uses_direct_detail_exact_match(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_level_exact")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
     esa.write_text(
         "\tProducts of agriculture, hunting and related services (01)\n"
@@ -581,9 +582,9 @@ def test_intermediate_mapping_step_fails_on_unmapped_required_source(tmp_path: P
         [{"CPA 2002": "Rice, not husked", "CPA 2002.1": "01.11.14", "CPA 2002.2": "11114", "EXIOBASE_2.0": "p01.a"}],
     )
     cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
-    pd.DataFrame([{"CPA2002_SOURCE_CODE": "02.10", "CPA2008_TARGET_CODE": "02.10"}]).to_csv(cpa02_08, index=False)
+    pd.DataFrame([{"CPA2002_SOURCE_CODE": "01.11.14", "CPA2008_TARGET_CODE": "01.64.10"}]).to_csv(cpa02_08, index=False)
     cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
-    pd.DataFrame([{"CPA2008_SOURCE_CODE": "02.10", "CPA21_TARGET_CODE": "02.10"}]).to_csv(cpa08_21, index=False)
+    pd.DataFrame([{"CPA2008_SOURCE_CODE": "01.64.10", "CPA21_TARGET_CODE": "01.64.10"}]).to_csv(cpa08_21, index=False)
     dictionary = tmp_path / "cpa65_dictionary.csv"
     pd.DataFrame([{"code": "CPA_A01", "label": "Agriculture", "description": "dictionary text is not parsed"}]).to_csv(dictionary, index=False)
     division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
@@ -591,25 +592,113 @@ def test_intermediate_mapping_step_fails_on_unmapped_required_source(tmp_path: P
         [{"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"}]
     ).to_csv(division_map, index=False)
 
-    try:
-        module.build_official_mapping(
-            esa59_path=esa,
-            exio20_exio30_path=exio_bridge,
-            cpa2002_cpa2008_path=cpa02_08,
-            cpa2008_cpa21_path=cpa08_21,
-            target_dictionary=dictionary,
-            target_division_map=division_map,
-            target_version="cpa65",
-            cpa2002_exiobase_path=direct,
-        )
-    except ValueError as exc:
-        assert "closed first-step old CPA divisions -> CPA2002->CPA2008 source divisions" in str(exc)
-    else:
-        raise AssertionError("Expected missing intermediate source code to fail")
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
+
+    assert result.diagnostics.empty
+    assert set(result.mapping.loc[result.mapping["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
+    assert set(result.edges["cpa2002_anchor_display_code"]) == {"01.11.14"}
+    assert set(result.edges["cpa2002_match_rule"]) == {"exact"}
+    assert set(result.edges["cpa2008_display_code"]) == {"01.64.10"}
 
 
-def test_cross_step_universe_fails_when_cpa2008_target_not_next_source(tmp_path: Path) -> None:
-    module = load_module(OFFICIAL_SCRIPT, "official_concordance_cross_step_cpa2008_fail")
+def test_level_aware_composition_uses_numeric_ancestor_without_section_fallback(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_level_ancestor")
+    esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
+    esa.write_text(
+        "\tProducts of agriculture, hunting and related services (01)\n"
+        "Paddy rice\t1\n",
+        encoding="utf-8",
+    )
+    exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+    pd.DataFrame(
+        [{"EXIOBASE 2 Name": "Paddy rice", "EXIOBASE 2 code": "p01.a", "EXIOBASE 3 name": "Paddy rice", "EXIOBASE 3 code": "p01.a"}]
+    ).to_excel(exio_bridge, index=False)
+    direct = tmp_path / "CPA2002_6digit_EXIOBASE_FINAL.xlsx"
+    _write_cpa2002_exiobase_workbook(
+        direct,
+        [{"CPA 2002": "Rice, not husked", "CPA 2002.1": "01.11.14", "CPA 2002.2": "11114", "EXIOBASE_2.0": "p01.a"}],
+    )
+    cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
+    pd.DataFrame([{"CPA2002_SOURCE_CODE": "01.11", "CPA2008_TARGET_CODE": "01.11"}]).to_csv(cpa02_08, index=False)
+    cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
+    pd.DataFrame([{"CPA2008_SOURCE_CODE": "01.11", "CPA21_TARGET_CODE": "01.11"}]).to_csv(cpa08_21, index=False)
+    dictionary = tmp_path / "cpa65_dictionary.csv"
+    pd.DataFrame([{"code": "CPA_A01", "label": "Agriculture", "description": "dictionary text is not parsed"}]).to_csv(dictionary, index=False)
+    division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
+    pd.DataFrame(
+        [{"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"}]
+    ).to_csv(division_map, index=False)
+
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
+
+    assert result.diagnostics.empty
+    assert set(result.edges["cpa2002_match_rule"]) == {"ancestor:0111"}
+    assert set(result.edges["cpa2008_match_rule"]) == {"exact"}
+
+
+def test_level_aware_composition_reports_unresolved_first_step_path(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_level_first_unresolved")
+    esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
+    esa.write_text(
+        "\tProducts of agriculture, hunting and related services (01)\n"
+        "Paddy rice\t1\n",
+        encoding="utf-8",
+    )
+    exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+    pd.DataFrame(
+        [{"EXIOBASE 2 Name": "Paddy rice", "EXIOBASE 2 code": "p01.a", "EXIOBASE 3 name": "Paddy rice", "EXIOBASE 3 code": "p01.a"}]
+    ).to_excel(exio_bridge, index=False)
+    direct = tmp_path / "CPA2002_6digit_EXIOBASE_FINAL.xlsx"
+    _write_cpa2002_exiobase_workbook(
+        direct,
+        [{"CPA 2002": "Rice, not husked", "CPA 2002.1": "01.11.14", "CPA 2002.2": "11114", "EXIOBASE_2.0": "p01.a"}],
+    )
+    cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
+    pd.DataFrame([{"CPA2002_SOURCE_CODE": "C", "CPA2008_TARGET_CODE": "09.90.19"}]).to_csv(cpa02_08, index=False)
+    cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
+    pd.DataFrame([{"CPA2008_SOURCE_CODE": "09.90.19", "CPA21_TARGET_CODE": "09.90.19"}]).to_csv(cpa08_21, index=False)
+    dictionary = tmp_path / "cpa65_dictionary.csv"
+    pd.DataFrame([{"code": "CPA_A01", "label": "Agriculture", "description": "dictionary text is not parsed"}]).to_csv(dictionary, index=False)
+    division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
+    pd.DataFrame(
+        [{"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"}]
+    ).to_csv(division_map, index=False)
+
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
+
+    assert result.mapping.empty
+    assert set(result.diagnostics["diagnostic_kind"]) == {"cpa2002_to_cpa2008_unresolved"}
+
+
+def test_level_aware_composition_reports_unresolved_second_step_path(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_level_second_unresolved")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
     esa.write_text(
         "\tProducts of agriculture, hunting and related services (01)\n"
@@ -636,25 +725,23 @@ def test_cross_step_universe_fails_when_cpa2008_target_not_next_source(tmp_path:
         [{"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"}]
     ).to_csv(division_map, index=False)
 
-    try:
-        module.build_official_mapping(
-            esa59_path=esa,
-            exio20_exio30_path=exio_bridge,
-            cpa2002_cpa2008_path=cpa02_08,
-            cpa2008_cpa21_path=cpa08_21,
-            target_dictionary=dictionary,
-            target_division_map=division_map,
-            target_version="cpa65",
-            cpa2002_exiobase_path=direct,
-        )
-    except ValueError as exc:
-        assert "CPA2002->CPA2008 target divisions -> CPA2008->CPA2.1 source divisions" in str(exc)
-    else:
-        raise AssertionError("Expected cross-step universe mismatch to fail")
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
+
+    assert result.mapping.empty
+    assert set(result.diagnostics["diagnostic_kind"]) == {"cpa2008_to_cpa21_unresolved"}
 
 
-def test_final_cpa21_universe_fails_when_target_bridge_source_differs(tmp_path: Path) -> None:
-    module = load_module(OFFICIAL_SCRIPT, "official_concordance_final_universe_fail")
+def test_level_aware_composition_reports_final_target_gap(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_level_final_gap")
     esa = tmp_path / "EXIOBASE20p_ESA59p.txt"
     esa.write_text(
         "\tProducts of agriculture, hunting and related services (01)\n"
@@ -681,21 +768,19 @@ def test_final_cpa21_universe_fails_when_target_bridge_source_differs(tmp_path: 
         [{"target_version": "CPA_65", "target_code": "CPA_B", "target_label": "Mining", "iot_a64_code": "B", "cpa21_division": "05"}]
     ).to_csv(division_map, index=False)
 
-    try:
-        module.build_official_mapping(
-            esa59_path=esa,
-            exio20_exio30_path=exio_bridge,
-            cpa2002_cpa2008_path=cpa02_08,
-            cpa2008_cpa21_path=cpa08_21,
-            target_dictionary=dictionary,
-            target_division_map=division_map,
-            target_version="cpa65",
-            cpa2002_exiobase_path=direct,
-        )
-    except ValueError as exc:
-        assert "CPA2008->CPA2.1 target divisions -> CPA64/CPA65 source divisions" in str(exc)
-    else:
-        raise AssertionError("Expected final CPA2.1 universe mismatch to fail")
+    result = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+    )
+
+    assert result.mapping.empty
+    assert set(result.diagnostics["diagnostic_kind"]) == {"cpa21_division_without_target_aggregation"}
 
 
 def test_first_step_conciliation_fails_when_recorded_evidence_is_stale() -> None:
@@ -753,3 +838,12 @@ def test_first_step_conciliation_fails_when_recorded_evidence_is_stale() -> None
         assert "First-step EXIOBASE2->old-CPA two-source closure failed" in str(exc)
     else:
         raise AssertionError("Expected stale conciliation evidence to fail")
+
+
+def test_curated_product_anchor_file_documents_esa_only_broad_products() -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_product_anchor_file")
+    anchors = module.read_product_anchor_conciliation_map(module.DEFAULT_PRODUCT_ANCHOR_CONCILIATION)
+    assert set(anchors["exio20_product_code"]) == {"p24.b", "p90.5.a", "p90.5.b", "p90.5.c", "p90.5.d", "p90.5.e", "p90.5.f"}
+    p905d = anchors.loc[anchors["exio20_product_code"] == "p90.5.d"]
+    assert set(p905d["chosen_cpa2002_display_code"]) == {"90.02.13", "90.02.14"}
+    assert set(p905d["chosen_cpa2002_division"]) == {"90"}

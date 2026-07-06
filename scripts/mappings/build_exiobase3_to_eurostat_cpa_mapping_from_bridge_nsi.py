@@ -43,6 +43,7 @@ DEFAULT_CPA65_DICTIONARY: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eu
 DEFAULT_CPA64_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa64_to_cpa21_divisions.csv"
 DEFAULT_CPA65_DIVISION_MAP: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "eurostat_cpa65_to_cpa21_divisions.csv"
 DEFAULT_FIRST_STEP_CONCILIATION: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "exiobase2_old_cpa2002_first_step_conciliation.csv"
+DEFAULT_PRODUCT_ANCHOR_CONCILIATION: Final[Path] = REPO_ROOT / "scripts" / "mappings" / "exiobase2_cpa2002_product_anchor_conciliation.csv"
 
 ESA59_SUFFIX: Final[str] = "EXIOBASE20p_ESA59p.txt"
 EXIO20_EXIO30_SUFFIX: Final[str] = "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
@@ -111,6 +112,14 @@ class CorrespondenceLevelAudit:
     target_level_counts: dict[str, int]
     edge_kind_counts: dict[str, int]
     mixed_level_edges: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class ProductPathResult:
+    """Level-aware product-composition paths and diagnostics."""
+
+    paths: pd.DataFrame
+    diagnostics: pd.DataFrame
 
 
 def clean_text(value: object) -> str:
@@ -635,6 +644,94 @@ def _split_semicolon_codes(value: object) -> list[str]:
     """Split a curated semicolon code cell without inventing classifications."""
 
     return [clean_text(part) for part in clean_text(value).split(";") if clean_text(part)]
+
+
+
+
+PRODUCT_ANCHOR_COLUMNS: Final[set[str]] = {
+    "exio20_product_code",
+    "exio20_product_label",
+    "esa59_old_cpa2002_division",
+    "esa59_old_cpa2002_label",
+    "chosen_cpa2002_code",
+    "chosen_cpa2002_label",
+    "chosen_cpa2002_level",
+    "anchor_basis",
+    "notes",
+}
+
+
+def read_product_anchor_conciliation_map(path: Path | None) -> pd.DataFrame:
+    """Read curated detailed CPA2002 anchors for ESA-only broad products."""
+
+    columns = [
+        "exio20_product_code",
+        "exio20_product_label",
+        "esa59_old_cpa2002_division",
+        "esa59_old_cpa2002_label",
+        "chosen_cpa2002_code",
+        "chosen_cpa2002_label",
+        "chosen_cpa2002_level",
+        "anchor_basis",
+        "notes",
+        "chosen_cpa2002_normalized_code",
+        "chosen_cpa2002_display_code",
+        "chosen_cpa2002_division",
+    ]
+    if path is None:
+        return pd.DataFrame(columns=columns)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing product-anchor conciliation map: {path}")
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False).fillna("")
+    missing = sorted(PRODUCT_ANCHOR_COLUMNS - set(frame.columns))
+    if missing:
+        raise ValueError(f"Product-anchor conciliation map {path} missing columns: {missing}")
+    rows: list[dict[str, str]] = []
+    bad_rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in frame.itertuples(index=False):
+        exio_code = clean_text(getattr(row, "exio20_product_code"))
+        esa_division = clean_text(getattr(row, "esa59_old_cpa2002_division"))
+        chosen_raw = clean_text(getattr(row, "chosen_cpa2002_code"))
+        basis = clean_text(getattr(row, "anchor_basis"))
+        endpoint = classify_correspondence_code(chosen_raw)
+        chosen_division = clean_text(endpoint["division"])
+        key = (exio_code, esa_division, clean_text(endpoint["code"]))
+        if not exio_code or not esa_division or not chosen_raw or not basis:
+            bad_rows.append({"exio20_product_code": exio_code, "chosen_cpa2002_code": chosen_raw, "message": "blank product code, ESA division, chosen CPA2002 code, or basis"})
+            continue
+        if endpoint["level"] in {"blank", "header", "section", "non_code_label"} or not chosen_division:
+            bad_rows.append({"exio20_product_code": exio_code, "chosen_cpa2002_code": chosen_raw, "message": "chosen CPA2002 anchor is not a numeric CPA product code"})
+            continue
+        if chosen_division != esa_division:
+            bad_rows.append({"exio20_product_code": exio_code, "chosen_cpa2002_code": chosen_raw, "esa59_old_cpa2002_division": esa_division, "message": "chosen CPA2002 anchor is outside the ESA59 old-CPA division it is supposed to refine"})
+            continue
+        if key in seen:
+            bad_rows.append({"exio20_product_code": exio_code, "chosen_cpa2002_code": chosen_raw, "message": "duplicate product-anchor row"})
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "exio20_product_code": exio_code,
+                "exio20_product_label": clean_text(getattr(row, "exio20_product_label")),
+                "esa59_old_cpa2002_division": esa_division,
+                "esa59_old_cpa2002_label": clean_text(getattr(row, "esa59_old_cpa2002_label")),
+                "chosen_cpa2002_code": chosen_raw,
+                "chosen_cpa2002_label": clean_text(getattr(row, "chosen_cpa2002_label")),
+                "chosen_cpa2002_level": clean_text(endpoint["level"]),
+                "anchor_basis": basis,
+                "notes": clean_text(getattr(row, "notes")),
+                "chosen_cpa2002_normalized_code": clean_text(endpoint["code"]),
+                "chosen_cpa2002_display_code": clean_text(endpoint["display_code"]),
+                "chosen_cpa2002_division": chosen_division,
+            }
+        )
+    _print_mapping_rows("Product-anchor conciliation map invalid rows:", bad_rows)
+    if bad_rows:
+        raise ValueError(f"Invalid product-anchor conciliation map {path}; see printed rows above.")
+    out = pd.DataFrame.from_records(rows, columns=columns).drop_duplicates().reset_index(drop=True)
+    print(f"Read product-anchor conciliation map {path}: rows={len(out)}")
+    return out
 
 
 def read_first_step_conciliation_map(path: Path | None) -> pd.DataFrame:
@@ -1435,6 +1532,327 @@ def audit_correspondence_level_step(frame: pd.DataFrame, *, step_name: str) -> C
     )
 
 
+NUMERIC_CORRESPONDENCE_LEVELS: Final[set[str]] = {"division", "group", "class", "category", "subcategory", "aggregate"}
+
+
+def numeric_code_ancestors(code: object) -> list[str]:
+    """Return exact numeric code and numeric ancestors, stopping at two digits.
+
+    This is deliberately not a section fallback.  Without an explicit hierarchy
+    universe, a section-level source such as ``C`` cannot be expanded to all of its
+    product descendants for product-composition purposes.
+    """
+
+    compact = canonical_code(code)
+    if not compact.isdigit() or len(compact) < 2:
+        return []
+    out: list[str] = []
+    current = compact
+    while len(current) >= 2:
+        out.append(current)
+        if len(current) == 2:
+            break
+        current = current[:-1]
+    return out
+
+
+def _records_by_source_code(frame: pd.DataFrame) -> dict[str, list[dict[str, str]]]:
+    """Index level-aware correspondence rows by normalized source code."""
+
+    records = cast(list[dict[str, Any]], frame.to_dict(orient="records"))
+    by_source: dict[str, list[dict[str, str]]] = {}
+    for record in records:
+        source_code = clean_text(record.get("source_code", ""))
+        source_level = clean_text(record.get("source_level", ""))
+        target_code = clean_text(record.get("target_code", ""))
+        if not source_code or not target_code:
+            continue
+        if source_level == "section":
+            # Preserve section rows in the parser/audit, but never use them as an
+            # implicit product-composition fallback.  They are too broad without a
+            # trusted child universe.
+            continue
+        by_source.setdefault(source_code, []).append({key: clean_text(value) for key, value in record.items()})
+    return by_source
+
+
+def _match_level_aware_edges(
+    by_source: dict[str, list[dict[str, str]]],
+    *,
+    source_code: str,
+    source_level: str,
+    step_name: str,
+) -> tuple[list[dict[str, str]], str, dict[str, str] | None]:
+    """Match exact source code, then numeric ancestors; never infer sections."""
+
+    code = canonical_code(source_code)
+    level = clean_text(source_level)
+    if level == "unresolved_broad_division":
+        return [], "", {
+            "diagnostic_kind": "missing_curated_cpa2002_product_anchor",
+            "source_code": source_code,
+            "source_label": source_level,
+            "message": "ESA-only broad old-CPA division has no direct detailed CPA2002 row and no curated product-anchor row; refusing implicit broad fan-out.",
+        }
+    if level == "section" or not code.isdigit():
+        return [], "", {
+            "diagnostic_kind": f"{step_name}_section_or_nonnumeric_anchor",
+            "source_code": source_code,
+            "source_label": source_level,
+            "message": "Product composition refused section/non-numeric correspondence fallback without an explicit child universe.",
+        }
+    for candidate in numeric_code_ancestors(code):
+        matches = by_source.get(candidate, [])
+        if matches:
+            rule = "exact" if candidate == code else f"ancestor:{candidate}"
+            return matches, rule, None
+    return [], "", {
+        "diagnostic_kind": f"{step_name}_unresolved",
+        "source_code": source_code,
+        "source_label": source_level,
+        "message": "No exact or numeric-ancestor correspondence row resolved this product-level code.",
+    }
+
+
+def _direct_cpa2002_detail_rows_by_product(direct_cpa2002: pd.DataFrame) -> dict[str, list[dict[str, str]]]:
+    """Group detailed direct CPA2002 rows by EXIOBASE2 product code."""
+
+    out: dict[str, list[dict[str, str]]] = {}
+    if direct_cpa2002.empty:
+        return out
+    for row in direct_cpa2002.itertuples(index=False):
+        exio_code = clean_text(getattr(row, "exio20_product_code", ""))
+        cpa_code = clean_text(getattr(row, "cpa2002_code", ""))
+        if not exio_code or not cpa_code:
+            continue
+        endpoint = classify_correspondence_code(cpa_code)
+        out.setdefault(exio_code, []).append(
+            {
+                "cpa2002_code": endpoint["code"],
+                "cpa2002_display_code": endpoint["display_code"],
+                "cpa2002_level": endpoint["level"],
+                "cpa2002_division": clean_text(getattr(row, "cpa2002_division", "")) or endpoint["division"],
+                "cpa2002_label": clean_text(getattr(row, "cpa2002_label", "")),
+            }
+        )
+    return out
+
+
+def _curated_product_anchors_by_product(product_anchor_conciliation: pd.DataFrame) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """Group curated product-anchor rows by EXIOBASE2 product and ESA division."""
+
+    out: dict[tuple[str, str], list[dict[str, str]]] = {}
+    if product_anchor_conciliation.empty:
+        return out
+    records = cast(list[dict[str, Any]], product_anchor_conciliation.to_dict(orient="records"))
+    for record in records:
+        exio_code = clean_text(record.get("exio20_product_code", ""))
+        esa_division = clean_text(record.get("esa59_old_cpa2002_division", ""))
+        normalized = clean_text(record.get("chosen_cpa2002_normalized_code", ""))
+        if not exio_code or not esa_division or not normalized:
+            continue
+        out.setdefault((exio_code, esa_division), []).append(
+            {
+                "anchor_code": normalized,
+                "anchor_display_code": clean_text(record.get("chosen_cpa2002_display_code", "")) or clean_text(record.get("chosen_cpa2002_code", "")),
+                "anchor_level": clean_text(record.get("chosen_cpa2002_level", "")),
+                "anchor_label": clean_text(record.get("chosen_cpa2002_label", "")),
+                "anchor_source": "curated_CPA2002_product_anchor",
+                "anchor_basis": clean_text(record.get("anchor_basis", "")),
+            }
+        )
+    return out
+
+
+def _product_anchors_for_closed_row(
+    row: Any,
+    *,
+    direct_details_by_product: dict[str, list[dict[str, str]]],
+    curated_anchors_by_product: dict[tuple[str, str], list[dict[str, str]]],
+) -> list[dict[str, str]]:
+    """Return admissible CPA2002 anchors for one closed first-step row."""
+
+    exio_code = clean_text(getattr(row, "exio20_product_code", ""))
+    old_code = clean_text(getattr(row, "esa59_product_code", ""))
+    first_step_source = clean_text(getattr(row, "first_step_source", ""))
+    direct_details = [
+        detail
+        for detail in direct_details_by_product.get(exio_code, [])
+        if clean_text(detail.get("cpa2002_division", "")) == old_code
+    ]
+    anchors: list[dict[str, str]] = []
+    for detail in direct_details:
+        anchors.append(
+            {
+                "anchor_code": clean_text(detail.get("cpa2002_code", "")),
+                "anchor_display_code": clean_text(detail.get("cpa2002_display_code", "")),
+                "anchor_level": clean_text(detail.get("cpa2002_level", "")),
+                "anchor_label": clean_text(detail.get("cpa2002_label", "")),
+                "anchor_source": "CPA2002_6digit_EXIOBASE_FINAL" if first_step_source != "curated_first_step_conciliation" else "curated_first_step_conciliation_direct_CPA2002_detail",
+                "anchor_basis": "direct_detailed_cpa2002_within_closed_first_step_division",
+            }
+        )
+    if anchors:
+        return anchors
+    curated = curated_anchors_by_product.get((exio_code, old_code), [])
+    if curated:
+        return curated
+    endpoint = classify_correspondence_code(old_code)
+    return [
+        {
+            "anchor_code": endpoint["code"],
+            "anchor_display_code": endpoint["display_code"] or old_code,
+            "anchor_level": "unresolved_broad_division",
+            "anchor_label": clean_text(getattr(row, "esa59_product_label", "")),
+            "anchor_source": "ESA59_old_CPA_division_requires_curated_product_anchor",
+            "anchor_basis": "missing_direct_detail_and_missing_product_anchor",
+        }
+    ]
+
+
+def compose_products_to_cpa21_level_aware(
+    closed_first_step: pd.DataFrame,
+    direct_cpa2002: pd.DataFrame,
+    cpa2002_to_2008: pd.DataFrame,
+    cpa2008_to_21: pd.DataFrame,
+    product_anchor_conciliation: pd.DataFrame,
+) -> ProductPathResult:
+    """Compose EXIOBASE products through finest available CPA codes to CPA2.1.
+
+    Direct CPA2002 product codes are used before ESA/old-division fallbacks.  The
+    matcher uses exact correspondence rows first, then numeric ancestors.  It does
+    not use section-level correspondence rows as implicit product fallbacks.
+    """
+
+    cpa2002_index = _records_by_source_code(cpa2002_to_2008)
+    cpa2008_index = _records_by_source_code(cpa2008_to_21)
+    direct_details_by_product = _direct_cpa2002_detail_rows_by_product(direct_cpa2002)
+    curated_anchors_by_product = _curated_product_anchors_by_product(product_anchor_conciliation)
+    path_rows: list[dict[str, str]] = []
+    diagnostics: list[dict[str, str]] = []
+
+    for row in closed_first_step.itertuples(index=False):
+        exio20_code = clean_text(getattr(row, "exio20_product_code", ""))
+        exio20_name = clean_text(getattr(row, "exio20_product_name", ""))
+        exio3_code = clean_text(getattr(row, "exio3_product_code", ""))
+        exio3_name = clean_text(getattr(row, "exio3_product_name", ""))
+        esa59_code = clean_text(getattr(row, "esa59_product_code", ""))
+        esa59_label = clean_text(getattr(row, "esa59_product_label", ""))
+        first_step_source = clean_text(getattr(row, "first_step_source", ""))
+        anchors = _product_anchors_for_closed_row(row, direct_details_by_product=direct_details_by_product, curated_anchors_by_product=curated_anchors_by_product)
+        for anchor in anchors:
+            first_edges, first_rule, first_diagnostic = _match_level_aware_edges(
+                cpa2002_index,
+                source_code=anchor["anchor_code"],
+                source_level=anchor["anchor_level"],
+                step_name="cpa2002_to_cpa2008",
+            )
+            if first_diagnostic is not None:
+                diagnostics.append(
+                    {
+                        **first_diagnostic,
+                        "source_code": exio20_code,
+                        "source_label": exio20_name,
+                        "message": f"{first_diagnostic['message']} anchor={anchor['anchor_display_code']} ({anchor['anchor_level']})",
+                    }
+                )
+                continue
+            for first_edge in first_edges:
+                cpa2008_code = clean_text(first_edge.get("target_code", ""))
+                cpa2008_display = clean_text(first_edge.get("target_display_code", "")) or clean_text(first_edge.get("target_raw", "")) or cpa2008_code
+                cpa2008_level = clean_text(first_edge.get("target_level", ""))
+                second_edges, second_rule, second_diagnostic = _match_level_aware_edges(
+                    cpa2008_index,
+                    source_code=cpa2008_code,
+                    source_level=cpa2008_level,
+                    step_name="cpa2008_to_cpa21",
+                )
+                if second_diagnostic is not None:
+                    diagnostics.append(
+                        {
+                            **second_diagnostic,
+                            "source_code": exio20_code,
+                            "source_label": exio20_name,
+                            "message": f"{second_diagnostic['message']} cpa2008={cpa2008_display} ({cpa2008_level}) from anchor={anchor['anchor_display_code']}",
+                        }
+                    )
+                    continue
+                for second_edge in second_edges:
+                    cpa21_division = clean_text(second_edge.get("target_division", ""))
+                    if not cpa21_division:
+                        diagnostics.append(
+                            {
+                                "diagnostic_kind": "cpa21_without_numeric_division",
+                                "source_code": exio20_code,
+                                "source_label": exio20_name,
+                                "message": f"CPA2.1 target {second_edge.get('target_raw', '')} has no numeric division; not usable for CPA64/CPA65 aggregation.",
+                            }
+                        )
+                        continue
+                    path_rows.append(
+                        {
+                            "exio20_product_code": exio20_code,
+                            "exio20_product_name": exio20_name,
+                            "exio3_product_code": exio3_code,
+                            "exio3_product_name": exio3_name,
+                            "esa59_product_code": esa59_code,
+                            "esa59_product_label": esa59_label,
+                            "first_step_source": first_step_source,
+                            "cpa2002_anchor_code": anchor["anchor_code"],
+                            "cpa2002_anchor_display_code": anchor["anchor_display_code"],
+                            "cpa2002_anchor_level": anchor["anchor_level"],
+                            "cpa2002_anchor_label": anchor["anchor_label"],
+                            "cpa2002_anchor_source": anchor["anchor_source"],
+                            "cpa2002_anchor_basis": clean_text(anchor.get("anchor_basis", "")),
+                            "cpa2002_match_rule": first_rule,
+                            "cpa2008_code": cpa2008_code,
+                            "cpa2008_display_code": cpa2008_display,
+                            "cpa2008_level": cpa2008_level,
+                            "cpa2008_match_rule": second_rule,
+                            "cpa21_code": clean_text(second_edge.get("target_code", "")),
+                            "cpa21_display_code": clean_text(second_edge.get("target_display_code", "")) or clean_text(second_edge.get("target_raw", "")),
+                            "cpa21_level": clean_text(second_edge.get("target_level", "")),
+                            "cpa21_division": cpa21_division,
+                        }
+                    )
+
+    path_columns = [
+        "exio20_product_code",
+        "exio20_product_name",
+        "exio3_product_code",
+        "exio3_product_name",
+        "esa59_product_code",
+        "esa59_product_label",
+        "first_step_source",
+        "cpa2002_anchor_code",
+        "cpa2002_anchor_display_code",
+        "cpa2002_anchor_level",
+        "cpa2002_anchor_label",
+        "cpa2002_anchor_source",
+        "cpa2002_match_rule",
+        "cpa2008_code",
+        "cpa2008_display_code",
+        "cpa2008_level",
+        "cpa2008_match_rule",
+        "cpa21_code",
+        "cpa21_display_code",
+        "cpa21_level",
+        "cpa21_division",
+    ]
+    diagnostic_columns = ["diagnostic_kind", "source_code", "source_label", "message"]
+    paths = pd.DataFrame.from_records(path_rows, columns=path_columns).drop_duplicates().reset_index(drop=True)
+    diagnostic_frame = pd.DataFrame.from_records(diagnostics, columns=diagnostic_columns).drop_duplicates().reset_index(drop=True)
+    print(
+        "Level-aware product composition: "
+        f"closed_edges={len(closed_first_step)} product_paths={len(paths)} diagnostics={len(diagnostic_frame)}"
+    )
+    _print_mapping_rows(
+        "Level-aware product-composition diagnostics:",
+        cast(list[dict[str, str]], diagnostic_frame.head(50).to_dict(orient="records")),
+    )
+    return ProductPathResult(paths=paths, diagnostics=diagnostic_frame)
+
+
 def compose_old_division_to_cpa21_divisions(cpa2002_to_2008: pd.DataFrame, cpa2008_to_21: pd.DataFrame, *, old_division: str) -> tuple[set[str], list[str]]:
     """Compose old CPA2002 division code to current CPA2.1 division codes."""
 
@@ -1594,6 +2012,7 @@ def build_official_mapping(
     target_version: str,
     cpa2002_exiobase_path: Path | None = None,
     first_step_conciliation_path: Path | None = None,
+    product_anchor_conciliation_path: Path | None = None,
 ) -> BuildResult:
     """Build EXIOBASE3 -> CPA64/65 using official/source concordance chains."""
 
@@ -1605,25 +2024,23 @@ def build_official_mapping(
     direct_cpa2002 = read_cpa2002_exiobase_mapping(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else pd.DataFrame()
     conciliation_path = first_step_conciliation_path if first_step_conciliation_path is not None else DEFAULT_FIRST_STEP_CONCILIATION
     first_step_conciliation = read_first_step_conciliation_map(conciliation_path)
+    product_anchor_path = product_anchor_conciliation_path if product_anchor_conciliation_path is not None else DEFAULT_PRODUCT_ANCHOR_CONCILIATION
+    product_anchor_conciliation = read_product_anchor_conciliation_map(product_anchor_path)
 
     joined = build_closed_first_step_edges(esa, bridge, direct_cpa2002, first_step_conciliation)
 
-    old_division_labels = {
-        clean_text(getattr(row, "esa59_product_code")): clean_text(getattr(row, "esa59_product_label"))
-        for row in joined.itertuples(index=False)
-        if clean_text(getattr(row, "esa59_product_code"))
-    }
-    old_to_current_cache = compose_old_divisions_to_cpa21_divisions_checked(
+    diagnostics: list[dict[str, object]] = []
+    composition = compose_products_to_cpa21_level_aware(
+        joined,
+        direct_cpa2002,
         cpa2002_to_2008,
         cpa2008_to_21,
-        old_division_labels=old_division_labels,
-        division_to_targets=division_to_targets,
-        target_labels=labels,
+        product_anchor_conciliation,
     )
+    diagnostics.extend(cast(list[dict[str, object]], composition.diagnostics.to_dict(orient="records")))
 
-    diagnostics: list[dict[str, object]] = []
     edge_rows: list[dict[str, object]] = []
-    for row in joined.itertuples(index=False):
+    for row in composition.paths.itertuples(index=False):
         exio3_code = clean_text(getattr(row, "exio3_product_code", ""))
         if not exio3_code:
             diagnostics.append(
@@ -1631,37 +2048,55 @@ def build_official_mapping(
                     "diagnostic_kind": "exio20_without_exio3_bridge",
                     "source_code": clean_text(getattr(row, "exio20_product_code", "")),
                     "source_label": clean_text(getattr(row, "exio20_product_name", "")),
-                    "message": "ESA59 EXIOBASE2 product did not match the EXIOBASE2->EXIOBASE3 bridge.",
+                    "message": "EXIOBASE2 product did not match the EXIOBASE2->EXIOBASE3 bridge.",
                 }
             )
             continue
-        old_code = clean_text(getattr(row, "esa59_product_code"))
-        for division in sorted(old_to_current_cache[old_code]):
-            targets = division_to_targets.get(division, set())
-            if not targets:
-                diagnostics.append(
-                    {
-                        "diagnostic_kind": "cpa21_division_without_target_aggregation",
-                        "source_code": old_code,
-                        "source_label": clean_text(getattr(row, "esa59_product_label")),
-                        "message": f"CPA2.1 division {division} has no target in {target_division_map}.",
-                    }
-                )
-                continue
-            for target_code in sorted(targets):
-                edge_rows.append(
-                    {
-                        "exio3_product_code": exio3_code,
-                        "exio3_product_name": clean_text(getattr(row, "exio3_product_name", "")),
-                        "exio20_product_code": clean_text(getattr(row, "exio20_product_code", "")) or clean_text(getattr(row, "exio20_product_code_bridge", "")),
-                        "exio20_product_name": clean_text(getattr(row, "exio20_product_name", "")) or clean_text(getattr(row, "exio20_product_name_bridge", "")),
-                        "esa59_product_code": old_code,
-                        "esa59_product_label": clean_text(getattr(row, "esa59_product_label", "")),
-                        "cpa21_division": division,
-                        "target_code": target_code,
-                        "target_label": labels.get(target_code, target_code),
-                    }
-                )
+        division = clean_text(getattr(row, "cpa21_division", ""))
+        targets = division_to_targets.get(division, set())
+        if not targets:
+            diagnostics.append(
+                {
+                    "diagnostic_kind": "cpa21_division_without_target_aggregation",
+                    "source_code": clean_text(getattr(row, "cpa21_display_code", "")),
+                    "source_label": clean_text(getattr(row, "cpa21_level", "")),
+                    "message": f"CPA2.1 division {division} has no target in {target_division_map}.",
+                }
+            )
+            continue
+        economic_warning = ""
+        if len(targets) > 1:
+            economic_warning = "CPA2.1 division maps to multiple CPA64/CPA65 targets; runtime output-share split required."
+        for target_code in sorted(targets):
+            edge_rows.append(
+                {
+                    "exio3_product_code": exio3_code,
+                    "exio3_product_name": clean_text(getattr(row, "exio3_product_name", "")),
+                    "exio20_product_code": clean_text(getattr(row, "exio20_product_code", "")),
+                    "exio20_product_name": clean_text(getattr(row, "exio20_product_name", "")),
+                    "esa59_product_code": clean_text(getattr(row, "esa59_product_code", "")),
+                    "esa59_product_label": clean_text(getattr(row, "esa59_product_label", "")),
+                    "first_step_source": clean_text(getattr(row, "first_step_source", "")),
+                    "cpa2002_anchor_code": clean_text(getattr(row, "cpa2002_anchor_code", "")),
+                    "cpa2002_anchor_display_code": clean_text(getattr(row, "cpa2002_anchor_display_code", "")),
+                    "cpa2002_anchor_level": clean_text(getattr(row, "cpa2002_anchor_level", "")),
+                    "cpa2002_anchor_label": clean_text(getattr(row, "cpa2002_anchor_label", "")),
+                    "cpa2002_anchor_source": clean_text(getattr(row, "cpa2002_anchor_source", "")),
+                    "cpa2002_anchor_basis": clean_text(getattr(row, "cpa2002_anchor_basis", "")),
+                    "cpa2002_match_rule": clean_text(getattr(row, "cpa2002_match_rule", "")),
+                    "cpa2008_code": clean_text(getattr(row, "cpa2008_code", "")),
+                    "cpa2008_display_code": clean_text(getattr(row, "cpa2008_display_code", "")),
+                    "cpa2008_level": clean_text(getattr(row, "cpa2008_level", "")),
+                    "cpa2008_match_rule": clean_text(getattr(row, "cpa2008_match_rule", "")),
+                    "cpa21_code": clean_text(getattr(row, "cpa21_code", "")),
+                    "cpa21_display_code": clean_text(getattr(row, "cpa21_display_code", "")),
+                    "cpa21_level": clean_text(getattr(row, "cpa21_level", "")),
+                    "cpa21_division": division,
+                    "target_code": target_code,
+                    "target_label": labels.get(target_code, target_code),
+                    "economic_warning": economic_warning,
+                }
+            )
     edges = pd.DataFrame.from_records(edge_rows)
     if edges.empty:
         mapping = pd.DataFrame(columns=list(CANONICAL_COLUMNS))
@@ -1671,8 +2106,16 @@ def build_official_mapping(
             edges.groupby(["exio3_product_code", "exio3_product_name", "target_code", "target_label"], as_index=False).agg(
                 esa59_product_codes=("esa59_product_code", lambda values: ";".join(sorted(set(map(str, values))))),
                 esa59_product_labels=("esa59_product_label", lambda values: " | ".join(sorted(set(map(str, values))))),
+                cpa2002_anchor_codes=("cpa2002_anchor_display_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa2002_anchor_levels=("cpa2002_anchor_level", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa2002_match_rules=("cpa2002_match_rule", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa2008_codes=("cpa2008_display_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa2008_match_rules=("cpa2008_match_rule", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa21_codes=("cpa21_display_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa21_levels=("cpa21_level", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
                 cpa21_divisions=("cpa21_division", lambda values: ";".join(sorted(set(map(str, values))))),
                 exio20_product_codes=("exio20_product_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                economic_warnings=("economic_warning", lambda values: " | ".join(sorted({str(value) for value in values if str(value)}))),
             ),
         )
         target_counts = grouped.groupby("exio3_product_code")["target_code"].transform("nunique").astype(int)
@@ -1684,8 +2127,16 @@ def build_official_mapping(
             allocation_rule = "split-by-output-share" if int(row["n_targets_for_exio3_product"]) > 1 else "direct-single-target"
             esa59_product_codes = clean_text(row.get("esa59_product_codes", ""))
             esa59_product_labels = clean_text(row.get("esa59_product_labels", ""))
+            cpa2002_anchor_codes = clean_text(row.get("cpa2002_anchor_codes", ""))
+            cpa2002_anchor_levels = clean_text(row.get("cpa2002_anchor_levels", ""))
+            cpa2002_match_rules = clean_text(row.get("cpa2002_match_rules", ""))
+            cpa2008_codes = clean_text(row.get("cpa2008_codes", ""))
+            cpa2008_match_rules = clean_text(row.get("cpa2008_match_rules", ""))
+            cpa21_codes = clean_text(row.get("cpa21_codes", ""))
+            cpa21_levels = clean_text(row.get("cpa21_levels", ""))
             cpa21_divisions = clean_text(row.get("cpa21_divisions", ""))
             exio20_product_codes = clean_text(row.get("exio20_product_codes", ""))
+            economic_warnings = clean_text(row.get("economic_warnings", ""))
             rows.append(
                 {
                     "order": order,
@@ -1703,17 +2154,20 @@ def build_official_mapping(
                     "target_code": clean_text(row.get("target_code", "")),
                     "target_label": clean_text(row.get("target_label", "")),
                     "enabled": "1",
-                    "provenance": "EXIOBASE_ESA59_and_Eurostat_RAMON_official_correspondence_chain",
+                    "provenance": "EXIOBASE_ESA59_direct_CPA2002_and_level_aware_RAMON_correspondence_chain",
                     "certainty": "source-concordance-derived",
                     "allocation_rule": allocation_rule,
-                    "source_name": "EXIOBASE20p_ESA59p + CPA2002_6digit_EXIOBASE_FINAL + EXIOBASE2->3 + RAMON CPA correspondences",
+                    "source_name": "EXIOBASE20p_ESA59p + CPA2002_6digit_EXIOBASE_FINAL + EXIOBASE2->3 + level-aware RAMON CPA correspondences",
                     "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_exiobase_path or "", conciliation_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
                     "notes": (
                         f"ESA59 old product group(s) {esa59_product_codes}: {esa59_product_labels}. "
-                        f"Resolved CPA2.1 division(s) {cpa21_divisions}. "
+                        f"CPA2002 anchor(s) {cpa2002_anchor_codes} at level(s) {cpa2002_anchor_levels}; "
+                        f"CPA2002->CPA2008 match rule(s): {cpa2002_match_rules}; CPA2008 code(s): {cpa2008_codes}; "
+                        f"CPA2008->CPA2.1 match rule(s): {cpa2008_match_rules}; CPA2.1 code(s): {cpa21_codes} "
+                        f"at level(s) {cpa21_levels}; CPA2.1 division(s): {cpa21_divisions}. "
                         f"EXIOBASE2 source code(s): {exio20_product_codes}. "
-                        "No manual NSI->CPA table is used; many-target rows are resolved from target-side values at runtime."
-                    ),
+                        f"{economic_warnings}"
+                    ).strip(),
                     "source_balance_role": "",
                     "target_sector_role": "",
                     "include_in_direct_energy": "1",
@@ -1731,6 +2185,8 @@ def build_official_mapping(
         "cpa2002_exiobase_sha256": sha256_file(cpa2002_exiobase_path) if cpa2002_exiobase_path is not None else "",
         "first_step_conciliation_path": str(conciliation_path),
         "first_step_conciliation_sha256": sha256_file(conciliation_path),
+        "product_anchor_conciliation_path": str(product_anchor_path),
+        "product_anchor_conciliation_sha256": sha256_file(product_anchor_path),
         "cpa2002_cpa2008_path": str(cpa2002_cpa2008_path),
         "cpa2002_cpa2008_sha256": sha256_file(cpa2002_cpa2008_path),
         "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
@@ -1739,6 +2195,7 @@ def build_official_mapping(
         "target_division_map_path": str(target_division_map),
         "target_division_map_sha256": sha256_file(target_division_map),
         "esa59_rows": int(len(esa)),
+        "level_aware_product_path_rows": int(len(composition.paths)),
         "edge_rows": int(len(edges)),
         "mapping_rows": int(len(mapping)),
         "distinct_exio3_products": int(mapping["source_code"].nunique()) if not mapping.empty else 0,
@@ -1804,6 +2261,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--exio20-exio30-member", default=EXIO20_EXIO30_MEMBER)
     parser.add_argument("--cpa2002-exiobase-member", default=CPA2002_EXIOBASE_MEMBER)
     parser.add_argument("--first-step-conciliation", type=Path, default=DEFAULT_FIRST_STEP_CONCILIATION)
+    parser.add_argument("--product-anchor-conciliation", type=Path, default=DEFAULT_PRODUCT_ANCHOR_CONCILIATION)
     parser.add_argument("--cpa2002-cpa2008", type=Path, default=DEFAULT_CPA2002_CPA2008)
     parser.add_argument("--cpa2008-cpa21", type=Path, default=DEFAULT_CPA2008_CPA21)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
@@ -1850,6 +2308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_version=args.target_version,
             cpa2002_exiobase_path=cpa2002_exiobase_path,
             first_step_conciliation_path=args.first_step_conciliation,
+            product_anchor_conciliation_path=args.product_anchor_conciliation,
         )
 
     official_source = "; ".join(
@@ -1860,6 +2319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(args.cpa2002_cpa2008),
             str(args.cpa2008_cpa21),
             str(args.first_step_conciliation),
+            str(args.product_anchor_conciliation),
             str(target_division_map),
         ]
     )
@@ -1882,6 +2342,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "cpa2002_exiobase_sha256": sha256_bytes(cpa2002_exiobase_bytes),
             "first_step_conciliation_path": str(args.first_step_conciliation),
             "first_step_conciliation_sha256": sha256_file(args.first_step_conciliation),
+            "product_anchor_conciliation_path": str(args.product_anchor_conciliation),
+            "product_anchor_conciliation_sha256": sha256_file(args.product_anchor_conciliation),
             "target_division_map_path": str(target_division_map),
             "target_division_map_sha256": sha256_file(target_division_map),
         }
