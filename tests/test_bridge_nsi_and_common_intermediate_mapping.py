@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ast
 
 import importlib.util
 import sys
@@ -158,26 +159,6 @@ def test_real_ramon_correspondence_files_parse_as_level_aware_edges() -> None:
     assert old_audit.edge_kind_counts["section_to_subcategory"] > 0
     assert current_audit.edge_kind_counts["section_to_section"] > 0
     assert current_audit.edge_kind_counts["division_to_division"] > 0
-
-
-def test_legacy_two_digit_audit_rejects_mixed_level_edges_without_silent_skip() -> None:
-    module = load_module(OFFICIAL_SCRIPT, "official_concordance_legacy_two_digit_rejects_mixed")
-    frame = pd.DataFrame(
-        [
-            {
-                "source_code": "C",
-                "target_code": "099019",
-                "source_raw": "C",
-                "target_raw": "09.90.19",
-            }
-        ]
-    )
-    try:
-        module.audit_correspondence_division_step(frame, step_name="mixed-level row must not be silently skipped")
-    except ValueError as exc:
-        assert "cannot be normalized to two-digit divisions" in str(exc)
-    else:
-        raise AssertionError("Expected legacy two-digit audit to reject mixed-level edge")
 
 
 def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path) -> None:
@@ -952,3 +933,25 @@ def test_curated_product_anchor_file_documents_esa_only_broad_products() -> None
     p905d = anchors.loc[anchors["exio20_product_code"] == "p90.5.d"]
     assert set(p905d["chosen_cpa2002_display_code"]) == {"90.02.13", "90.02.14"}
     assert set(p905d["chosen_cpa2002_division"]) == {"90"}
+
+
+def test_phase4_removed_legacy_two_digit_architecture_symbols() -> None:
+    source_text = OFFICIAL_SCRIPT.read_text(encoding="utf-8")
+    tree = ast.parse(source_text)
+    definitions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_symbols = {
+        "DivisionStepAudit",
+        "_active_prefix_edges",
+        "_correspondence_division_edges",
+        "_division_labels_from_edges",
+        "audit_correspondence_division_step",
+        "assert_code_universes_equal",
+        "_targets_by_source_division",
+        "compose_old_divisions_to_cpa21_divisions_checked",
+        "compose_old_division_to_cpa21_divisions",
+    }
+    assert definitions.isdisjoint(legacy_symbols)
