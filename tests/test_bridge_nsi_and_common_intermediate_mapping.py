@@ -443,10 +443,43 @@ def test_first_step_closure_fills_missing_direct_cpa_from_esa(tmp_path: Path) ->
     )
 
     assert result.diagnostics.empty
-    # p24.b is not in the direct CPA workbook fixture, but it can be filled from
-    # ESA59 because the direct workbook still reaches old division 24 through p24.a.
-    # This distinguishes allowed product-side closure from forbidden codomain loss.
+    # p24.b is not in the direct CPA workbook fixture. It is mapped only because
+    # the default product-anchor conciliation file gives an explicit detailed
+    # CPA2002 anchor; broad ESA division 24 is not fanned out implicitly.
     assert set(result.mapping.loc[result.mapping["source_code"] == "p24.b", "target_code"]) == {"CPA_C20"}
+    p24b_edges = result.edges.loc[result.edges["exio20_product_code"] == "p24.b"]
+    assert set(p24b_edges["cpa2002_anchor_display_code"]) == {"24.15.10"}
+    assert set(p24b_edges["cpa2002_anchor_source"]) == {"curated_CPA2002_product_anchor"}
+    assert set(p24b_edges["cpa2002_anchor_basis"]) == {"curated_from_product_label"}
+    assert "curated_from_product_label" in " ".join(result.mapping.loc[result.mapping["source_code"] == "p24.b", "notes"].astype(str))
+
+    empty_anchor = tmp_path / "empty_product_anchor_conciliation.csv"
+    pd.DataFrame(
+        columns=[
+            "exio20_product_code",
+            "exio20_product_label",
+            "esa59_old_cpa2002_division",
+            "esa59_old_cpa2002_label",
+            "chosen_cpa2002_code",
+            "chosen_cpa2002_label",
+            "chosen_cpa2002_level",
+            "anchor_basis",
+            "notes",
+        ]
+    ).to_csv(empty_anchor, index=False)
+    without_anchor = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+        product_anchor_conciliation_path=empty_anchor,
+    )
+    assert "p24.b" not in set(without_anchor.mapping["source_code"])
+    assert set(without_anchor.diagnostics["diagnostic_kind"]) == {"missing_curated_cpa2002_product_anchor"}
 
 def test_first_step_closure_fails_on_two_digit_inconsistency(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_closure_fail")

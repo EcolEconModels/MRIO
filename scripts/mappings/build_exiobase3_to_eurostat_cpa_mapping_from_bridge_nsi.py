@@ -1829,6 +1829,7 @@ def compose_products_to_cpa21_level_aware(
         "cpa2002_anchor_level",
         "cpa2002_anchor_label",
         "cpa2002_anchor_source",
+        "cpa2002_anchor_basis",
         "cpa2002_match_rule",
         "cpa2008_code",
         "cpa2008_display_code",
@@ -2108,6 +2109,8 @@ def build_official_mapping(
                 esa59_product_labels=("esa59_product_label", lambda values: " | ".join(sorted(set(map(str, values))))),
                 cpa2002_anchor_codes=("cpa2002_anchor_display_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
                 cpa2002_anchor_levels=("cpa2002_anchor_level", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa2002_anchor_sources=("cpa2002_anchor_source", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
+                cpa2002_anchor_bases=("cpa2002_anchor_basis", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
                 cpa2002_match_rules=("cpa2002_match_rule", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
                 cpa2008_codes=("cpa2008_display_code", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
                 cpa2008_match_rules=("cpa2008_match_rule", lambda values: ";".join(sorted({str(value) for value in values if str(value)}))),
@@ -2129,6 +2132,8 @@ def build_official_mapping(
             esa59_product_labels = clean_text(row.get("esa59_product_labels", ""))
             cpa2002_anchor_codes = clean_text(row.get("cpa2002_anchor_codes", ""))
             cpa2002_anchor_levels = clean_text(row.get("cpa2002_anchor_levels", ""))
+            cpa2002_anchor_sources = clean_text(row.get("cpa2002_anchor_sources", ""))
+            cpa2002_anchor_bases = clean_text(row.get("cpa2002_anchor_bases", ""))
             cpa2002_match_rules = clean_text(row.get("cpa2002_match_rules", ""))
             cpa2008_codes = clean_text(row.get("cpa2008_codes", ""))
             cpa2008_match_rules = clean_text(row.get("cpa2008_match_rules", ""))
@@ -2158,10 +2163,11 @@ def build_official_mapping(
                     "certainty": "source-concordance-derived",
                     "allocation_rule": allocation_rule,
                     "source_name": "EXIOBASE20p_ESA59p + CPA2002_6digit_EXIOBASE_FINAL + EXIOBASE2->3 + level-aware RAMON CPA correspondences",
-                    "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_exiobase_path or "", conciliation_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
+                    "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_exiobase_path or "", conciliation_path, product_anchor_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
                     "notes": (
                         f"ESA59 old product group(s) {esa59_product_codes}: {esa59_product_labels}. "
                         f"CPA2002 anchor(s) {cpa2002_anchor_codes} at level(s) {cpa2002_anchor_levels}; "
+                        f"anchor source(s): {cpa2002_anchor_sources}; anchor basis: {cpa2002_anchor_bases}; "
                         f"CPA2002->CPA2008 match rule(s): {cpa2002_match_rules}; CPA2008 code(s): {cpa2008_codes}; "
                         f"CPA2008->CPA2.1 match rule(s): {cpa2008_match_rules}; CPA2.1 code(s): {cpa21_codes} "
                         f"at level(s) {cpa21_levels}; CPA2.1 division(s): {cpa21_divisions}. "
@@ -2240,7 +2246,8 @@ def write_outputs(
         "method_notes": [
             "No hard-coded NSI->CPA table is used.",
             "EXIOBASE2 products are mapped through a closed first-step comparison of EXIOBASE20p_ESA59p.txt and CPA2002_6digit_EXIOBASE_FINAL.xlsx, with product-level conflicts resolved only by scripts/mappings/exiobase2_old_cpa2002_first_step_conciliation.csv.",
-            "Old CPA2002-style divisions are chained through RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
+            "After first-step division closure, direct detailed CPA2002 anchors and curated product-anchor rows for ESA-only broad products are composed through level-aware RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
+            "ESA-only broad CPA2002 division anchors are not fanned out implicitly; they require scripts/mappings/exiobase2_cpa2002_product_anchor_conciliation.csv.",
             "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
             "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
             "The internal EXIOBASE3/ESA59/CPA2.1 edge audit is written under out-dir/diagnostics by default; --edge-audit-csv may override the path.",
