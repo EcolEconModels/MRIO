@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import json
 
 import importlib.util
 import sys
@@ -237,6 +238,56 @@ def test_official_generator_builds_mapping_from_concordance_chain(tmp_path: Path
     assert set(result.mapping.loc[result.mapping["source_code"] == "p47.a", "allocation_rule"]) == {"split-by-output-share"}
     assert set(result.mapping["target_version"]) == {"CPA_65"}
 
+
+
+
+def _write_minimal_official_cli_fixture(tmp_path: Path, *, resolvable: bool) -> dict[str, Path]:
+    concordances_zip = tmp_path / "exiobase_concordances.zip"
+    exio_bridge = tmp_path / "EXIOBASE2 products comparison with EXIOBASE3 products.xlsx"
+    direct_cpa = tmp_path / "CPA2002_6digit_EXIOBASE_FINAL.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "EXIOBASE 2 Name": "Paddy rice",
+                "EXIOBASE 2 code": "p01.a",
+                "EXIOBASE 3 name": "Paddy rice",
+                "EXIOBASE 3 code": "p01.a",
+            }
+        ]
+    ).to_excel(exio_bridge, index=False)
+    _write_cpa2002_exiobase_workbook(
+        direct_cpa,
+        [{"CPA 2002": "Rice, not husked", "CPA 2002.1": "01.11.14", "CPA 2002.2": "11114", "EXIOBASE_2.0": "p01.a"}],
+    )
+    with zipfile.ZipFile(concordances_zip, "w") as zf:
+        zf.writestr("Concordances/Different aggregations/EXIOBASE20p_ESA59p.txt", "\tProducts of agriculture, hunting and related services (01)\nPaddy rice\t1\n")
+        zf.write(exio_bridge, "Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx")
+        zf.write(direct_cpa, "Concordances/Archive/International classifications/CPA2002_6digit_EXIOBASE_FINAL.xlsx")
+    cpa02_08 = tmp_path / "CPA_2002_to_CPA_2008.csv"
+    if resolvable:
+        pd.DataFrame([{"CPA2002_SOURCE_CODE": "01.11", "CPA2008_TARGET_CODE": "01.11"}]).to_csv(cpa02_08, index=False)
+    else:
+        pd.DataFrame([{"CPA2002_SOURCE_CODE": "02.10", "CPA2008_TARGET_CODE": "02.10"}]).to_csv(cpa02_08, index=False)
+    cpa08_21 = tmp_path / "CPA_2008_to_CPA_21.csv"
+    pd.DataFrame(
+        [
+            {"CPA2008_SOURCE_CODE": "01.11", "CPA21_TARGET_CODE": "01.11"},
+            {"CPA2008_SOURCE_CODE": "02.10", "CPA21_TARGET_CODE": "02.10"},
+        ]
+    ).to_csv(cpa08_21, index=False)
+    dictionary = tmp_path / "cpa65_dictionary.csv"
+    pd.DataFrame([{"code": "CPA_A01", "label": "Agriculture", "description": "dictionary text is not parsed"}]).to_csv(dictionary, index=False)
+    division_map = tmp_path / "cpa65_to_cpa21_divisions.csv"
+    pd.DataFrame([{"target_version": "CPA_65", "target_code": "CPA_A01", "target_label": "Agriculture", "iot_a64_code": "A01", "cpa21_division": "01"}]).to_csv(division_map, index=False)
+    return {
+        "concordances_zip": concordances_zip,
+        "cpa02_08": cpa02_08,
+        "cpa08_21": cpa08_21,
+        "dictionary": dictionary,
+        "division_map": division_map,
+    }
+
+
 def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_zip_cli")
     concordances_zip = tmp_path / "exiobase_concordances.zip"
@@ -321,6 +372,64 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     assert set(generated.loc[generated["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(generated.loc[generated["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(generated["target_version"]) == {"CPA_65"}
+
+
+
+
+
+def test_official_cli_does_not_write_outputs_before_failing_diagnostics(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_cli_diag_gate")
+    paths = _write_minimal_official_cli_fixture(tmp_path, resolvable=False)
+    out_dir = tmp_path / "out"
+
+    try:
+        module.main([
+            "--concordances-zip", str(paths["concordances_zip"]),
+            "--cpa2002-cpa2008", str(paths["cpa02_08"]),
+            "--cpa2008-cpa21", str(paths["cpa08_21"]),
+            "--target-dictionary", str(paths["dictionary"]),
+            "--target-division-map", str(paths["division_map"]),
+            "--target-version", "cpa65",
+            "--out-dir", str(out_dir),
+        ])
+    except SystemExit as exc:
+        assert "diagnostics" in str(exc)
+    else:
+        raise AssertionError("Expected unresolved detailed anchor diagnostics to stop the default CLI run")
+
+    stem = "exio_to_eurostat_cpa65_products_from_official_concordances"
+    assert not (out_dir / f"{stem}.csv").exists()
+    assert not (out_dir / f"{stem}_diagnostics.csv").exists()
+    assert not (out_dir / f"{stem}_manifest.json").exists()
+    assert not (out_dir / "diagnostics" / f"{stem}_edges.csv").exists()
+
+
+def test_official_cli_allow_diagnostics_marks_outputs_exploratory(tmp_path: Path) -> None:
+    module = load_module(OFFICIAL_SCRIPT, "official_concordance_cli_diag_allow")
+    paths = _write_minimal_official_cli_fixture(tmp_path, resolvable=False)
+    out_dir = tmp_path / "out"
+
+    assert module.main([
+        "--concordances-zip", str(paths["concordances_zip"]),
+        "--cpa2002-cpa2008", str(paths["cpa02_08"]),
+        "--cpa2008-cpa21", str(paths["cpa08_21"]),
+        "--target-dictionary", str(paths["dictionary"]),
+        "--target-division-map", str(paths["division_map"]),
+        "--target-version", "cpa65",
+        "--out-dir", str(out_dir),
+        "--allow-diagnostics",
+    ]) == 0
+
+    stem = "exio_to_eurostat_cpa65_products_from_official_concordances"
+    manifest = json.loads((out_dir / f"{stem}_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["diagnostics_allowed"] is True
+    assert manifest["output_status"] == "diagnostic_exploratory_unresolved_anchors_present"
+    assert manifest["coverage"]["diagnostic_rows"] == 1
+    assert manifest["coverage"]["anchor_source_mode"] == "direct-only"
+    assert manifest["coverage"]["diagnostics_allowed"] is True
+    assert "--allow-diagnostics" in " ".join(manifest["method_notes"])
+    assert (out_dir / f"{stem}.csv").exists()
+    assert (out_dir / f"{stem}_diagnostics.csv").exists()
 
 
 def test_common_intermediate_composer_collapses_edges_to_direct_eb_cpa_mapping(tmp_path: Path) -> None:
@@ -493,12 +602,13 @@ def test_first_step_closure_fills_missing_direct_cpa_from_esa(tmp_path: Path) ->
         target_division_map=division_map,
         target_version="cpa65",
         cpa2002_exiobase_path=direct,
+        anchor_source_mode="direct-plus-curated-gaps",
     )
 
     assert result.diagnostics.empty
-    # p24.b is not in the direct CPA workbook fixture. It is mapped only because
-    # the default product-anchor conciliation file gives an explicit detailed
-    # CPA2002 anchor; broad ESA division 24 is not fanned out implicitly.
+    # p24.b is not in the direct CPA workbook fixture. It is mapped only in
+    # direct-plus-curated-gaps mode because the product-anchor conciliation file
+    # gives an explicit detailed CPA2002 anchor; broad ESA division 24 is not fanned out implicitly.
     assert set(result.mapping.loc[result.mapping["source_code"] == "p24.b", "target_code"]) == {"CPA_C20"}
     p24b_edges = result.edges.loc[result.edges["exio20_product_code"] == "p24.b"]
     assert set(p24b_edges["cpa2002_anchor_display_code"]) == {"24.15.10"}
@@ -530,9 +640,25 @@ def test_first_step_closure_fills_missing_direct_cpa_from_esa(tmp_path: Path) ->
         target_version="cpa65",
         cpa2002_exiobase_path=direct,
         product_anchor_conciliation_path=empty_anchor,
+        anchor_source_mode="direct-plus-curated-gaps",
     )
     assert "p24.b" not in set(without_anchor.mapping["source_code"])
     assert set(without_anchor.diagnostics["diagnostic_kind"]) == {"missing_curated_cpa2002_product_anchor"}
+
+    direct_only = module.build_official_mapping(
+        esa59_path=esa,
+        exio20_exio30_path=exio_bridge,
+        cpa2002_cpa2008_path=cpa02_08,
+        cpa2008_cpa21_path=cpa08_21,
+        target_dictionary=dictionary,
+        target_division_map=division_map,
+        target_version="cpa65",
+        cpa2002_exiobase_path=direct,
+        anchor_source_mode="direct-only",
+    )
+    assert "p24.b" not in set(direct_only.mapping["source_code"])
+    assert set(direct_only.diagnostics["diagnostic_kind"]) == {"missing_direct_cpa2002_anchor"}
+    assert direct_only.coverage["anchor_source_mode"] == "direct-only"
 
 def test_first_step_closure_fails_on_two_digit_inconsistency(tmp_path: Path) -> None:
     module = load_module(OFFICIAL_SCRIPT, "official_concordance_closure_fail")

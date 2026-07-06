@@ -1314,6 +1314,13 @@ def audit_correspondence_level_step(frame: pd.DataFrame, *, step_name: str) -> C
 
 
 NUMERIC_CORRESPONDENCE_LEVELS: Final[set[str]] = {"division", "group", "class", "category", "subcategory", "aggregate"}
+DIRECT_ONLY_ANCHOR_SOURCE_MODE: Final[str] = "direct-only"
+DIRECT_PLUS_CURATED_GAPS_ANCHOR_SOURCE_MODE: Final[str] = "direct-plus-curated-gaps"
+ANCHOR_SOURCE_MODES: Final[set[str]] = {DIRECT_ONLY_ANCHOR_SOURCE_MODE, DIRECT_PLUS_CURATED_GAPS_ANCHOR_SOURCE_MODE}
+DEFAULT_ANCHOR_SOURCE_MODE: Final[str] = DIRECT_ONLY_ANCHOR_SOURCE_MODE
+CLEAN_OUTPUT_STATUS: Final[str] = "clean_no_diagnostics"
+DIAGNOSTICS_BLOCKED_OUTPUT_STATUS: Final[str] = "diagnostics_blocked_no_outputs"
+DIAGNOSTIC_EXPLORATORY_OUTPUT_STATUS: Final[str] = "diagnostic_exploratory_unresolved_anchors_present"
 TARGET_DIVISION_SPLIT_WARNING: Final[str] = "CPA2.1 division maps to multiple CPA64/CPA65 targets; runtime output-share split required."
 FINAL_AGGREGATION_SPLIT_WARNING: Final[str] = "EXIOBASE3 product maps to multiple CPA64/CPA65 targets; runtime output-share split required."
 
@@ -1386,6 +1393,13 @@ def _match_level_aware_edges(
             "source_code": source_code,
             "source_label": source_level,
             "message": "ESA-only broad old-CPA division has no direct detailed CPA2002 row and no curated product-anchor row; refusing implicit broad fan-out.",
+        }
+    if level == "unresolved_direct_only_missing_detail":
+        return [], "", {
+            "diagnostic_kind": "missing_direct_cpa2002_anchor",
+            "source_code": source_code,
+            "source_label": source_level,
+            "message": "Direct-only anchor mode found no direct detailed CPA2002 row for this EXIOBASE2 product; curated ESA59 gap anchors are disabled.",
         }
     if level == "section" or not code.isdigit():
         return [], "", {
@@ -1462,9 +1476,13 @@ def _product_anchors_for_closed_row(
     *,
     direct_details_by_product: dict[str, list[dict[str, str]]],
     curated_anchors_by_product: dict[tuple[str, str], list[dict[str, str]]],
+    anchor_source_mode: str,
 ) -> list[dict[str, str]]:
-    """Return admissible CPA2002 anchors for one closed first-step row."""
+    """Return CPA2002 anchors for one closed first-step row under the selected source mode."""
 
+    mode = clean_text(anchor_source_mode) or DEFAULT_ANCHOR_SOURCE_MODE
+    if mode not in ANCHOR_SOURCE_MODES:
+        raise ValueError(f"Unknown anchor_source_mode {anchor_source_mode!r}; expected one of {sorted(ANCHOR_SOURCE_MODES)}")
     exio_code = clean_text(getattr(row, "exio20_product_code", ""))
     old_code = clean_text(getattr(row, "esa59_product_code", ""))
     first_step_source = clean_text(getattr(row, "first_step_source", ""))
@@ -1487,10 +1505,21 @@ def _product_anchors_for_closed_row(
         )
     if anchors:
         return anchors
+    endpoint = classify_correspondence_code(old_code)
+    if mode == DIRECT_ONLY_ANCHOR_SOURCE_MODE:
+        return [
+            {
+                "anchor_code": endpoint["code"],
+                "anchor_display_code": endpoint["display_code"] or old_code,
+                "anchor_level": "unresolved_direct_only_missing_detail",
+                "anchor_label": clean_text(getattr(row, "esa59_product_label", "")),
+                "anchor_source": "Direct_CPA2002_detail_missing_in_direct_only_mode",
+                "anchor_basis": "direct_only_missing_direct_detail",
+            }
+        ]
     curated = curated_anchors_by_product.get((exio_code, old_code), [])
     if curated:
         return curated
-    endpoint = classify_correspondence_code(old_code)
     return [
         {
             "anchor_code": endpoint["code"],
@@ -1509,6 +1538,8 @@ def compose_products_to_cpa21_level_aware(
     cpa2002_to_2008: pd.DataFrame,
     cpa2008_to_21: pd.DataFrame,
     product_anchor_conciliation: pd.DataFrame,
+    *,
+    anchor_source_mode: str = DEFAULT_ANCHOR_SOURCE_MODE,
 ) -> ProductPathResult:
     """Compose EXIOBASE products through finest available CPA codes to CPA2.1.
 
@@ -1532,7 +1563,12 @@ def compose_products_to_cpa21_level_aware(
         esa59_code = clean_text(getattr(row, "esa59_product_code", ""))
         esa59_label = clean_text(getattr(row, "esa59_product_label", ""))
         first_step_source = clean_text(getattr(row, "first_step_source", ""))
-        anchors = _product_anchors_for_closed_row(row, direct_details_by_product=direct_details_by_product, curated_anchors_by_product=curated_anchors_by_product)
+        anchors = _product_anchors_for_closed_row(
+            row,
+            direct_details_by_product=direct_details_by_product,
+            curated_anchors_by_product=curated_anchors_by_product,
+            anchor_source_mode=anchor_source_mode,
+        )
         for anchor in anchors:
             first_edges, first_rule, first_diagnostic = _match_level_aware_edges(
                 cpa2002_index,
@@ -1785,9 +1821,13 @@ def build_official_mapping(
     cpa2002_exiobase_path: Path | None = None,
     first_step_conciliation_path: Path | None = None,
     product_anchor_conciliation_path: Path | None = None,
+    anchor_source_mode: str = DEFAULT_ANCHOR_SOURCE_MODE,
 ) -> BuildResult:
     """Build EXIOBASE3 -> CPA64/65 using official/source concordance chains."""
 
+    anchor_source_mode = clean_text(anchor_source_mode) or DEFAULT_ANCHOR_SOURCE_MODE
+    if anchor_source_mode not in ANCHOR_SOURCE_MODES:
+        raise ValueError(f"Unknown anchor_source_mode {anchor_source_mode!r}; expected one of {sorted(ANCHOR_SOURCE_MODES)}")
     esa = read_esa59_mapping(esa59_path)
     bridge = read_exio20_to_exio30_bridge(exio20_exio30_path)
     cpa2002_to_2008 = read_correspondence(cpa2002_cpa2008_path, source_tokens=("source", "from", "2002"), target_tokens=("target", "to", "2008"))
@@ -1797,7 +1837,8 @@ def build_official_mapping(
     conciliation_path = first_step_conciliation_path if first_step_conciliation_path is not None else DEFAULT_FIRST_STEP_CONCILIATION
     first_step_conciliation = read_first_step_conciliation_map(conciliation_path)
     product_anchor_path = product_anchor_conciliation_path if product_anchor_conciliation_path is not None else DEFAULT_PRODUCT_ANCHOR_CONCILIATION
-    product_anchor_conciliation = read_product_anchor_conciliation_map(product_anchor_path)
+    product_anchor_conciliation_used = anchor_source_mode == DIRECT_PLUS_CURATED_GAPS_ANCHOR_SOURCE_MODE
+    product_anchor_conciliation = read_product_anchor_conciliation_map(product_anchor_path) if product_anchor_conciliation_used else pd.DataFrame()
 
     joined = build_closed_first_step_edges(esa, bridge, direct_cpa2002, first_step_conciliation)
 
@@ -1808,6 +1849,7 @@ def build_official_mapping(
         cpa2002_to_2008,
         cpa2008_to_21,
         product_anchor_conciliation,
+        anchor_source_mode=anchor_source_mode,
     )
     diagnostics.extend(cast(list[dict[str, object]], composition.diagnostics.to_dict(orient="records")))
 
@@ -1985,7 +2027,19 @@ def build_official_mapping(
                     "certainty": "source-concordance-derived",
                     "allocation_rule": allocation_rule,
                     "source_name": "EXIOBASE20p_ESA59p + CPA2002_6digit_EXIOBASE_FINAL + EXIOBASE2->3 + level-aware RAMON CPA correspondences",
-                    "official_source": "; ".join(str(path) for path in [esa59_path, exio20_exio30_path, cpa2002_exiobase_path or "", conciliation_path, product_anchor_path, cpa2002_cpa2008_path, cpa2008_cpa21_path]),
+                    "official_source": "; ".join(
+                        str(path)
+                        for path in [
+                            esa59_path,
+                            exio20_exio30_path,
+                            cpa2002_exiobase_path or "",
+                            conciliation_path,
+                            product_anchor_path if product_anchor_conciliation_used else "",
+                            cpa2002_cpa2008_path,
+                            cpa2008_cpa21_path,
+                        ]
+                        if str(path)
+                    ),
                     "notes": (
                         f"ESA59 old product group(s) {esa59_product_codes}: {esa59_product_labels}. "
                         f"CPA2002 anchor(s) {cpa2002_anchor_codes} at level(s) {cpa2002_anchor_levels}; "
@@ -2015,6 +2069,8 @@ def build_official_mapping(
         "first_step_conciliation_sha256": sha256_file(conciliation_path),
         "product_anchor_conciliation_path": str(product_anchor_path),
         "product_anchor_conciliation_sha256": sha256_file(product_anchor_path),
+        "product_anchor_conciliation_used": product_anchor_conciliation_used,
+        "anchor_source_mode": anchor_source_mode,
         "cpa2002_cpa2008_path": str(cpa2002_cpa2008_path),
         "cpa2002_cpa2008_sha256": sha256_file(cpa2002_cpa2008_path),
         "cpa2008_cpa21_path": str(cpa2008_cpa21_path),
@@ -2049,6 +2105,9 @@ def write_outputs(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"exio_to_eurostat_{target_version.lower()}_products_from_official_concordances"
+    anchor_source_mode = clean_text(result.coverage.get("anchor_source_mode", "")) or DEFAULT_ANCHOR_SOURCE_MODE
+    if anchor_source_mode != DEFAULT_ANCHOR_SOURCE_MODE:
+        stem = f"{stem}_{anchor_source_mode.replace('-', '_')}"
     mapping_path = out_dir / f"{stem}.csv"
     diagnostics_path = out_dir / f"{stem}_diagnostics.csv"
     manifest_path = out_dir / f"{stem}_manifest.json"
@@ -2064,22 +2123,38 @@ def write_outputs(
         edge_audit_path = out_dir / "diagnostics" / f"{stem}_edges.csv"
     edge_audit_path.parent.mkdir(parents=True, exist_ok=True)
     result.edges.to_csv(edge_audit_path, index=False)
-    output_files["edge_audit"] = str(edge_audit_path)
+    diagnostics_allowed = bool(result.coverage.get("diagnostics_allowed", False))
+    # Coverage is stored as dict[str, object] for JSON metadata, but this key is
+    # produced by build_official_mapping as an int.  Keep the runtime behaviour
+    # unchanged and document the static type boundary locally.
+    diagnostic_rows_value = cast(int, result.coverage.get("diagnostic_rows", 0))
+    diagnostic_rows = int(diagnostic_rows_value or 0)
+    output_status = clean_text(result.coverage.get("output_status", "")) or CLEAN_OUTPUT_STATUS
+    anchor_source_mode = clean_text(result.coverage.get("anchor_source_mode", "")) or DEFAULT_ANCHOR_SOURCE_MODE
+    method_notes = [
+        "No hard-coded NSI->CPA table is used.",
+        "EXIOBASE2 products are mapped through a closed first-step comparison of EXIOBASE20p_ESA59p.txt and CPA2002_6digit_EXIOBASE_FINAL.xlsx, with product-level conflicts resolved only by scripts/mappings/exiobase2_old_cpa2002_first_step_conciliation.csv.",
+        "After first-step division closure, direct detailed CPA2002 anchors are composed through level-aware RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
+        "ESA-only broad CPA2002 division anchors are not fanned out implicitly.",
+        "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
+        "Products reaching multiple final CPA64/CPA65 targets are retained as explicit weighted mapping rows and marked split-by-output-share for runtime monetary allocation.",
+        "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
+        "The internal EXIOBASE3/ESA59/CPA2.1 edge audit is written under out-dir/diagnostics by default; --edge-audit-csv may override the path.",
+    ]
+    if anchor_source_mode == DIRECT_ONLY_ANCHOR_SOURCE_MODE:
+        method_notes.append("Anchor source mode is direct-only: missing direct CPA2002 workbook detail is reported as diagnostics; curated ESA59 gap anchors are not used for mapping rows.")
+    elif anchor_source_mode == DIRECT_PLUS_CURATED_GAPS_ANCHOR_SOURCE_MODE:
+        method_notes.append("Anchor source mode is direct-plus-curated-gaps: curated product anchors are used only when direct detailed CPA2002 rows are absent; broad ESA59 divisions are never fanned out implicitly.")
+    if diagnostics_allowed and diagnostic_rows:
+        method_notes.append("This output was written with --allow-diagnostics. It contains unresolved source-chain diagnostics and is intended for audit/stress-testing, not as a clean production concordance.")
 
     manifest = {
         "mapping_name": stem,
         "created_utc": datetime.now(UTC).isoformat(),
         "created_by_script": "scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py",
-        "method_notes": [
-            "No hard-coded NSI->CPA table is used.",
-            "EXIOBASE2 products are mapped through a closed first-step comparison of EXIOBASE20p_ESA59p.txt and CPA2002_6digit_EXIOBASE_FINAL.xlsx, with product-level conflicts resolved only by scripts/mappings/exiobase2_old_cpa2002_first_step_conciliation.csv.",
-            "After first-step division closure, direct detailed CPA2002 anchors and curated product-anchor rows for ESA-only broad products are composed through level-aware RAMON CPA2002->CPA2008 and CPA2008->CPA2.1 correspondences.",
-            "ESA-only broad CPA2002 division anchors are not fanned out implicitly; they require scripts/mappings/exiobase2_cpa2002_product_anchor_conciliation.csv.",
-            "CPA2.1 two-digit divisions are aggregated to repo CPA64/CPA65 targets via scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv.",
-            "Products reaching multiple final CPA64/CPA65 targets are retained as explicit weighted mapping rows and marked split-by-output-share for runtime monetary allocation.",
-            "CPA64/CPA65 dictionary descriptions are not parsed for machine topology; dictionaries are label/description references only.",
-            "The internal EXIOBASE3/ESA59/CPA2.1 edge audit is written under out-dir/diagnostics by default; --edge-audit-csv may override the path.",
-        ],
+        "diagnostics_allowed": diagnostics_allowed,
+        "output_status": output_status,
+        "method_notes": method_notes,
         "coverage": result.coverage,
         "output_files": output_files,
     }
@@ -2097,6 +2172,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cpa2002-exiobase-member", default=CPA2002_EXIOBASE_MEMBER)
     parser.add_argument("--first-step-conciliation", type=Path, default=DEFAULT_FIRST_STEP_CONCILIATION)
     parser.add_argument("--product-anchor-conciliation", type=Path, default=DEFAULT_PRODUCT_ANCHOR_CONCILIATION)
+    parser.add_argument(
+        "--anchor-source-mode",
+        choices=sorted(ANCHOR_SOURCE_MODES),
+        default=DEFAULT_ANCHOR_SOURCE_MODE,
+        help=(
+            "CPA2002 anchor source policy. direct-only uses only the direct EXIOBASE2->CPA2002 workbook; "
+            "direct-plus-curated-gaps additionally uses curated anchors for products absent from that workbook."
+        ),
+    )
     parser.add_argument("--cpa2002-cpa2008", type=Path, default=DEFAULT_CPA2002_CPA2008)
     parser.add_argument("--cpa2008-cpa21", type=Path, default=DEFAULT_CPA2008_CPA21)
     parser.add_argument("--target-version", choices=["cpa64", "cpa65"], default="cpa65")
@@ -2144,6 +2228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cpa2002_exiobase_path=cpa2002_exiobase_path,
             first_step_conciliation_path=args.first_step_conciliation,
             product_anchor_conciliation_path=args.product_anchor_conciliation,
+            anchor_source_mode=args.anchor_source_mode,
         )
 
     official_source = "; ".join(
@@ -2179,11 +2264,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             "first_step_conciliation_sha256": sha256_file(args.first_step_conciliation),
             "product_anchor_conciliation_path": str(args.product_anchor_conciliation),
             "product_anchor_conciliation_sha256": sha256_file(args.product_anchor_conciliation),
+            "anchor_source_mode": args.anchor_source_mode,
+            "diagnostics_allowed": bool(args.allow_diagnostics),
+            "output_status": (
+                DIAGNOSTIC_EXPLORATORY_OUTPUT_STATUS
+                if result.coverage["diagnostic_rows"] and args.allow_diagnostics
+                else DIAGNOSTICS_BLOCKED_OUTPUT_STATUS
+                if result.coverage["diagnostic_rows"]
+                else CLEAN_OUTPUT_STATUS
+            ),
             "target_division_map_path": str(target_division_map),
             "target_division_map_sha256": sha256_file(target_division_map),
         }
     )
     result = BuildResult(mapping=mapping, edges=result.edges, diagnostics=result.diagnostics, coverage=coverage)
+    if result.coverage["diagnostic_rows"] and not args.allow_diagnostics:
+        print(json.dumps({"coverage": result.coverage, "out_dir": str(args.out_dir), "wrote_outputs": False}, indent=2, sort_keys=True))
+        raise SystemExit("Official-concordance mapping has diagnostics; inspect printed diagnostics or rerun with --allow-diagnostics for an explicitly marked exploratory output.")
     if not args.check_only:
         write_outputs(
             result,
@@ -2192,8 +2289,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             edge_audit_csv=args.edge_audit_csv,
         )
     print(json.dumps({"coverage": result.coverage, "out_dir": str(args.out_dir), "wrote_outputs": not args.check_only}, indent=2, sort_keys=True))
-    if result.coverage["diagnostic_rows"] and not args.allow_diagnostics:
-        raise SystemExit("Official-concordance mapping has diagnostics; inspect diagnostics CSV or rerun with --allow-diagnostics after review.")
     return 0
 
 
