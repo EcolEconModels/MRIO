@@ -369,9 +369,14 @@ def test_official_cli_reads_exiobase_members_from_zip(tmp_path: Path) -> None:
     assert edge_audit.exists()
     edge_rows = pd.read_csv(edge_audit, dtype=str)
     assert {"exio3_product_code", "target_code", "cpa21_division"} <= set(edge_rows.columns)
+    manifest = json.loads((out_dir / "exio_to_eurostat_cpa65_products_from_official_concordances_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["output_files"]["edge_audit"] == str(edge_audit)
+    assert manifest["coverage"]["product_anchor_conciliation_used"] is False
     assert set(generated.loc[generated["source_code"] == "p01.a", "target_code"]) == {"CPA_A01"}
     assert set(generated.loc[generated["source_code"] == "p47.a", "target_code"]) == {"CPA_L68A", "CPA_L68B"}
     assert set(generated["target_version"]) == {"CPA_65"}
+    official_source_text = " ".join(generated["official_source"].astype(str))
+    assert "exiobase2_cpa2002_product_anchor_conciliation.csv" not in official_source_text
 
 
 
@@ -606,6 +611,8 @@ def test_first_step_closure_fills_missing_direct_cpa_from_esa(tmp_path: Path) ->
     )
 
     assert result.diagnostics.empty
+    assert result.coverage["product_anchor_conciliation_used"] is True
+    assert "exiobase2_cpa2002_product_anchor_conciliation.csv" in " ".join(result.mapping["official_source"].astype(str))
     # p24.b is not in the direct CPA workbook fixture. It is mapped only in
     # direct-plus-curated-gaps mode because the product-anchor conciliation file
     # gives an explicit detailed CPA2002 anchor; broad ESA division 24 is not fanned out implicitly.

@@ -2123,6 +2123,7 @@ def write_outputs(
         edge_audit_path = out_dir / "diagnostics" / f"{stem}_edges.csv"
     edge_audit_path.parent.mkdir(parents=True, exist_ok=True)
     result.edges.to_csv(edge_audit_path, index=False)
+    output_files["edge_audit"] = str(edge_audit_path)
     diagnostics_allowed = bool(result.coverage.get("diagnostics_allowed", False))
     # Coverage is stored as dict[str, object] for JSON metadata, but this key is
     # produced by build_official_mapping as an int.  Keep the runtime behaviour
@@ -2231,18 +2232,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             anchor_source_mode=args.anchor_source_mode,
         )
 
-    official_source = "; ".join(
-        [
-            f"{args.concordances_zip}::{esa59_member}",
-            f"{args.concordances_zip}::{exio_bridge_member}",
-            f"{args.concordances_zip}::{cpa2002_exiobase_member}",
-            str(args.cpa2002_cpa2008),
-            str(args.cpa2008_cpa21),
-            str(args.first_step_conciliation),
-            str(args.product_anchor_conciliation),
-            str(target_division_map),
-        ]
-    )
+    official_source_parts = [
+        f"{args.concordances_zip}::{esa59_member}",
+        f"{args.concordances_zip}::{exio_bridge_member}",
+        f"{args.concordances_zip}::{cpa2002_exiobase_member}",
+        str(args.cpa2002_cpa2008),
+        str(args.cpa2008_cpa21),
+        str(args.first_step_conciliation),
+    ]
+    if args.anchor_source_mode == DIRECT_PLUS_CURATED_GAPS_ANCHOR_SOURCE_MODE:
+        official_source_parts.append(str(args.product_anchor_conciliation))
+    official_source_parts.append(str(target_division_map))
+    official_source = "; ".join(official_source_parts)
     mapping = result.mapping.copy()
     if "official_source" in mapping.columns:
         mapping.loc[:, "official_source"] = official_source
