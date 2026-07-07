@@ -11,8 +11,9 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py"
-LEGACY_OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py"
+LEGACY_OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py"
 COMPOSE_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "compose_mapping_via_common_intermediate.py"
+COMPARE_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "compare_exiobase3_to_cpa_mapping_routes.py"
 
 
 def load_module(path: Path, name: str):
@@ -125,7 +126,7 @@ def test_final_aggregation_marks_multi_target_products_for_output_share_split(tm
     assert result.coverage["distinct_exio3_products_requiring_output_share_split"] == 1
 
 
-def test_legacy_bridge_nsi_wrapper_reexports_canonical_generator() -> None:
+def test_legacy_official_concordances_wrapper_reexports_canonical_generator() -> None:
     module = load_module(LEGACY_OFFICIAL_SCRIPT, "official_concordance_legacy_wrapper")
     assert module.DEFAULT_ANCHOR_SOURCE_MODE == "direct-only"
     assert callable(module.main)
@@ -1095,3 +1096,48 @@ def test_phase4_removed_legacy_two_digit_architecture_symbols() -> None:
         "compose_old_division_to_cpa21_divisions",
     }
     assert definitions.isdisjoint(legacy_symbols)
+
+
+def test_compare_exiobase3_to_cpa_mapping_routes_writes_route_diffs(tmp_path: Path) -> None:
+    module = load_module(COMPARE_SCRIPT, "compare_exiobase3_to_cpa_routes")
+    old_csv = tmp_path / "old.csv"
+    new_csv = tmp_path / "new.csv"
+    pd.DataFrame(
+        [
+            {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_B", "target_label": "Mining"},
+            {"source_code": "p40.11.a", "source_label": "Electricity coal", "target_code": "CPA_D", "target_label": "Electricity"},
+            {"source_code": "p70", "source_label": "Real estate", "target_code": "CPA_L68A", "target_label": "Imputed rents"},
+            {"source_code": "p70", "source_label": "Real estate", "target_code": "CPA_L68B", "target_label": "Real estate excluding imputed rents"},
+        ]
+    ).to_csv(old_csv, index=False)
+    pd.DataFrame(
+        [
+            {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_B", "target_label": "Mining"},
+            {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_C19", "target_label": "Coke and petroleum"},
+            {"source_code": "p40.11.a", "source_label": "Electricity coal", "target_code": "CPA_D", "target_label": "Electricity"},
+            {"source_code": "p40.11.a", "source_label": "Electricity coal", "target_code": "CPA_E37-39", "target_label": "Waste"},
+        ]
+    ).to_csv(new_csv, index=False)
+    out_dir = tmp_path / "compare"
+
+    summary = module.compare_routes(
+        old_csv=old_csv,
+        new_csv=new_csv,
+        out_dir=out_dir,
+        target_version="cpa65",
+        output_prefix="cpa65_test",
+    )
+
+    assert summary["old_rows"] == 4
+    assert summary["new_rows"] == 4
+    assert summary["same_source_target_pairs"] == 2
+    assert summary["only_old_pairs"] == 2
+    assert summary["only_new_pairs"] == 2
+    assert summary["changed_exio_products"] == 3
+    assert summary["old_multi_target_products"] == 1
+    assert summary["new_multi_target_products"] == 2
+    assert (out_dir / "cpa65_test_route_comparison_summary.json").exists()
+    only_new = pd.read_csv(out_dir / "cpa65_test_source_target_pairs_only_new.csv", dtype=str)
+    assert set(only_new["target_code"]) == {"CPA_C19", "CPA_E37-39"}
+    changed = pd.read_csv(out_dir / "cpa65_test_per_source_target_set_differences.csv", dtype=str)
+    assert set(changed["source_code"]) == {"p10.f", "p40.11.a", "p70"}

@@ -35,7 +35,8 @@ DEFAULT_RIGHT_CSV: Final[Path] = (
     / "scripts"
     / "mappings"
     / "generated"
-    / "exio_to_eurostat_cpa65_products_from_bridge_nsi_at.csv"
+    / "official_concordances"
+    / "exio_to_eurostat_cpa65_products_from_official_concordances.csv"
 )
 DEFAULT_OUT_DIR: Final[Path] = (
     REPO_ROOT

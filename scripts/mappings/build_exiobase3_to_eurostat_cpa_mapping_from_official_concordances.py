@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build EXIOBASE3 -> Eurostat CPA mappings from official concordances.
 
-This replaces the earlier Bridge_NSI_AT label-derived fallback.  The generator
+This replaces the earlier earlier label-derived fallback.  The generator
 uses only source concordance files under ``data/exiobase_concordance_sources``
 and ``data/eurostat_concordance_sources``:
 
