@@ -10,7 +10,8 @@ from pathlib import Path
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py"
+OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py"
+LEGACY_OFFICIAL_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py"
 COMPOSE_SCRIPT = REPO_ROOT / "scripts" / "mappings" / "compose_mapping_via_common_intermediate.py"
 
 
@@ -122,6 +123,12 @@ def test_final_aggregation_marks_multi_target_products_for_output_share_split(tm
     assert result.coverage["target_division_split_edge_rows"] == 2
     assert result.coverage["final_output_share_split_mapping_rows"] == 2
     assert result.coverage["distinct_exio3_products_requiring_output_share_split"] == 1
+
+
+def test_legacy_bridge_nsi_wrapper_reexports_canonical_generator() -> None:
+    module = load_module(LEGACY_OFFICIAL_SCRIPT, "official_concordance_legacy_wrapper")
+    assert module.DEFAULT_ANCHOR_SOURCE_MODE == "direct-only"
+    assert callable(module.main)
 
 
 def test_default_eurostat_correspondence_paths_are_tracked_renamed_csvs() -> None:

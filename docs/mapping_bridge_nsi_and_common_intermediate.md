@@ -7,7 +7,7 @@ correspondence files are committed under `data/eurostat_concordance_sources/`.
 
 ## EXIOBASE3 -> CPA64/CPA65 generator
 
-`scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py`
+`scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py`
 builds the EXIOBASE3 product -> Eurostat CPA target map from this source chain:
 
 ```text
@@ -55,7 +55,7 @@ Build the official-concordance EXIOBASE3 -> CPA65 mapping:
 
 ```bash
 /home/agilra/EcolEconModels/MRIO/.venv/bin/python \
-  scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_bridge_nsi.py \
+  scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py \
   --concordances-zip data/exiobase_concordance_sources/exiobase_concordances.zip \
   --cpa2002-cpa2008 data/eurostat_concordance_sources/CPA_2002_to_CPA_2008.csv \
   --cpa2008-cpa21 data/eurostat_concordance_sources/CPA_2008_to_CPA_21.csv \
@@ -89,3 +89,20 @@ map for the direct workbook path:
   --source-balance-role-filter final_use \
   --include-direct-energy-only
 ```
+
+## Comparing old A64/compat and new official-concordance EXIOBASE -> CPA routes
+
+`scripts/mappings/compare_exiobase3_to_cpa_mapping_routes.py` compares active
+source-target pairs from the old A64/compat generated map and the new
+official-concordance generated map.  It writes per-pair and per-source diffs,
+plus multi-target source summaries, without declaring either route correct.
+
+Example for CPA65:
+
+```bash
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python   scripts/mappings/compare_exiobase3_to_cpa_mapping_routes.py   --target-version cpa65   --old-csv scripts/mappings/generated/exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv   --new-csv scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances.csv   --out-dir scripts/mappings/generated/compare_routes/exiobase3_to_cpa
+```
+
+When comparing the `direct-plus-curated-gaps` new map, pass either the generated
+CSV explicitly with `--new-csv` or use `--new-anchor-source-mode
+direct-plus-curated-gaps` with the default generated filename convention.
