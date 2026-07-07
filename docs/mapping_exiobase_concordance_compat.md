@@ -6,6 +6,12 @@ converter in `scripts/mappings/build_exiobase_concordance_compat_mappings.py`
 then converts the generated collapsed A64 table into the current MRIO mapping CSV
 schema used by the existing disaggregation and audit scripts.
 
+This is the old route used for comparison against
+`scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py`.
+It is economically a coarse NACE/A64 production-sector bridge. The newer
+official-concordance route instead follows detailed EXIOBASE2 -> CPA2002 anchors
+through CPA2008 and CPA2.1 before aggregating to CPA64/CPA65.
+
 ## Inputs
 
 The converter expects the collapsed A64 file at:
@@ -54,6 +60,23 @@ allocation_rule=split-by-output-share
 The existing mapping API can resolve these rows from a supplied Eurostat target
 output/value reference. This keeps the official concordance relational and lets
 the selected country/year/flow determine numerical split weights.
+
+## Comparing with the official-concordance route
+
+After generating the old compatibility maps and the new official-concordance
+maps, compare CPA65 with:
+
+```bash
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+  scripts/mappings/compare_exiobase3_to_cpa_mapping_routes.py \
+  --target-version cpa65 \
+  --new-anchor-source-mode direct-plus-curated-gaps \
+  --out-dir scripts/mappings/generated/compare_routes/exiobase3_to_cpa
+```
+
+The comparison is structural: it checks active EXIOBASE3 source-target pairs and
+per-source target sets. It does not resolve runtime output-share weights or
+decide which route is economically preferable for a fuel-flow result.
 
 ## Licensing note
 

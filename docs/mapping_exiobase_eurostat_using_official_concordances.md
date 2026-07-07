@@ -36,6 +36,26 @@ bridge files, not by parsing target dictionary descriptions.  For CPA65, divisio
 `eurostat_cpa65_to_cpa21_divisions.csv`; runtime target-side output/use values
 must resolve the split.
 
+The generator has two CPA2002 anchor modes:
+
+```text
+direct-only
+  Uses only direct detailed EXIOBASE2 -> CPA2002 workbook anchors.
+  Products absent from that workbook are reported as diagnostics.
+
+direct-plus-curated-gaps
+  Uses direct detailed workbook anchors plus the small curated gap file
+  scripts/mappings/exiobase2_cpa2002_product_anchor_conciliation.csv,
+  but only for EXIOBASE products absent from the direct workbook.
+```
+
+Neither mode maps the unresolved `p33`/`p34` direct workbook anchors through a
+curated fallback. Those anchors are present in the direct workbook but fail
+later because the official CPA2002 -> CPA2008 table has no exact or numeric
+ancestor path for `33.30.90`, `34.10.25`, and `34.10.43`. Outputs that retain
+those unresolved diagnostics must be written with `--allow-diagnostics` and are
+marked exploratory in the manifest.
+
 ## Route-B composition
 
 The common-intermediate composer remains the second stage:
@@ -57,20 +77,32 @@ Build the official-concordance EXIOBASE3 -> CPA65 mapping:
 /home/agilra/EcolEconModels/MRIO/.venv/bin/python \
   scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py \
   --concordances-zip data/exiobase_concordance_sources/exiobase_concordances.zip \
-  --cpa2002-cpa2008 data/eurostat_concordance_sources/CPA_2002_to_CPA_2008.csv \
-  --cpa2008-cpa21 data/eurostat_concordance_sources/CPA_2008_to_CPA_21.csv \
+  --cpa2002-cpa2008 "data/eurostat_concordance_sources/CPA 2002 - CPA 2008 (CSV format).csv" \
+  --cpa2008-cpa21 "data/eurostat_concordance_sources/CPA 2008 - CPA 2.1.csv" \
   --target-version cpa65 \
   --target-division-map scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv \
+  --out-dir scripts/mappings/generated/official_concordances
+```
+
+For the current fuels-pipeline comparison candidate, use the curated direct-gap
+mode and allow the three downstream `p33`/`p34` diagnostics explicitly:
+
+```bash
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+  scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py \
+  --target-version cpa65 \
+  --anchor-source-mode direct-plus-curated-gaps \
+  --allow-diagnostics \
   --out-dir scripts/mappings/generated/official_concordances
 ```
 
 This writes:
 
 ```text
-scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances.csv
-scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_diagnostics.csv
-scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_manifest.json
-scripts/mappings/generated/official_concordances/diagnostics/exio_to_eurostat_cpa65_products_from_official_concordances_edges.csv
+scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps.csv
+scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps_diagnostics.csv
+scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps_manifest.json
+scripts/mappings/generated/official_concordances/diagnostics/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps_edges.csv
 ```
 
 Compose EB -> EXIOBASE3 and EXIOBASE3 -> CPA65 into a direct final-use EB -> CPA
@@ -100,9 +132,58 @@ plus multi-target source summaries, without declaring either route correct.
 Example for CPA65:
 
 ```bash
-/home/agilra/EcolEconModels/MRIO/.venv/bin/python   scripts/mappings/compare_exiobase3_to_cpa_mapping_routes.py   --target-version cpa65   --old-csv scripts/mappings/generated/exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv   --new-csv scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances.csv   --out-dir scripts/mappings/generated/compare_routes/exiobase3_to_cpa
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+  scripts/mappings/compare_exiobase3_to_cpa_mapping_routes.py \
+  --target-version cpa65 \
+  --new-anchor-source-mode direct-plus-curated-gaps \
+  --out-dir scripts/mappings/generated/compare_routes/exiobase3_to_cpa
 ```
 
 When comparing the `direct-plus-curated-gaps` new map, pass either the generated
 CSV explicitly with `--new-csv` or use `--new-anchor-source-mode
 direct-plus-curated-gaps` with the default generated filename convention.
+
+The route comparison is a structural source-target comparison. It reports pair
+and target-set differences between the old A64/compat route and the new
+official-concordance route, but it does not compare runtime output-share weights,
+mapped Eurostat use totals, or fuel-flow results. Those are evaluated by running
+the fuels pipeline with each map and comparing the emitted
+`flow_specific_exio_to_eurostat_weights.csv`, `mapped_output_consistency.csv`,
+and split/reaggregated matrices.
+
+## Fuels pipeline route comparison
+
+The fuels split/reaggregation wrapper uses `CONCORDANCE_CSV` as the
+EXIOBASE3 -> Eurostat CPA weighted mapping. Keep the split and reaggregation
+recipes fixed, and change only `CONCORDANCE_CSV`.
+
+Old A64/compat route:
+
+```bash
+cd /home/agilra/EcolEconModels/MRIO
+TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx \
+OUTPUT_SUFFIX=fuels_old_a64 \
+CONCORDANCE_CSV=scripts/mappings/generated/exio_to_eurostat_cpa65_products_from_exiobase_concordances.csv \
+bash scripts/pipelines/at_2021_workbook_reaggregation.sh
+```
+
+New official-concordance route:
+
+```bash
+cd /home/agilra/EcolEconModels/MRIO
+TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx \
+OUTPUT_SUFFIX=fuels_official_cpa \
+CONCORDANCE_CSV=scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps.csv \
+bash scripts/pipelines/at_2021_workbook_reaggregation.sh
+```
+
+Both commands use the same committed `scripts/pipelines/fuels_split.csv` and
+`scripts/pipelines/fuels_reaggregation.csv` by default. Compare the corresponding
+output trees under:
+
+```text
+outputs/AT_2021_fuels_old_a64_split_flows/
+outputs/AT_2021_fuels_old_a64_reaggregated_flows/
+outputs/AT_2021_fuels_official_cpa_split_flows/
+outputs/AT_2021_fuels_official_cpa_reaggregated_flows/
+```

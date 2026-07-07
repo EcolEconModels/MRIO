@@ -31,3 +31,34 @@ splits only `CPA_L68` into `CPA_L68A` and `CPA_L68B` for older workflows.
 Neither file stores static split weights; rows requiring a split use
 `allocation_rule=split-by-output-share` so runtime code can compute shares from
 the selected Eurostat target-side value reference.
+
+## Official-concordance route outputs
+
+The newer EXIOBASE3 -> CPA route is generated separately from detailed
+EXIOBASE2 -> CPA2002 anchors and official CPA2002 -> CPA2008 -> CPA2.1
+correspondence tables:
+
+```bash
+../MRIO/.venv/bin/python \
+  scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py \
+  --target-version cpa65 \
+  --anchor-source-mode direct-plus-curated-gaps \
+  --allow-diagnostics \
+  --out-dir scripts/mappings/generated/official_concordances
+```
+
+The `direct-plus-curated-gaps` mode uses curated CPA2002 product anchors only
+for EXIOBASE products absent from the direct CPA2002 workbook. It does not map
+the unresolved `p33`/`p34` downstream CPA2002 -> CPA2008 gaps; those remain
+diagnostics, so these outputs are exploratory unless and until those diagnostics
+are resolved by an explicit production decision.
+
+Compare old and new route outputs with:
+
+```bash
+../MRIO/.venv/bin/python \
+  scripts/mappings/compare_exiobase3_to_cpa_mapping_routes.py \
+  --target-version cpa65 \
+  --new-anchor-source-mode direct-plus-curated-gaps \
+  --out-dir scripts/mappings/generated/compare_routes/exiobase3_to_cpa
+```
