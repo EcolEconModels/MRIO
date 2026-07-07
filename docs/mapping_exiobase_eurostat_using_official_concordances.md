@@ -1,11 +1,15 @@
-# Official-concordance EXIOBASE and Energy Balance mappings
+# EXIOBASE3 to Eurostat CPA using official concordances
 
-This workflow keeps Eurostat Energy Balance quantities/prices as the numerical
-driver while using source concordance files only for topology. The EXIOBASE raw
-concordance ZIP remains uncommitted and is read directly; RAMON/Eurostat
-correspondence files are committed under `data/eurostat_concordance_sources/`.
+This workflow builds an EXIOBASE3 product -> Eurostat CPA64/CPA65 target map
+from detailed product concordances. It is the official-concordance route used to
+test whether the fuels pipeline performs better than the older A64/compatibility
+route.
 
-## EXIOBASE3 -> CPA64/CPA65 generator
+The EXIOBASE raw concordance ZIP remains uncommitted and is read directly.
+RAMON/Eurostat correspondence files are committed under
+`data/eurostat_concordance_sources/`.
+
+## Generator
 
 `scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py`
 builds the EXIOBASE3 product -> Eurostat CPA target map from this source chain:
@@ -16,9 +20,9 @@ data/exiobase_concordance_sources/exiobase_concordances.zip
     EXIOBASE2 product -> ESA59 old product group / old CPA2002-style division
   Concordances/EXIOBASE/EXIOBASE2 products comparison with EXIOBASE3 products.xlsx
     EXIOBASE2 product -> EXIOBASE3 product
-data/eurostat_concordance_sources/CPA_2002_to_CPA_2008.csv
+data/eurostat_concordance_sources/CPA 2002 - CPA 2008 (CSV format).csv
   CPA 2002 -> CPA 2008
-data/eurostat_concordance_sources/CPA_2008_to_CPA_21.csv
+data/eurostat_concordance_sources/CPA 2008 - CPA 2.1.csv
   CPA 2008 -> CPA 2.1
 scripts/mappings/eurostat_cpa64_to_cpa21_divisions.csv or
 scripts/mappings/eurostat_cpa65_to_cpa21_divisions.csv
@@ -56,19 +60,6 @@ ancestor path for `33.30.90`, `34.10.25`, and `34.10.43`. Outputs that retain
 those unresolved diagnostics must be written with `--allow-diagnostics` and are
 marked exploratory in the manifest.
 
-## Route-B composition
-
-The common-intermediate composer remains the second stage:
-
-```text
-Eurostat Energy Balance row -> EXIOBASE3 product -> CPA64/CPA65 target
-```
-
-The direct EB -> CPA output is a current-schema `category-target` mapping. It is
-suitable for the direct Energy Balance workbook path when generated with the
-final-use/direct-energy filters, but it is not a silent replacement for the
-technology-specific `energy_balance_pxp` split/reaggregation recipes.
-
 ## Example commands
 
 Build the official-concordance EXIOBASE3 -> CPA65 mapping:
@@ -105,22 +96,10 @@ scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products
 scripts/mappings/generated/official_concordances/diagnostics/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps_edges.csv
 ```
 
-Compose EB -> EXIOBASE3 and EXIOBASE3 -> CPA65 into a direct final-use EB -> CPA
-map for the direct workbook path:
-
-```bash
-/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
-  scripts/mappings/compose_mapping_via_common_intermediate.py \
-  --left-csv data/exiobase_concordance_sources/derived/eurostat_energy_balance_to_exiobase3/eb_to_exio3_products_collapsed.csv \
-  --right-csv scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances.csv \
-  --out-csv scripts/mappings/generated/compare_routes/official_concordances/energy_balance_to_cpa65_products.csv \
-  --edge-out-csv scripts/mappings/generated/compare_routes/official_concordances/energy_balance_to_cpa65_products_edges.csv \
-  --diagnostics-csv scripts/mappings/generated/compare_routes/official_concordances/energy_balance_to_cpa65_products_diagnostics.csv \
-  --manifest-json scripts/mappings/generated/compare_routes/official_concordances/energy_balance_to_cpa65_products_manifest.json \
-  --target-version CPA_65 \
-  --source-balance-role-filter final_use \
-  --include-direct-energy-only
-```
+Energy-balance routes are separate. The EB -> EXIOBASE3 generator is documented
+in `docs/mapping_energy_balance_to_exiobase3.md`; composing EB -> EXIOBASE3 with
+this official EXIOBASE3 -> CPA map is documented in
+`docs/mapping_energy_balance_to_cpa_via_exiobase3.md`.
 
 ## Comparing old A64/compat and new official-concordance EXIOBASE -> CPA routes
 

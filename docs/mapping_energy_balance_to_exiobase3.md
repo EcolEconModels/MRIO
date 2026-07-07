@@ -52,6 +52,9 @@ The generator writes:
 - `manifest.json`
 - `README.md`
 
+To compose this output with an EXIOBASE3 -> CPA map, see
+`docs/mapping_energy_balance_to_cpa_via_exiobase3.md`.
+
 ## Caveats
 
 - This is a product-level EXIOBASE3 `pxp` candidate concordance, not an industry-technology model.

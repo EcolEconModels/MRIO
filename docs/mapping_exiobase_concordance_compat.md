@@ -1,18 +1,20 @@
-# EXIOBASE concordance compatibility mappings
+# Old EXIOBASE A64 compatibility mappings
 
-The canonical EXIOBASE-to-Eurostat concordance source is generated from the
-EXIOBASE/XIO concordance archive through the A64 builder. The compatibility
-converter in `scripts/mappings/build_exiobase_concordance_compat_mappings.py`
-then converts the generated collapsed A64 table into the current MRIO mapping CSV
-schema used by the existing disaggregation and audit scripts.
+This document describes the adapter for the old EXIOBASE -> Eurostat route. The
+A64 builder first creates a collapsed EXIOBASE3 product -> Eurostat IOT A*64
+table from the EXIOBASE/XIO concordance archive. The compatibility converter in
+`scripts/mappings/build_exiobase_concordance_compat_mappings.py` then projects
+that A64 table into the current MRIO CPA64/CPA65 mapping CSV schema used by the
+existing disaggregation and audit scripts.
 
 This is the old route used for comparison against
 `scripts/mappings/build_exiobase3_to_eurostat_cpa_mapping_from_official_concordances.py`.
-It is economically a coarse NACE/A64 production-sector bridge. The newer
-official-concordance route instead follows detailed EXIOBASE2 -> CPA2002 anchors
-through CPA2008 and CPA2.1 before aggregating to CPA64/CPA65.
+It is economically a coarse NACE/A64 production-sector bridge, not the detailed
+official-concordance product route. The newer official-concordance route instead
+follows detailed EXIOBASE2 -> CPA2002 anchors through CPA2008 and CPA2.1 before
+aggregating to CPA64/CPA65.
 
-## Inputs
+## Relationship to the A64 builder
 
 The converter expects the collapsed A64 file at:
 
@@ -25,6 +27,11 @@ That file is generated from the EXIOBASE concordance chain:
 ```text
 NACE Rev. 2 class -> EXIOBASE2 product -> EXIOBASE3 product -> Eurostat IOT A*64
 ```
+
+The A64 builder itself is documented in
+`docs/mapping_exiobase_eurostat_iot_a64.md`. This compatibility converter only
+changes the target schema from the collapsed A64 output to the MRIO CPA64/CPA65
+CSV format expected by downstream code.
 
 ## Outputs
 
