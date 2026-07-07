@@ -1,0 +1,24 @@
+{
+  "base_reagg_csv": "scripts/pipelines/fuels_reaggregation.csv",
+  "base_rows": 66,
+  "closure_rule_counts": {
+    "edge_target_residual_bucket": 10,
+    "existing_exact_reaggregation_row": 49,
+    "existing_unsuffixed_reaggregation_row_same_edge_target": 15,
+    "explicit_route_rule": 3
+  },
+  "concordance_csv": "scripts/mappings/generated/official_concordances/exio_to_eurostat_cpa65_products_from_official_concordances_direct_plus_curated_gaps.csv",
+  "created_by_script": "scripts/pipelines/generate_reaggregation_for_concordance.py",
+  "created_utc": "2026-07-07T14:16:37.156657+00:00",
+  "manifest_json": "scripts/pipelines/generated/fuels_reaggregation_official_curated_gaps_manifest.json",
+  "out_csv": "scripts/pipelines/generated/fuels_reaggregation_official_curated_gaps.csv",
+  "output_rows": 77,
+  "review_csv": "scripts/pipelines/generated/fuels_reaggregation_official_curated_gaps_review.csv",
+  "review_required_rows": 0,
+  "rule_csvs": [
+    "scripts/pipelines/fuels_reaggregation_fuel_expanded_edge_rules.csv"
+  ],
+  "rule_rows": 4,
+  "selected_children": 77,
+  "split_mapping_csv": "scripts/pipelines/fuels_split.csv"
+}

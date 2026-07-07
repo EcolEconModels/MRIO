@@ -1,0 +1,78 @@
+parent_code,child_code,source_code,source_label,target_code,target_label,covered_by_reaggregation
+CPA_C10-12,p01.d@CPA_C10-12,p01.d,"Vegetables, fruit, nuts",CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p01.e@CPA_C10-12,p01.e,Oil seeds,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p01.h@CPA_C10-12,p01.h,Crops nec,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p01.m@CPA_C10-12,p01.m,Animal products nec,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C19,p10.f@CPA_C19,p10.f,Lignite/Brown Coal,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p10.g,p10.g,BKB/Peat Briquettes,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p10.h@CPA_C19,p10.h,Peat,CPA_C19,Coke and refined petroleum products,True
+CPA_C10-12,p14.3@CPA_C10-12,p14.3,"Chemical and fertilizer minerals, salt and other mining and quarrying products n.e.c.",CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.a,p15.a,Products of meat cattle,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.b,p15.b,Products of meat pigs,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.c,p15.c,Products of meat poultry,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.d,p15.d,Meat products nec,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.e,p15.e,products of Vegetable oils and fats,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.f,p15.f,Dairy products,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.g,p15.g,Processed rice,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.h,p15.h,Sugar,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.i,p15.i,Food products nec,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p15.j@CPA_C10-12,p15.j,Beverages,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C20,p15.j@CPA_C20,p15.j,Beverages,CPA_C20,Chemicals and chemical products,True
+CPA_C10-12,p15.k,p15.k,Fish products,CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C10-12,p16,p16,Tobacco products (16),CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C19,p23.1.a,p23.1.a,Coke Oven Coke,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.1.b,p23.1.b,Gas Coke,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.1.c,p23.1.c,Coal Tar,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.a,p23.20.a,Motor Gasoline,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.b,p23.20.b,Aviation Gasoline,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.c,p23.20.c,Gasoline Type Jet Fuel,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.d,p23.20.d,Kerosene Type Jet Fuel,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.e,p23.20.e,Kerosene,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.f,p23.20.f,Gas/Diesel Oil,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.g@CPA_C19,p23.20.g,Heavy Fuel Oil,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.h,p23.20.h,Refinery Gas,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.i,p23.20.i,Liquefied Petroleum Gases (LPG),CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.j,p23.20.j,Refinery Feedstocks,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.k,p23.20.k,Ethane,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.l,p23.20.l,Naphtha,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.m,p23.20.m,White Spirit & SBP,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.n,p23.20.n,Lubricants,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.o,p23.20.o,Bitumen,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.p,p23.20.p,Paraffin Waxes,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.q,p23.20.q,Petroleum Coke,CPA_C19,Coke and refined petroleum products,True
+CPA_C19,p23.20.r,p23.20.r,Non-specified Petroleum Products,CPA_C19,Coke and refined petroleum products,True
+CPA_C20,p23.3@CPA_C20,p23.3,Nuclear fuel,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.a,p24.a,"Plastics, basic",CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.b,p24.b,N-fertiliser,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.c,p24.c,P- and other fertiliser,CPA_C20,Chemicals and chemical products,True
+CPA_C19,p24.d@CPA_C19,p24.d,Chemicals nec,CPA_C19,Coke and refined petroleum products,True
+CPA_C20,p24.d@CPA_C20,p24.d,Chemicals nec,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.e,p24.e,Charcoal,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.f@CPA_C20,p24.f,Additives/Blending Components,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.g,p24.g,Biogasoline,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.h,p24.h,Biodiesels,CPA_C20,Chemicals and chemical products,True
+CPA_C20,p24.i,p24.i,Other Liquid Biofuels,CPA_C20,Chemicals and chemical products,True
+CPA_C10-12,p36@CPA_C10-12,p36,Furniture; other manufactured goods n.e.c. (36),CPA_C10-12,"Food products, beverages and tobacco products",True
+CPA_C20,p36@CPA_C20,p36,Furniture; other manufactured goods n.e.c. (36),CPA_C20,Chemicals and chemical products,True
+CPA_D,p40.11.a@CPA_D,p40.11.a,Electricity by coal,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.b@CPA_D,p40.11.b,Electricity by gas,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.c@CPA_D,p40.11.c,Electricity by nuclear,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.d@CPA_D,p40.11.d,Electricity by hydro,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.e@CPA_D,p40.11.e,Electricity by wind,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.f@CPA_D,p40.11.f,Electricity by petroleum and other oil derivatives,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.g@CPA_D,p40.11.g,Electricity by biomass and waste,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.h@CPA_D,p40.11.h,Electricity by solar photovoltaic,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.i@CPA_D,p40.11.i,Electricity by solar thermal,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.j@CPA_D,p40.11.j,"Electricity by tide, wave, ocean",CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.k@CPA_D,p40.11.k,Electricity by Geothermal,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.11.l@CPA_D,p40.11.l,Electricity nec,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.12,p40.12,Transmission services of electricity,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.13,p40.13,Distribution and trade services of electricity,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.2.1,p40.2.1,Distribution services of gaseous fuels through mains,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.2.a,p40.2.a,Coke oven gas,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.2.b,p40.2.b,Blast Furnace Gas,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.2.c,p40.2.c,Oxygen Steel Furnace Gas,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.2.d,p40.2.d,Gas Works Gas,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.2.e,p40.2.e,Biogas,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_D,p40.3,p40.3,Steam and hot water supply services,CPA_D,"Electricity, gas, steam and air-conditioning",True
+CPA_C10-12,p51@CPA_C10-12,p51,"Wholesale trade and commission trade services, except of motor vehicles and motorcycles (51)",CPA_C10-12,"Food products, beverages and tobacco products",True

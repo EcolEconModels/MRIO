@@ -1037,21 +1037,29 @@ def build_closed_first_step_edges(esa: pd.DataFrame, bridge: pd.DataFrame, direc
     for exio_code in sorted(bridge_codes):
         info = bridge_labels[exio_code]
         if exio_code in mismatch_codes:
+            # Curated first-step decisions are authoritative for ESA59/direct
+            # disagreements.  This keeps manure-treatment products in division 90
+            # and preserves the other documented conflict decisions.
             resolution = conciliation_by_code[exio_code]
             label_by_division = cast(dict[str, str], resolution.get("label_by_division", {}))
             targets = [(division, label_by_division.get(division, "")) for division in sorted(cast(set[str], resolution["divisions"]))]
             source = "curated_first_step_conciliation"
         else:
-            targets = sorted(esa_by_code.get(exio_code, set()))
-            source = "ESA59_EXIOBASE20p_ESA59p"
-            if not targets:
-                direct_entry = direct_by_code.get(exio_code, {"divisions": set(), "labels_by_division": {}})
+            direct_entry = direct_by_code.get(exio_code, {"divisions": set(), "labels_by_division": {}})
+            direct_divisions = sorted(cast(set[str], direct_entry.get("divisions", set())))
+            if direct_divisions:
                 labels_by_division = cast(dict[str, set[str]], direct_entry.get("labels_by_division", {}))
                 targets = [
-                    (division, "CPA2002 direct fallback: " + " | ".join(sorted(labels_by_division.get(division, set()))[:8]))
-                    for division in sorted(cast(set[str], direct_entry.get("divisions", set())))
+                    (division, "CPA2002 direct: " + " | ".join(sorted(labels_by_division.get(division, set()))[:8]))
+                    for division in direct_divisions
                 ]
-                source = "CPA2002_6digit_EXIOBASE_FINAL_fallback"
+                source = "CPA2002_6digit_EXIOBASE_FINAL_direct"
+            else:
+                # ESA59 is a coarse but complete fallback.  Use it only for the
+                # known direct-workbook gaps, never ahead of available detailed
+                # CPA2002 product anchors.
+                targets = sorted(esa_by_code.get(exio_code, set()))
+                source = "ESA59_EXIOBASE20p_ESA59p_direct_gap_fill"
         for old_code, old_label in targets:
             records.append(
                 {

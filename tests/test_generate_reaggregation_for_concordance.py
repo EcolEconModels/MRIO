@@ -1,140 +1,102 @@
 from __future__ import annotations
 
-import csv
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-HELPER = REPO_ROOT / "scripts" / "pipelines" / "generate_reaggregation_for_concordance.py"
+import pandas as pd
 
 
-def load_helper():
-    spec = importlib.util.spec_from_file_location("generate_reaggregation_for_concordance", HELPER)
+def load_reagg_module():
+    path = Path("scripts/pipelines/generate_reaggregation_for_concordance.py")
+    spec = importlib.util.spec_from_file_location("generate_reaggregation_for_concordance", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    assert spec.name is not None
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str] | None = None) -> None:
-    if fieldnames is None:
-        fieldnames = list(rows[0])
+def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    frame = pd.DataFrame(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
+    frame.to_csv(path, index=False)
 
 
-def read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
-
-
-def test_aliases_edge_child_from_unsuffixed_base_row(tmp_path: Path) -> None:
-    helper = load_helper()
-    split = tmp_path / "split.csv"
-    base = tmp_path / "base_reagg.csv"
-    concordance = tmp_path / "concordance.csv"
-    out = tmp_path / "generated_reagg.csv"
-    review = tmp_path / "review.csv"
-    manifest = tmp_path / "manifest.json"
-
-    write_csv(split, [{"source_code": "CPA_D", "source_label": "Electricity"}])
+def test_edge_children_close_to_selected_target_or_compatible_fuel_bucket(tmp_path: Path) -> None:
+    module = load_reagg_module()
+    split = tmp_path / "fuels_split.csv"
+    write_csv(
+        split,
+        [
+            {"source_code": "CPA_C10-12", "source_label": "Food"},
+            {"source_code": "CPA_C19", "source_label": "Coke and refined petroleum"},
+            {"source_code": "CPA_C20", "source_label": "Chemicals"},
+            {"source_code": "CPA_D", "source_label": "Electricity"},
+        ],
+    )
+    base = tmp_path / "fuels_reaggregation.csv"
     write_csv(
         base,
         [
-            {
-                "source_code": "p40.11.a",
-                "source_label": "Electricity by coal",
-                "target_code": "CPA_D_Electricity_by_coal",
-                "target_label": "CPA_D: Electricity by coal",
-                "enabled": "True",
-                "notes": "base row",
-            }
+            {"source_code": "p15.j", "source_label": "Beverages", "target_code": "CPA_C10-12_FOOD_AND_BEVERAGES", "target_label": "CPA_C10-12: Food and beverages", "enabled": True, "notes": "base food row"},
+            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_D_Electricity_by_coal", "target_label": "CPA_D: Electricity by coal", "enabled": True, "notes": "base electricity row"},
         ],
     )
+    concordance = tmp_path / "exio_to_cpa.csv"
     write_csv(
         concordance,
         [
-            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_D", "target_label": "Electricity", "enabled": "1"},
-            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_E37-39", "target_label": "Waste", "enabled": "1"},
+            {"source_code": "p15.j", "source_label": "Beverages", "target_code": "CPA_C10-12", "target_label": "Food", "enabled": True},
+            {"source_code": "p15.j", "source_label": "Beverages", "target_code": "CPA_C20", "target_label": "Chemicals", "enabled": True},
+            {"source_code": "p36", "source_label": "Furniture; other goods", "target_code": "CPA_C10-12", "target_label": "Food", "enabled": True},
+            {"source_code": "p36", "source_label": "Furniture; other goods", "target_code": "CPA_C20", "target_label": "Chemicals", "enabled": True},
+            {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_C19", "target_label": "Coke", "enabled": True},
+            {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_B", "target_label": "Mining", "enabled": True},
+            {"source_code": "p23.3", "source_label": "Nuclear fuel", "target_code": "CPA_C20", "target_label": "Chemicals", "enabled": True},
+            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_D", "target_label": "Electricity", "enabled": True},
+            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_E37-39", "target_label": "Waste", "enabled": True},
         ],
     )
-
-    assert helper.main(
-        [
-            "--split-mapping-csv", str(split),
-            "--base-reagg-csv", str(base),
-            "--concordance-csv", str(concordance),
-            "--out-csv", str(out),
-            "--review-csv", str(review),
-            "--manifest-json", str(manifest),
-        ]
-    ) == 0
-
-    rows = read_csv(out)
-    assert {row["source_code"] for row in rows} == {"p40.11.a", "p40.11.a@CPA_D"}
-    alias = [row for row in rows if row["source_code"] == "p40.11.a@CPA_D"][0]
-    assert alias["target_code"] == "CPA_D_Electricity_by_coal"
-    assert "copies base reaggregation from p40.11.a" in alias["notes"]
-    assert read_csv(review) == []
-    summary = json.loads(manifest.read_text(encoding="utf-8"))
-    assert summary["added_alias_rows"] == 1
-    assert summary["review_required_rows"] == 0
-
-
-def test_review_required_rows_are_written_but_not_added(tmp_path: Path) -> None:
-    helper = load_helper()
-    split = tmp_path / "split.csv"
-    base = tmp_path / "base_reagg.csv"
-    concordance = tmp_path / "concordance.csv"
-    out = tmp_path / "generated_reagg.csv"
-    review = tmp_path / "review.csv"
-    manifest = tmp_path / "manifest.json"
-
-    write_csv(split, [{"source_code": "CPA_C19", "source_label": "Coke and refined petroleum"}])
+    rules = tmp_path / "rules.csv"
     write_csv(
-        base,
+        rules,
         [
-            {
-                "source_code": "p23.20.g",
-                "source_label": "Heavy Fuel Oil",
-                "target_code": "CPA_C19_OIL",
-                "target_label": "CPA_C19: Oil",
-                "enabled": "True",
-                "notes": "base row",
-            }
-        ],
-    )
-    write_csv(
-        concordance,
-        [
-            {"source_code": "p10.f", "source_label": "Lignite/Brown Coal", "target_code": "CPA_C19", "target_label": "Coke and refined petroleum", "enabled": "1"}
+            {"source_code": "p10.f@CPA_C19", "source_label": "Lignite edge", "target_code": "CPA_C19_COAL", "target_label": "CPA_C19: Coal", "enabled": True, "notes": "coal rule"},
+            {"source_code": "p23.3", "source_label": "Nuclear fuel", "target_code": "CPA_C20_NUCLEAR_FUEL", "target_label": "CPA_C20: Nuclear fuel", "enabled": True, "notes": "nuclear rule"},
         ],
     )
 
-    try:
-        helper.main(
-            [
-                "--split-mapping-csv", str(split),
-                "--base-reagg-csv", str(base),
-                "--concordance-csv", str(concordance),
-                "--out-csv", str(out),
-                "--review-csv", str(review),
-                "--manifest-json", str(manifest),
-            ]
-        )
-    except SystemExit as exc:
-        assert exc.code != 0
-    else:
-        raise AssertionError("Expected review-required rows to exit nonzero by default")
+    out_rows, review_rows, manifest = module.build_closed_reaggregation(
+        split_mapping_csv=split,
+        base_reagg_csv=base,
+        concordance_csv=concordance,
+        rule_csvs=[rules],
+    )
 
-    assert {row["source_code"] for row in read_csv(out)} == {"p23.20.g"}
-    review_rows = read_csv(review)
-    assert len(review_rows) == 1
-    assert review_rows[0]["child_code"] == "p10.f"
-    assert "manual economic classification required" in review_rows[0]["reason"]
+    assert review_rows == []
+    mapping = {row["source_code"]: row["target_code"] for row in out_rows}
+    assert mapping["p15.j@CPA_C10-12"] == "CPA_C10-12_FOOD_AND_BEVERAGES"
+    assert mapping["p15.j@CPA_C20"] == "CPA_C20"
+    assert mapping["p36@CPA_C10-12"] == "CPA_C10-12"
+    assert mapping["p36@CPA_C20"] == "CPA_C20"
+    assert mapping["p10.f@CPA_C19"] == "CPA_C19_COAL"
+    assert mapping["p23.3"] == "CPA_C20_NUCLEAR_FUEL"
+    assert mapping["p40.11.a@CPA_D"] == "CPA_D_Electricity_by_coal"
+    assert manifest["review_required_rows"] == 0
+
+
+def test_raw_many_target_child_requires_review(tmp_path: Path) -> None:
+    module = load_reagg_module()
+    child = {"child_code": "p36", "source_code": "p36", "source_label": "Furniture", "edge_target_code": "", "edge_target_label": "", "source_n_targets": 2, "is_edge_child": False}
+    row, review = module.route_child(
+        child,
+        base_by_source={},
+        rules_by_source={},
+        targets_by_source={"p36": {"CPA_C10-12", "CPA_C20"}},
+    )
+    assert row is None
+    assert review is not None
+    assert review["source_code"] == "p36"
+    assert "multiple active concordance targets" in review["reason"]
