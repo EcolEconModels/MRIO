@@ -684,8 +684,7 @@ def ensure_exiobase_year_zip(
     zip_path = data_dir / f"IOT_{int(year)}_{system}.zip"
 
     if force_download and zip_path.exists():
-        ts = int(time.time())
-        zip_path.rename(data_dir / f"IOT_{int(year)}_{system}.zip.corrupt_or_forced.{ts}")
+        zip_path.unlink()
 
     if zip_path.exists() and not zip_contains_member(zip_path, "file_parameters.json"):
         ts = int(time.time())
