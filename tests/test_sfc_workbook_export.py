@@ -918,12 +918,20 @@ def test_write_excel_mapping_sheet_allows_missing_co2_for_import_flow(capsys) ->
         {"P3": [1.0], "P5": [0.0], "P6": [0.0]},
         index=["p10.f@CPA_C19"],
     )
+    aggregated_y = pd.DataFrame(
+        {"P3": [1.0], "P5": [0.0], "P6": [0.0]},
+        index=["CPA_C19_COAL"],
+    )
+    aggregated_x = pd.Series([1.0], index=["CPA_C19_COAL"], dtype="float64")
 
     _write_excel_mapping_sheet(
         wb,
         sheet_name="IO Aggregation Mapping",
         mapping_df=mapping_df,
         disaggregated_Y=disaggregated_y,
+        aggregated_Y=aggregated_y,
+        aggregated_x=aggregated_x,
+        aggregated_sector_order=["CPA_C19_COAL"],
         allow_missing_sfc_co2=True,
         verbose=True,
     )
@@ -931,11 +939,24 @@ def test_write_excel_mapping_sheet_allows_missing_co2_for_import_flow(capsys) ->
     stdout = capsys.readouterr().out
     assert "WARNING: SFC workbook mapping sheet is omitting production-based CO2 intensity columns" in stdout
     assert "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns" in stdout
+    assert "WARNING: SFC workbook re-aggregated summary is omitting production-based CO2" in stdout
+    assert "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2" in stdout
     assert "import flow" in stdout
 
     ws = wb["IO Aggregation Mapping"]
     headers = [cell.value for cell in ws[1]]
     assert not any("CO2 intensity" in str(header) for header in headers)
+
+    summary_ws = wb["Re-aggregated Summary"]
+    summary_headers = [cell.value for cell in summary_ws[1]]
+    assert summary_headers == [
+        "To Sector",
+        "Monetary output (M€)",
+        "Domestic final demand (M€)",
+        "Exports (M€)",
+        "Stocks & valuables (M€)",
+    ]
+    assert summary_ws.cell(row=2, column=2).value == 1.0
 
 
 def test_write_excel_mapping_sheet_requires_co2_for_non_import_flow() -> None:

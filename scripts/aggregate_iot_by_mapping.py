@@ -599,6 +599,8 @@ def _write_excel_mapping_sheet(
         display_df["notes"] = display_df["stressor"].map(_note_for_stressor)
 
     # Use-phase (F_Y) domestic-demand CO2 intensity (scalar applied to all sectors)
+    fy_dom_intensity_scalar: float | None = None
+    fy_unit_label = "mixed units"
     if exio_final_demand_emission_intensity is None or exio_final_demand_emission_intensity.empty:
         if not allow_missing_sfc_co2:
             raise ValueError("exio_final_demand_emission_intensity is required for use-phase CO2 intensity.")
@@ -846,12 +848,26 @@ def _write_excel_mapping_sheet(
                     cell.number_format = "0.0000"
         _auto_width(ws_m)
 
-    # Add aggregated sector summary with domestic/exports/stocks + use-phase intensity (F_Y)
+    # Add aggregated sector summary with domestic/exports/stocks + optional CO2 intensity columns.
     if aggregated_Y is not None and not aggregated_Y.empty:
-        if aggregated_sector_emission_intensity is None or aggregated_sector_emission_intensity.empty:
-            raise ValueError("aggregated_sector_emission_intensity is required for the summary sheet.")
-        if fy_dom_intensity_scalar is None:
-            raise ValueError("use-phase CO2 intensity is required for the summary sheet.")
+        summary_has_prod_co2 = aggregated_sector_emission_intensity is not None and not aggregated_sector_emission_intensity.empty
+        summary_has_use_co2 = fy_dom_intensity_scalar is not None
+        if not summary_has_prod_co2:
+            if not allow_missing_sfc_co2:
+                raise ValueError("aggregated_sector_emission_intensity is required for the summary sheet.")
+            _vprint(
+                verbose,
+                "WARNING: SFC workbook re-aggregated summary is omitting production-based CO2 "
+                "columns for import flow because aggregated_sector_co2_intensity.csv is not available.",
+            )
+        if not summary_has_use_co2:
+            if not allow_missing_sfc_co2:
+                raise ValueError("use-phase CO2 intensity is required for the summary sheet.")
+            _vprint(
+                verbose,
+                "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2 "
+                "columns for import flow because exio_final_demand_co2_intensity.csv is not available.",
+            )
         agg_domestic_fd, agg_exports, agg_stocks = _split_final_demand(aggregated_Y)
 
         sheet_title = "Re-aggregated Summary"
@@ -860,35 +876,43 @@ def _write_excel_mapping_sheet(
         ws_s = wb.create_sheet(sheet_title)
 
         prod_unit_label = "mixed units"
-        if "unit" in aggregated_sector_emission_intensity.columns:
-            uvals = aggregated_sector_emission_intensity["unit"].dropna().unique().tolist()
-            if len(uvals) == 1:
-                prod_unit_label = str(uvals[0]).strip()
-
-        ws_s.append(
-            [
-                mapping_to_col.replace("_", " ").title(),
-                "Monetary output (M€)",
-                f"Mean CO2 intensity ({prod_unit_label}/M€)",
-                "Domestic final demand (M€)",
-                "Exports (M€)",
-                "Stocks & valuables (M€)",
-                f"Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)",
-            ]
-        )
-        agg_emis_df = aggregated_sector_emission_intensity.copy()
-        if "aggregated_sector" in agg_emis_df.columns:
-            agg_emis_df["aggregated_sector"] = agg_emis_df["aggregated_sector"].astype(str)
+        agg_emis_df = pd.DataFrame()
         intensity_by_sector = None
         output_by_sector = None
-        if "aggregated_sector" in agg_emis_df.columns and "emission_intensity" in agg_emis_df.columns:
-            intensity_by_sector = agg_emis_df.set_index("aggregated_sector")["emission_intensity"]
+        if summary_has_prod_co2:
+            assert aggregated_sector_emission_intensity is not None
+            agg_emis_df = aggregated_sector_emission_intensity.copy()
+            if "unit" in agg_emis_df.columns:
+                uvals = agg_emis_df["unit"].dropna().unique().tolist()
+                if len(uvals) == 1:
+                    prod_unit_label = str(uvals[0]).strip()
+            if "aggregated_sector" in agg_emis_df.columns:
+                agg_emis_df["aggregated_sector"] = agg_emis_df["aggregated_sector"].astype(str)
+            if "aggregated_sector" in agg_emis_df.columns and "emission_intensity" in agg_emis_df.columns:
+                intensity_by_sector = agg_emis_df.set_index("aggregated_sector")["emission_intensity"]
 
         if aggregated_x is not None and not aggregated_x.empty:
             output_by_sector = aggregated_x.copy()
             output_by_sector.index = output_by_sector.index.astype(str)
-        elif "aggregated_sector" in agg_emis_df.columns and "monetary_output" in agg_emis_df.columns:
+        elif summary_has_prod_co2 and "aggregated_sector" in agg_emis_df.columns and "monetary_output" in agg_emis_df.columns:
             output_by_sector = agg_emis_df.set_index("aggregated_sector")["monetary_output"]
+
+        summary_headers = [
+            mapping_to_col.replace("_", " ").title(),
+            "Monetary output (M€)",
+        ]
+        if summary_has_prod_co2:
+            summary_headers.append(f"Mean CO2 intensity ({prod_unit_label}/M€)")
+        summary_headers.extend(
+            [
+                "Domestic final demand (M€)",
+                "Exports (M€)",
+                "Stocks & valuables (M€)",
+            ]
+        )
+        if summary_has_use_co2:
+            summary_headers.append(f"Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)")
+        ws_s.append(summary_headers)
 
         if aggregated_sector_order:
             sector_index = pd.Index(list(map(str, aggregated_sector_order)))
@@ -899,27 +923,30 @@ def _write_excel_mapping_sheet(
 
         for agg_sector in sector_index:
             agg_sector_s = str(agg_sector)
-            ws_s.append(
+            row_values = [
+                aggregated_sector_labels.get(agg_sector_s)
+                if aggregated_sector_labels is not None
+                else agg_sector_s,
+                output_by_sector.get(agg_sector_s) if output_by_sector is not None else None,
+            ]
+            if summary_has_prod_co2:
+                row_values.append(intensity_by_sector.get(agg_sector_s) if intensity_by_sector is not None else None)
+            row_values.extend(
                 [
-                    aggregated_sector_labels.get(agg_sector_s)
-                    if aggregated_sector_labels is not None
-                    else agg_sector_s,
-                    output_by_sector.get(agg_sector_s) if output_by_sector is not None else None,
-                    intensity_by_sector.get(agg_sector_s) if intensity_by_sector is not None else None,
                     agg_domestic_fd.get(agg_sector_s) if agg_domestic_fd is not None else None,
                     agg_exports.get(agg_sector_s) if agg_exports is not None else None,
                     agg_stocks.get(agg_sector_s) if agg_stocks is not None else None,
-                    fy_dom_intensity_scalar,
                 ]
             )
-        for row in ws_s.iter_rows(min_row=2, min_col=2, max_col=7):
+            if summary_has_use_co2:
+                row_values.append(fy_dom_intensity_scalar)
+            ws_s.append(row_values)
+        for row in ws_s.iter_rows(min_row=2, min_col=2, max_col=len(summary_headers)):
             for cell in row:
                 if cell.value is None or pd.isna(cell.value):
                     continue
-                if cell.column in (2, 4, 5, 6):
-                    cell.number_format = "0.00"
-                else:
-                    cell.number_format = "0.0000"
+                header = str(ws_s.cell(row=1, column=cell.column).value)
+                cell.number_format = "0.0000" if "intensity" in header.lower() else "0.00"
         _auto_width(ws_s)
 
     ws.freeze_panes = "A2"
