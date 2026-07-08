@@ -14,6 +14,7 @@ import pandas as pd
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
 )
+from ecolecon_mrio.iot_identities import find_imports_vector, supplementary_accounting_identity_kind
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
 
@@ -1257,16 +1258,17 @@ def _validate_template_reaggregation(
         if label is None or str(label).strip() == "":
             continue
         label_text = str(label).strip()
+        identity_kind = supplementary_accounting_identity_kind(label_text)
         row_values = lower_row_vectors.get(label_text)
         if row_values is not None:
-            if label_text == "Value added, gross":
+            if identity_kind == "value_added":
                 expected_by_output = (current_x - col_sum_Z).astype("float64")
-            elif label_text == "Output":
+            elif identity_kind == "output":
                 expected_by_output = current_x.astype("float64")
-            elif label_text == "Total intermediate consumption /final use":
+            elif identity_kind == "intermediate_use":
                 expected_by_output = col_sum_Z.astype("float64")
-            elif label_text == "Total supply at basic prices":
-                imports_values = lower_row_vectors.get("Imports of goods and services")
+            elif identity_kind == "total_supply":
+                imports_values = find_imports_vector(pd.DataFrame(lower_row_vectors).T, product_codes)
                 expected_by_output = None if imports_values is None else (current_x + imports_values).astype("float64")
             else:
                 expected_by_output = None
@@ -1289,8 +1291,10 @@ def _validate_template_reaggregation(
 
         fd_values = lower_fd_vectors.get(label_text)
         if fd_values is not None:
-            if label_text == "Total intermediate consumption /final use":
+            if identity_kind == "intermediate_use":
                 expected_fd_values = current_fd_totals
+            elif identity_kind in {"value_added", "output", "total_supply"}:
+                expected_fd_values = pd.Series(index=fd_codes, dtype="float64")
             else:
                 template_fd_values = pd.Series(
                     {code: _numeric_cell(r, tpl_fd_cols[code]) for code in fd_codes if code in tpl_fd_cols},
@@ -1802,16 +1806,19 @@ def _write_sfc_workbook(
             if label is None or str(label).strip() == "":
                 continue
             label_text = str(label).strip()
+            identity_kind = supplementary_accounting_identity_kind(label_text)
             v_row_code = supplementary_row_by_label.get(label_text)
 
-            if label_text == "Value added, gross":
+            if identity_kind == "value_added":
                 product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
-            elif label_text == "Output":
+            elif identity_kind == "output":
                 product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
-            elif label_text == "Total intermediate consumption /final use":
+            elif identity_kind == "intermediate_use":
                 product_vector = col_sums_Z.reindex(product_codes_order).fillna(0.0).astype("float64")
-            elif label_text == "Total supply at basic prices":
-                imports_vector = lower_row_vectors.get("Imports of goods and services")
+            elif identity_kind == "total_supply":
+                imports_vector = find_imports_vector(V_ord, product_codes_order)
+                if imports_vector is None:
+                    imports_vector = find_imports_vector(pd.DataFrame(lower_row_vectors).T, product_codes_order)
                 if imports_vector is None:
                     imports_vector = pd.Series(0.0, index=product_codes_order, dtype="float64")
                 product_vector = (x_after.reindex(product_codes_order).fillna(0.0) + imports_vector.reindex(product_codes_order).fillna(0.0)).astype("float64")
@@ -1839,9 +1846,9 @@ def _write_sfc_workbook(
                 dtype="object",
             )
             numeric_template_fd = pd.to_numeric(template_fd_values, errors="coerce")
-            if label_text == "Total intermediate consumption /final use":
+            if identity_kind == "intermediate_use":
                 fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
-            elif label_text in {"Value added, gross", "Output", "Total supply at basic prices"}:
+            elif identity_kind in {"value_added", "output", "total_supply"}:
                 fd_vector = pd.Series(index=fd_codes_order_no_total, dtype="float64")
             elif v_row_code is not None and M_ord is not None and v_row_code in M_ord.index:
                 fd_vector = M_ord.loc[v_row_code].reindex(fd_codes_order_no_total).astype("float64")

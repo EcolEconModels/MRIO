@@ -451,8 +451,13 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
         columns=["CPA_C20", "CPA_C21"],
     )
     expected_Y = pd.DataFrame([[30.0], [30.0]], index=["CPA_C20", "CPA_C21"], columns=["P3"])
-    expected_V = pd.DataFrame([[300.0, 300.0]], index=["B1G"], columns=["CPA_C20", "CPA_C21"])
     expected_x = expected_Z.sum(axis=1) + expected_Y.sum(axis=1)
+    expected_V = pd.DataFrame(
+        [(expected_x - expected_Z.sum(axis=0)).astype("float64")],
+        index=["B1G"],
+        columns=["CPA_C20", "CPA_C21"],
+    )
+    expected_M = pd.DataFrame([[float("nan")]], index=["B1G"], columns=["P3"])
 
     pd.testing.assert_frame_equal(result.Z, expected_Z)
     pd.testing.assert_frame_equal(result.Y, expected_Y)
@@ -460,7 +465,7 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
     assert result.V is not None
     assert result.M is not None
     pd.testing.assert_frame_equal(result.V, expected_V)
-    pd.testing.assert_frame_equal(result.M, M)
+    pd.testing.assert_frame_equal(result.M, expected_M)
 
 
 def test_aggregation_cli_augments_mapping_from_split_child_edges_metadata():

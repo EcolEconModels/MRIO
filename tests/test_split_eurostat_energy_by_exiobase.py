@@ -685,7 +685,7 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
         expected_intermediate,
         check_names=False,
     )
-    assert res.M.loc["Value added, gross", "P3"] == pytest.approx(7.0)
+    assert pd.isna(res.M.loc["Value added, gross", "P3"])
     assert res.M.loc["Total intermediate consumption /final use", "P3"] == pytest.approx(float(res.Y.sum(axis=0)["P3"]))
 
 

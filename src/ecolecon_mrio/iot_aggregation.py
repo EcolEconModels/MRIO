@@ -7,6 +7,8 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.iot_identities import derive_v_identity_rows, refresh_m_identity_rows
+
 
 @dataclass(frozen=True)
 class AggregationResult:
@@ -302,13 +304,13 @@ def aggregate_iot(
 
     Z_agg = aggregate_square_matrix(Z, mapping, level=level, keep_unmapped=keep_unmapped)
     Y_agg = aggregate_Y(Y, mapping, level=level, keep_unmapped=keep_unmapped)
-    V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
-    M_agg = M.copy() if M is not None else None
-
     if not Y_agg.index.equals(Z_agg.index):
         raise RuntimeError("Aggregation produced inconsistent Z/Y indices.")
 
     x = (Z_agg.sum(axis=1) + Y_agg.sum(axis=1)).astype("float64")
+    V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
+    V_agg = derive_v_identity_rows(V_agg, Z=Z_agg, x=x)
+    M_agg = refresh_m_identity_rows(M, Y=Y_agg)
 
     A = Z_agg.astype("float64").copy()
     denom = x.replace(0.0, np.nan).astype("float64")

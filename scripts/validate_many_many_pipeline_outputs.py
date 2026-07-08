@@ -64,19 +64,29 @@ def _max_abs_frame_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
         return float("inf")
     if not actual.columns.astype(str).equals(expected.columns.astype(str)):
         return float("inf")
+    actual_values = actual.astype("float64").to_numpy(dtype="float64")
+    expected_values = expected.astype("float64").to_numpy(dtype="float64")
+    if np.any(np.isnan(actual_values) != np.isnan(expected_values)):
+        return float("inf")
     diff = actual.astype("float64") - expected.astype("float64")
     if diff.empty:
         return 0.0
-    return float(np.nanmax(np.abs(diff.to_numpy(dtype="float64"))))
+    values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
+    return float(np.max(values))
 
 
 def _max_abs_series_gap(actual: pd.Series, expected: pd.Series) -> float:
     if not actual.index.astype(str).equals(expected.index.astype(str)):
         return float("inf")
+    actual_values = actual.astype("float64").to_numpy(dtype="float64")
+    expected_values = expected.astype("float64").to_numpy(dtype="float64")
+    if np.any(np.isnan(actual_values) != np.isnan(expected_values)):
+        return float("inf")
     diff = actual.astype("float64") - expected.astype("float64")
     if diff.empty:
         return 0.0
-    return float(np.nanmax(np.abs(diff.to_numpy(dtype="float64"))))
+    values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
+    return float(np.max(values))
 
 
 def _check_ratio_file(

@@ -105,7 +105,15 @@ def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
 
     assert res.V is not None
     assert res.M is not None
-    assert res.V.loc["Value added, gross", "CPA_C20_others"] == pytest.approx(10.0)
-    assert res.V.loc["Value added, gross", "CPA_C20_BIOGASOLINE"] == pytest.approx(80.0)
-    assert res.V.loc["Value added, gross", "CPA_C21"] == pytest.approx(5.0)
-    pd.testing.assert_frame_equal(res.M, M)
+    expected_intermediate = res.Z.sum(axis=0).astype("float64")
+    expected_value_added = (res.x - expected_intermediate).astype("float64")
+    pd.testing.assert_series_equal(
+        res.V.loc["Value added, gross"].astype("float64"),
+        expected_value_added,
+        check_names=False,
+    )
+    assert res.V.loc["Taxes less subsidies on products", "CPA_C20_others"] == pytest.approx(1.0)
+    assert res.V.loc["Taxes less subsidies on products", "CPA_C20_BIOGASOLINE"] == pytest.approx(2.0)
+    assert res.V.loc["Taxes less subsidies on products", "CPA_C21"] == pytest.approx(3.0)
+    assert pd.isna(res.M.loc["Value added, gross", "P3"])
+    assert res.M.loc["Taxes less subsidies on products", "P3"] == pytest.approx(8.0)
