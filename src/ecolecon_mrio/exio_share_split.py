@@ -17,7 +17,12 @@ from ecolecon_mrio.exiobase3 import (
 from ecolecon_mrio.exiobase3_extensions import (
     extract_quantity_and_price as extract_exio_quantity_and_price,
 )
-from ecolecon_mrio.iot_identities import find_imports_vector, supplementary_accounting_identity_kind
+from ecolecon_mrio.iot_identities import (
+    final_demand_identity_totals,
+    find_imports_vector,
+    refresh_m_identity_rows,
+    supplementary_accounting_identity_kind,
+)
 
 
 @dataclass(frozen=True)
@@ -542,23 +547,27 @@ def _refresh_final_demand_identity_rows(
     M_out: pd.DataFrame | None,
     *,
     Y_split: pd.DataFrame | None,
+    Z_split: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame | None, list[dict[str, object]]]:
     if M_out is None:
         return None, []
 
-    M_out = M_out.copy().astype("float64")
-    M_out.index = M_out.index.astype(str)
-    M_out.columns = M_out.columns.astype(str)
+    M_before = M_out.copy().astype("float64")
+    M_before.index = M_before.index.astype(str)
+    M_before.columns = M_before.columns.astype(str)
 
     fd_totals = None
     if Y_split is not None:
-        fd_totals = Y_split.reindex(columns=M_out.columns).fillna(0.0).astype("float64").sum(axis=0)
+        fd_totals = final_demand_identity_totals(Y_split, M_before.columns, Z=Z_split)
+    M_out = refresh_m_identity_rows(M_before, Y=Y_split, Z=Z_split)
+    if M_out is None:
+        return None, []
+
     diagnostics: list[dict[str, object]] = []
-    for row_code in list(map(str, M_out.index)):
+    for row_code in list(map(str, M_before.index)):
         kind = supplementary_accounting_identity_kind(row_code)
         if kind == "intermediate_use" and fd_totals is not None:
-            mass_before = float(M_out.loc[row_code].sum())
-            M_out.loc[row_code, M_out.columns] = fd_totals
+            mass_before = float(M_before.loc[row_code].sum())
             diagnostics.append(
                 {
                     "row_code": row_code,
@@ -569,13 +578,12 @@ def _refresh_final_demand_identity_rows(
                     "fallback_reason": "",
                     "mass_before": mass_before,
                     "mass_after": float(M_out.loc[row_code].sum()),
-                    "weights": "derived_from_split_Y_column_sums",
+                    "weights": "derived_from_split_Y_column_sums_with_TFU_TU_identities",
                 }
             )
             continue
         if kind in {"value_added", "output", "total_supply"}:
-            mass_before = float(M_out.loc[row_code].sum())
-            M_out.loc[row_code, M_out.columns] = np.nan
+            mass_before = float(M_before.loc[row_code].sum())
             diagnostics.append(
                 {
                     "row_code": row_code,
@@ -604,7 +612,7 @@ def _split_supplementary_rows_columnwise(
     x_split: pd.Series | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     if eurostat_V is None:
-        M_out, diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split)
+        M_out, diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split, Z_split=Z_split)
         diag = pd.DataFrame(diagnostics) if diagnostics else None
         return None, M_out, diag
 
@@ -750,7 +758,7 @@ def _split_supplementary_rows_columnwise(
                     }
                 )
 
-    M_out, M_diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split)
+    M_out, M_diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split, Z_split=Z_split)
     diagnostics.extend(M_diagnostics)
     diag = pd.DataFrame(diagnostics) if diagnostics else None
     return V_split, M_out, diag

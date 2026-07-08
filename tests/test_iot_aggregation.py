@@ -122,3 +122,34 @@ def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
     assert res.V.loc["Taxes less subsidies on products", "CPA_C21"] == pytest.approx(3.0)
     assert pd.isna(res.M.loc["Value added, gross", "P3"])
     assert res.M.loc["Taxes less subsidies on products", "P3"] == pytest.approx(8.0)
+
+
+def test_aggregate_iot_refreshes_m_identity_tfu_and_tu_columns():
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+
+    sectors = ["A", "B"]
+    Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=sectors, columns=sectors)
+    Y = pd.DataFrame(
+        {
+            "P3": [10.0, 20.0],
+            "P5": [1.0, 2.0],
+            "P6": [3.0, 4.0],
+        },
+        index=sectors,
+    )
+    M = pd.DataFrame(
+        [[-1.0, -1.0, -1.0, -1.0, -1.0], [5.0, 6.0, 7.0, 8.0, 9.0]],
+        index=["Total intermediate consumption / final use", "Other supplementary row"],
+        columns=["P3", "P5", "P6", "TFU", "TU"],
+    )
+
+    res = aggregate_iot(Z, Y, {}, M=M, keep_unmapped=True, create_io_system=False)
+
+    assert res.M is not None
+    identity = res.M.loc["Total intermediate consumption / final use"]
+    assert identity["P3"] == pytest.approx(30.0)
+    assert identity["P5"] == pytest.approx(3.0)
+    assert identity["P6"] == pytest.approx(7.0)
+    assert identity["TFU"] == pytest.approx(40.0)
+    assert identity["TU"] == pytest.approx(float(Z.to_numpy().sum()) + 40.0)
+    assert res.M.loc["Other supplementary row", "TU"] == pytest.approx(9.0)

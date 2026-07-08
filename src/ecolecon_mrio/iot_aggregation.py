@@ -310,7 +310,7 @@ def aggregate_iot(
     x = (Z_agg.sum(axis=1) + Y_agg.sum(axis=1)).astype("float64")
     V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
     V_agg = derive_v_identity_rows(V_agg, Z=Z_agg, x=x)
-    M_agg = refresh_m_identity_rows(M, Y=Y_agg)
+    M_agg = refresh_m_identity_rows(M, Y=Y_agg, Z=Z_agg)
 
     A = Z_agg.astype("float64").copy()
     denom = x.replace(0.0, np.nan).astype("float64")
