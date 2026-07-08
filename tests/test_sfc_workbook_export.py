@@ -301,13 +301,26 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
         index=z_after.index,
     )
     v_after = pd.DataFrame(
-        [[0.25, 0.75, 2.0]],
-        index=["D21X31"],
+        [
+            [0.25, 0.75, 2.0],
+            [999.0, 999.0, 999.0],
+            [888.0, 888.0, 888.0],
+            [777.0, 777.0, 777.0],
+        ],
+        index=[
+            "D21X31",
+            "Value added, gross",
+            "Output",
+            "Total intermediate consumption /final use",
+        ],
         columns=z_after.columns,
     )
     m_after = pd.DataFrame(
-        [[9.0, 8.0, 7.0, 27.0, 24.0]],
-        index=["D21X31"],
+        [
+            [9.0, 8.0, 7.0, 27.0, 24.0],
+            [999.0, 999.0, 999.0, 999.0, 999.0],
+        ],
+        index=["D21X31", "Total intermediate consumption /final use"],
         columns=["P3", "P5", "P6", "TU", "TFU"],
     )
 

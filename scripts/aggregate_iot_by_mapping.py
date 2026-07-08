@@ -1804,9 +1804,7 @@ def _write_sfc_workbook(
             label_text = str(label).strip()
             v_row_code = supplementary_row_by_label.get(label_text)
 
-            if v_row_code is not None and V_ord is not None:
-                product_vector = V_ord.loc[v_row_code].reindex(product_codes_order).fillna(0.0).astype("float64")
-            elif label_text == "Value added, gross":
+            if label_text == "Value added, gross":
                 product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
             elif label_text == "Output":
                 product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
@@ -1817,6 +1815,8 @@ def _write_sfc_workbook(
                 if imports_vector is None:
                     imports_vector = pd.Series(0.0, index=product_codes_order, dtype="float64")
                 product_vector = (x_after.reindex(product_codes_order).fillna(0.0) + imports_vector.reindex(product_codes_order).fillna(0.0)).astype("float64")
+            elif v_row_code is not None and V_ord is not None:
+                product_vector = V_ord.loc[v_row_code].reindex(product_codes_order).fillna(0.0).astype("float64")
             else:
                 product_values: dict[str, float] = {}
                 for output_code in product_codes_order:
@@ -1839,10 +1839,12 @@ def _write_sfc_workbook(
                 dtype="object",
             )
             numeric_template_fd = pd.to_numeric(template_fd_values, errors="coerce")
-            if v_row_code is not None and M_ord is not None and v_row_code in M_ord.index:
-                fd_vector = M_ord.loc[v_row_code].reindex(fd_codes_order_no_total).astype("float64")
-            elif label_text == "Total intermediate consumption /final use":
+            if label_text == "Total intermediate consumption /final use":
                 fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
+            elif label_text in {"Value added, gross", "Output", "Total supply at basic prices"}:
+                fd_vector = pd.Series(index=fd_codes_order_no_total, dtype="float64")
+            elif v_row_code is not None and M_ord is not None and v_row_code in M_ord.index:
+                fd_vector = M_ord.loc[v_row_code].reindex(fd_codes_order_no_total).astype("float64")
             elif numeric_template_fd.notna().any():
                 fd_vector = _supplementary_fd_row_from_current_shares(
                     template_fd_values=numeric_template_fd,
