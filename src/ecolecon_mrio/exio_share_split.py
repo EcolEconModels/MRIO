@@ -549,14 +549,14 @@ def _refresh_final_demand_identity_rows(
     M_out = M_out.copy().astype("float64")
     M_out.index = M_out.index.astype(str)
     M_out.columns = M_out.columns.astype(str)
-    if Y_split is None:
-        return M_out, []
 
-    fd_totals = Y_split.reindex(columns=M_out.columns).fillna(0.0).astype("float64").sum(axis=0)
+    fd_totals = None
+    if Y_split is not None:
+        fd_totals = Y_split.reindex(columns=M_out.columns).fillna(0.0).astype("float64").sum(axis=0)
     diagnostics: list[dict[str, object]] = []
     for row_code in list(map(str, M_out.index)):
         kind = supplementary_accounting_identity_kind(row_code)
-        if kind == "intermediate_use":
+        if kind == "intermediate_use" and fd_totals is not None:
             mass_before = float(M_out.loc[row_code].sum())
             M_out.loc[row_code, M_out.columns] = fd_totals
             diagnostics.append(
@@ -625,6 +625,9 @@ def _split_supplementary_rows_columnwise(
             children = [parent]
 
         for row_code in map(str, V.index):
+            identity_kind = supplementary_accounting_identity_kind(row_code)
+            if identity_kind is not None:
+                continue
             row_total = float(V.loc[row_code, parent])
             if prof is None:
                 weights = pd.Series(1.0, index=children, dtype="float64")
@@ -727,24 +730,25 @@ def _split_supplementary_rows_columnwise(
 
     if x_identity is not None:
         imports_vector = find_imports_vector(V_split, V_split.columns)
-        if imports_vector is not None:
-            for row_code in list(map(str, V_split.index)):
-                if supplementary_accounting_identity_kind(row_code) == "total_supply":
-                    mass_before = float(V_split.loc[row_code].sum())
-                    V_split.loc[row_code, V_split.columns] = x_identity + imports_vector
-                    diagnostics.append(
-                        {
-                            "row_code": row_code,
-                            "parent_code": "__accounting_identity__",
-                            "child_codes": identity_child_codes,
-                            "allocation_method": "accounting_identity_x_plus_imports",
-                            "denominator": 1.0,
-                            "fallback_reason": "",
-                            "mass_before": mass_before,
-                            "mass_after": float(V_split.loc[row_code].sum()),
-                            "weights": "derived_from_split_x_plus_imports",
-                        }
-                    )
+        if imports_vector is None:
+            imports_vector = pd.Series(0.0, index=V_split.columns, dtype="float64")
+        for row_code in list(map(str, V_split.index)):
+            if supplementary_accounting_identity_kind(row_code) == "total_supply":
+                mass_before = float(V_split.loc[row_code].sum())
+                V_split.loc[row_code, V_split.columns] = x_identity + imports_vector
+                diagnostics.append(
+                    {
+                        "row_code": row_code,
+                        "parent_code": "__accounting_identity__",
+                        "child_codes": identity_child_codes,
+                        "allocation_method": "accounting_identity_x_plus_imports",
+                        "denominator": 1.0,
+                        "fallback_reason": "",
+                        "mass_before": mass_before,
+                        "mass_after": float(V_split.loc[row_code].sum()),
+                        "weights": "derived_from_split_x_plus_imports",
+                    }
+                )
 
     M_out, M_diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split)
     diagnostics.extend(M_diagnostics)

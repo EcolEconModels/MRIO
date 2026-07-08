@@ -647,8 +647,8 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
     euro_Z = pd.DataFrame([[0.0]], index=["CPA_C20"], columns=["CPA_C20"])
     euro_Y = pd.DataFrame({"P3": [1.0]}, index=["CPA_C20"])
     euro_V = pd.DataFrame(
-        [[90.0], [999.0]],
-        index=["Value added, gross", "Total intermediate consumption /final use"],
+        [[90.0], [999.0], [888.0]],
+        index=["Value added, gross", "Total intermediate consumption /final use", "Total supply at basic prices"],
         columns=["CPA_C20"],
     )
     euro_M = pd.DataFrame(
@@ -685,8 +685,24 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
         expected_intermediate,
         check_names=False,
     )
+    pd.testing.assert_series_equal(
+        res.V.loc["Total supply at basic prices"].astype("float64"),
+        res.x.astype("float64"),
+        check_names=False,
+    )
     assert pd.isna(res.M.loc["Value added, gross", "P3"])
     assert res.M.loc["Total intermediate consumption /final use", "P3"] == pytest.approx(float(res.Y.sum(axis=0)["P3"]))
+    assert res.supplementary_diagnostics is not None
+    identity_rows = {
+        "Value added, gross",
+        "Total intermediate consumption /final use",
+        "Total supply at basic prices",
+    }
+    proxy_rows = res.supplementary_diagnostics.loc[
+        ~res.supplementary_diagnostics["parent_code"].astype(str).eq("__accounting_identity__"),
+        "row_code",
+    ].astype(str)
+    assert not identity_rows.intersection(set(proxy_rows))
 
 
 def test_validate_split_reconstruction_preserves_original_final_demand_columns():

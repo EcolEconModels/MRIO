@@ -382,6 +382,13 @@ def test_supplementary_rows_use_row_specific_proxy_hierarchy():
         columns=["CPA_X"],
     )
     M = pd.DataFrame([[7.0]], index=["B1G"], columns=["P3"])
+    Z_split = pd.DataFrame(
+        [[2.0, 0.0], [0.0, 6.0]],
+        index=children,
+        columns=children,
+        dtype="float64",
+    )
+    x_split = pd.Series([10.0, 10.0], index=children, dtype="float64")
 
     V_split, M_out, diag = _split_supplementary_rows_columnwise(
         eurostat_V=V,
@@ -389,19 +396,21 @@ def test_supplementary_rows_use_row_specific_proxy_hierarchy():
         sectors_old=["CPA_X"],
         sectors_new=list(children),
         split_profiles=profiles,
+        Z_split=Z_split,
+        x_split=x_split,
     )
 
     assert V_split is not None
     assert M_out is not None
     assert diag is not None
-    pd.testing.assert_series_equal(V_split.sum(axis=1), V["CPA_X"], check_names=False)
-    assert V_split.loc["B1G", "child_output_heavy"] == 80.0
-    assert V_split.loc["B1G", "child_input_heavy"] == 20.0
+    assert V_split.loc["B1G", "child_output_heavy"] == 8.0
+    assert V_split.loc["B1G", "child_input_heavy"] == 4.0
     assert V_split.loc["OTHER_ROW", "child_output_heavy"] == 25.0
     assert V_split.loc["OTHER_ROW", "child_input_heavy"] == 75.0
-    assert "output_share_proxy_for_value_added_row" in set(diag["allocation_method"])
+    assert "accounting_identity_value_added_residual" in set(diag["allocation_method"])
+    assert "output_share_proxy_for_value_added_row" not in set(diag["allocation_method"])
     assert "projected_exio_column_use_proxy" in set(diag["allocation_method"])
-    pd.testing.assert_frame_equal(M_out, M.astype("float64"))
+    assert pd.isna(M_out.loc["B1G", "P3"])
 
 
 def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():

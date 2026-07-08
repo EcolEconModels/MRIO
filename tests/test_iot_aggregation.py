@@ -94,11 +94,11 @@ def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
     Z = pd.DataFrame(np.eye(3), index=sectors, columns=sectors)
     Y = pd.DataFrame({"P3": [1.0, 2.0, 3.0]}, index=sectors)
     V = pd.DataFrame(
-        [[10.0, 80.0, 5.0], [1.0, 2.0, 3.0]],
-        index=["Value added, gross", "Taxes less subsidies on products"],
+        [[10.0, 80.0, 5.0], [999.0, 999.0, 999.0], [1.0, 2.0, 3.0]],
+        index=["Value added, gross", "Total supply at basic prices", "Taxes less subsidies on products"],
         columns=sectors,
     )
-    M = pd.DataFrame({"P3": [7.0, 8.0]}, index=V.index)
+    M = pd.DataFrame({"P3": [7.0, 9.0, 8.0]}, index=V.index)
     mapping = {"p24.d@CPA_C20": "CPA_C20_others", "p24.g": "CPA_C20_BIOGASOLINE"}
 
     res = aggregate_iot(Z, Y, mapping, V=V, M=M, keep_unmapped=True, create_io_system=False)
@@ -110,6 +110,11 @@ def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
     pd.testing.assert_series_equal(
         res.V.loc["Value added, gross"].astype("float64"),
         expected_value_added,
+        check_names=False,
+    )
+    pd.testing.assert_series_equal(
+        res.V.loc["Total supply at basic prices"].astype("float64"),
+        res.x.astype("float64"),
         check_names=False,
     )
     assert res.V.loc["Taxes less subsidies on products", "CPA_C20_others"] == pytest.approx(1.0)

@@ -71,6 +71,8 @@ def derive_v_identity_rows(
     intermediate_use = Z_ord.sum(axis=0).astype("float64")
     value_added = (x_ord - intermediate_use).astype("float64")
     imports = find_imports_vector(out, cols)
+    if imports is None:
+        imports = pd.Series(0.0, index=cols, dtype="float64")
 
     for row_code in list(map(str, out.index)):
         kind = supplementary_accounting_identity_kind(row_code)
@@ -80,7 +82,7 @@ def derive_v_identity_rows(
             out.loc[row_code, cols] = intermediate_use
         elif kind == "value_added":
             out.loc[row_code, cols] = value_added
-        elif kind == "total_supply" and imports is not None:
+        elif kind == "total_supply":
             out.loc[row_code, cols] = x_ord + imports
     return out
 

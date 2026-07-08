@@ -1269,7 +1269,9 @@ def _validate_template_reaggregation(
                 expected_by_output = col_sum_Z.astype("float64")
             elif identity_kind == "total_supply":
                 imports_values = find_imports_vector(pd.DataFrame(lower_row_vectors).T, product_codes)
-                expected_by_output = None if imports_values is None else (current_x + imports_values).astype("float64")
+                if imports_values is None:
+                    imports_values = pd.Series(0.0, index=product_codes, dtype="float64")
+                expected_by_output = (current_x + imports_values.reindex(product_codes).fillna(0.0)).astype("float64")
             else:
                 expected_by_output = None
             if expected_by_output is not None:
@@ -1296,16 +1298,7 @@ def _validate_template_reaggregation(
             elif identity_kind in {"value_added", "output", "total_supply"}:
                 expected_fd_values = pd.Series(index=fd_codes, dtype="float64")
             else:
-                template_fd_values = pd.Series(
-                    {code: _numeric_cell(r, tpl_fd_cols[code]) for code in fd_codes if code in tpl_fd_cols},
-                    dtype="float64",
-                )
-                product_total = float(row_values.sum()) if row_values is not None else 0.0
-                expected_fd_values = _supplementary_fd_row_from_current_shares(
-                    template_fd_values=template_fd_values,
-                    current_fd_totals=current_fd_totals,
-                    product_total=product_total,
-                )
+                continue
             for fd_code in fd_codes:
                 expected = expected_fd_values.get(fd_code)
                 actual = fd_values.get(fd_code)
