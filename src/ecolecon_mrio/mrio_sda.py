@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """Strict, MultiIndex-preserving MRIO SDA pair utilities.
 
 This module is intentionally small.  It does not load EXIOBASE, parse pymrio
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 import gc
 import warnings
 
@@ -231,6 +232,7 @@ def _solve_sparse_leontief_many(label: str, A: csr_matrix, rhs: np.ndarray) -> n
         rhs_matrix = rhs_array
     else:
         raise ValueError(f"{label} RHS must be one- or two-dimensional, got shape {rhs_array.shape!r}")
+    rhs_matrix = cast(np.ndarray, rhs_matrix)
     if rhs_matrix.shape[0] != A.shape[0]:
         raise ValueError(f"{label} RHS length {rhs_matrix.shape[0]} does not match matrix shape {A.shape!r}")
     if not np.isfinite(rhs_matrix).all():
@@ -388,7 +390,9 @@ def _load_sda_year_matrices(
     system: str,
     data_root: str | Path | None,
     allow_download_missing: bool,
-    verbose: bool,
+    force_download: bool = False,
+    doi: str | None = None,
+    verbose: bool = False,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
     """Load one EXIOBASE year as sparse A plus checked x/y vectors for SDA.
 
@@ -398,16 +402,19 @@ def _load_sda_year_matrices(
 
     from ecolecon_mrio.data import load_mrio_matrices
 
-    A, x, y, index, metadata = load_mrio_matrices(
-        int(year),
-        data_root=data_root,
-        allow_download_missing=allow_download_missing,
-        exio_system=str(system),
-        verbose=bool(verbose),
-        cache_matrices=False,
-        read_existing_cache=False,
-        delete_source_zip_after_parse=False,
-    )
+    load_kwargs: dict[str, Any] = {
+        "data_root": data_root,
+        "allow_download_missing": bool(allow_download_missing),
+        "force_download": bool(force_download),
+        "exio_system": str(system),
+        "verbose": bool(verbose),
+        "cache_matrices": False,
+        "read_existing_cache": False,
+        "delete_source_zip_after_parse": False,
+    }
+    if doi is not None and str(doi).strip():
+        load_kwargs["doi"] = str(doi).strip()
+    A, x, y, index, metadata = load_mrio_matrices(int(year), **load_kwargs)
     idx = require_region_sector_multiindex(index)
     x_series = x if isinstance(x, pd.Series) else pd.Series(x, index=idx)
     y_series = y if isinstance(y, pd.Series) else pd.Series(y, index=idx)
@@ -495,6 +502,8 @@ def load_mrio_year_state(
     system: str = "pxp",
     data_root: str | Path | None = None,
     allow_download_missing: bool = False,
+    force_download: bool = False,
+    doi: str | None = None,
     verbose: bool = False,
     monetary_unit: str | None = None,
     monetary_unit_source: str | None = None,
@@ -524,6 +533,8 @@ def load_mrio_year_state(
         system=str(system),
         data_root=data_root,
         allow_download_missing=bool(allow_download_missing),
+        force_download=bool(force_download),
+        doi=doi,
         verbose=bool(verbose),
     )
     return MrioYearState(
