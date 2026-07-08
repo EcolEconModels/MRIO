@@ -535,6 +535,63 @@ def _normalized_supplementary_weights(
     if not np.isfinite(denom) or denom <= 0.0:
         return pd.Series(1.0 / len(child_list), index=child_list, dtype="float64"), denom, True
     return weights / denom, denom, False  # pyright: ignore[reportOptionalOperand]  # pandas Series after nonzero finite denominator guard
+
+
+def _normalise_supplementary_row_label(row_code: object) -> str:
+    return " ".join(str(row_code).strip().casefold().replace("\\", "/").split())
+
+
+def _supplementary_accounting_identity_kind(row_code: object) -> str | None:
+    code = str(row_code).strip().upper()
+    label = _normalise_supplementary_row_label(row_code)
+    if code in {"P1", "OUTPUT"} or label == "output":
+        return "output"
+    if code in {"P2_ADJ", "P2ADJ"} or label == "total intermediate consumption /final use":
+        return "intermediate_use"
+    if code in {"B1G", "B1GQ", "VALUE_ADDED_GROSS"} or label == "value added, gross":
+        return "value_added"
+    if code in {"TS_BP", "TOTAL_SUPPLY_AT_BASIC_PRICES"} or label == "total supply at basic prices":
+        return "total_supply"
+    return None
+
+
+def _refresh_final_demand_identity_rows(
+    M_out: pd.DataFrame | None,
+    *,
+    Y_split: pd.DataFrame | None,
+) -> tuple[pd.DataFrame | None, list[dict[str, object]]]:
+    if M_out is None:
+        return None, []
+
+    M_out = M_out.copy().astype("float64")
+    M_out.index = M_out.index.astype(str)
+    M_out.columns = M_out.columns.astype(str)
+    if Y_split is None:
+        return M_out, []
+
+    fd_totals = Y_split.reindex(columns=M_out.columns).fillna(0.0).astype("float64").sum(axis=0)
+    diagnostics: list[dict[str, object]] = []
+    for row_code in list(map(str, M_out.index)):
+        if _supplementary_accounting_identity_kind(row_code) != "intermediate_use":
+            continue
+        mass_before = float(M_out.loc[row_code].sum())
+        M_out.loc[row_code, M_out.columns] = fd_totals
+        diagnostics.append(
+            {
+                "row_code": row_code,
+                "parent_code": "__accounting_identity__",
+                "child_codes": "|".join(map(str, M_out.columns)),
+                "allocation_method": "accounting_identity_final_demand_column_sum",
+                "denominator": 1.0,
+                "fallback_reason": "",
+                "mass_before": mass_before,
+                "mass_after": float(M_out.loc[row_code].sum()),
+                "weights": "derived_from_split_Y_column_sums",
+            }
+        )
+    return M_out, diagnostics
+
+
 def _split_supplementary_rows_columnwise(
     *,
     eurostat_V: pd.DataFrame | None,
@@ -543,11 +600,13 @@ def _split_supplementary_rows_columnwise(
     sectors_new: Sequence[str],
     split_profiles: Mapping[str, SplitProfiles],
     Z_split: pd.DataFrame | None = None,
+    Y_split: pd.DataFrame | None = None,
     x_split: pd.Series | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     if eurostat_V is None:
-        M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
-        return None, M_out, None
+        M_out, diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split)
+        diag = pd.DataFrame(diagnostics) if diagnostics else None
+        return None, M_out, diag
 
     V = eurostat_V.copy().astype("float64")
     V.index = V.index.astype(str)
@@ -607,7 +666,7 @@ def _split_supplementary_rows_columnwise(
             raise TypeError("Expected x_split identity vector to remain a pandas Series.")
         x_identity = x_obj.fillna(0.0).astype("float64")
         for row_code in list(map(str, V_split.index)):
-            if row_code.strip().upper() in {"P1", "OUTPUT"}:
+            if _supplementary_accounting_identity_kind(row_code) == "output":
                 mass_before = float(V_split.loc[row_code].sum())
                 V_split.loc[row_code, V_split.columns] = x_identity
                 diagnostics.append(
@@ -624,11 +683,12 @@ def _split_supplementary_rows_columnwise(
                     }
                 )
 
+    z_col_use: pd.Series | None = None
     if Z_split is not None:
         z_use = Z_split.reindex(index=V_split.columns, columns=V_split.columns).fillna(0.0).astype("float64")
         z_col_use = z_use.sum(axis=0).astype("float64")
         for row_code in list(map(str, V_split.index)):
-            if row_code.strip().upper() in {"P2_ADJ", "P2ADJ"}:
+            if _supplementary_accounting_identity_kind(row_code) == "intermediate_use":
                 mass_before = float(V_split.loc[row_code].sum())
                 V_split.loc[row_code, V_split.columns] = z_col_use
                 diagnostics.append(
@@ -645,6 +705,26 @@ def _split_supplementary_rows_columnwise(
                     }
                 )
 
+    if x_identity is not None and z_col_use is not None:
+        value_added = (x_identity - z_col_use).astype("float64")
+        for row_code in list(map(str, V_split.index)):
+            if _supplementary_accounting_identity_kind(row_code) == "value_added":
+                mass_before = float(V_split.loc[row_code].sum())
+                V_split.loc[row_code, V_split.columns] = value_added
+                diagnostics.append(
+                    {
+                        "row_code": row_code,
+                        "parent_code": "__accounting_identity__",
+                        "child_codes": identity_child_codes,
+                        "allocation_method": "accounting_identity_value_added_residual",
+                        "denominator": 1.0,
+                        "fallback_reason": "",
+                        "mass_before": mass_before,
+                        "mass_after": float(V_split.loc[row_code].sum()),
+                        "weights": "derived_from_split_x_minus_Z_column_sums",
+                    }
+                )
+
     if x_identity is not None:
         imports_vector = None
         imports_row_code = ""
@@ -655,7 +735,7 @@ def _split_supplementary_rows_columnwise(
                 break
         if imports_vector is not None:
             for row_code in list(map(str, V_split.index)):
-                if row_code.strip().upper() in {"TS_BP", "TOTAL_SUPPLY_AT_BASIC_PRICES"}:
+                if _supplementary_accounting_identity_kind(row_code) == "total_supply":
                     mass_before = float(V_split.loc[row_code].sum())
                     V_split.loc[row_code, V_split.columns] = x_identity + imports_vector
                     diagnostics.append(
@@ -672,10 +752,8 @@ def _split_supplementary_rows_columnwise(
                         }
                     )
 
-    M_out = eurostat_M.copy().astype("float64") if eurostat_M is not None else None
-    if M_out is not None:
-        M_out.index = M_out.index.astype(str)
-        M_out.columns = M_out.columns.astype(str)
+    M_out, M_diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split)
+    diagnostics.extend(M_diagnostics)
     diag = pd.DataFrame(diagnostics) if diagnostics else None
     return V_split, M_out, diag
 
@@ -881,6 +959,7 @@ def _split_iot_using_donor_blocks(
         sectors_new=sectors_new,
         split_profiles=split_profiles,
         Z_split=Z_split,
+        Y_split=Y_split,
         x_split=x_split,
     )
 

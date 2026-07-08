@@ -646,8 +646,16 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
     )
     euro_Z = pd.DataFrame([[0.0]], index=["CPA_C20"], columns=["CPA_C20"])
     euro_Y = pd.DataFrame({"P3": [1.0]}, index=["CPA_C20"])
-    euro_V = pd.DataFrame([[90.0]], index=["Value added, gross"], columns=["CPA_C20"])
-    euro_M = pd.DataFrame([[7.0]], index=["Value added, gross"], columns=["P3"])
+    euro_V = pd.DataFrame(
+        [[90.0], [999.0]],
+        index=["Value added, gross", "Total intermediate consumption /final use"],
+        columns=["CPA_C20"],
+    )
+    euro_M = pd.DataFrame(
+        [[7.0], [999.0]],
+        index=["Value added, gross", "Total intermediate consumption /final use"],
+        columns=["P3"],
+    )
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -665,11 +673,20 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
 
     assert res.V is not None
     assert res.M is not None
-    # Column-side donor inputs are p24.d edge: 4 * 0.25 = 1 and p24.g: 8.
-    assert res.V.loc["Value added, gross", "p24.d@CPA_C20"] == pytest.approx(10.0)
-    assert res.V.loc["Value added, gross", "p24.g"] == pytest.approx(80.0)
-    assert float(res.V.loc["Value added, gross", ["p24.d@CPA_C20", "p24.g"]].sum()) == pytest.approx(90.0)
+    expected_intermediate = res.Z.sum(axis=0).astype("float64")
+    expected_value_added = (res.x - expected_intermediate).astype("float64")
+    pd.testing.assert_series_equal(
+        res.V.loc["Value added, gross"].astype("float64"),
+        expected_value_added,
+        check_names=False,
+    )
+    pd.testing.assert_series_equal(
+        res.V.loc["Total intermediate consumption /final use"].astype("float64"),
+        expected_intermediate,
+        check_names=False,
+    )
     assert res.M.loc["Value added, gross", "P3"] == pytest.approx(7.0)
+    assert res.M.loc["Total intermediate consumption /final use", "P3"] == pytest.approx(float(res.Y.sum(axis=0)["P3"]))
 
 
 def test_validate_split_reconstruction_preserves_original_final_demand_columns():
