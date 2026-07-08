@@ -100,3 +100,26 @@ def test_raw_many_target_child_requires_review(tmp_path: Path) -> None:
     assert review is not None
     assert review["source_code"] == "p36"
     assert "multiple active concordance targets" in review["reason"]
+
+
+def test_write_rows_uses_lf_line_endings(tmp_path: Path) -> None:
+    module = load_reagg_module()
+    out_csv = tmp_path / "out.csv"
+    module.write_rows(
+        out_csv,
+        [
+            {
+                "source_code": "p10.f@CPA_C19",
+                "source_label": "Lignite",
+                "target_code": "CPA_C19_COAL",
+                "target_label": "CPA_C19: Coal",
+                "enabled": "True",
+                "notes": "test",
+            }
+        ],
+        module.REAGG_COLUMNS,
+    )
+
+    data = out_csv.read_bytes()
+    assert b"\r\n" not in data
+    assert data.endswith(b"\n")

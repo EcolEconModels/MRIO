@@ -311,7 +311,7 @@ def build_closed_reaggregation(
 def write_rows(path: Path, rows: list[dict[str, str]], columns: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(columns), extrasaction="ignore")
+        writer = csv.DictWriter(handle, fieldnames=list(columns), extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 

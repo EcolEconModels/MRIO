@@ -1,3 +1,4 @@
+# pyright: reportOptionalMemberAccess=false, reportAttributeAccessIssue=false, reportArgumentType=false
 from __future__ import annotations
 
 from pathlib import Path
@@ -899,4 +900,52 @@ def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_p
             Y_ord=y_after,
             lower_row_vectors={},
             lower_fd_vectors={},
+        )
+
+
+def test_write_excel_mapping_sheet_allows_missing_co2_for_import_flow(capsys) -> None:
+    from openpyxl import Workbook
+    from scripts.aggregate_iot_by_mapping import _write_excel_mapping_sheet
+
+    wb = Workbook()
+    mapping_df = pd.DataFrame(
+        {
+            "from_sector": ["p10.f@CPA_C19"],
+            "to_sector": ["CPA_C19_COAL"],
+        }
+    )
+    disaggregated_y = pd.DataFrame(
+        {"P3": [1.0], "P5": [0.0], "P6": [0.0]},
+        index=["p10.f@CPA_C19"],
+    )
+
+    _write_excel_mapping_sheet(
+        wb,
+        sheet_name="IO Aggregation Mapping",
+        mapping_df=mapping_df,
+        disaggregated_Y=disaggregated_y,
+        allow_missing_sfc_co2=True,
+        verbose=True,
+    )
+
+    stdout = capsys.readouterr().out
+    assert "WARNING: SFC workbook mapping sheet is omitting production-based CO2 intensity columns" in stdout
+    assert "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns" in stdout
+    assert "import flow" in stdout
+
+    ws = wb["IO Aggregation Mapping"]
+    headers = [cell.value for cell in ws[1]]
+    assert not any("CO2 intensity" in str(header) for header in headers)
+
+
+def test_write_excel_mapping_sheet_requires_co2_for_non_import_flow() -> None:
+    from openpyxl import Workbook
+    from scripts.aggregate_iot_by_mapping import _write_excel_mapping_sheet
+
+    with pytest.raises(ValueError, match="disaggregated_sector_emission_intensity is required"):
+        _write_excel_mapping_sheet(
+            Workbook(),
+            sheet_name="IO Aggregation Mapping",
+            mapping_df=pd.DataFrame({"from_sector": ["p10.f"], "to_sector": ["CPA_C19"]}),
+            allow_missing_sfc_co2=False,
         )

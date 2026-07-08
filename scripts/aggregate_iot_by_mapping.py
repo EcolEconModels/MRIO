@@ -465,6 +465,8 @@ def _write_excel_mapping_sheet(
     exio_final_demand_emission_intensity: pd.DataFrame | None = None,
     mapping_from_col: str = "from_sector",
     mapping_to_col: str = "to_sector",
+    allow_missing_sfc_co2: bool = False,
+    verbose: bool = False,
 ) -> None:
     import openpyxl
     from openpyxl.utils import get_column_letter
@@ -537,19 +539,28 @@ def _write_excel_mapping_sheet(
 
     # Add CO2 monetary output + production-based intensity columns for disaggregated sectors.
     if disaggregated_sector_emission_intensity is None or disaggregated_sector_emission_intensity.empty:
-        raise ValueError("disaggregated_sector_emission_intensity is required for production-based CO2 intensity.")
-    emis_df = disaggregated_sector_emission_intensity.copy()
-    _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
-    unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
-    if len(unique_keys) != 1:
-        raise ValueError(
-            "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
+        if not allow_missing_sfc_co2:
+            raise ValueError("disaggregated_sector_emission_intensity is required for production-based CO2 intensity.")
+        _vprint(
+            verbose,
+            "WARNING: SFC workbook mapping sheet is omitting production-based CO2 intensity columns "
+            "for import flow because disaggregated_sector_co2_intensity.csv is not available. "
+            "Import-origin weighted CO2 intensities are not implemented; using destination-region "
+            "EXIO extension proxies would be misleading.",
         )
-    disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
-    header_out = f"{mapping_from_col} Monetary output (M€)"
-    header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
-    display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
-    display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
+    else:
+        emis_df = disaggregated_sector_emission_intensity.copy()
+        _require_columns(emis_df, {"extension", "stressor", "unit"}, label="disaggregated_sector_emission_intensity")
+        unique_keys = emis_df[["extension", "stressor", "unit"]].drop_duplicates()
+        if len(unique_keys) != 1:
+            raise ValueError(
+                "Production-based CO2 intensity is ambiguous: multiple extension/stressor/unit combinations found."
+            )
+        disagg_out_by_sector, disagg_intensity_by_sector, unit_label = _compute_production_based_intensity(emis_df)
+        header_out = f"{mapping_from_col} Monetary output (M€)"
+        header_int = f"{mapping_from_col} Mean CO2 intensity ({unit_label}/M€)"
+        display_df[header_out] = display_df[mapping_from_col].map(disagg_out_by_sector).fillna("")
+        display_df[header_int] = display_df[mapping_from_col].map(disagg_intensity_by_sector).fillna("")
 
     # Add domestic/exports/stocks final demand + CO2 intensity for domestic demand (per disaggregated sector)
     domestic_fd_by_sector = None
@@ -589,15 +600,23 @@ def _write_excel_mapping_sheet(
 
     # Use-phase (F_Y) domestic-demand CO2 intensity (scalar applied to all sectors)
     if exio_final_demand_emission_intensity is None or exio_final_demand_emission_intensity.empty:
-        raise ValueError("exio_final_demand_emission_intensity is required for use-phase CO2 intensity.")
-    if disaggregated_Y is None or disaggregated_Y.empty:
-        raise ValueError("disaggregated_Y is required for use-phase CO2 intensity.")
-    fy_dom_intensity_scalar, fy_unit_label = _compute_use_phase_intensity_scalar(
-        exio_final_demand_emission_intensity,
-        disaggregated_Y,
-    )
-    header_fd_int = f"{mapping_from_col} Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)"
-    display_df[header_fd_int] = fy_dom_intensity_scalar
+        if not allow_missing_sfc_co2:
+            raise ValueError("exio_final_demand_emission_intensity is required for use-phase CO2 intensity.")
+        _vprint(
+            verbose,
+            "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns "
+            "for import flow because exio_final_demand_co2_intensity.csv is not available. "
+            "Import-origin weighted final-demand CO2 intensities are not implemented.",
+        )
+    else:
+        if disaggregated_Y is None or disaggregated_Y.empty:
+            raise ValueError("disaggregated_Y is required for use-phase CO2 intensity.")
+        fy_dom_intensity_scalar, fy_unit_label = _compute_use_phase_intensity_scalar(
+            exio_final_demand_emission_intensity,
+            disaggregated_Y,
+        )
+        header_fd_int = f"{mapping_from_col} Mean CO2 intensity for domestic demand ({fy_unit_label}/M€)"
+        display_df[header_fd_int] = fy_dom_intensity_scalar
 
     # Write the main mapping table
     headers = list(map(str, display_df.columns))
@@ -1864,6 +1883,11 @@ def _write_sfc_workbook(
         exio_final_demand_emission_intensity=exio_final_demand_emission_intensity,
         mapping_from_col=mapping_from_col,
         mapping_to_col=mapping_to_col,
+        allow_missing_sfc_co2=(
+            str(variant_dim).strip() == "stk_flow"
+            and str(variant_value or "").strip().upper() in {"IMP", "IMPORT", "IMPORTS"}
+        ),
+        verbose=verbose,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
