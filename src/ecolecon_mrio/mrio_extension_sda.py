@@ -340,7 +340,11 @@ def compute_extension_intensity_state(
         unit=unit,
         unit_source=metadata["unit_source"],
         intensity_unit=intensity_unit,
-        stabilization={"method": str(stabilization), "tau": float(tau)},
+        stabilization={
+            "method": str(stabilization),
+            "tau": float(tau),
+            "reference": "aggregate_coefficient_sum_f_over_sum_x",
+        },
         metadata={
             "year": int(mrio_state.year),
             "index_columns": ["region", "sector"],

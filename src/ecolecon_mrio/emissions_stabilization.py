@@ -37,6 +37,8 @@ def threshold_intensity(
     mask_small = output.abs() <= threshold
     if bool(mask_small.any()):
         mask_large = ~mask_small
+        if bool((output.loc[mask_large] < 0.0).any()):
+            raise ValueError("non-small output entries must be non-negative for aggregate intensity stabilization")
         denominator = float(output.loc[mask_large].sum()) if bool(mask_large.any()) else 0.0
         if denominator > 0.0 and np.isfinite(denominator):
             if values is None:
