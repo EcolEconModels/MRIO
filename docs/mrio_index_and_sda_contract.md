@@ -79,4 +79,7 @@ incorrect stressor/year selection or an incomplete extension source.
 the `MrioYearState`, raw `ExtensionRowResult`, and computed `ExtensionIntensityState`.
 Pair callers can therefore compose convenience-loaded years through
 `compute_extension_sda_pair_result_from_extension_year_states(...)` without
-reloading extension rows or losing unit/stressor provenance.
+reloading extension rows or losing unit/stressor provenance. By default, that pair
+helper uses the stored `ExtensionIntensityState` objects directly; it recomputes
+from raw rows only when the caller explicitly overrides stabilization, tau, or the
+all-zero-row rejection policy.

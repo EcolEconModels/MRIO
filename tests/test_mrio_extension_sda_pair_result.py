@@ -306,6 +306,77 @@ def test_extension_year_state_helper_preserves_raw_row_for_pair_api() -> None:
     pd.testing.assert_series_equal(result.observed_extension_delta, _series([1.0, 1.0], index, "expected"), check_names=False)
 
 
+def test_extension_year_state_pair_reuses_precomputed_all_zero_override() -> None:
+    """Loaded bundle pairs must not recompute all-zero rows with stricter defaults."""
+
+    index = _idx()
+    A = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    start = _state(2000, A, [1.0, 2.0])
+    end = _state(2001, A, [2.0, 3.0])
+    f0 = _extension(_series([0.0, 0.0], index, "CO2"), year=2000)
+    f1 = _extension(_series([0.0, 0.0], index, "CO2"), year=2001)
+    start_bundle = MrioExtensionYearState(
+        mrio_state=start,
+        extension_row=f0,
+        intensity_state=compute_extension_intensity_state(
+            mrio_state=start,
+            extension_row=f0,
+            stabilization="raw",
+            reject_all_zero=False,
+        ),
+    )
+    end_bundle = MrioExtensionYearState(
+        mrio_state=end,
+        extension_row=f1,
+        intensity_state=compute_extension_intensity_state(
+            mrio_state=end,
+            extension_row=f1,
+            stabilization="raw",
+            reject_all_zero=False,
+        ),
+    )
+
+    result = compute_extension_sda_pair_result_from_extension_year_states(start_bundle, end_bundle)
+
+    assert float(result.observed_extension_delta.abs().sum()) == pytest.approx(0.0)
+    assert result.metadata["reject_all_zero"] == {"start": False, "end": False}
+
+
+def test_extension_year_state_pair_uses_isclose_for_loaded_tau() -> None:
+    """Tiny metadata roundoff in loaded tau must not force a false mismatch."""
+
+    index = _idx()
+    A = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    start = _state(2000, A, [1.0, 2.0])
+    end = _state(2001, A, [2.0, 3.0])
+    f0 = _extension(_series([1.0, 2.0], index, "CO2"), year=2000)
+    f1 = _extension(_series([2.0, 3.0], index, "CO2"), year=2001)
+    start_bundle = MrioExtensionYearState(
+        mrio_state=start,
+        extension_row=f0,
+        intensity_state=compute_extension_intensity_state(
+            mrio_state=start,
+            extension_row=f0,
+            stabilization="threshold",
+            tau=1.0e-8,
+        ),
+    )
+    end_bundle = MrioExtensionYearState(
+        mrio_state=end,
+        extension_row=f1,
+        intensity_state=compute_extension_intensity_state(
+            mrio_state=end,
+            extension_row=f1,
+            stabilization="threshold",
+            tau=1.0e-8 * (1.0 + 1.0e-13),
+        ),
+    )
+
+    result = compute_extension_sda_pair_result_from_extension_year_states(start_bundle, end_bundle)
+
+    assert result.metadata["stabilization"]["method"] == "threshold"
+
+
 def test_extension_sda_progress_and_low_memory_metadata() -> None:
     """Progress callbacks and metadata make sparse resource behavior auditable."""
 

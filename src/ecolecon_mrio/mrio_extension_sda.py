@@ -46,7 +46,6 @@ from ecolecon_mrio.mrio_sda import (
 ProgressCallback = Callable[[str], None]
 FactorName = Literal["intensity", "structure", "demand"]
 _FACTOR_ORDER: tuple[FactorName, FactorName, FactorName] = ("intensity", "structure", "demand")
-_SERIES_UNIT_ATTRS = ("unit", "unit_source")
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +80,9 @@ class MrioExtensionYearState:
     """Convenience bundle for one MRIO year plus the raw selected extension row.
 
     ``extension_row`` is kept because pair-level SDA must validate physical units,
-    stressor identity, and row provenance at the pair boundary. Returning only an
-    already-stabilized ``ExtensionIntensityState`` would force callers either to
-    reload the raw row or to pass unit-weakened vectors downstream.
+    stressor identity, and row provenance at the pair boundary. The pair helper
+    reuses this stored state by default so loaded stabilization and all-zero-row
+    policy are not silently recomputed with different defaults.
     """
 
     mrio_state: MrioYearState
@@ -420,69 +419,112 @@ def _unit_source_pair(start_source: str, end_source: str) -> str:
     return f"{start_source}; {end_source}"
 
 
+def _intensity_state_stabilization_method(state: ExtensionIntensityState) -> str:
+    """Return the stabilization method stored on an intensity state."""
+
+    raw_method = state.stabilization.get("method", "threshold")
+    if not isinstance(raw_method, str) or not raw_method.strip():
+        raise TypeError("Extension intensity state stabilization method must be a non-empty string")
+    return raw_method.strip()
+
+
+def _intensity_state_stabilization_tau(state: ExtensionIntensityState) -> float:
+    """Return the numeric stabilization tau stored on an intensity state."""
+
+    raw_tau = state.stabilization.get("tau", 1.0e-8)
+    if isinstance(raw_tau, bool) or not isinstance(raw_tau, (int, float)):
+        raise TypeError("Extension intensity state stabilization tau must be numeric")
+    return float(raw_tau)
+
+
 def _state_stabilization_method(state: MrioExtensionYearState) -> str:
     """Return the method stored on a loaded convenience state."""
 
-    return str(state.intensity_state.stabilization.get("method", "threshold"))
+    return _intensity_state_stabilization_method(state.intensity_state)
 
 
 def _state_stabilization_tau(state: MrioExtensionYearState) -> float:
     """Return the numeric tau stored on a loaded convenience state."""
 
-    raw_tau = state.intensity_state.stabilization.get("tau", 1.0e-8)
-    if isinstance(raw_tau, bool) or not isinstance(raw_tau, (int, float)):
-        raise TypeError("Loaded extension state stabilization tau must be numeric")
-    return float(raw_tau)
+    return _intensity_state_stabilization_tau(state.intensity_state)
 
 
-def compute_extension_sda_pair_result_from_states(
+def _metadata_bool(metadata: dict[str, object], key: str, default: bool) -> bool:
+    """Read a boolean metadata flag without treating arbitrary objects as booleans."""
+
+    value = metadata.get(key, default)
+    if isinstance(value, bool):
+        return value
+    raise TypeError(f"Extension intensity metadata field {key!r} must be boolean")
+
+
+def _validate_loaded_intensity_state(
+    *,
+    mrio_state: MrioYearState,
+    intensity_state: ExtensionIntensityState,
+    index: pd.MultiIndex,
+    name: str,
+) -> None:
+    """Validate that a precomputed intensity state belongs to the supplied MRIO year."""
+
+    if int(intensity_state.year) != int(mrio_state.year):
+        raise ValueError(f"{name} year {intensity_state.year} does not match MRIO year {mrio_state.year}")
+    if not intensity_state.values.index.equals(index):
+        raise ValueError(f"{name} values index does not exactly match the MRIO year-state index")
+    if not intensity_state.stabilized_intensity.index.equals(index):
+        raise ValueError(f"{name} stabilized intensity index does not exactly match the MRIO year-state index")
+    if not intensity_state.stabilized_values.index.equals(index):
+        raise ValueError(f"{name} stabilized values index does not exactly match the MRIO year-state index")
+    if not intensity_state.stabilization_gap.index.equals(index):
+        raise ValueError(f"{name} stabilization gap index does not exactly match the MRIO year-state index")
+    if str(intensity_state.kind) != "F":
+        raise ValueError("Extension SDA currently supports only production-side kind='F' intensity states")
+
+
+def _compute_extension_sda_pair_result_from_intensity_states(
     start: MrioYearState,
     end: MrioYearState,
-    start_extension: ExtensionRowResult | pd.Series,
-    end_extension: ExtensionRowResult | pd.Series,
+    start_state: ExtensionIntensityState,
+    end_state: ExtensionIntensityState,
     *,
-    stabilization: str = "threshold",
-    tau: float = 1.0e-8,
-    reject_all_zero: bool = True,
     progress: ProgressCallback | None = None,
 ) -> ExtensionSdaPairResult:
-    """Compute exact three-factor SDA for one production-side extension row.
+    """Compute the extension SDA from already validated/stabilized intensity states.
 
-    The components decompose ``q_tilde * L(A) * y`` using all six polar orderings.
-    The result also reports raw observed extension change, stabilization gaps, and
-    the difference between reported ``x`` and solved ``L y`` so callers can
-    reconcile from the Leontief SDA identity back to source rows.
+    This is the single pair-level core. Raw extension-row callers first build
+    ``ExtensionIntensityState`` objects, while convenience-loaded bundles reuse
+    their stored states. Keeping one core prevents a loaded all-zero override,
+    stabilization method, or tau from being silently recomputed with different
+    defaults at the pair boundary.
     """
 
-    _emit(progress, f"validate MRIO and extension indexes for {start.year}-{end.year}")
+    _emit(progress, f"validate MRIO and extension intensity states for {start.year}-{end.year}")
     if not start.index.equals(end.index):
         raise ValueError("MRIO year-state indexes do not match")
     idx = require_region_sector_multiindex(start.index)
     require_same_unit_string(start.monetary_unit, end.monetary_unit, context="MRIO year-state monetary units")
+    _validate_loaded_intensity_state(mrio_state=start, intensity_state=start_state, index=idx, name="start intensity state")
+    _validate_loaded_intensity_state(mrio_state=end, intensity_state=end_state, index=idx, name="end intensity state")
 
-    # Build year-specific intensity states before solving Leontief systems so any
-    # unit, row-kind, or index mismatch fails before expensive sparse work starts.
-    start_state = compute_extension_intensity_state(
-        mrio_state=start,
-        extension_row=start_extension,
-        stabilization=stabilization,
-        tau=float(tau),
-        reject_all_zero=bool(reject_all_zero),
-        progress=progress,
-    )
-    end_state = compute_extension_intensity_state(
-        mrio_state=end,
-        extension_row=end_extension,
-        stabilization=stabilization,
-        tau=float(tau),
-        reject_all_zero=bool(reject_all_zero),
-        progress=progress,
-    )
     unit = require_same_unit_string(start_state.unit, end_state.unit, context="extension SDA row units")
     if start_state.stressor != end_state.stressor:
         raise ValueError(f"Extension stressor mismatch: {start_state.stressor!r} != {end_state.stressor!r}")
     if start_state.extension != end_state.extension:
         raise ValueError(f"Extension name mismatch: {start_state.extension!r} != {end_state.extension!r}")
+    if start_state.intensity_unit != end_state.intensity_unit:
+        raise ValueError(f"Extension intensity-unit mismatch: {start_state.intensity_unit!r} != {end_state.intensity_unit!r}")
+
+    method = _intensity_state_stabilization_method(start_state)
+    end_method = _intensity_state_stabilization_method(end_state)
+    if method != end_method:
+        raise ValueError("Extension intensity states used different stabilization methods")
+    tau_value = _intensity_state_stabilization_tau(start_state)
+    end_tau = _intensity_state_stabilization_tau(end_state)
+    if not bool(np.isclose(tau_value, end_tau, rtol=1.0e-12, atol=0.0)):
+        raise ValueError("Extension intensity states used different stabilization tau values")
+
+    start_reject_all_zero = _metadata_bool(start_state.metadata, "reject_all_zero", True)
+    end_reject_all_zero = _metadata_bool(end_state.metadata, "reject_all_zero", True)
 
     y0 = _strict_float_series(start.y, index=idx, name=f"y_{start.year}")
     y1 = _strict_float_series(end.y, index=idx, name=f"y_{end.year}")
@@ -590,7 +632,7 @@ def compute_extension_sda_pair_result_from_states(
             "extension": start_state.extension,
             "stressor": start_state.stressor,
             "kind": start_state.kind,
-            "stabilization": {"method": str(stabilization), "tau": float(tau)},
+            "stabilization": {"method": method, "tau": tau_value},
             "index_columns": ["region", "sector"],
             "forms_explicit_leontief_inverse": False,
             "stores_solver_factorization": False,
@@ -598,7 +640,8 @@ def compute_extension_sda_pair_result_from_states(
             "rhs_columns_per_factorization": 2,
             "extension_loader": "row_level_zip_stream_expected",
             "cache_policy": "source_zip_only",
-            "reject_all_zero": bool(reject_all_zero),
+            "reject_all_zero": {"start": start_reject_all_zero, "end": end_reject_all_zero},
+            "intensity_state_source": "precomputed_extension_intensity_states",
             "reconstruction": {
                 "leontief_extension_delta": "sda_intensity_delta + sda_structure_delta + sda_demand_delta + sda_residual",
                 "stabilized_extension_delta": "leontief_extension_delta + reported_x_identity_gap_delta",
@@ -619,23 +662,91 @@ def compute_extension_sda_pair_result_from_states(
     )
 
 
+def compute_extension_sda_pair_result_from_states(
+    start: MrioYearState,
+    end: MrioYearState,
+    start_extension: ExtensionRowResult | pd.Series,
+    end_extension: ExtensionRowResult | pd.Series,
+    *,
+    stabilization: str = "threshold",
+    tau: float = 1.0e-8,
+    reject_all_zero: bool = True,
+    progress: ProgressCallback | None = None,
+) -> ExtensionSdaPairResult:
+    """Compute exact three-factor SDA from raw production-side extension rows.
+
+    The raw-row boundary validates units, stressor identity, and all-zero rows,
+    builds year-specific ``ExtensionIntensityState`` objects, and delegates to the
+    same precomputed-state core used by convenience-loaded bundle callers.
+    """
+
+    _emit(progress, f"validate MRIO and extension indexes for {start.year}-{end.year}")
+    start_state = compute_extension_intensity_state(
+        mrio_state=start,
+        extension_row=start_extension,
+        stabilization=stabilization,
+        tau=float(tau),
+        reject_all_zero=bool(reject_all_zero),
+        progress=progress,
+    )
+    end_state = compute_extension_intensity_state(
+        mrio_state=end,
+        extension_row=end_extension,
+        stabilization=stabilization,
+        tau=float(tau),
+        reject_all_zero=bool(reject_all_zero),
+        progress=progress,
+    )
+    return _compute_extension_sda_pair_result_from_intensity_states(
+        start,
+        end,
+        start_state,
+        end_state,
+        progress=progress,
+    )
+
+
 def compute_extension_sda_pair_result_from_extension_year_states(
     start: MrioExtensionYearState,
     end: MrioExtensionYearState,
     *,
     stabilization: str | None = None,
     tau: float | None = None,
-    reject_all_zero: bool = True,
+    reject_all_zero: bool | None = None,
     progress: ProgressCallback | None = None,
 ) -> ExtensionSdaPairResult:
-    """Compute pair SDA from convenience-loaded MRIO/extension year states."""
+    """Compute pair SDA from convenience-loaded MRIO/extension year states.
+
+    With no override, this helper reuses the ``ExtensionIntensityState`` stored in
+    each bundle. That preserves loaded stabilization, tau, and all-zero-row policy
+    exactly. If a caller explicitly passes a stabilization/tau/all-zero override,
+    the raw rows are intentionally recomputed under those new options.
+    """
+
+    if stabilization is None and tau is None and reject_all_zero is None:
+        return _compute_extension_sda_pair_result_from_intensity_states(
+            start.mrio_state,
+            end.mrio_state,
+            start.intensity_state,
+            end.intensity_state,
+            progress=progress,
+        )
 
     method = _state_stabilization_method(start) if stabilization is None else str(stabilization)
     if stabilization is None and method != _state_stabilization_method(end):
         raise ValueError("Loaded extension year states used different stabilization methods")
     tau_value = _state_stabilization_tau(start) if tau is None else float(tau)
-    if tau is None and tau_value != _state_stabilization_tau(end):
+    if tau is None and not bool(np.isclose(tau_value, _state_stabilization_tau(end), rtol=1.0e-12, atol=0.0)):
         raise ValueError("Loaded extension year states used different stabilization tau values")
+    if reject_all_zero is None:
+        reject_value = _metadata_bool(start.intensity_state.metadata, "reject_all_zero", True)
+        end_reject_value = _metadata_bool(end.intensity_state.metadata, "reject_all_zero", True)
+        if reject_value != end_reject_value:
+            raise ValueError("Loaded extension year states used different all-zero-row rejection policies")
+    else:
+        reject_value = bool(reject_all_zero)
+
+    _emit(progress, "recompute loaded extension rows because an explicit bundle override was provided")
     return compute_extension_sda_pair_result_from_states(
         start.mrio_state,
         end.mrio_state,
@@ -643,7 +754,7 @@ def compute_extension_sda_pair_result_from_extension_year_states(
         end.extension_row,
         stabilization=method,
         tau=tau_value,
-        reject_all_zero=bool(reject_all_zero),
+        reject_all_zero=reject_value,
         progress=progress,
     )
 
