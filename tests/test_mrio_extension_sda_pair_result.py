@@ -101,7 +101,7 @@ def test_extension_sda_six_polar_components_sum_to_leontief_delta() -> None:
 
 
 def test_extension_sda_has_nonzero_intensity_component_when_intensity_changes() -> None:
-    """Catch regressions to average-intensity times monetary SDA components."""
+    """Catch regressions away from physical extension-SDA components."""
 
     index = _idx()
     A = csr_matrix([[0.05, 0.0], [0.0, 0.05]], dtype=float)

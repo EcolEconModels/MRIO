@@ -16,11 +16,15 @@ def threshold_intensity(
     e: pd.Series,
     x: pd.Series,
     tau: float = 1.0e-8,
+    *,
+    values: pd.Series | None = None,
 ) -> pd.Series:
-    """Replace intensities with a reference mean when output is tiny.
+    """Replace tiny-output intensities with an aggregate reference coefficient.
 
-    Cells with |x_i| <= tau * sum(|x|) are considered small-output cells.
-    Their intensity is replaced by the mean intensity of the non-small cells.
+    Cells with ``|x_i| <= tau * sum(|x|)`` are not economically identified.
+    Their intensity is replaced by ``sum(f_j) / sum(x_j)`` over non-small cells.
+    Passing ``values`` uses the original extension row ``f``; otherwise ``e * x``
+    is used as the implied extension row.
     """
     if float(tau) < 0.0:
         raise ValueError("tau must be non-negative")
@@ -33,7 +37,15 @@ def threshold_intensity(
     mask_small = output.abs() <= threshold
     if bool(mask_small.any()):
         mask_large = ~mask_small
-        reference = float(coeff.loc[mask_large].mean()) if bool(mask_large.any()) else 0.0
+        denominator = float(output.loc[mask_large].sum()) if bool(mask_large.any()) else 0.0
+        if denominator > 0.0 and np.isfinite(denominator):
+            if values is None:
+                extension_values = (coeff * output).astype(float)
+            else:
+                extension_values = pd.to_numeric(pd.Series(values).reindex(coeff.index), errors="coerce").fillna(0.0).astype(float)
+            reference = float(extension_values.loc[mask_large].sum() / denominator)
+        else:
+            reference = 0.0
         coeff.loc[mask_small] = reference
     return coeff
 

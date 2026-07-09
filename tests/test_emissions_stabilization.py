@@ -16,9 +16,18 @@ def test_threshold_intensity_replaces_small_outputs() -> None:
     x = pd.Series([1000.0, 0.000001, 50.0], index=["a", "b", "c"], dtype=float)
     out = threshold_intensity(e, x, tau=1.0e-6)
 
-    assert np.isclose(float(out["b"]), 7.5)
+    assert np.isclose(float(out["b"]), (10.0 * 1000.0 + 5.0 * 50.0) / (1000.0 + 50.0))
     assert np.isclose(float(out["a"]), 10.0)
     assert np.isclose(float(out["c"]), 5.0)
+
+
+def test_threshold_intensity_uses_extension_values_for_weighted_reference() -> None:
+    e = pd.Series([10.0, 1.0, 5.0], index=["a", "b", "c"], dtype=float)
+    x = pd.Series([1000.0, 0.000001, 50.0], index=["a", "b", "c"], dtype=float)
+    values = pd.Series([8000.0, 1.0, 500.0], index=["a", "b", "c"], dtype=float)
+    out = threshold_intensity(e, x, tau=1.0e-6, values=values)
+
+    assert np.isclose(float(out["b"]), (8000.0 + 500.0) / (1000.0 + 50.0))
 
 
 def test_winsorize_clips_extremes() -> None:

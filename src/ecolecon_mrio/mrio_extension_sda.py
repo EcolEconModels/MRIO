@@ -251,6 +251,7 @@ def _stabilize_intensity(
     raw_intensity: pd.Series,
     output: pd.Series,
     *,
+    values: pd.Series,
     stabilization: str,
     tau: float,
 ) -> pd.Series:
@@ -260,7 +261,9 @@ def _stabilize_intensity(
     if method == "raw":
         return raw_intensity.astype(float).rename("stabilized_extension_intensity")
     if method == "threshold":
-        return threshold_intensity(raw_intensity, output, tau=float(tau)).rename("stabilized_extension_intensity")
+        return threshold_intensity(raw_intensity, output, tau=float(tau), values=values).rename(
+            "stabilized_extension_intensity"
+        )
     raise ValueError("stabilization must be one of: 'threshold', 'raw'")
 
 
@@ -310,6 +313,7 @@ def compute_extension_intensity_state(
     stabilized_intensity = _stabilize_intensity(
         raw_intensity,
         output,
+        values=values,
         stabilization=str(stabilization),
         tau=float(tau),
     )
