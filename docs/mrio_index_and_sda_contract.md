@@ -42,3 +42,21 @@ The MRIO API exposes unit labels and unit provenance for reporting, but it does
 not perform automatic conversion. Analysis and plotting code should save units in
 CSV outputs and should only apply conversions through explicit, separately tested
 code.
+
+## Production-side extension SDA
+
+`compute_extension_sda_pair_result_from_states(...)` decomposes production-side
+extension rows indexed by `MultiIndex(region, sector)`. The economic identity is
+`f_t = q_t * x_t = q_t * L_t y_t`, where `q_t` is a direct extension intensity.
+The public API initially supports only extension matrix kind `F`; `F_Y` is a
+final-demand-side matrix and must be handled by a separate additive API.
+
+The extension SDA has three factors: stabilized direct intensity, production
+structure, and final demand. The implementation averages all six polar orderings
+of `(intensity, structure, demand)`. The components decompose the stabilized
+`q_tilde * L_t y_t` identity, while reported stabilization-gap vectors reconcile
+back to raw observed extension rows.
+
+The implementation must preserve the existing sparse/low-RAM contract: no explicit
+Leontief inverse, no stored solver factorization, no persistent derived matrix
+cache, and no full extension matrix load for the default row-level path.

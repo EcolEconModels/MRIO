@@ -81,6 +81,19 @@ from .mrio_sda import (
     require_region_sector_multiindex,
     require_same_unit_string,
 )
+from .mrio_extension_sda import (
+    ExtensionIntensityState,
+    ExtensionSdaPairResult,
+    compute_extension_intensity_state,
+    compute_extension_sda_pair_result_from_states,
+    load_mrio_extension_year_state,
+)
+from .runtime import (
+    configure_low_memory_runtime,
+    enforce_memory_limit_gb,
+    memory_snapshot_text,
+    tick,
+)
 from .transition import classify_transition_years, principal_direction_index
 from .transition_support import (
     benchmark_step_for_emissions_cut,
@@ -279,6 +292,18 @@ __all__.extend([
     "ExtensionRowResult",
     "load_exiobase3_extension_row_with_unit",
     "load_exiobase3_extension_row_with_unit_for_year",
+])
+
+__all__.extend([
+    "ExtensionIntensityState",
+    "ExtensionSdaPairResult",
+    "compute_extension_intensity_state",
+    "compute_extension_sda_pair_result_from_states",
+    "load_mrio_extension_year_state",
+    "configure_low_memory_runtime",
+    "enforce_memory_limit_gb",
+    "memory_snapshot_text",
+    "tick",
 ])
 
 __all__.extend([
