@@ -6,10 +6,10 @@ EXIOBASE ``air_emissions/F.txt`` CO2 row, using the economically correct identit
 
     f_t = q_t \odot x_t = q_t \odot L_t y_t.
 
-The decomposition is therefore over three factors: direct extension intensity
-``q``, production structure ``A`` through the Leontief system, and final demand
-``y``.  It intentionally does not value monetary SDA components by an average
-extension intensity, because that would not decompose the extension identity.
+The decomposition is over three factors: direct extension intensity ``q``,
+production structure ``A`` through the Leontief system, and final demand ``y``.
+It intentionally does not value monetary SDA components by an average extension
+intensity, because that would not decompose the extension identity.
 
 The implementation is sparse and source-zip friendly: it reuses ``MrioYearState``
 and the existing sparse multi-RHS Leontief solve helper, never forms an explicit
@@ -46,6 +46,7 @@ from ecolecon_mrio.mrio_sda import (
 ProgressCallback = Callable[[str], None]
 FactorName = Literal["intensity", "structure", "demand"]
 _FACTOR_ORDER: tuple[FactorName, FactorName, FactorName] = ("intensity", "structure", "demand")
+_SERIES_UNIT_ATTRS = ("unit", "unit_source")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +54,8 @@ class ExtensionIntensityState:
     """One year's direct extension row and stabilized production intensity.
 
     ``values`` stores the raw direct extension row ``f_t`` in its source unit,
-    aligned to the MRIO ``MultiIndex(region, sector)``.  ``raw_intensity`` is the
-    direct coefficient ``f_t / x_t``.  ``stabilized_intensity`` is the coefficient
+    aligned to the MRIO ``MultiIndex(region, sector)``. ``raw_intensity`` is the
+    direct coefficient ``f_t / x_t``. ``stabilized_intensity`` is the coefficient
     actually used in extension SDA, and ``stabilization_gap`` records the raw
     extension amount not represented by ``stabilized_intensity * x_t``.
     """
@@ -76,14 +77,29 @@ class ExtensionIntensityState:
 
 
 @dataclass(frozen=True, slots=True)
+class MrioExtensionYearState:
+    """Convenience bundle for one MRIO year plus the raw selected extension row.
+
+    ``extension_row`` is kept because pair-level SDA must validate physical units,
+    stressor identity, and row provenance at the pair boundary. Returning only an
+    already-stabilized ``ExtensionIntensityState`` would force callers either to
+    reload the raw row or to pass unit-weakened vectors downstream.
+    """
+
+    mrio_state: MrioYearState
+    extension_row: ExtensionRowResult
+    intensity_state: ExtensionIntensityState
+
+
+@dataclass(frozen=True, slots=True)
 class ExtensionSdaPairResult:
     """Strict three-factor extension SDA vectors for one MRIO year pair.
 
     All vector fields preserve the same canonical ``MultiIndex(region, sector)``.
-    The SDA components decompose the stabilized production-side extension identity
-    ``q_tilde * L_t y_t``.  ``sda_residual`` reconciles those components to the
-    stabilized direct row change ``q_tilde * x_t`` and therefore includes any
-    endpoint difference between reported ``x`` and ``L y`` plus numerical noise.
+    The SDA components decompose the stabilized Leontief identity
+    ``q_tilde * L_t y_t``. ``sda_residual`` is only the numerical residual of that
+    Leontief identity. Any endpoint difference between reported ``x`` and ``L y``
+    is reported separately as ``reported_x_identity_gap_*``.
     """
 
     start_year: int
@@ -99,6 +115,9 @@ class ExtensionSdaPairResult:
     stabilization_gap_start: pd.Series
     stabilization_gap_end: pd.Series
     stabilization_gap_delta: pd.Series
+    reported_x_identity_gap_start: pd.Series
+    reported_x_identity_gap_end: pd.Series
+    reported_x_identity_gap_delta: pd.Series
     identity_gap_start: pd.Series
     identity_gap_end: pd.Series
     identity_gap_delta: pd.Series
@@ -108,6 +127,7 @@ class ExtensionSdaPairResult:
     residual_l2: float
     residual_linf: float
     residual_share_l2: float
+    reported_x_identity_gap_l2: float
     metadata: dict[str, Any]
 
 
@@ -118,9 +138,38 @@ def _emit(progress: ProgressCallback | None, message: str) -> None:
         progress(message)
 
 
+def _required_series_attr(series: pd.Series, key: str) -> str:
+    """Read required unit/provenance metadata from a plain pandas Series."""
+
+    value = series.attrs.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            "Plain pandas Series extension rows require explicit metadata in "
+            "Series.attrs: attrs['unit'] and attrs['unit_source'] are mandatory; "
+            "prefer ExtensionRowResult for public API calls."
+        )
+    return value.strip()
+
+
+def _series_attr(series: pd.Series, key: str, default: str) -> str:
+    """Read optional string metadata from a Series without weakening unit checks."""
+
+    value = series.attrs.get(key, default)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
+
+
 def _extension_row_metadata(extension_row: ExtensionRowResult | pd.Series) -> dict[str, str]:
     """Return strict row metadata without loading a full extension object."""
 
+    if isinstance(extension_row, ExtensionIntensityState):
+        raise TypeError(
+            "compute_extension_sda_pair_result_from_states expects raw ExtensionRowResult "
+            "or a unit-annotated pandas Series, not ExtensionIntensityState. Use the "
+            "extension_row field returned by load_mrio_extension_year_state(), or call "
+            "compute_extension_sda_pair_result_from_extension_year_states(...)."
+        )
     if isinstance(extension_row, ExtensionRowResult):
         return {
             "extension": str(extension_row.extension),
@@ -129,12 +178,14 @@ def _extension_row_metadata(extension_row: ExtensionRowResult | pd.Series) -> di
             "unit": str(extension_row.unit),
             "unit_source": str(extension_row.unit_source),
         }
+    unit = _required_series_attr(extension_row, "unit")
+    unit_source = _required_series_attr(extension_row, "unit_source")
     return {
-        "extension": "explicit_series",
-        "kind": "F",
-        "stressor": str(extension_row.name or "unnamed_extension_row"),
-        "unit": "unknown",
-        "unit_source": "series_without_unit_metadata",
+        "extension": _series_attr(extension_row, "extension", "explicit_series"),
+        "kind": _series_attr(extension_row, "kind", "F"),
+        "stressor": _series_attr(extension_row, "stressor", str(extension_row.name or "unnamed_extension_row")),
+        "unit": unit,
+        "unit_source": unit_source,
     }
 
 
@@ -162,10 +213,27 @@ def _strict_extension_values(
     return _strict_float_series(values, index=index, name=name).rename(name)
 
 
+def _reject_scientifically_empty_row(values: pd.Series, output: pd.Series, *, name: str, reject_all_zero: bool) -> None:
+    """Fail on selected all-zero extension rows when the MRIO economy has output mass."""
+
+    if not reject_all_zero:
+        return
+    value_array = values.to_numpy(dtype=float)
+    output_array = output.to_numpy(dtype=float)
+    # An exactly all-zero selected row with positive production is usually a wrong
+    # stressor/extension selection or a failed source read, as seen for incomplete
+    # EXIOBASE years. Do not let that produce a formally valid but meaningless SDA.
+    if bool(np.any(output_array > 0.0)) and not bool(np.any(value_array != 0.0)):
+        raise ValueError(
+            f"{name} is an all-zero extension row while MRIO output has positive mass; "
+            "check the selected extension/stressor/year or pass reject_all_zero=False explicitly."
+        )
+
+
 def _raw_intensity_from_values(values: pd.Series, output: pd.Series, *, name: str) -> pd.Series:
     """Compute ``f_t / x_t`` while making zero-output behavior explicit.
 
-    A zero-output denominator cannot define a production intensity.  The raw
+    A zero-output denominator cannot define a production intensity. The raw
     coefficient is set to zero only as an intermediate placeholder; the threshold
     stabilization step will replace tiny-output cells when requested.
     """
@@ -203,11 +271,13 @@ def compute_extension_intensity_state(
     extension_row: ExtensionRowResult | pd.Series,
     stabilization: str = "threshold",
     tau: float = 1.0e-8,
+    reject_all_zero: bool = True,
+    progress: ProgressCallback | None = None,
 ) -> ExtensionIntensityState:
     """Build one year's stabilized production-side extension intensity state.
 
     The scientific estimand is the direct coefficient vector ``q_t`` in
-    ``f_t = q_t * x_t``.  Stabilization changes the coefficient vector used for
+    ``f_t = q_t * x_t``. Stabilization changes the coefficient vector used for
     SDA, so the raw/stabilized value gap is stored explicitly rather than hidden
     inside a residual.
     """
@@ -217,22 +287,27 @@ def compute_extension_intensity_state(
     output = _strict_float_series(mrio_state.x, index=idx, name=f"x_{mrio_state.year}")
 
     # The extension row must already be on the same production-sector basis as
-    # the MRIO state.  Reindexing would hide wrong EXIO system, row kind, or order.
+    # the MRIO state. Reindexing would hide wrong EXIO system, row kind, or order.
     values = _strict_extension_values(
         extension_row,
         index=idx,
         name=f"extension_values_{mrio_state.year}",
     )
+    _reject_scientifically_empty_row(
+        values,
+        output,
+        name=f"extension_values_{mrio_state.year}",
+        reject_all_zero=bool(reject_all_zero),
+    )
 
-    # Compute the raw direct coefficient f/x before any small-output correction.
+    _emit(progress, f"compute raw direct extension intensity for {mrio_state.year}")
     raw_intensity = _raw_intensity_from_values(
         values,
         output,
         name=f"raw_extension_intensity_{mrio_state.year}",
     )
 
-    # Stabilization defines the identity decomposed by extension SDA.  The gap is
-    # kept as a first-class diagnostic so raw observed totals remain auditable.
+    _emit(progress, f"apply {stabilization} extension-intensity stabilization for {mrio_state.year}")
     stabilized_intensity = _stabilize_intensity(
         raw_intensity,
         output,
@@ -245,8 +320,10 @@ def compute_extension_intensity_state(
     stabilization_gap = (values - stabilized_values).astype(float).rename(
         f"stabilization_gap_{mrio_state.year}"
     )
+    _emit(progress, f"computed raw-vs-stabilized extension gap for {mrio_state.year}")
+
     unit = metadata["unit"]
-    intensity_unit = f"{unit}/{mrio_state.monetary_unit}" if unit != "unknown" else "unknown_per_monetary_output"
+    intensity_unit = f"{unit}/{mrio_state.monetary_unit}"
     return ExtensionIntensityState(
         year=int(mrio_state.year),
         values=values,
@@ -266,6 +343,7 @@ def compute_extension_intensity_state(
             "index_columns": ["region", "sector"],
             "stabilized_identity": "stabilized_intensity * output",
             "raw_gap": "extension_values - stabilized_intensity * output",
+            "reject_all_zero": bool(reject_all_zero),
         },
     )
 
@@ -294,8 +372,8 @@ def _six_polar_extension_components(
 ) -> dict[FactorName, np.ndarray]:
     """Average all six three-factor polar paths for ``q * L(A) * y``.
 
-    Each path starts at ``(q0, A0, y0)`` and ends at ``(q1, A1, y1)``.  The step
-    contribution is assigned to the factor changed at that step.  Averaging all
+    Each path starts at ``(q0, A0, y0)`` and ends at ``(q1, A1, y1)``. The step
+    contribution is assigned to the factor changed at that step. Averaging all
     six orders avoids privileging one arbitrary update sequence.
     """
 
@@ -307,7 +385,7 @@ def _six_polar_extension_components(
     }
     paths = list(permutations(_FACTOR_ORDER))
     for path in paths:
-        # The current tuple records which endpoint is used for (q, A, y).  Changing
+        # The current tuple records which endpoint is used for (q, A, y). Changing
         # exactly one element gives a scientifically attributable polar step.
         current = {"intensity": 0, "structure": 0, "demand": 0}
         previous = _counterfactual_extension(
@@ -342,6 +420,21 @@ def _unit_source_pair(start_source: str, end_source: str) -> str:
     return f"{start_source}; {end_source}"
 
 
+def _state_stabilization_method(state: MrioExtensionYearState) -> str:
+    """Return the method stored on a loaded convenience state."""
+
+    return str(state.intensity_state.stabilization.get("method", "threshold"))
+
+
+def _state_stabilization_tau(state: MrioExtensionYearState) -> float:
+    """Return the numeric tau stored on a loaded convenience state."""
+
+    raw_tau = state.intensity_state.stabilization.get("tau", 1.0e-8)
+    if isinstance(raw_tau, bool) or not isinstance(raw_tau, (int, float)):
+        raise TypeError("Loaded extension state stabilization tau must be numeric")
+    return float(raw_tau)
+
+
 def compute_extension_sda_pair_result_from_states(
     start: MrioYearState,
     end: MrioYearState,
@@ -350,13 +443,15 @@ def compute_extension_sda_pair_result_from_states(
     *,
     stabilization: str = "threshold",
     tau: float = 1.0e-8,
+    reject_all_zero: bool = True,
     progress: ProgressCallback | None = None,
 ) -> ExtensionSdaPairResult:
     """Compute exact three-factor SDA for one production-side extension row.
 
     The components decompose ``q_tilde * L(A) * y`` using all six polar orderings.
-    The result also reports raw observed extension change and stabilization gaps,
-    so callers can reconcile from the stabilized SDA identity back to source data.
+    The result also reports raw observed extension change, stabilization gaps, and
+    the difference between reported ``x`` and solved ``L y`` so callers can
+    reconcile from the Leontief SDA identity back to source rows.
     """
 
     _emit(progress, f"validate MRIO and extension indexes for {start.year}-{end.year}")
@@ -372,12 +467,16 @@ def compute_extension_sda_pair_result_from_states(
         extension_row=start_extension,
         stabilization=stabilization,
         tau=float(tau),
+        reject_all_zero=bool(reject_all_zero),
+        progress=progress,
     )
     end_state = compute_extension_intensity_state(
         mrio_state=end,
         extension_row=end_extension,
         stabilization=stabilization,
         tau=float(tau),
+        reject_all_zero=bool(reject_all_zero),
+        progress=progress,
     )
     unit = require_same_unit_string(start_state.unit, end_state.unit, context="extension SDA row units")
     if start_state.stressor != end_state.stressor:
@@ -431,25 +530,32 @@ def compute_extension_sda_pair_result_from_states(
     structure = pd.Series(component_arrays["structure"], index=idx, dtype=float, name="sda_structure_delta")
     demand = pd.Series(component_arrays["demand"], index=idx, dtype=float, name="sda_demand_delta")
 
-    # The components exactly decompose q_tilde * L y.  The residual reconciles that
-    # Leontief identity to q_tilde * reported x, mirroring monetary SDA residuals.
-    residual = (stabilized_delta - intensity - structure - demand).astype(float).rename("sda_residual")
-    identity_gap_start = (start_state.stabilized_values - leontief_start).astype(float).rename("identity_gap_start")
-    identity_gap_end = (end_state.stabilized_values - leontief_end).astype(float).rename("identity_gap_end")
-    identity_gap_delta = (identity_gap_end - identity_gap_start).astype(float).rename("identity_gap_delta")
+    # The six-polar components decompose q_tilde * L y. Keep the numerical SDA
+    # residual separate from any reported-x-versus-Leontief-identity discrepancy.
+    residual = (leontief_delta - intensity - structure - demand).astype(float).rename("sda_residual")
+    reported_x_identity_gap_start = (start_state.stabilized_values - leontief_start).astype(float).rename(
+        "reported_x_identity_gap_start"
+    )
+    reported_x_identity_gap_end = (end_state.stabilized_values - leontief_end).astype(float).rename(
+        "reported_x_identity_gap_end"
+    )
+    reported_x_identity_gap_delta = (reported_x_identity_gap_end - reported_x_identity_gap_start).astype(float).rename(
+        "reported_x_identity_gap_delta"
+    )
     stabilization_gap_delta = (end_state.stabilization_gap - start_state.stabilization_gap).astype(float).rename(
         "stabilization_gap_delta"
     )
 
     residual_arr = residual.to_numpy(dtype=float)
-    stabilized_norm = float(np.linalg.norm(stabilized_delta.to_numpy(dtype=float), ord=2))
+    leontief_norm = float(np.linalg.norm(leontief_delta.to_numpy(dtype=float), ord=2))
     residual_l2 = float(np.linalg.norm(residual_arr, ord=2))
     residual_linf = float(np.linalg.norm(residual_arr, ord=np.inf)) if residual_arr.size else 0.0
-    residual_share_l2 = float(residual_l2 / stabilized_norm) if stabilized_norm > 0.0 else 0.0
+    residual_share_l2 = float(residual_l2 / leontief_norm) if leontief_norm > 0.0 else 0.0
+    reported_x_identity_gap_l2 = float(np.linalg.norm(reported_x_identity_gap_delta.to_numpy(dtype=float), ord=2))
 
     del start_outputs, end_outputs
     gc.collect()
-    _emit(progress, f"built extension-SDA residual and gap diagnostics for {start.year}-{end.year}")
+    _emit(progress, f"built extension-SDA residual and reported-x identity-gap diagnostics for {start.year}-{end.year}")
 
     return ExtensionSdaPairResult(
         start_year=int(start.year),
@@ -465,15 +571,19 @@ def compute_extension_sda_pair_result_from_states(
         stabilization_gap_start=start_state.stabilization_gap.rename("stabilization_gap_start"),
         stabilization_gap_end=end_state.stabilization_gap.rename("stabilization_gap_end"),
         stabilization_gap_delta=stabilization_gap_delta,
-        identity_gap_start=identity_gap_start,
-        identity_gap_end=identity_gap_end,
-        identity_gap_delta=identity_gap_delta,
+        reported_x_identity_gap_start=reported_x_identity_gap_start,
+        reported_x_identity_gap_end=reported_x_identity_gap_end,
+        reported_x_identity_gap_delta=reported_x_identity_gap_delta,
+        identity_gap_start=reported_x_identity_gap_start.rename("identity_gap_start"),
+        identity_gap_end=reported_x_identity_gap_end.rename("identity_gap_end"),
+        identity_gap_delta=reported_x_identity_gap_delta.rename("identity_gap_delta"),
         unit=unit,
         unit_source=_unit_source_pair(start_state.unit_source, end_state.unit_source),
         intensity_unit=start_state.intensity_unit,
         residual_l2=residual_l2,
         residual_linf=residual_linf,
         residual_share_l2=residual_share_l2,
+        reported_x_identity_gap_l2=reported_x_identity_gap_l2,
         metadata={
             "identity_mode": "six_polar_three_factor_extension_sda",
             "factors": list(_FACTOR_ORDER),
@@ -488,6 +598,12 @@ def compute_extension_sda_pair_result_from_states(
             "rhs_columns_per_factorization": 2,
             "extension_loader": "row_level_zip_stream_expected",
             "cache_policy": "source_zip_only",
+            "reject_all_zero": bool(reject_all_zero),
+            "reconstruction": {
+                "leontief_extension_delta": "sda_intensity_delta + sda_structure_delta + sda_demand_delta + sda_residual",
+                "stabilized_extension_delta": "leontief_extension_delta + reported_x_identity_gap_delta",
+                "observed_extension_delta": "stabilized_extension_delta + stabilization_gap_delta",
+            },
             "returned_vectors": [
                 "observed_extension_delta",
                 "stabilized_extension_delta",
@@ -497,9 +613,38 @@ def compute_extension_sda_pair_result_from_states(
                 "sda_demand_delta",
                 "sda_residual",
                 "stabilization_gap_delta",
-                "identity_gap_delta",
+                "reported_x_identity_gap_delta",
             ],
         },
+    )
+
+
+def compute_extension_sda_pair_result_from_extension_year_states(
+    start: MrioExtensionYearState,
+    end: MrioExtensionYearState,
+    *,
+    stabilization: str | None = None,
+    tau: float | None = None,
+    reject_all_zero: bool = True,
+    progress: ProgressCallback | None = None,
+) -> ExtensionSdaPairResult:
+    """Compute pair SDA from convenience-loaded MRIO/extension year states."""
+
+    method = _state_stabilization_method(start) if stabilization is None else str(stabilization)
+    if stabilization is None and method != _state_stabilization_method(end):
+        raise ValueError("Loaded extension year states used different stabilization methods")
+    tau_value = _state_stabilization_tau(start) if tau is None else float(tau)
+    if tau is None and tau_value != _state_stabilization_tau(end):
+        raise ValueError("Loaded extension year states used different stabilization tau values")
+    return compute_extension_sda_pair_result_from_states(
+        start.mrio_state,
+        end.mrio_state,
+        start.extension_row,
+        end.extension_row,
+        stabilization=method,
+        tau=tau_value,
+        reject_all_zero=bool(reject_all_zero),
+        progress=progress,
     )
 
 
@@ -519,9 +664,10 @@ def load_mrio_extension_year_state(
     require_unit: bool = True,
     stabilization: str = "threshold",
     tau: float = 1.0e-8,
+    reject_all_zero: bool = True,
     verbose: bool = False,
-) -> tuple[MrioYearState, ExtensionIntensityState]:
-    """Load one MRIO year and one production-side extension intensity state.
+) -> MrioExtensionYearState:
+    """Load one MRIO year plus the raw and stabilized production extension row.
 
     This convenience boundary keeps EXIOBASE source-zip discovery in MRIO while
     still reading only the sparse MRIO matrices and the selected extension row.
@@ -563,5 +709,10 @@ def load_mrio_extension_year_state(
         extension_row=extension_row,
         stabilization=str(stabilization),
         tau=float(tau),
+        reject_all_zero=bool(reject_all_zero),
     )
-    return mrio_state, intensity_state
+    return MrioExtensionYearState(
+        mrio_state=mrio_state,
+        extension_row=extension_row,
+        intensity_state=intensity_state,
+    )

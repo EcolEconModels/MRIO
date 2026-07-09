@@ -7,7 +7,9 @@ from scipy.sparse.linalg import spsolve
 
 from ecolecon_mrio.exiobase3_extensions import ExtensionRowResult
 from ecolecon_mrio.mrio_extension_sda import (
+    MrioExtensionYearState,
     compute_extension_intensity_state,
+    compute_extension_sda_pair_result_from_extension_year_states,
     compute_extension_sda_pair_result_from_states,
 )
 from ecolecon_mrio.mrio_sda import MrioYearState
@@ -21,10 +23,13 @@ def _series(values: list[float], index: pd.MultiIndex, name: str) -> pd.Series:
     return pd.Series(values, index=index, dtype=float, name=name)
 
 
-def _state(year: int, A: csr_matrix, y_values: list[float]) -> MrioYearState:
+def _state(year: int, A: csr_matrix, y_values: list[float], x_override: list[float] | None = None) -> MrioYearState:
     index = _idx()
     y = _series(y_values, index, f"y{year}")
-    x_values = spsolve(sparse_eye(2, format="csr") - A, y.to_numpy(dtype=float))
+    if x_override is None:
+        x_values = spsolve(sparse_eye(2, format="csr") - A, y.to_numpy(dtype=float))
+    else:
+        x_values = x_override
     x = pd.Series(x_values, index=index, dtype=float, name=f"x{year}")
     return MrioYearState(
         year=year,
@@ -51,8 +56,17 @@ def _extension(values: pd.Series, *, year: int, unit: str = "kg", stressor: str 
     )
 
 
-def test_extension_sda_six_polar_components_sum_to_stabilized_delta() -> None:
-    """Protect the scientific identity Δf~=Δq+ΔA+Δy+r, not monetary post-valuation."""
+def _series_with_unit(values: pd.Series, *, unit: str = "kg", stressor: str = "CO2") -> pd.Series:
+    values.attrs["unit"] = unit
+    values.attrs["unit_source"] = "test/unit.txt"
+    values.attrs["extension"] = "air_emissions"
+    values.attrs["kind"] = "F"
+    values.attrs["stressor"] = stressor
+    return values
+
+
+def test_extension_sda_six_polar_components_sum_to_leontief_delta() -> None:
+    """Protect the scientific identity Δ(qL y)=Δq+ΔA+Δy+r, not monetary post-valuation."""
 
     index = _idx()
     A0 = csr_matrix([[0.10, 0.02], [0.03, 0.12]], dtype=float)
@@ -72,13 +86,15 @@ def test_extension_sda_six_polar_components_sum_to_stabilized_delta() -> None:
         stabilization="raw",
     )
 
-    reconstructed = (
+    reconstructed_leontief = (
         result.sda_intensity_delta
         + result.sda_structure_delta
         + result.sda_demand_delta
         + result.sda_residual
     )
-    pd.testing.assert_series_equal(result.stabilized_extension_delta, reconstructed, check_names=False)
+    pd.testing.assert_series_equal(result.leontief_extension_delta, reconstructed_leontief, check_names=False)
+    reconstructed_stabilized = result.leontief_extension_delta + result.reported_x_identity_gap_delta
+    pd.testing.assert_series_equal(result.stabilized_extension_delta, reconstructed_stabilized, check_names=False)
     assert result.residual_l2 < 1.0e-10
     assert result.residual_share_l2 < 1.0e-10
     assert result.metadata["identity_mode"] == "six_polar_three_factor_extension_sda"
@@ -129,6 +145,40 @@ def test_threshold_stabilization_reports_raw_gap() -> None:
     bridge = result.stabilized_extension_delta + result.stabilization_gap_delta
     pd.testing.assert_series_equal(result.observed_extension_delta, bridge, check_names=False)
     assert float(result.stabilization_gap_delta.abs().sum()) > 0.0
+
+
+def test_reported_x_identity_gap_is_separate_from_sda_residual() -> None:
+    """Reported x != L y must be a separate diagnostic, not hidden in SDA residual."""
+
+    index = _idx()
+    A = csr_matrix([[0.10, 0.0], [0.0, 0.10]], dtype=float)
+    start = _state(2000, A, [9.0, 9.0], x_override=[12.0, 10.0])
+    end = _state(2001, A, [9.0, 9.0], x_override=[10.0, 12.0])
+    f0 = (_series([2.0, 2.0], index, "q0") * start.x).rename("CO2")
+    f1 = (_series([2.0, 2.0], index, "q1") * end.x).rename("CO2")
+
+    result = compute_extension_sda_pair_result_from_states(
+        start,
+        end,
+        _extension(f0, year=2000),
+        _extension(f1, year=2001),
+        stabilization="raw",
+    )
+
+    reconstructed_leontief = (
+        result.sda_intensity_delta
+        + result.sda_structure_delta
+        + result.sda_demand_delta
+        + result.sda_residual
+    )
+    pd.testing.assert_series_equal(result.leontief_extension_delta, reconstructed_leontief, check_names=False)
+    assert result.residual_l2 < 1.0e-10
+    assert float(result.reported_x_identity_gap_delta.abs().sum()) > 0.0
+    pd.testing.assert_series_equal(
+        result.stabilized_extension_delta,
+        result.leontief_extension_delta + result.reported_x_identity_gap_delta,
+        check_names=False,
+    )
 
 
 def test_extension_sda_rejects_f_y_index() -> None:
@@ -183,6 +233,79 @@ def test_extension_sda_rejects_unit_mismatch() -> None:
         compute_extension_sda_pair_result_from_states(start, end, f0, f1)
 
 
+def test_plain_series_requires_explicit_unit_metadata() -> None:
+    """Bare Series must not get fake matching unknown units at the pair boundary."""
+
+    index = _idx()
+    A = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    start = _state(2000, A, [1.0, 2.0])
+    with pytest.raises(ValueError, match=r"attrs\['unit'\]"):
+        compute_extension_intensity_state(mrio_state=start, extension_row=_series([1.0, 2.0], index, "CO2"))
+
+    state = compute_extension_intensity_state(
+        mrio_state=start,
+        extension_row=_series_with_unit(_series([1.0, 2.0], index, "CO2")),
+        stabilization="raw",
+    )
+    assert state.unit == "kg"
+    assert state.stressor == "CO2"
+
+
+def test_all_zero_extension_row_rejected_when_output_has_mass() -> None:
+    """A missing selected extension row must not yield a scientifically bogus zero SDA."""
+
+    index = _idx()
+    A = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    start = _state(2000, A, [1.0, 2.0])
+    zero = _extension(_series([0.0, 0.0], index, "CO2"), year=2000)
+
+    with pytest.raises(ValueError, match="all-zero extension row"):
+        compute_extension_intensity_state(mrio_state=start, extension_row=zero)
+
+    allowed = compute_extension_intensity_state(mrio_state=start, extension_row=zero, reject_all_zero=False)
+    assert float(allowed.values.abs().sum()) == pytest.approx(0.0)
+
+
+def test_pair_api_rejects_intensity_state_instead_of_raw_row() -> None:
+    """The pair API must fail loudly if caller passes loader's intensity state field."""
+
+    index = _idx()
+    A = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    start = _state(2000, A, [1.0, 2.0])
+    end = _state(2001, A, [1.0, 2.0])
+    f0 = _extension(_series([1.0, 2.0], index, "CO2"), year=2000)
+    f1 = _extension(_series([1.0, 2.0], index, "CO2"), year=2001)
+    intensity_state = compute_extension_intensity_state(mrio_state=start, extension_row=f0)
+
+    with pytest.raises(TypeError, match="ExtensionIntensityState"):
+        compute_extension_sda_pair_result_from_states(start, end, intensity_state, f1)  # type: ignore[arg-type]
+
+
+def test_extension_year_state_helper_preserves_raw_row_for_pair_api() -> None:
+    """Convenience-loaded year bundles must compose cleanly into the pair API."""
+
+    index = _idx()
+    A = csr_matrix([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+    start = _state(2000, A, [1.0, 2.0])
+    end = _state(2001, A, [2.0, 3.0])
+    f0 = _extension(_series([1.0, 2.0], index, "CO2"), year=2000)
+    f1 = _extension(_series([2.0, 3.0], index, "CO2"), year=2001)
+    start_bundle = MrioExtensionYearState(
+        mrio_state=start,
+        extension_row=f0,
+        intensity_state=compute_extension_intensity_state(mrio_state=start, extension_row=f0, stabilization="raw"),
+    )
+    end_bundle = MrioExtensionYearState(
+        mrio_state=end,
+        extension_row=f1,
+        intensity_state=compute_extension_intensity_state(mrio_state=end, extension_row=f1, stabilization="raw"),
+    )
+
+    result = compute_extension_sda_pair_result_from_extension_year_states(start_bundle, end_bundle)
+
+    pd.testing.assert_series_equal(result.observed_extension_delta, _series([1.0, 1.0], index, "expected"), check_names=False)
+
+
 def test_extension_sda_progress_and_low_memory_metadata() -> None:
     """Progress callbacks and metadata make sparse resource behavior auditable."""
 
@@ -204,7 +327,10 @@ def test_extension_sda_progress_and_low_memory_metadata() -> None:
     )
 
     assert any("validate" in message for message in messages)
+    assert any("raw direct extension intensity" in message for message in messages)
+    assert any("stabilization" in message for message in messages)
     assert any("Leontief" in message for message in messages)
+    assert any("identity-gap" in message for message in messages)
     assert result.metadata["forms_explicit_leontief_inverse"] is False
     assert result.metadata["stores_solver_factorization"] is False
     assert result.metadata["forms_sparse_delta_A"] is False

@@ -84,7 +84,9 @@ from .mrio_sda import (
 from .mrio_extension_sda import (
     ExtensionIntensityState,
     ExtensionSdaPairResult,
+    MrioExtensionYearState,
     compute_extension_intensity_state,
+    compute_extension_sda_pair_result_from_extension_year_states,
     compute_extension_sda_pair_result_from_states,
     load_mrio_extension_year_state,
 )
@@ -297,7 +299,9 @@ __all__.extend([
 __all__.extend([
     "ExtensionIntensityState",
     "ExtensionSdaPairResult",
+    "MrioExtensionYearState",
     "compute_extension_intensity_state",
+    "compute_extension_sda_pair_result_from_extension_year_states",
     "compute_extension_sda_pair_result_from_states",
     "load_mrio_extension_year_state",
     "configure_low_memory_runtime",

@@ -60,3 +60,23 @@ back to raw observed extension rows.
 The implementation must preserve the existing sparse/low-RAM contract: no explicit
 Leontief inverse, no stored solver factorization, no persistent derived matrix
 cache, and no full extension matrix load for the default row-level path.
+
+The pair result separates three reconciliation layers. First, the six-polar
+components plus `sda_residual` reconstruct only `leontief_extension_delta`, so
+`sda_residual` is a numerical residual for the `q_tilde * L y` identity. Second,
+`reported_x_identity_gap_delta` reconciles `leontief_extension_delta` to the
+stabilized direct row change `q_tilde * x` when reported output is not exactly the
+solved Leontief output. Third, `stabilization_gap_delta` reconciles the stabilized
+row change back to raw observed extension rows.
+
+Plain pandas Series are accepted only when they carry explicit `attrs["unit"]` and
+`attrs["unit_source"]` metadata; otherwise public callers should pass
+`ExtensionRowResult`. Selected all-zero production extension rows are rejected by
+default when MRIO output has positive mass, because such rows usually indicate an
+incorrect stressor/year selection or an incomplete extension source.
+
+`load_mrio_extension_year_state(...)` returns `MrioExtensionYearState`, containing
+the `MrioYearState`, raw `ExtensionRowResult`, and computed `ExtensionIntensityState`.
+Pair callers can therefore compose convenience-loaded years through
+`compute_extension_sda_pair_result_from_extension_year_states(...)` without
+reloading extension rows or losing unit/stressor provenance.
