@@ -327,6 +327,10 @@ def compute_extension_intensity_state(
 
     unit = metadata["unit"]
     intensity_unit = f"{unit}/{mrio_state.monetary_unit}"
+    stabilization_method = str(stabilization).strip().lower()
+    stabilization_reference = (
+        "aggregate_coefficient_sum_f_over_sum_x" if stabilization_method == "threshold" else "none_raw"
+    )
     return ExtensionIntensityState(
         year=int(mrio_state.year),
         values=values,
@@ -341,9 +345,9 @@ def compute_extension_intensity_state(
         unit_source=metadata["unit_source"],
         intensity_unit=intensity_unit,
         stabilization={
-            "method": str(stabilization),
+            "method": stabilization_method,
             "tau": float(tau),
-            "reference": "aggregate_coefficient_sum_f_over_sum_x",
+            "reference": stabilization_reference,
         },
         metadata={
             "year": int(mrio_state.year),
@@ -445,6 +449,16 @@ def _intensity_state_stabilization_tau(state: ExtensionIntensityState) -> float:
     return float(raw_tau)
 
 
+def _intensity_state_stabilization_reference(state: ExtensionIntensityState) -> str:
+    """Return the benchmark/reference used by the stored stabilization method."""
+
+    raw_reference = state.stabilization.get("reference")
+    if isinstance(raw_reference, str) and raw_reference.strip():
+        return raw_reference.strip()
+    method = _intensity_state_stabilization_method(state)
+    return "aggregate_coefficient_sum_f_over_sum_x" if method == "threshold" else "none_raw"
+
+
 def _state_stabilization_method(state: MrioExtensionYearState) -> str:
     """Return the method stored on a loaded convenience state."""
 
@@ -530,6 +544,10 @@ def _compute_extension_sda_pair_result_from_intensity_states(
     end_tau = _intensity_state_stabilization_tau(end_state)
     if not bool(np.isclose(tau_value, end_tau, rtol=1.0e-12, atol=0.0)):
         raise ValueError("Extension intensity states used different stabilization tau values")
+    reference = _intensity_state_stabilization_reference(start_state)
+    end_reference = _intensity_state_stabilization_reference(end_state)
+    if reference != end_reference:
+        raise ValueError("Extension intensity states used different stabilization references")
 
     start_reject_all_zero = _metadata_bool(start_state.metadata, "reject_all_zero", True)
     end_reject_all_zero = _metadata_bool(end_state.metadata, "reject_all_zero", True)
@@ -640,7 +658,7 @@ def _compute_extension_sda_pair_result_from_intensity_states(
             "extension": start_state.extension,
             "stressor": start_state.stressor,
             "kind": start_state.kind,
-            "stabilization": {"method": method, "tau": tau_value},
+            "stabilization": {"method": method, "tau": tau_value, "reference": reference},
             "index_columns": ["region", "sector"],
             "forms_explicit_leontief_inverse": False,
             "stores_solver_factorization": False,

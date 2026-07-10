@@ -375,6 +375,7 @@ def test_extension_year_state_pair_uses_isclose_for_loaded_tau() -> None:
     result = compute_extension_sda_pair_result_from_extension_year_states(start_bundle, end_bundle)
 
     assert result.metadata["stabilization"]["method"] == "threshold"
+    assert result.metadata["stabilization"]["reference"] == "aggregate_coefficient_sum_f_over_sum_x"
 
 
 def test_extension_sda_progress_and_low_memory_metadata() -> None:
