@@ -29,6 +29,8 @@ MAPPING_CONSISTENCY_ATOL="${MAPPING_CONSISTENCY_ATOL:-1e-6}"
 FLOW_IDENTITY_RTOL="${FLOW_IDENTITY_RTOL:-1e-9}"
 FLOW_IDENTITY_ATOL="${FLOW_IDENTITY_ATOL:-1e-6}"
 EXPECTED_REAGG_SECTORS="${EXPECTED_REAGG_SECTORS:-}"
+MPG4ALL_DIR="${MPG4ALL_DIR:-$(cd "$ROOT_DIR/.." && pwd)/MPG4ALL}"
+CAPITAL_STOCK_SOURCE_CSV="${CAPITAL_STOCK_SOURCE_CSV:-}"
 
 GENERATED_MAPPINGS_OUT="${GENERATED_MAPPINGS_OUT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_generated_mappings}"
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_split_flows}"
@@ -172,3 +174,14 @@ PY
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
   --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
+
+if [[ -n "$CAPITAL_STOCK_SOURCE_CSV" ]]; then
+  "$PY" "$ROOT_DIR/scripts/export_product_initialization.py" \
+    --official-input-csv "$CAPITAL_STOCK_SOURCE_CSV" \
+    --iot-output-csv "$OUT_REAGG/stk_flow=TOTAL/x_agg.csv" \
+    --template-xlsx "$MPG4ALL_DIR/capital_stock.xlsx" \
+    --output-xlsx "$MPG4ALL_DIR/capital_stock_2021.xlsx" \
+    --value-column capital_stock:2 \
+    --share-column gross_capital_formation:3 \
+    --diagnostic-csv "$OUT_REAGG/stk_flow=TOTAL/capital_stock_output_shares.csv"
+fi
