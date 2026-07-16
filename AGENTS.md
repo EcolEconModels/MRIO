@@ -66,15 +66,16 @@ Follow `../ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md` 
 
 Follow `../ecolecon-agent-memory/coding/scientific-code-documentation-specs.md` for scientific code documentation.  In particular, scientific analysis code needs file/function/class/attribute documentation and line/block comments for every scientifically relevant loop, branch, indexing step, normalization, projection, edge-case guard, and output write.
 
-Follow `../ecolecon-agent-memory/coding/pylance-compliant-python.md` before producing or committing Python patches.  Patch scripts must run py_compile, focused tests, Ruff when available, Pyright when available, and no-suppression/static guardrails so Pylance/Ruff errors such as unused imports, undefined names, and unknown external imports are not handed to the user.
+Follow `../ecolecon-agent-memory/coding/pylance-compliant-python.md` before producing or committing Python patches. Patch scripts must run py_compile, focused tests, Ruff, and tiered Pyright when available: scientific/core diagnostics are blocking; plotting/export stub diagnostics are advisory only after a runtime smoke test. Unused imports, undefined names, unknown imports, schema errors, unit errors, and shape/alignment errors remain blocking.
 
 ## Cross-repo Python analysis validation
 
 Before handing over Python patch scripts, follow the durable guidance in
 `ecolecon-agent-memory/coding/pylance-compliant-python.md` and
 `ecolecon-agent-memory/coding/resource-bounded-resumable-analysis.md`.
-Run Ruff `F401/F821`, Pyright if available with typeCheckingMode "standard" not "strict", focused tests, and `git diff --check`; then check
-Pylance in VS Code for the changed files.
+Run Ruff `F401/F821`, focused tests, `git diff --check`, and Pyright in standard mode using the durable tiered policy. Scientific/core files must pass; plotting/export files may retain reported stub-only diagnostics only after smoke rendering succeeds.
+
+Patch scripts that add or change executable Python files must run each exact file-path `--help` command and the smallest real smoke command before commit; pytest collection does not validate standalone import paths.
 
 ## MRIO index and strict SDA API contract
 
