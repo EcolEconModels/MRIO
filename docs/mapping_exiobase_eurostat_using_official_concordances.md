@@ -1,5 +1,31 @@
 # EXIOBASE3 to Eurostat CPA using official concordances
 
+<!-- BEGIN DIRECT OFFICIAL ROUTE -->
+## Preferred direct official route
+
+The preferred route now starts from the official direct file
+`data/exiobase_concordance_sources/cpasut64_exiobase3p.csv`. One small builder,
+`scripts/mappings/build_exiobase3_to_cpa_from_official_direct.py`, validates full
+CPA64 and EXIOBASE3 coverage and writes compatible CPA64 and CPA65 canonical maps
+under `scripts/mappings/generated/official_direct/`.
+
+The official file's unit weights describe membership only. The builder therefore
+does not preserve them as numerical allocation shares. It reverses the topology,
+marks EXIOBASE3 products with multiple CPA targets as `split-by-output-share`, and
+leaves the established flow-specific Eurostat output/use resolver unchanged. The
+CPA65 output differs from CPA64 only by the repository's existing real-estate
+refinement: upstream `CPA_L` is normalized to `CPA_L68`, then emitted as
+`CPA_L68A` and `CPA_L68B` for CPA65.
+
+```bash
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+  scripts/mappings/build_exiobase3_to_cpa_from_official_direct.py
+```
+
+The longer chained-concordance workflow documented below is retained separately
+for comparison and can be deleted later without affecting this direct route.
+<!-- END DIRECT OFFICIAL ROUTE -->
+
 This workflow builds an EXIOBASE3 product -> Eurostat CPA64/CPA65 target map
 from detailed product concordances. It is the official-concordance route used to
 test whether the fuels pipeline performs better than the older A64/compatibility

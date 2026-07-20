@@ -1,5 +1,24 @@
 # EXIOBASE concordance source archive
 
+<!-- BEGIN OFFICIAL DIRECT CPA64 EXIOBASE3 BUILDER -->
+## Preferred direct official concordance
+
+The committed upstream source `cpasut64_exiobase3p.csv` is the preferred direct
+CPA64-to-EXIOBASE3 topology. Its `weight=1.0` values are binary incidence markers,
+not allocation shares. Build both canonical runtime orientations with:
+
+```bash
+/home/agilra/EcolEconModels/MRIO/.venv/bin/python \
+  scripts/mappings/build_exiobase3_to_cpa_from_official_direct.py
+```
+
+The builder reverses the edges to EXIOBASE3-to-CPA, normalizes upstream `CPA_L`
+to the repository CPA64 code `CPA_L68`, and emits the CPA65 variant by replacing
+that one target with `CPA_L68A` and `CPA_L68B`. Multi-target EXIOBASE3 products
+retain no static numerical weight; the existing runtime output/use-share resolver
+allocates them while enforcing source weights that sum to one.
+<!-- END OFFICIAL DIRECT CPA64 EXIOBASE3 BUILDER -->
+
 Offical EXIOBASE concordances are at:
 https://github.com/EXIOBASE/00-concordances-public 
 with more concordances and better organisation than the obsolete one below.
