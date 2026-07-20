@@ -33,6 +33,8 @@ data/**/*.pkl
 data/**/*.zip
 data/**/*.7z
 
+data_exiobase_v3.10.2/*
+
 # Allow only the audit-trail README in the EXIOBASE concordance source folder.
 !data/exiobase_concordance_sources/
 data/exiobase_concordance_sources/*

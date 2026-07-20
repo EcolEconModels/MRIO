@@ -1,5 +1,21 @@
 # EXIOBASE concordance source archive
 
+Offical EXIOBASE concordances are at:
+https://github.com/EXIOBASE/00-concordances-public 
+with more concordances and better organisation than the obsolete one below.
+
+The direct Eurostat CPA64 to Exiobase3 concordance map is taken from URL below and copied in this directory:  
+https://github.com/EXIOBASE/00-concordances-public/blob/main/concordances/international/cpasut64_exiobase3p.csv  
+
+There is also a "wide" concordance map with the map as a matrix of 1s and 0s with CPA64 codes as rows and EXIOBASE3 codes as columns, in the "_wide" directory, i.e. at:  
+https://github.com/EXIOBASE/00-concordances-public/blob/main/concordances/international/_wide/cpasut64_exiobase3p.csv  
+
+
+## OBSOLETE SOURCE:
+
+Since this source didn't have a direct CPA64 to Exiobase3 mapping, we needed to use a chain of concordance maps.  
+This is now obsolete as we have the official direct concordance map as above!
+
 Download the EXIOBASE/XIO concordance bundle from the EXIOBASE concordance
 folder used for this project:
 
@@ -31,7 +47,7 @@ choose such an assumption; they are not empirical allocation shares.
 
 <!-- BEGIN EXIOBASE A64 AUDIT TRAIL -->
 
-## Recreating the EXIOBASE3 to Eurostat IOT A*64 mapping
+## OBSOLETE -- Recreating the EXIOBASE3 to Eurostat IOT A*64 mapping
 
 The raw EXIOBASE concordance archive is a licensed external source and should not
 be committed to this repository. Download the concordance folder from the
