@@ -7,6 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from ecolecon_mrio.iot_flow_semantics import flow_use_total, technical_coefficients
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "derive_total_iot_flow.py"
 SPEC = importlib.util.spec_from_file_location("derive_total_iot_flow", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -27,21 +29,31 @@ def _write_flow(root: Path, flow: str, scale: float) -> None:
     (d / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")
 
 
+def _write_canonical_sidecars(root: Path, *, suffix: str) -> None:
+    z_name = f"Z_{suffix}.csv"
+    y_name = f"Y_{suffix}.csv"
+    x_name = f"x_{suffix}.csv"
+    a_name = f"A_{suffix}.csv"
+    use_name = f"use_total_{suffix}.csv"
+    dom = root / "stk_flow=DOM"
+    output = flow_use_total(pd.read_csv(dom / z_name, index_col=0), pd.read_csv(dom / y_name, index_col=0)).rename("x")
+    for flow in ("DOM", "IMP", "TOTAL"):
+        directory = root / f"stk_flow={flow}"
+        Z = pd.read_csv(directory / z_name, index_col=0)
+        Y = pd.read_csv(directory / y_name, index_col=0)
+        flow_use_total(Z, Y).to_csv(directory / use_name, header=True)
+        output.to_csv(directory / x_name, header=True)
+        technical_coefficients(Z, output).to_csv(directory / a_name)
+
+
 def test_validate_additive_outputs_detects_and_accepts_identity(tmp_path: Path) -> None:
     _write_flow(tmp_path, "DOM", 1.0)
     _write_flow(tmp_path, "IMP", 2.0)
     _write_flow(tmp_path, "TOTAL", 3.0)
+    _write_canonical_sidecars(tmp_path, suffix="split")
+    MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
     total = tmp_path / "stk_flow=TOTAL"
     Z = pd.read_csv(total / "Z_split.csv", index_col=0)
-    Y = pd.read_csv(total / "Y_split.csv", index_col=0)
-    x = Z.sum(axis=1) + Y.sum(axis=1)
-    x.to_csv(total / "x_split.csv", header=["x"])
-    for flow in ("DOM", "IMP"):
-        d = tmp_path / f"stk_flow={flow}"
-        z = pd.read_csv(d / "Z_split.csv", index_col=0)
-        y = pd.read_csv(d / "Y_split.csv", index_col=0)
-        (z.sum(axis=1) + y.sum(axis=1)).to_csv(d / "x_split.csv", header=["x"])
-    MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
     Z.iloc[0, 0] += 1.0
     Z.to_csv(total / "Z_split.csv")
     with pytest.raises(ValueError, match="DOM\\+IMP=TOTAL"):

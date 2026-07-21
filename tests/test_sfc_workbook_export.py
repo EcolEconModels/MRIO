@@ -1,11 +1,14 @@
-# pyright: reportOptionalMemberAccess=false, reportAttributeAccessIssue=false, reportArgumentType=false
+# pyright: reportOptionalMemberAccess=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportOptionalOperand=false, reportIndexIssue=false
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import pytest
 from openpyxl import Workbook, load_workbook
+
+from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
 
 def _build_template(path: Path) -> None:
@@ -48,6 +51,28 @@ def _build_template(path: Path) -> None:
 
 def _row_values(ws, row_idx: int, start_col: int, count: int) -> list[object]:
     return [ws.cell(row=row_idx, column=col).value for col in range(start_col, start_col + count)]
+
+
+def _with_source_rows(parsed, row_codes: list[str]):
+    labels = {
+        "P1": "Output",
+        "P2_ADJ": "Total intermediate consumption /final use",
+        "B1G": "Value added, gross",
+        "P7": "Imports of goods and services",
+        "TS_BP": "Total supply at basic prices",
+        "D21X31": "Taxes less subsidies on products",
+    }
+    meta = dict(parsed.meta)
+    dimensions = {key: dict(value) for key, value in meta["dimensions"].items()}
+    dimensions["prd_ava"].update({code: labels[code] for code in row_codes})
+    meta["dimensions"] = dimensions
+    meta["identified_supplementary_rows"] = list(row_codes)
+    return replace(
+        parsed,
+        meta=meta,
+        V=pd.DataFrame(0.0, index=row_codes, columns=parsed.Z.columns),
+        M=pd.DataFrame(0.0, index=row_codes, columns=parsed.Y.columns),
+    )
 
 
 def _build_lineage_toy_case():
@@ -132,7 +157,7 @@ def _build_lineage_toy_case():
             ],
         }
     )
-    return parsed, z_before, y_before, z_after, y_after, mapping_df
+    return _with_source_rows(parsed, ["P1", "P2_ADJ"]), z_before, y_before, z_after, y_after, mapping_df
 
 
 def test_pretty_sector_label_formats_energy_codes() -> None:
@@ -158,69 +183,6 @@ def test_infer_variant_value_uses_source_dir_and_filters() -> None:
         variant_dim="stk_flow",
         eurostat_filters={"stk_flow": "DOM"},
     ) == "DOM"
-
-
-def test_supplementary_fd_row_uses_current_final_demand_shares() -> None:
-    from scripts.aggregate_iot_by_mapping import _supplementary_fd_row_from_current_shares
-
-    template_fd = pd.Series(
-        {
-            "P3": 100.0,
-            "P3_S13": float("nan"),
-            "P3_S14": float("nan"),
-            "P3_S15": float("nan"),
-            "P5": 60.0,
-            "P51G": float("nan"),
-            "P52": float("nan"),
-            "P53": float("nan"),
-            "P5M": float("nan"),
-            "P6": 40.0,
-            "P6_B0": float("nan"),
-            "P6_D0": float("nan"),
-            "P6_U2": float("nan"),
-            "P6_U3": float("nan"),
-            "TU": float("nan"),
-            "TFU": float("nan"),
-        },
-        dtype="float64",
-    )
-    current_fd = pd.Series(
-        {
-            "P3": 100.0,
-            "P3_S13": 10.0,
-            "P3_S14": 70.0,
-            "P3_S15": 20.0,
-            "P5": 60.0,
-            "P51G": 30.0,
-            "P52": 10.0,
-            "P53": 20.0,
-            "P5M": 30.0,
-            "P6": 40.0,
-            "P6_B0": 25.0,
-            "P6_D0": 10.0,
-            "P6_U2": 3.0,
-            "P6_U3": 2.0,
-            "TU": 0.0,
-            "TFU": 0.0,
-        },
-        dtype="float64",
-    )
-
-    out = _supplementary_fd_row_from_current_shares(
-        template_fd_values=template_fd,
-        current_fd_totals=current_fd,
-        product_total=15.0,
-    )
-
-    assert out[["P3_S13", "P3_S14", "P3_S15"]].tolist() == pytest.approx([10.0, 70.0, 20.0])
-    assert out[["P51G", "P52", "P53"]].tolist() == pytest.approx([30.0, 10.0, 20.0])
-    assert out[["P6_B0", "P6_D0", "P6_U2", "P6_U3"]].tolist() == pytest.approx([25.0, 10.0, 3.0, 2.0])
-    assert float(out["P3"]) == pytest.approx(100.0)
-    assert float(out["P5M"]) == pytest.approx(30.0)
-    assert float(out["P5"]) == pytest.approx(60.0)
-    assert float(out["P6"]) == pytest.approx(40.0)
-    assert float(out["TFU"]) == pytest.approx(200.0)
-    assert float(out["TU"]) == pytest.approx(215.0)
 
 
 def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path: Path, monkeypatch) -> None:
@@ -262,6 +224,7 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
             "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
         },
     )
+    parsed = _with_source_rows(parsed, ["D21X31", "B1G", "P1", "P2_ADJ", "P7", "TS_BP"])
     monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
     monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
 
@@ -306,12 +269,16 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
             [999.0, 999.0, 999.0],
             [888.0, 888.0, 888.0],
             [777.0, 777.0, 777.0],
+            [1.0, 2.0, 3.0],
+            [666.0, 666.0, 666.0],
         ],
         index=[
             "D21X31",
             "Value added, gross",
             "Output",
             "Total intermediate consumption /final use",
+            "Imports of goods and services",
+            "Total supply at basic prices",
         ],
         columns=z_after.columns,
     )
@@ -319,8 +286,9 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
         [
             [9.0, 8.0, 7.0, 27.0, 24.0],
             [999.0, 999.0, 999.0, 999.0, 999.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
         ],
-        index=["D21X31", "Total intermediate consumption /final use"],
+        index=["D21X31", "Total intermediate consumption /final use", "Imports of goods and services"],
         columns=["P3", "P5", "P6", "TU", "TFU"],
     )
 
@@ -364,6 +332,7 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
         mapping_from_col="from_sector",
         mapping_to_col="to_sector",
         verbose=False,
+        output_after=flow_use_total(z_after, y_after),
     )
 
     ws = load_workbook(out_path, data_only=True)["Sheet 1"]
@@ -382,14 +351,11 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
 
     x_after = (z_after.sum(axis=1) + y_after.sum(axis=1)).astype(float)
     col_sums_z = z_after.sum(axis=0).astype(float)
-    x_before = (z_before.sum(axis=1) + y_before.sum(axis=1)).astype(float)
-    c19_share_motor = float(x_before.loc["CPA_C19::Motor Gasoline"] / x_before.loc[["CPA_C19::Motor Gasoline", "CPA_C19::Heavy Fuel Oil"]].sum())
-    c19_share_remaining = float(x_before.loc["CPA_C19::Heavy Fuel Oil"] / x_before.loc[["CPA_C19::Motor Gasoline", "CPA_C19::Heavy Fuel Oil"]].sum())
     expected_value_added = (x_after - col_sums_z).tolist()
     expected_output = x_after.tolist()
     expected_intermediate = col_sums_z.tolist()
     expected_taxes = [0.25, 0.75, 2.0]
-    expected_imports = [7.0 * c19_share_motor, 7.0 * c19_share_remaining, 8.0]
+    expected_imports = [1.0, 2.0, 3.0]
     expected_supply = [round(a + b, 10) for a, b in zip(expected_output, expected_imports, strict=True)]
 
     # Right block above the lower rows is the current aggregated Y matrix.
@@ -451,6 +417,7 @@ def test_validate_template_reaggregation_raises_on_supplementary_parent_drift(tm
             tpl_layout=tpl_layout,
             Z_ord=Z_ord,
             Y_ord=Y_ord,
+            output_after=flow_use_total(Z_ord, Y_ord),
             lower_row_vectors=lower_row_vectors,
             lower_fd_vectors=lower_fd_vectors,
         )
@@ -492,6 +459,7 @@ def test_validate_template_reaggregation_skips_parent_fd_check_for_multi_parent_
         tpl_layout=tpl_layout,
         Z_ord=Z_ord,
         Y_ord=Y_ord,
+        output_after=flow_use_total(Z_ord, Y_ord),
         lower_row_vectors={},
         lower_fd_vectors={},
     )
@@ -530,6 +498,7 @@ def test_validate_template_reaggregation_skips_supplementary_parent_check_when_d
         tpl_layout=tpl_layout,
         Z_ord=Z_ord,
         Y_ord=Y_ord,
+        output_after=flow_use_total(Z_ord, Y_ord),
         lower_row_vectors={
             "Taxes less subsidies on products": pd.Series(0.0, index=Z_ord.index, dtype="float64"),
         },
@@ -576,6 +545,7 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
             "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
         },
     )
+    parsed = _with_source_rows(parsed, ["B1G", "P1", "P2_ADJ"])
     monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
     monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -621,6 +591,7 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
             mapping_from_col="from_sector",
             mapping_to_col="to_sector",
             verbose=False,
+            output_after=flow_use_total(z_before, y_before),
         )
 
 
@@ -706,6 +677,7 @@ def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tm
         mapping_from_col="from_sector",
         mapping_to_col="to_sector",
         verbose=False,
+        output_after=flow_use_total(z_after, y_after),
     )
 
     audit_path = out_path.with_name("template_parent_total_audit.csv")
@@ -753,6 +725,7 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
             mapping_from_col="from_sector",
             mapping_to_col="to_sector",
             verbose=False,
+            output_after=flow_use_total(z_after, y_after),
         )
 
     audit_path = out_path.with_name("template_parent_total_audit.csv")
@@ -807,6 +780,7 @@ def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_p
             "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
         },
     )
+    parsed = _with_source_rows(parsed, ["B1G", "P1", "P2_ADJ"])
     monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
     monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
 
@@ -884,6 +858,7 @@ def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_p
         mapping_from_col="from_sector",
         mapping_to_col="to_sector",
         verbose=False,
+        output_after=flow_use_total(z_after, y_after),
     )
 
     tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
@@ -911,6 +886,7 @@ def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_p
             workbook_layout=mod._template_table_layout(workbook_ws),
             Z_ord=z_after,
             Y_ord=y_after,
+            output_after=flow_use_total(z_after, y_after),
             lower_row_vectors={},
             lower_fd_vectors={},
         )
@@ -983,3 +959,14 @@ def test_write_excel_mapping_sheet_requires_co2_for_non_import_flow() -> None:
             mapping_df=pd.DataFrame({"from_sector": ["p10.f"], "to_sector": ["CPA_C19"]}),
             allow_missing_sfc_co2=False,
         )
+
+
+def test_generated_workbook_metadata_does_not_retain_template_values() -> None:
+    """Guardrail: canonical writers must generate Summary/Structure, not preserve template data."""
+    source = Path(__file__).resolve().parents[1] / "scripts" / "aggregate_iot_by_mapping.py"
+    text = source.read_text(encoding="utf-8")
+    assert 'for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure")' in text
+    assert 'ws_sum = wb.create_sheet("Summary")' in text
+    assert "flow_specific_v_disaggregation" in text
+    assert "_supplementary_fd_row_from_current_shares" not in text
+    assert 'output_after=res.x' in text

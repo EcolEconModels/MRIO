@@ -1,8 +1,11 @@
+# pyright: reportArgumentType=false
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
+
+from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
 
 def test_aggregate_iot_keeps_unmapped_and_sums_correctly():
@@ -14,11 +17,13 @@ def test_aggregate_iot_keeps_unmapped_and_sums_correctly():
         index=sectors,
         columns=sectors,
     )
-    Y = pd.DataFrame({"FD": [1.0, 2.0, 3.0]}, index=sectors)
+    # P3 is a non-overlapping final-demand fixture, so the explicit production
+    # helper is numerically the familiar Z + Y total here.
+    Y = pd.DataFrame({"P3": [1.0, 2.0, 3.0]}, index=sectors)
 
     # Aggregate B and C into X; keep A unmapped.
     mapping = {"B": "X", "C": "X"}
-    res = aggregate_iot(Z, Y, mapping, keep_unmapped=True, create_io_system=False)
+    res = aggregate_iot(Z, Y, mapping, output=flow_use_total(Z, Y), keep_unmapped=True, create_io_system=False)
 
     assert list(res.Z.index) == ["A", "X"]
     assert list(res.Z.columns) == ["A", "X"]
@@ -37,7 +42,7 @@ def test_aggregate_iot_keeps_unmapped_and_sums_correctly():
     pd.testing.assert_frame_equal(res.Z, Z_expected)
     pd.testing.assert_frame_equal(res.Y, Y_expected)
 
-    x_expected = (Z_expected.sum(axis=1) + Y_expected.sum(axis=1)).astype("float64")
+    x_expected = (Z_expected.sum(axis=1) + Y_expected.sum(axis=1)).astype("float64").rename("x")
     pd.testing.assert_series_equal(res.x, x_expected)
 
     # A = Z / x (column-wise)
@@ -78,12 +83,12 @@ def test_aggregate_iot_preserves_final_demand_column_totals():
     )
 
     mapping = {"B": "X", "C": "X"}
-    res = aggregate_iot(Z, Y, mapping, keep_unmapped=True, create_io_system=False)
+    res = aggregate_iot(Z, Y, mapping, output=flow_use_total(Z, Y), keep_unmapped=True, create_io_system=False)
 
     pd.testing.assert_series_equal(res.Y.sum(axis=0).astype("float64"), Y.sum(axis=0).astype("float64"))
     pd.testing.assert_series_equal(
         res.x.astype("float64"),
-        (res.Z.sum(axis=1) + res.Y.sum(axis=1)).astype("float64"),
+        (res.Z.sum(axis=1) + res.Y.sum(axis=1)).astype("float64").rename("x"),
     )
 
 
@@ -101,7 +106,7 @@ def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
     M = pd.DataFrame({"P3": [7.0, 9.0, 8.0]}, index=V.index)
     mapping = {"p24.d@CPA_C20": "CPA_C20_others", "p24.g": "CPA_C20_BIOGASOLINE"}
 
-    res = aggregate_iot(Z, Y, mapping, V=V, M=M, keep_unmapped=True, create_io_system=False)
+    res = aggregate_iot(Z, Y, mapping, V=V, M=M, output=flow_use_total(Z, Y), keep_unmapped=True, create_io_system=False)
 
     assert res.V is not None
     assert res.M is not None
@@ -143,7 +148,7 @@ def test_aggregate_iot_refreshes_m_identity_tfu_and_tu_columns():
         columns=["P3", "P5", "P6", "TFU", "TU"],
     )
 
-    res = aggregate_iot(Z, Y, {}, M=M, keep_unmapped=True, create_io_system=False)
+    res = aggregate_iot(Z, Y, {}, M=M, output=flow_use_total(Z, Y), keep_unmapped=True, create_io_system=False)
 
     assert res.M is not None
     identity = res.M.loc["Total intermediate consumption / final use"]

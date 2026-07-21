@@ -14,7 +14,11 @@ import pandas as pd
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
 )
-from ecolecon_mrio.iot_identities import find_imports_vector, supplementary_accounting_identity_kind
+from ecolecon_mrio.iot_identities import (
+    find_imports_vector,
+    normalise_supplementary_row_label,
+    supplementary_accounting_identity_kind,
+)
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
 
@@ -1036,68 +1040,6 @@ def _reshape_template_table(ws, *, target_n_products: int) -> dict:
     return _template_table_layout(ws)
 
 
-def _supplementary_fd_row_from_current_shares(
-    *,
-    template_fd_values: pd.Series,
-    current_fd_totals: pd.Series,
-    product_total: float,
-) -> pd.Series:
-    out = pd.Series(index=template_fd_values.index.astype(str), dtype="float64")
-    current = pd.to_numeric(current_fd_totals.reindex(out.index), errors="coerce")
-    template = pd.to_numeric(template_fd_values.reindex(out.index), errors="coerce")
-
-    split_groups = {
-        "P3": ["P3_S13", "P3_S14", "P3_S15"],
-        "P5": ["P51G", "P52", "P53"],
-        "P6": ["P6_B0", "P6_D0", "P6_U2", "P6_U3"],
-    }
-
-    for total_code, detail_codes in split_groups.items():
-        if total_code in out.index:
-            if pd.notna(template.get(total_code)):
-                out.loc[total_code] = float(template.loc[total_code])
-            elif pd.notna(current.get(total_code)):
-                out.loc[total_code] = float(current.loc[total_code])
-        available_details = [code for code in detail_codes if code in out.index]
-        if not available_details:
-            continue
-        detail_sum = float(current.reindex(available_details).fillna(0.0).sum())
-        total_value = out.get(total_code)
-        if pd.isna(total_value):
-            total_value = template.get(total_code)
-        if pd.isna(total_value):
-            total_value = current.get(total_code)
-        if pd.isna(total_value):
-            continue
-        if detail_sum > 0:
-            shares = current.reindex(available_details).fillna(0.0) / detail_sum
-            out.loc[available_details] = float(total_value) * shares
-        else:
-            out.loc[available_details] = 0.0
-
-    for code in out.index:
-        if code in {"P3", "P5", "P6", "TU", "TFU"}:
-            continue
-        if code == "P5M":
-            if pd.notna(current.get(code)):
-                out.loc[code] = float(current.loc[code])
-            elif pd.notna(template.get(code)):
-                out.loc[code] = float(template.loc[code])
-            continue
-        if pd.notna(template.get(code)) and pd.isna(out.get(code)):
-            out.loc[code] = float(template.loc[code])
-
-    tfu_value = 0.0
-    for code in ("P3", "P5", "P6"):
-        if code in out.index and pd.notna(out.get(code)):
-            tfu_value += float(out.loc[code])
-    if "TFU" in out.index:
-        out.loc["TFU"] = tfu_value
-    if "TU" in out.index:
-        out.loc["TU"] = float(product_total) + tfu_value
-    return out
-
-
 def _validate_template_reaggregation(
     *,
     product_codes_order: Sequence[str],
@@ -1111,6 +1053,7 @@ def _validate_template_reaggregation(
     workbook_layout: dict[str, int] | None = None,
     Z_ord: pd.DataFrame,
     Y_ord: pd.DataFrame,
+    output_after: pd.Series,
     lower_row_vectors: dict[str, pd.Series],
     lower_fd_vectors: dict[str, pd.Series],
     source_parent_by_input: dict[str, str] | None = None,
@@ -1152,7 +1095,7 @@ def _validate_template_reaggregation(
 
     row_sum_Z = Z_ord.sum(axis=1).astype("float64")
     col_sum_Z = Z_ord.sum(axis=0).astype("float64")
-    current_x = (row_sum_Z + Y_ord.sum(axis=1)).astype("float64")
+    current_x = output_after.reindex(product_codes).fillna(0.0).astype("float64")
     current_tfu = pd.Series(0.0, index=product_codes, dtype="float64")
     if {"P3", "P5", "P6"}.issubset(set(Y_ord.columns.astype(str))):
         current_tfu = (Y_ord["P3"] + Y_ord["P5"] + Y_ord["P6"]).astype("float64")
@@ -1453,6 +1396,7 @@ def _write_sfc_workbook(
     aggregated_sector_emission_intensity: pd.DataFrame | None = None,
     exio_final_demand_emission_intensity: pd.DataFrame | None = None,
     eurostat_sector_co2_mapping: pd.DataFrame | None = None,
+    output_after: pd.Series | None = None,
     validate_template_parent_totals: bool = True,
 ) -> None:
     """
@@ -1587,7 +1531,9 @@ def _write_sfc_workbook(
         M_ord = M_after.copy().astype("float64")
         M_ord.index = M_ord.index.astype(str)
         M_ord.columns = M_ord.columns.astype(str)
-    x_after = (Z_after.sum(axis=1) + Y_after.sum(axis=1)).astype("float64")
+    if output_after is None:
+        raise ValueError("Workbook export requires the authoritative output vector.")
+    x_after = output_after.reindex(Z_after.index).fillna(0.0).astype("float64")
 
     # Workbook creation/load
     if template_xlsx is not None:
@@ -1723,144 +1669,182 @@ def _write_sfc_workbook(
 
     lower_row_vectors: dict[str, pd.Series] = {}
     lower_fd_vectors: dict[str, pd.Series] = {}
-    supplementary_row_by_label: dict[str, str] = {}
-    if V_ord is not None:
-        for row_code in V_ord.index.astype(str):
-            supplementary_row_by_label[row_code.strip()] = row_code
-            row_label = str(row_labels.get(row_code, "")).strip()
-            if row_label:
-                supplementary_row_by_label[row_label] = row_code
-                supplementary_row_by_label[_pretty_sector_label(row_label)] = row_code
+    source_rows = [str(code) for code in parsed.meta["identified_supplementary_rows"]]
+    if len(source_rows) != len(set(source_rows)):
+        raise ValueError(f"Parsed Eurostat supplementary rows are not unique: {source_rows!r}")
 
-    # Template-only: rebuild lower rows from identities and parent-sector shares, then remove
-    # template-only tabs that would otherwise survive as blank sheets.
+    def _match_row(frame: pd.DataFrame | None, row_code: str, row_label: str) -> str | None:
+        if frame is None:
+            return None
+        index = [str(code) for code in frame.index]
+        exact = [code for code in index if code == row_code]
+        if len(exact) > 1:
+            raise ValueError(f"Ambiguous supplementary row code {row_code!r}")
+        if exact:
+            return exact[0]
+        target = normalise_supplementary_row_label(row_label)
+        label_matches = [code for code in index if normalise_supplementary_row_label(code) == target]
+        if len(label_matches) > 1:
+            raise ValueError(
+                f"Ambiguous supplementary row label for {row_code!r} ({row_label!r}): {label_matches!r}"
+            )
+        return label_matches[0] if label_matches else None
+
+    flow_role = str(variant_value or "TOTAL").upper()
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unknown workbook flow role {variant_value!r}")
+
+    tpl_wb = None
+    tpl_ws = None
+    tpl_layout = None
     if template_xlsx is not None:
-        # Drop template-only mapping sheets instead of blanking them, so downstream consumers
-        # do not receive empty workbook tabs.
-        for sheet_name in ("Mapping", "Aggregation"):
+        # Remove every stale template metadata/data sheet. Recreate only generated metadata.
+        for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure"):
             if sheet_name in wb.sheetnames:
                 wb.remove(wb[sheet_name])
 
-        # Update Summary / Structure "Stock or flow" label if present.
-        if "Summary" in wb.sheetnames:
-            ws_sum = wb["Summary"]
-            if ws_sum.cell(row=16, column=2).value == "Sheet 1" and variant_value is not None:
-                human = {"TOTAL": "Total", "DOM": "Domestic", "IMP": "Imports"}.get(str(variant_value), str(variant_value))
-                ws_sum.cell(row=16, column=5).value = human
-        if "Structure" in wb.sheetnames:
-            ws_struct = wb["Structure"]
-            if ws_struct.cell(row=6, column=2).value == "Stock or flow" and variant_value is not None:
-                human = {"TOTAL": "Total", "DOM": "Domestic", "IMP": "Imports"}.get(str(variant_value), str(variant_value))
-                ws_struct.cell(row=6, column=3).value = human
+        ws_sum = wb.create_sheet("Summary")
+        ws_sum.append(["Field", "Value"])
+        ws_sum.append(["Table", "Generated disaggregated/reaggregated Eurostat-shaped IOT"])
+        ws_sum.append(["Stock or flow", str(variant_value or "")])
+        ws_sum.append(["Output semantics", "Domestic product output; shared activity denominator"])
+        ws_sum.append(["Final-demand basis", "Atomic/non-overlapping P3, P5 and P6 categories"])
+        ws_struct = wb.create_sheet("Structure")
+        ws_struct.append(["Dimension", "Count"])
+        ws_struct.append(["Products", len(product_codes_order)])
+        ws_struct.append(["Final-demand display columns", len(fd_codes_order_no_total)])
+        ws_struct.append(["Supplementary rows", len(source_rows)])
 
         tpl_wb = openpyxl.load_workbook(template_xlsx, data_only=False)
         tpl_ws = tpl_wb["Sheet 1"]
         tpl_layout = _template_table_layout(tpl_ws)
-        tpl_product_cols = {
-            code: int(tpl_layout["first_product_col"]) + idx for idx, code in enumerate(base_product_codes)
-        }
-        tpl_fd_cols = {
-            code: int(tpl_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes_order_no_total)
-        }
 
-        x_before = (Z_before.sum(axis=1) + Y_before.sum(axis=1)).astype("float64")
-        output_contrib_by_parent: dict[str, dict[str, float]] = {code: {} for code in product_codes_order}
-        if mapping_to_col in mapping_df.columns and mapping_from_col in mapping_df.columns:
-            for _, row in mapping_df.iterrows():
-                from_sector = str(row[mapping_from_col])
-                to_sector = str(row[mapping_to_col])
-                parent_code = source_parent_by_input.get(from_sector) or _base_sector_from_code(from_sector, base_product_codes)
-                if parent_code is None or to_sector not in output_contrib_by_parent or from_sector not in x_before.index:
-                    continue
-                output_contrib_by_parent[to_sector][parent_code] = output_contrib_by_parent[to_sector].get(parent_code, 0.0) + float(
-                    x_before.loc[from_sector]
+    if template_xlsx is None:
+        ws_sum = wb["Summary"]
+        ws_sum.append(["Field", "Value"])
+        ws_sum.append(["Table", "Generated disaggregated/reaggregated Eurostat-shaped IOT"])
+        ws_sum.append(["Stock or flow", str(variant_value or "")])
+        ws_sum.append(["Output semantics", "Domestic product output; shared activity denominator"])
+        ws_sum.append(["Final-demand basis", "Atomic/non-overlapping P3, P5 and P6 categories"])
+        ws_struct = wb["Structure"]
+        ws_struct.append(["Dimension", "Count"])
+        ws_struct.append(["Products", len(product_codes_order)])
+        ws_struct.append(["Final-demand display columns", len(fd_codes_order_no_total)])
+        ws_struct.append(["Supplementary rows", len(source_rows)])
+
+    lower_start = int(layout["va_row"])
+    lower_end = max(ws.max_row, lower_start + len(source_rows) - 1)
+    for row in range(lower_start, lower_end + 1):
+        for col in range(1, int(layout["header_last_col"]) + 1):
+            ws.cell(row=row, column=col).value = None
+
+    supplementary_row_codes_written: list[str] = []
+    row_positions: dict[str, int] = {}
+    contract_rows: list[dict[str, object]] = []
+    parsed_v = parsed.V.astype("float64") if parsed.V is not None else None
+    parsed_m = parsed.M.astype("float64") if parsed.M is not None else None
+    imports_vector = find_imports_vector(V_ord, product_codes_order)
+
+    for offset, row_code in enumerate(source_rows):
+        target_r = lower_start + offset
+        row_label = str(row_labels.get(row_code, row_code)).strip() or row_code
+        kind = supplementary_accounting_identity_kind(row_code) or supplementary_accounting_identity_kind(row_label)
+        source_v_row = _match_row(parsed_v, row_code, row_label)
+        source_m_row = _match_row(parsed_m, row_code, row_label)
+        output_v_row = _match_row(V_ord, row_code, row_label)
+        output_m_row = _match_row(M_ord, row_code, row_label)
+
+        if kind == "output":
+            product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
+            product_method = "identity_output"
+        elif kind == "intermediate_use":
+            product_vector = col_sums_Z.reindex(product_codes_order).fillna(0.0).astype("float64")
+            product_method = "identity_intermediate_use"
+        elif kind == "value_added" and flow_role == "TOTAL":
+            product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
+            product_method = "identity_value_added_total_only"
+        elif kind == "total_supply" and flow_role == "TOTAL":
+            if imports_vector is None:
+                raise ValueError(f"Cannot reconstruct TOTAL supply row {row_code!r}: no imports vector in transformed V.")
+            product_vector = (x_after.reindex(product_codes_order).fillna(0.0) + imports_vector.reindex(product_codes_order).fillna(0.0)).astype("float64")
+            product_method = "identity_total_supply_total_only"
+        else:
+            if source_v_row is None or output_v_row is None or V_ord is None:
+                raise ValueError(
+                    "Supplementary product row cannot be reconstructed without authoritative V: "
+                    f"code={row_code!r}, label={row_label!r}, source_present={source_v_row is not None}."
                 )
+            product_vector = V_ord.loc[output_v_row].reindex(product_codes_order).astype("float64")
+            product_method = "flow_specific_v_disaggregation"
 
-        shares_new_given_old: dict[str, dict[str, float]] = {code: {} for code in product_codes_order}
-        for parent_code in base_product_codes:
-            parent_outputs = [code for code in product_codes_order if parent_code in parents_by_output.get(code, ())]
-            if not parent_outputs:
-                continue
-            total_parent = float(sum(output_contrib_by_parent.get(code, {}).get(parent_code, 0.0) for code in parent_outputs))
-            if total_parent <= 0:
-                total_parent = float(x_after.reindex(parent_outputs).fillna(0.0).sum())
-                for code in parent_outputs:
-                    value = float(x_after.get(code, 0.0))
-                    shares_new_given_old.setdefault(code, {})[parent_code] = 0.0 if total_parent <= 0 else value / total_parent
-            else:
-                for code in parent_outputs:
-                    value = float(output_contrib_by_parent.get(code, {}).get(parent_code, 0.0))
-                    shares_new_given_old.setdefault(code, {})[parent_code] = value / total_parent
+        if kind == "intermediate_use":
+            fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
+            fd_method = "identity_intermediate_use"
+            non_applicable = ""
+        elif kind in {"value_added", "output", "total_supply"}:
+            fd_vector = pd.Series(np.nan, index=fd_codes_order_no_total, dtype="float64")
+            fd_method = "structurally_non_applicable"
+            non_applicable = "|".join(fd_codes_order_no_total)
+        else:
+            if source_m_row is None or output_m_row is None or M_ord is None:
+                raise ValueError(
+                    "Supplementary final-demand row cannot be reconstructed without authoritative M: "
+                    f"code={row_code!r}, label={row_label!r}, source_present={source_m_row is not None}."
+                )
+            fd_vector = M_ord.loc[output_m_row].reindex(fd_codes_order_no_total).astype("float64")
+            fd_method = "flow_specific_m_disaggregation"
+            non_applicable = ""
 
-        source_lower_rows = list(range(int(tpl_layout["va_row"]), tpl_ws.max_row + 1))
-        for offset, source_r in enumerate(source_lower_rows):
-            target_r = int(layout["va_row"]) + offset
-            label = tpl_ws.cell(row=source_r, column=1).value
-            if label is None or str(label).strip() == "":
-                continue
-            label_text = str(label).strip()
-            identity_kind = supplementary_accounting_identity_kind(label_text)
-            v_row_code = supplementary_row_by_label.get(label_text)
-
-            if identity_kind == "value_added":
-                product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
-            elif identity_kind == "output":
-                product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
-            elif identity_kind == "intermediate_use":
-                product_vector = col_sums_Z.reindex(product_codes_order).fillna(0.0).astype("float64")
-            elif identity_kind == "total_supply":
-                imports_vector = find_imports_vector(V_ord, product_codes_order)
-                if imports_vector is None:
-                    imports_vector = find_imports_vector(pd.DataFrame(lower_row_vectors).T, product_codes_order)
-                if imports_vector is None:
-                    imports_vector = pd.Series(0.0, index=product_codes_order, dtype="float64")
-                product_vector = (x_after.reindex(product_codes_order).fillna(0.0) + imports_vector.reindex(product_codes_order).fillna(0.0)).astype("float64")
-            elif v_row_code is not None and V_ord is not None:
-                product_vector = V_ord.loc[v_row_code].reindex(product_codes_order).fillna(0.0).astype("float64")
-            else:
-                product_values: dict[str, float] = {}
-                for output_code in product_codes_order:
-                    total_value = 0.0
-                    for parent_code in parents_by_output.get(output_code, ()):
-                        cell_value = tpl_ws.cell(row=source_r, column=tpl_product_cols[parent_code]).value
-                        if not isinstance(cell_value, (int, float)):
-                            continue
-                        total_value += float(cell_value) * float(shares_new_given_old.get(output_code, {}).get(parent_code, 0.0))
-                    product_values[output_code] = total_value
-                product_vector = pd.Series(product_values, dtype="float64").reindex(product_codes_order).fillna(0.0)
-
-            for j, output_code in enumerate(product_codes_order):
-                _write_num(ws, row=target_r, col=c_prod0 + j, value=float(product_vector.loc[output_code]))
-            lower_row_vectors[label_text] = product_vector
-
-            template_fd_values = pd.Series(
-                {code: tpl_ws.cell(row=source_r, column=tpl_fd_cols[code]).value if code in tpl_fd_cols else None for code in fd_codes_order_no_total},
-                index=fd_codes_order_no_total,
-                dtype="object",
-            )
-            numeric_template_fd = pd.to_numeric(template_fd_values, errors="coerce")
-            if identity_kind == "intermediate_use":
-                fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
-            elif identity_kind in {"value_added", "output", "total_supply"}:
-                fd_vector = pd.Series(index=fd_codes_order_no_total, dtype="float64")
-            elif v_row_code is not None and M_ord is not None and v_row_code in M_ord.index:
-                fd_vector = M_ord.loc[v_row_code].reindex(fd_codes_order_no_total).astype("float64")
-            elif numeric_template_fd.notna().any():
-                fd_vector = _supplementary_fd_row_from_current_shares(
-                    template_fd_values=numeric_template_fd,
-                    current_fd_totals=current_fd_totals,
-                    product_total=float(product_vector.sum()),
-                ).reindex(fd_codes_order_no_total)
-            else:
-                fd_vector = pd.Series(index=fd_codes_order_no_total, dtype="float64")
-
-            for j, fd_code in enumerate(fd_codes_order_no_total):
-                value = fd_vector.get(fd_code)
-                if pd.isna(value):
-                    continue
+        ws.cell(row=target_r, column=1).value = row_label
+        for j, output_code in enumerate(product_codes_order):
+            _write_num(ws, row=target_r, col=c_prod0 + j, value=float(product_vector.loc[output_code]))
+        for j, fd_code in enumerate(fd_codes_order_no_total):
+            value = fd_vector.loc[fd_code]
+            if not pd.isna(value):
                 _write_num(ws, row=target_r, col=c_fd0 + j, value=float(value))
-            lower_fd_vectors[label_text] = fd_vector
 
+        lower_row_vectors[row_code] = product_vector
+        lower_fd_vectors[row_code] = fd_vector
+        supplementary_row_codes_written.append(row_code)
+        row_positions[row_code] = target_r
+        contract_rows.extend(
+            [
+                {
+                    "row_code": row_code,
+                    "row_label": row_label,
+                    "block": "V",
+                    "method": product_method,
+                    "is_identity": kind is not None,
+                    "source_present": source_v_row is not None,
+                    "output_present": True,
+                    "non_applicable_cells": "",
+                    "status": "ok",
+                },
+                {
+                    "row_code": row_code,
+                    "row_label": row_label,
+                    "block": "M",
+                    "method": fd_method,
+                    "is_identity": kind is not None,
+                    "source_present": source_m_row is not None,
+                    "output_present": True,
+                    "non_applicable_cells": non_applicable,
+                    "status": "ok",
+                },
+            ]
+        )
+
+    source_rows_set = set(map(str, parsed.meta["identified_supplementary_rows"]))
+    written_rows = set(supplementary_row_codes_written)
+    missing = sorted(source_rows_set - written_rows)
+    if missing:
+        raise ValueError(f"Supplementary rows were not economically reconstructed: {missing}")
+    contract = pd.DataFrame(contract_rows)
+    if not contract.empty and not contract["status"].eq("ok").all():
+        raise ValueError("Supplementary row contract contains unresolved source rows.")
+    contract.to_csv(out_path.with_name("supplementary_row_contract.csv"), index=False)
+
+    if template_xlsx is not None:
         audit_df = _build_template_parent_total_audit(
             variant_value=variant_value,
             source_parent_by_input=source_parent_by_input,
@@ -1886,6 +1870,7 @@ def _write_sfc_workbook(
             workbook_layout=layout,
             Z_ord=Z_ord,
             Y_ord=Y_ord,
+            output_after=x_after,
             lower_row_vectors=lower_row_vectors,
             lower_fd_vectors=lower_fd_vectors,
             source_parent_by_input=source_parent_by_input,
@@ -1894,6 +1879,7 @@ def _write_sfc_workbook(
             rtol=1e-9,
             atol=1e-6,
         )
+        tpl_wb.close()
     _write_excel_mapping_sheet(
         wb,
         sheet_name="IO Aggregation Mapping",
@@ -1921,7 +1907,73 @@ def _write_sfc_workbook(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
-    _vprint(verbose, f"Wrote: {out_path.resolve()}")
+    # Round-trip the saved workbook so stale-template, shape and serialization
+    # failures cannot hide behind an in-memory validation pass.
+    reopened = openpyxl.load_workbook(out_path, data_only=False)
+    if "Sheet 1" not in reopened.sheetnames or "Summary" not in reopened.sheetnames or "Structure" not in reopened.sheetnames:
+        raise ValueError(f"Saved workbook is missing required generated sheets: {out_path}")
+    ws_reopened = reopened["Sheet 1"]
+
+    def _assert_roundtrip_value(label: str, actual: object, expected: float) -> None:
+        if not isinstance(actual, (int, float)) or not np.isclose(float(actual), expected, rtol=1e-9, atol=1e-6):
+            raise ValueError(f"Workbook round-trip validation failed for {label}: actual={actual!r}, expected={expected!r}")
+
+    for i, row_code in enumerate(product_codes_order):
+        excel_r = r0 + i
+        for j, col_code in enumerate(product_codes_order):
+            _assert_roundtrip_value(
+                f"Z[{row_code!r}, {col_code!r}]",
+                ws_reopened.cell(row=excel_r, column=c_prod0 + j).value,
+                float(Z_ord.loc[row_code, col_code]),
+            )
+        for j, fd_code in enumerate(fd_codes_order_no_total):
+            expected = float(tu.loc[row_code]) if fd_code == "TU" else float(tfu.loc[row_code]) if fd_code == "TFU" else float(Y_ord.loc[row_code, fd_code])
+            _assert_roundtrip_value(
+                f"Y[{row_code!r}, {fd_code!r}]",
+                ws_reopened.cell(row=excel_r, column=c_fd0 + j).value,
+                expected,
+            )
+
+    output_rows = [code for code in source_rows if supplementary_accounting_identity_kind(code) == "output" or supplementary_accounting_identity_kind(row_labels.get(code, code)) == "output"]
+    if not output_rows:
+        raise ValueError("Parsed Eurostat table has no recognised output supplementary row.")
+    for row_code in output_rows:
+        for j, product_code in enumerate(product_codes_order):
+            _assert_roundtrip_value(
+                f"output[{row_code!r}, {product_code!r}]",
+                ws_reopened.cell(row=row_positions[row_code], column=c_prod0 + j).value,
+                float(x_after.loc[product_code]),
+            )
+
+    for row_code in source_rows:
+        row = row_positions[row_code]
+        if ws_reopened.cell(row=row, column=1).value != str(row_labels.get(row_code, row_code)).strip():
+            raise ValueError(f"Workbook round-trip validation lost supplementary row {row_code!r}.")
+        for j, product_code in enumerate(product_codes_order):
+            _assert_roundtrip_value(
+                f"supplementary V[{row_code!r}, {product_code!r}]",
+                ws_reopened.cell(row=row, column=c_prod0 + j).value,
+                float(lower_row_vectors[row_code].loc[product_code]),
+            )
+        for j, fd_code in enumerate(fd_codes_order_no_total):
+            expected = lower_fd_vectors[row_code].loc[fd_code]
+            actual = ws_reopened.cell(row=row, column=c_fd0 + j).value
+            if pd.isna(expected):
+                if isinstance(actual, (int, float)):
+                    raise ValueError(
+                        f"Workbook round-trip validation found inherited numeric value for "
+                        f"supplementary M[{row_code!r}, {fd_code!r}]: {actual!r}"
+                    )
+            else:
+                _assert_roundtrip_value(
+                    f"supplementary M[{row_code!r}, {fd_code!r}]", actual, float(expected)
+                )
+    for row in range(lower_start + len(source_rows), lower_end + 1):
+        for col in range(c_prod0, int(layout["header_last_col"]) + 1):
+            if isinstance(ws_reopened.cell(row=row, column=col).value, (int, float)):
+                raise ValueError(f"Workbook round-trip validation found stale template value at row={row}, col={col}.")
+    reopened.close()
+    _vprint(verbose, f"Wrote and round-trip validated: {out_path.resolve()}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2174,12 +2226,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         _vprint(args.verbose, "Calling: aggregate_iot(...)")
         t = _Timer()
+        x_input_path = z_dir / "x_split.csv"
+        if not x_input_path.is_file():
+            x_input_path = z_dir / "x_split_balanced.csv"
+        if not x_input_path.is_file():
+            raise SystemExit(f"Missing authoritative output vector beside {Z_path}: {x_input_path.name}")
+        x_input_frame = pd.read_csv(x_input_path, index_col=0)
+        if x_input_frame.shape[1] != 1:
+            raise SystemExit(f"Expected one output column in {x_input_path}, found {x_input_frame.shape[1]}")
+        x_input = x_input_frame.iloc[:, 0].astype("float64")
+        x_input.index = x_input.index.astype(str)
+        flow_role = str(out_base.name).split("=", 1)[-1].upper()
         res = aggregate_iot(
             Z,
             Y,
             mapping_for_run,
             V=V,
             M=M,
+            output=x_input,
+            flow_role=flow_role,
             keep_unmapped=keep_unmapped,
             create_io_system=args.create_io_system,
             compute_sector_value_per_physical_input=disaggregated_values is not None,
@@ -2341,13 +2406,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mapping_from_col="from_sector",
                 mapping_to_col="to_sector",
                 verbose=args.verbose,
-                validate_template_parent_totals=not bool(args.unsafe_skip_template_parent_totals),
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
                 disaggregated_sector_emission_intensity=disaggregated_emissions,
                 aggregated_sector_emission_intensity=combined_emissions,
                 exio_final_demand_emission_intensity=exio_final_demand_emissions,
                 eurostat_sector_co2_mapping=mapping_for_sheet,
+                output_after=res.x,
+                validate_template_parent_totals=not bool(args.unsafe_skip_template_parent_totals),
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
 

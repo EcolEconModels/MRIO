@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Construct additive monetary flows and enforce output/coefficient semantics."""
+"""Construct canonical additive flows and validate the single IO contract."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,11 @@ import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot
+from ecolecon_mrio.iot_flow_semantics import (
+    flow_use_total,
+    refresh_supplementary_rows,
+    technical_coefficients,
+)
 
 _FRAME_FILES = ("Z", "Y", "V", "M")
 _SPLIT_NAMES = {name: f"{name}_split.csv" for name in _FRAME_FILES}
@@ -44,6 +49,13 @@ def _write_series(series: pd.Series, path: Path) -> None:
     out.to_csv(path, header=True)
 
 
+def _write_frame(frame: pd.DataFrame, directory: Path, filename: str) -> None:
+    frame.to_csv(directory / filename)
+    alias = _ALIASES.get(filename)
+    if alias:
+        frame.to_csv(directory / alias)
+
+
 def _add_frames(dom: pd.DataFrame, imp: pd.DataFrame) -> pd.DataFrame:
     rows = dom.index.union(imp.index, sort=False)
     cols = dom.columns.union(imp.columns, sort=False)
@@ -56,9 +68,7 @@ def _max_gap(left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series) ->
     if isinstance(left, pd.DataFrame) and isinstance(right, pd.DataFrame):
         rows = left.index.union(right.index, sort=False)
         cols = left.columns.union(right.columns, sort=False)
-        diff = left.reindex(index=rows, columns=cols, fill_value=0.0) - right.reindex(
-            index=rows, columns=cols, fill_value=0.0
-        )
+        diff = left.reindex(index=rows, columns=cols, fill_value=0.0) - right.reindex(index=rows, columns=cols, fill_value=0.0)
     elif isinstance(left, pd.Series) and isinstance(right, pd.Series):
         idx = left.index.union(right.index, sort=False)
         diff = left.reindex(idx, fill_value=0.0) - right.reindex(idx, fill_value=0.0)
@@ -69,10 +79,7 @@ def _max_gap(left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series) ->
 
 def _assert_close(label: str, left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series, *, rtol: float, atol: float) -> float:
     gap = _max_gap(left, right)
-    scale = max(
-        float(np.nanmax(np.abs(left.to_numpy()))) if left.size else 0.0,
-        float(np.nanmax(np.abs(right.to_numpy()))) if right.size else 0.0,
-    )
+    scale = max(float(np.nanmax(np.abs(left.to_numpy()))) if left.size else 0.0, float(np.nanmax(np.abs(right.to_numpy()))) if right.size else 0.0)
     tolerance = max(atol, rtol * scale)
     if not np.isfinite(gap) or gap > tolerance:
         raise ValueError(f"{label} failed: max_abs_gap={gap:.12g}, tolerance={tolerance:.12g}")
@@ -112,10 +119,10 @@ def _child_to_parent(manifest: Mapping[str, object], source_codes: Iterable[str]
 
 
 def _aggregate_square(frame: pd.DataFrame, child_parent: Mapping[str, str], source_codes: pd.Index) -> pd.DataFrame:
-    row_groups = pd.Index([child_parent.get(str(code), str(code)) for code in frame.index])
-    col_groups = pd.Index([child_parent.get(str(code), str(code)) for code in frame.columns])
-    row_agg = cast(pd.DataFrame, frame.groupby(row_groups, sort=False).sum())
-    col_agg = cast(pd.DataFrame, row_agg.T.groupby(col_groups, sort=False).sum().T)
+    rows = pd.Index([child_parent.get(str(code), str(code)) for code in frame.index])
+    cols = pd.Index([child_parent.get(str(code), str(code)) for code in frame.columns])
+    row_agg = cast(pd.DataFrame, frame.groupby(rows, sort=False).sum())
+    col_agg = cast(pd.DataFrame, row_agg.T.groupby(cols, sort=False).sum().T)
     return cast(pd.DataFrame, col_agg.reindex(index=source_codes, columns=source_codes, fill_value=0.0))
 
 
@@ -129,41 +136,43 @@ def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], sou
     return cast(pd.DataFrame, frame.T.groupby(groups, sort=False).sum().T.reindex(columns=source_codes, fill_value=0.0))
 
 
-def _write_frame(frame: pd.DataFrame, directory: Path, filename: str) -> None:
-    frame.to_csv(directory / filename)
-    alias = _ALIASES.get(filename)
-    if alias:
-        frame.to_csv(directory / alias)
-
-
-def _use_total(Z: pd.DataFrame, Y: pd.DataFrame) -> pd.Series:
-    use = Z.sum(axis=1).add(Y.sum(axis=1), fill_value=0.0).astype("float64")
-    use.name = "use_total"
-    return use
-
-
-def _apply_output_contract(dirs: Mapping[str, Path], *, suffix: str) -> list[dict[str, object]]:
+def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> list[dict[str, object]]:
     z_name = "Z_split.csv" if suffix == "split" else "Z_agg.csv"
     y_name = "Y_split.csv" if suffix == "split" else "Y_agg.csv"
     x_name = "x_split.csv" if suffix == "split" else "x_agg.csv"
     a_name = "A_split.csv" if suffix == "split" else "A_agg.csv"
     use_name = "use_total_split.csv" if suffix == "split" else "use_total_agg.csv"
-    Z = {flow: _read_frame(directory / z_name) for flow, directory in dirs.items()}
-    Y = {flow: _read_frame(directory / y_name) for flow, directory in dirs.items()}
-    use = {flow: _use_total(Z[flow], Y[flow]) for flow in dirs}
-    output = use["DOM"].copy()
-    output.name = "x"
+    v_name = "V_split.csv" if suffix == "split" else "V_agg.csv"
+    m_name = "M_split.csv" if suffix == "split" else "M_agg.csv"
+    Z = {flow: _read_frame(path / z_name) for flow, path in dirs.items()}
+    Y = {flow: _read_frame(path / y_name) for flow, path in dirs.items()}
+    use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in dirs}
+    output = use["DOM"].copy().rename("x")
     diagnostics: list[dict[str, object]] = []
     for flow, directory in dirs.items():
-        _write_series(use[flow], directory / use_name)
-        _write_series(output, directory / x_name)
-        if suffix == "split":
-            _write_series(output, directory / _ALIASES[x_name])
-        A = Z[flow].divide(output.replace(0.0, np.nan), axis="columns").fillna(0.0)
-        _write_frame(A, directory, a_name)
-    diagnostics.append({"stage": suffix, "object": "use_total", "contract": "TOTAL=DOM+IMP"})
-    diagnostics.append({"stage": suffix, "object": "x", "contract": "shared_domestic_output_denominator"})
-    diagnostics.append({"stage": suffix, "object": "A", "contract": "A_flow=Z_flow/DOM_output"})
+        expected_A = technical_coefficients(Z[flow], output)
+        if write:
+            _write_series(use[flow], directory / use_name)
+            _write_series(output, directory / x_name)
+            if suffix == "split":
+                _write_series(output, directory / _ALIASES[x_name])
+            _write_frame(expected_A, directory, a_name)
+            V = _read_frame(directory / v_name) if (directory / v_name).is_file() else None
+            M = _read_frame(directory / m_name) if (directory / m_name).is_file() else None
+            V, M = refresh_supplementary_rows(V, M, Z=Z[flow], Y=Y[flow], output=output, flow_role=flow)  # type: ignore[arg-type]
+            if V is not None:
+                _write_frame(V, directory, v_name)
+            if M is not None:
+                _write_frame(M, directory, m_name)
+        else:
+            _assert_close(f"{suffix} {flow} use_total", _read_series(directory / use_name), use[flow], rtol=1e-9, atol=1e-6)
+            _assert_close(f"{suffix} {flow} output", _read_series(directory / x_name), output, rtol=1e-9, atol=1e-6)
+            _assert_close(f"{suffix} {flow} A", _read_frame(directory / a_name), expected_A, rtol=1e-9, atol=1e-6)
+    diagnostics.extend([
+        {"stage": suffix, "object": "use_total", "contract": "atomic final demand; TOTAL=DOM+IMP"},
+        {"stage": suffix, "object": "x", "contract": "shared domestic product output"},
+        {"stage": suffix, "object": "A", "contract": "A_flow=Z_flow/domestic output"},
+    ])
     return diagnostics
 
 
@@ -176,7 +185,6 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     if dirs["TOTAL"].exists():
         shutil.rmtree(dirs["TOTAL"])
     dirs["TOTAL"].mkdir(parents=True)
-
     derived: dict[str, pd.DataFrame] = {}
     for obj, filename in _SPLIT_NAMES.items():
         dom_path, imp_path = dirs["DOM"] / filename, dirs["IMP"] / filename
@@ -192,33 +200,31 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     derived["Y"] = derived["Y"].reindex(index=sectors, fill_value=0.0)
     _write_frame(derived["Z"], dirs["TOTAL"], "Z_split.csv")
     _write_frame(derived["Y"], dirs["TOTAL"], "Y_split.csv")
-    semantic_diagnostics = _apply_output_contract(dirs, suffix="split")
+    semantic_diagnostics = _apply_contract(dirs, suffix="split", write=True)
 
     total_filters = dict(eurostat_filters)
     total_filters[eurostat_stk_flow_dim] = "TOTAL"
     reference = load_eurostat_iot(dataset=eurostat_dataset, filters=total_filters, row_dim=eurostat_row_dim, col_dim=eurostat_col_dim, storage_folder=default_data_root() / "eurostat")
     source_codes = reference.Z.index.astype(str)
     child_parent = _child_to_parent(manifest, source_codes)
-    diagnostics: list[dict[str, object]] = []
-    diagnostics.append({"stage": "split_to_eurostat", "object": "Z", "max_abs_gap": _assert_close("TOTAL Z reconstruction", _aggregate_square(derived["Z"], child_parent, source_codes), reference.Z, rtol=rtol, atol=atol), "ok": True})
-    diagnostics.append({"stage": "split_to_eurostat", "object": "Y", "max_abs_gap": _assert_close("TOTAL Y reconstruction", _aggregate_rows(derived["Y"], child_parent, source_codes), reference.Y, rtol=rtol, atol=atol), "ok": True})
+    diagnostics: list[dict[str, object]] = [
+        {"stage": "split_to_eurostat", "object": "Z", "max_abs_gap": _assert_close("TOTAL Z reconstruction", _aggregate_square(derived["Z"], child_parent, source_codes), reference.Z, rtol=rtol, atol=atol), "ok": True},
+        {"stage": "split_to_eurostat", "object": "Y", "max_abs_gap": _assert_close("TOTAL Y reconstruction", _aggregate_rows(derived["Y"], child_parent, source_codes), reference.Y, rtol=rtol, atol=atol), "ok": True},
+    ]
     if "V" in derived and reference.V is not None:
-        diagnostics.append({"stage": "split_to_eurostat", "object": "V", "max_abs_gap": _assert_close("TOTAL V reconstruction", _aggregate_columns(derived["V"], child_parent, source_codes), reference.V, rtol=rtol, atol=atol), "ok": True})
+        diagnostics.append({"stage": "split_to_eurostat", "object": "V", "max_abs_gap": _assert_close("TOTAL V reconstruction", _aggregate_columns(_read_frame(dirs["TOTAL"] / "V_split.csv"), child_parent, source_codes), reference.V, rtol=rtol, atol=atol), "ok": True})
     if "M" in derived and reference.M is not None:
-        diagnostics.append({"stage": "split_to_eurostat", "object": "M", "max_abs_gap": _assert_close("TOTAL M reconstruction", derived["M"], reference.M, rtol=rtol, atol=atol), "ok": True})
+        diagnostics.append({"stage": "split_to_eurostat", "object": "M", "max_abs_gap": _assert_close("TOTAL M reconstruction", _read_frame(dirs["TOTAL"] / "M_split.csv"), reference.M, rtol=rtol, atol=atol), "ok": True})
     (dirs["TOTAL"] / "exio_selected_sectors.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    info = {
+    (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({
         "flow_construction": "derived_dom_plus_imp",
         "source_flows": ["DOM", "IMP"],
-        "x_semantics": "domestic_product_output_shared_across_DOM_IMP_TOTAL",
-        "use_total_semantics": "flow_specific_Z_row_plus_Y_row",
-        "A_semantics": "flow_specific_intermediate_inputs_divided_by_domestic_product_output",
-        "flow_identity_rtol": rtol,
-        "flow_identity_atol": atol,
+        "x_semantics": "domestic product output from Z plus atomic final demand",
+        "use_total_semantics": "flow-specific Z plus atomic final demand",
+        "A_semantics": "flow-specific Z divided by shared domestic output",
+        "supplementary_semantics": "TOTAL complete identities; DOM/IMP partial-table identities explicitly blanked where not meaningful",
         "is_reconstruction_validated": True,
-        "canonical_total_sidecars": "monetary matrices, split topology, metadata, and measured diagnostics only",
-    }
-    (dirs["TOTAL"] / "split_info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    }, indent=2) + "\n", encoding="utf-8")
     pd.DataFrame(diagnostics + semantic_diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)
 
 
@@ -227,7 +233,6 @@ def validate_additive_outputs(outdir: Path, *, suffix: str, atol: float, rtol: f
     for directory in dirs.values():
         if not directory.is_dir():
             raise FileNotFoundError(f"Required flow directory not found: {directory}")
-    semantic_diagnostics = _apply_output_contract(dirs, suffix=suffix)
     names = _SPLIT_NAMES if suffix == "split" else _AGG_NAMES
     diagnostics: list[dict[str, object]] = []
     for obj in _FRAME_FILES:
@@ -238,19 +243,12 @@ def validate_additive_outputs(outdir: Path, *, suffix: str, atol: float, rtol: f
         if not all(path.is_file() for path in paths.values()):
             raise FileNotFoundError(f"{filename} must exist for DOM, IMP, and TOTAL")
         expected = _add_frames(_read_frame(paths["DOM"]), _read_frame(paths["IMP"]))
-        gap = _assert_close(f"{suffix} {obj} DOM+IMP=TOTAL", expected, _read_frame(paths["TOTAL"]), rtol=rtol, atol=atol)
-        diagnostics.append({"stage": suffix, "object": obj, "max_abs_gap": gap, "ok": True})
+        diagnostics.append({"stage": suffix, "object": obj, "max_abs_gap": _assert_close(f"{suffix} {obj} DOM+IMP=TOTAL", expected, _read_frame(paths["TOTAL"]), rtol=rtol, atol=atol), "ok": True})
+    diagnostics.extend(_apply_contract(dirs, suffix=suffix, write=False))
     use_name = "use_total_split.csv" if suffix == "split" else "use_total_agg.csv"
     use = {flow: _read_series(directory / use_name) for flow, directory in dirs.items()}
     diagnostics.append({"stage": suffix, "object": "use_total", "max_abs_gap": _assert_close(f"{suffix} use TOTAL=DOM+IMP", use["DOM"].add(use["IMP"], fill_value=0.0), use["TOTAL"], rtol=rtol, atol=atol), "ok": True})
-    x_name = "x_split.csv" if suffix == "split" else "x_agg.csv"
-    x = {flow: _read_series(directory / x_name) for flow, directory in dirs.items()}
-    for flow in ("IMP", "TOTAL"):
-        diagnostics.append({"stage": suffix, "object": f"x_{flow}", "max_abs_gap": _assert_close(f"{suffix} x {flow}=DOM output", x[flow], x["DOM"], rtol=rtol, atol=atol), "ok": True})
-    a_name = "A_split.csv" if suffix == "split" else "A_agg.csv"
-    A = {flow: _read_frame(directory / a_name) for flow, directory in dirs.items()}
-    diagnostics.append({"stage": suffix, "object": "A", "max_abs_gap": _assert_close(f"{suffix} A TOTAL=DOM+IMP", _add_frames(A["DOM"], A["IMP"]), A["TOTAL"], rtol=rtol, atol=atol), "ok": True})
-    pd.DataFrame(diagnostics + semantic_diagnostics).to_csv(outdir / f"{suffix}_flow_identity.csv", index=False)
+    pd.DataFrame(diagnostics).to_csv(outdir / f"{suffix}_flow_identity.csv", index=False)
 
 
 def main(argv: Iterable[str] | None = None) -> int:

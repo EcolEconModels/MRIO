@@ -169,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
                 split_result.Z,
                 split_result.Y,
                 plan.reaggregation_mapping,
+                output=pd.Series(split_result.x).astype("float64"),
+                flow_role=str(flow).upper(),
                 keep_unmapped=True,
                 create_io_system=False,
             )

@@ -173,13 +173,15 @@ def validate_pipeline_outputs(
     add_check("split_Z_square", Z.index.equals(Z.columns), n_rows=int(len(Z.index)))
     add_check("split_Y_index_matches_Z", Y.index.equals(Z.index), n_rows=int(len(Y.index)))
 
-    x_expected = (Z.sum(axis=1) + Y.sum(axis=1)).astype("float64")
     x_path = _find_first(split_dir, ("x_split_balanced.csv", "x_split.csv"))
-    if x_path is not None:
-        x_df = pd.read_csv(x_path, index_col=0)
-        x_observed = x_df.iloc[:, 0].astype("float64") if isinstance(x_df, pd.DataFrame) else pd.Series(dtype="float64")
-        gap = _max_abs_series_gap(x_observed, x_expected)
-        add_check("split_x_matches_Z_plus_Y", np.isclose(gap, 0.0, rtol=rtol, atol=atol), max_abs_gap=gap)
+    if x_path is None:
+        raise FileNotFoundError(f"Missing authoritative split output vector under {split_dir}")
+    x_df = pd.read_csv(x_path, index_col=0)
+    if x_df.shape[1] != 1:
+        raise ValueError(f"Expected one output column in {x_path}, found {x_df.shape[1]}")
+    x_observed = x_df.iloc[:, 0].astype("float64")
+    x_observed.index = x_observed.index.astype(str)
+    add_check("split_x_present", True, path=str(x_path))
 
     for ratio in (
         _check_ratio_file(
@@ -214,7 +216,18 @@ def validate_pipeline_outputs(
 
         V = _load_optional_frame(split_dir, ("V_split_balanced.csv", "V_split.csv"))
         M = _load_optional_frame(split_dir, ("M_split_balanced.csv", "M_split.csv"))
-        recomputed = aggregate_iot(Z, Y, mapping, V=V, M=M, keep_unmapped=False, create_io_system=False)
+        flow_role = str(split_dir.name).split("=", 1)[-1].upper()
+        recomputed = aggregate_iot(
+            Z,
+            Y,
+            mapping,
+            V=V,
+            M=M,
+            output=x_observed,
+            flow_role=flow_role if flow_role in {"DOM", "IMP", "TOTAL"} else "TOTAL",
+            keep_unmapped=False,
+            create_io_system=False,
+        )
 
         expected_outputs: list[tuple[str, pd.DataFrame | pd.Series | None, Path]] = [
             ("Z_agg", recomputed.Z, agg_dir / "Z_agg.csv"),

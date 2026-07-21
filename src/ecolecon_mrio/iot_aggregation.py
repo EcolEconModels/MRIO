@@ -1,13 +1,13 @@
+# pyright: reportAssignmentType=false, reportArgumentType=false, reportGeneralTypeIssues=false
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.iot_identities import derive_v_identity_rows, refresh_m_identity_rows
+from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows, technical_coefficients
 
 
 @dataclass(frozen=True)
@@ -271,6 +271,8 @@ def aggregate_iot(
     *,
     V: pd.DataFrame | None = None,
     M: pd.DataFrame | None = None,
+    output: pd.Series | None = None,
+    flow_role: str = "TOTAL",
     level: int = -1,
     keep_unmapped: bool = True,
     create_io_system: bool = True,
@@ -279,75 +281,48 @@ def aggregate_iot(
     compute_sector_emission_intensity: bool = False,
     disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
 ) -> AggregationResult:
-    """
-    Aggregate an IO table (Z,Y) by summing rows/cols according to a mapping.
-
-    Args:
-        Z: Intermediate transactions matrix (must be square)
-        Y: Final demand matrix (must have same index as Z)
-        mapping: Dict mapping aggregated sector names to original sector names
-        level: Which level of MultiIndex to aggregate (if applicable)
-        keep_unmapped: Whether to keep sectors not in the mapping
-        create_io_system: Whether to build a pymrio IOSystem
-        compute_sector_value_per_physical_input: If True and disaggregated_sector_value_per_physical_input provided,
-            compute aggregated sector value-per-physical-input
-        disaggregated_sector_value_per_physical_input: DataFrame with value-per-physical-input data for disaggregated sectors
-            (required if compute_sector_value_per_physical_input=True)
-
-    Returns:
-        AggregationResult with aggregated Z, Y, x, A, and optionally aggregated_sector_value_per_physical_input
-    """
+    """Aggregate one flow using an explicit, already validated output vector."""
     if not Z.index.equals(Z.columns):
         raise ValueError("Z must be square with matching index/columns.")
     if not Y.index.equals(Z.index):
         raise ValueError("Y must have the same index as Z.")
-
+    if output is None:
+        raise ValueError("aggregate_iot requires the canonical domestic output vector; implicit Z+Y output was removed.")
+    role = str(flow_role).upper()
+    if role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unknown flow_role={flow_role!r}")
     Z_agg = aggregate_square_matrix(Z, mapping, level=level, keep_unmapped=keep_unmapped)
     Y_agg = aggregate_Y(Y, mapping, level=level, keep_unmapped=keep_unmapped)
     if not Y_agg.index.equals(Z_agg.index):
         raise RuntimeError("Aggregation produced inconsistent Z/Y indices.")
-
-    x = (Z_agg.sum(axis=1) + Y_agg.sum(axis=1)).astype("float64")
+    output_df = output.astype("float64").to_frame("x")
+    output_agg_df = aggregate_Y(output_df, mapping, level=level, keep_unmapped=keep_unmapped)
+    x = output_agg_df["x"].reindex(Z_agg.index).fillna(0.0).astype("float64")
+    x.name = "x"
     V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
-    V_agg = derive_v_identity_rows(V_agg, Z=Z_agg, x=x)
-    M_agg = refresh_m_identity_rows(M, Y=Y_agg, Z=Z_agg)
-
-    A = Z_agg.astype("float64").copy()
-    denom = x.replace(0.0, np.nan).astype("float64")
-    A = A.div(denom, axis=1).fillna(0.0)
-
+    V_agg, M_agg = refresh_supplementary_rows(V_agg, M, Z=Z_agg, Y=Y_agg, output=x, flow_role=role)  # type: ignore[arg-type]
+    A = technical_coefficients(Z_agg, x)
     io_system = None
     if create_io_system:
         try:
             import pymrio  # type: ignore
-
             io_system = pymrio.IOSystem(Z=Z_agg, Y=Y_agg, x=x)
             io_system.calc_system()
         except Exception:
             io_system = None
-
-    # Compute aggregated sector value-per-physical-input if requested
     agg_sector_values = None
     if compute_sector_value_per_physical_input and disaggregated_sector_value_per_physical_input is not None:
         agg_sector_values = compute_aggregated_sector_value_per_physical_input(
             disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
             aggregation_mapping=mapping,
         )
-
     agg_sector_emission_intensity = None
     if compute_sector_emission_intensity:
         agg_sector_emission_intensity = compute_aggregated_sector_emission_intensity(
-            disaggregated_sector_emission_intensity,
-            mapping,
+            disaggregated_sector_emission_intensity, mapping
         )
-
     return AggregationResult(
-        Z=Z_agg,
-        Y=Y_agg,
-        x=x,
-        A=A,
-        V=V_agg,
-        M=M_agg,
+        Z=Z_agg, Y=Y_agg, x=x, A=A, V=V_agg, M=M_agg,
         aggregated_sector_value_per_physical_input=agg_sector_values,
         aggregated_sector_emission_intensity=agg_sector_emission_intensity,
         io_system=io_system,

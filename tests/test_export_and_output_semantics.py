@@ -12,6 +12,7 @@ import pytest
 
 from ecolecon_mrio.exiobase3 import read_exiobase3_region_export_vector
 from ecolecon_mrio.exio_eurostat_concordance_audit import ConcordanceAuditResult
+from ecolecon_mrio.iot_flow_semantics import flow_use_total, technical_coefficients
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "derive_total_iot_flow.py"
@@ -43,6 +44,18 @@ def _write_flow(root: Path, flow: str, Z: pd.DataFrame, Y: pd.DataFrame) -> None
     Y.to_csv(directory / "Y_agg.csv")
 
 
+def _write_canonical_sidecars(root: Path) -> None:
+    dom = root / "stk_flow=DOM"
+    output = flow_use_total(pd.read_csv(dom / "Z_agg.csv", index_col=0), pd.read_csv(dom / "Y_agg.csv", index_col=0)).rename("x")
+    for flow in ("DOM", "IMP", "TOTAL"):
+        directory = root / f"stk_flow={flow}"
+        Z = pd.read_csv(directory / "Z_agg.csv", index_col=0)
+        Y = pd.read_csv(directory / "Y_agg.csv", index_col=0)
+        flow_use_total(Z, Y).to_csv(directory / "use_total_agg.csv", header=True)
+        output.to_csv(directory / "x_agg.csv", header=True)
+        technical_coefficients(Z, output).to_csv(directory / "A_agg.csv")
+
+
 def test_output_contract_uses_domestic_output_and_keeps_additive_use(tmp_path: Path) -> None:
     idx = pd.Index(["a", "b"])
     Z_dom = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx)
@@ -52,6 +65,7 @@ def test_output_contract_uses_domestic_output_and_keeps_additive_use(tmp_path: P
     _write_flow(tmp_path, "DOM", Z_dom, Y_dom)
     _write_flow(tmp_path, "IMP", Z_imp, Y_imp)
     _write_flow(tmp_path, "TOTAL", Z_dom + Z_imp, Y_dom + Y_imp)
+    _write_canonical_sidecars(tmp_path)
     MODULE.validate_additive_outputs(tmp_path, suffix="agg", atol=1e-9, rtol=1e-12)
     x_dom = pd.read_csv(tmp_path / "stk_flow=DOM" / "x_agg.csv", index_col=0).iloc[:, 0]
     x_imp = pd.read_csv(tmp_path / "stk_flow=IMP" / "x_agg.csv", index_col=0).iloc[:, 0]
