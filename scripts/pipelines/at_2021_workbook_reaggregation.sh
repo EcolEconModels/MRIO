@@ -67,7 +67,7 @@ EUROSTAT_FILTERS_JSON=$(cat <<JSON
 JSON
 )
 
-STK_FLOWS_JSON='["DOM","IMP","TOTAL"]'
+STK_FLOWS_JSON='["DOM","IMP"]'
 
 CONSISTENCY_ARGS=(
   --mapping-consistency-rtol "$MAPPING_CONSISTENCY_RTOL"
@@ -106,6 +106,10 @@ set -x
 
 "$PY" "$ROOT_DIR/scripts/derive_total_iot_flow.py" \
   --outdir "$OUT_SPLIT" \
+  --eurostat-dataset naio_10_cp1700 \
+  --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
+  --eurostat-row-dim prd_ava --eurostat-col-dim prd_use \
+  --eurostat-stk-flow-dim stk_flow \
   --rtol "$FLOW_IDENTITY_RTOL" \
   --atol "$FLOW_IDENTITY_ATOL"
 
@@ -167,6 +171,10 @@ PY
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
   --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
 
+"$PY" "$ROOT_DIR/scripts/derive_total_iot_flow.py" \
+  --outdir "$OUT_DISAGG" --validate-only agg \
+  --rtol "$FLOW_IDENTITY_RTOL" --atol "$FLOW_IDENTITY_ATOL"
+
 "$PY" "$ROOT_DIR/scripts/aggregate_iot_by_mapping.py" --verbose \
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_REAGG" \
@@ -179,6 +187,10 @@ PY
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
   --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
+
+"$PY" "$ROOT_DIR/scripts/derive_total_iot_flow.py" \
+  --outdir "$OUT_REAGG" --validate-only agg \
+  --rtol "$FLOW_IDENTITY_RTOL" --atol "$FLOW_IDENTITY_ATOL"
 
 if [[ -n "$CAPITAL_STOCK_SOURCE_CSV" ]]; then
   "$PY" "$ROOT_DIR/scripts/export_product_initialization.py" \

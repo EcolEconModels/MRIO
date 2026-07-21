@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run domestic, imports, and total concordance audits and consolidate the results.")
+    parser = argparse.ArgumentParser(description="Run domestic and import concordance audits; optionally run an independently mapped TOTAL sensitivity.")
     parser.add_argument("--country", default="AT")
     parser.add_argument("--year", type=int, default=2020)
     parser.add_argument("--exio-year", type=int, default=None)
@@ -28,6 +28,7 @@ def main() -> int:
     parser.add_argument("--exio-system", default="pxp")
     parser.add_argument("--verbose", action="store_true", help="Enable detailed audit-stage logging.")
     parser.add_argument("--full-subcomponent-z-scan", action="store_true", help="Evaluate Z-cell subcomponent exceedances by scanning every Z cell.")
+    parser.add_argument("--include-independent-total", action="store_true", help="Also run the legacy independently mapped TOTAL sensitivity and consolidated three-flow reconciliation.")
     args = parser.parse_args()
 
     if args.full_subcomponent_z_scan:
@@ -37,8 +38,10 @@ def main() -> int:
     flow_specs = [
         ("domestic", "domestic", "DOM"),
         ("imports", "imports", "IMP"),
-        ("total", "total", "TOTAL"),
     ]
+    # Namespace callers predating the opt-in flag retain the historical three-flow audit.
+    if getattr(args, "include_independent_total", True):
+        flow_specs.append(("total", "total", "TOTAL"))
     script = str(Path(__file__).relative_to(REPO_ROOT))
     run_command = "PYTHONPATH=src " + shlex.join([".venv/bin/python", script, *sys.argv[1:]])
 
@@ -64,6 +67,10 @@ def main() -> int:
             run_command=run_command,
         )
         runs[comparison_mode] = FlowAuditRun(mode=comparison_mode, exio_flow=exio_flow, eurostat_flow=eurostat_flow, result=result)
+
+    if not getattr(args, "include_independent_total", True):
+        print("Wrote domestic and import audits; independently mapped TOTAL was skipped.", flush=True)
+        return 0
 
     _, euro_labels = load_default_label_maps(REPO_ROOT)
     consolidated_dir = output_root / "consolidated"

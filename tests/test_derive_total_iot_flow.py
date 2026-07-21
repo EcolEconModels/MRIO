@@ -4,9 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-
+import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "derive_total_iot_flow.py"
 SPEC = importlib.util.spec_from_file_location("derive_total_iot_flow", SCRIPT)
@@ -15,48 +14,55 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def _write_flow(root: Path, flow: str, *, scale: float) -> None:
-    out = root / f"stk_flow={flow}"
-    out.mkdir(parents=True)
-    Z = pd.DataFrame(
-        [[1.0, 2.0], [3.0, 4.0]], index=pd.Index(["a", "b"]), columns=pd.Index(["a", "b"])
-    ) * scale
-    Y = pd.DataFrame([[5.0], [6.0]], index=pd.Index(["a", "b"]), columns=pd.Index(["P3_S14"])) * scale
-    V = pd.DataFrame([[7.0, 8.0]], index=pd.Index(["D1"]), columns=pd.Index(["a", "b"])) * scale
+def _write_flow(root: Path, flow: str, scale: float) -> None:
+    d = root / f"stk_flow={flow}"
+    d.mkdir(parents=True)
+    idx = pd.Index(["a", "b"])
+    Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx) * scale
+    Y = pd.DataFrame([[5.0], [6.0]], index=idx, columns=pd.Index(["P3_S14"])) * scale
+    V = pd.DataFrame([[7.0, 8.0]], index=pd.Index(["D1"]), columns=idx) * scale
     M = pd.DataFrame([[9.0]], index=pd.Index(["TU"]), columns=pd.Index(["P3_S14"])) * scale
     for name, frame in (("Z_split.csv", Z), ("Y_split.csv", Y), ("V_split.csv", V), ("M_split.csv", M)):
-        frame.to_csv(out / name)
-    (out / "split_info.json").write_text(json.dumps({"variant_value": flow}), encoding="utf-8")
+        frame.to_csv(d / name)
+    (d / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")
 
 
-def test_derive_total_flow_is_additive_and_recomputes_x_a(tmp_path: Path) -> None:
-    _write_flow(tmp_path, "DOM", scale=1.0)
-    _write_flow(tmp_path, "IMP", scale=2.0)
-    _write_flow(tmp_path, "TOTAL", scale=99.0)
-
-    MODULE.derive_total_flow(tmp_path)
-
+def test_validate_additive_outputs_detects_and_accepts_identity(tmp_path: Path) -> None:
+    _write_flow(tmp_path, "DOM", 1.0)
+    _write_flow(tmp_path, "IMP", 2.0)
+    _write_flow(tmp_path, "TOTAL", 3.0)
     total = tmp_path / "stk_flow=TOTAL"
     Z = pd.read_csv(total / "Z_split.csv", index_col=0)
     Y = pd.read_csv(total / "Y_split.csv", index_col=0)
-    x = pd.read_csv(total / "x_split.csv", index_col=0).iloc[:, 0]
-    A = pd.read_csv(total / "A_split.csv", index_col=0)
-    V = pd.read_csv(total / "V_split.csv", index_col=0)
-    M = pd.read_csv(total / "M_split.csv", index_col=0)
+    x = Z.sum(axis=1) + Y.sum(axis=1)
+    x.to_csv(total / "x_split.csv", header=["x"])
+    for flow in ("DOM", "IMP"):
+        d = tmp_path / f"stk_flow={flow}"
+        z = pd.read_csv(d / "Z_split.csv", index_col=0)
+        y = pd.read_csv(d / "Y_split.csv", index_col=0)
+        (z.sum(axis=1) + y.sum(axis=1)).to_csv(d / "x_split.csv", header=["x"])
+    MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
+    Z.iloc[0, 0] += 1.0
+    Z.to_csv(total / "Z_split.csv")
+    with pytest.raises(ValueError, match="DOM\\+IMP=TOTAL"):
+        MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
 
-    expected_Z = pd.DataFrame(
-        [[3.0, 6.0], [9.0, 12.0]], index=pd.Index(["a", "b"]), columns=pd.Index(["a", "b"])
-    )
-    expected_Y = pd.DataFrame(
-        [[15.0], [18.0]], index=pd.Index(["a", "b"]), columns=pd.Index(["P3_S14"])
-    )
-    pd.testing.assert_frame_equal(Z, expected_Z)
-    pd.testing.assert_frame_equal(Y, expected_Y)
-    pd.testing.assert_series_equal(x, expected_Z.sum(axis=1) + expected_Y.sum(axis=1), check_names=False)
-    np.testing.assert_allclose(A.to_numpy(), expected_Z.divide(x, axis="columns").to_numpy())
-    np.testing.assert_allclose(V.to_numpy(), [[21.0, 24.0]])
-    np.testing.assert_allclose(M.to_numpy(), [[27.0]])
 
-    info = json.loads((total / "split_info.json").read_text(encoding="utf-8"))
-    assert info["flow_construction"] == "derived_dom_plus_imp"
-    assert (tmp_path / "derived_total_flow_identity.csv").is_file()
+def test_topology_mismatch_is_rejected(tmp_path: Path) -> None:
+    _write_flow(tmp_path, "DOM", 1.0)
+    _write_flow(tmp_path, "IMP", 2.0)
+    (tmp_path / "stk_flow=IMP" / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["c"]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="topology differs"):
+        MODULE._load_equal_manifests(tmp_path / "stk_flow=DOM", tmp_path / "stk_flow=IMP")
+
+
+def test_parent_aggregation_reconstructs_original_cells() -> None:
+    split = pd.DataFrame(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+        index=pd.Index(["a1", "a2", "b"]),
+        columns=pd.Index(["a1", "a2", "b"]),
+    )
+    mapping = {"a1": "a", "a2": "a", "b": "b"}
+    got = MODULE._aggregate_square(split, mapping, pd.Index(["a", "b"]))
+    expected = pd.DataFrame([[12.0, 9.0], [15.0, 9.0]], index=pd.Index(["a", "b"]), columns=pd.Index(["a", "b"]))
+    pd.testing.assert_frame_equal(got, expected)
