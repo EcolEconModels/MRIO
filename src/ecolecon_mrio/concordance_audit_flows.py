@@ -15,7 +15,6 @@ from ecolecon_mrio.exio_eurostat_concordance_audit import (
     DEFAULT_MIN_ABS_MEUR,
     DEFAULT_REL_THRESHOLD,
     EPS,
-    METRIC_HUMAN_LABELS,
     METRIC_TOTAL_USE,
     METRIC_X_OUTPUT_PROXY_TOTAL_USE,
     METRIC_Y_FINAL_DEMAND_TOTAL,
@@ -207,7 +206,7 @@ def run_single_flow_audit(
                     "EXIOBASE imports mean origin != selected country and destination/use == selected country, summed across all foreign origins; Eurostat IMP is the import-flow table."
                 ),
                 "total": (
-                    "EXIOBASE total means all origins used by the selected country; Eurostat TOTAL is the total-flow table. Total is mainly a reconciliation view and should not replace separate domestic/import diagnostics."
+                    "EXIOBASE total means all origins used by the selected country and is mapped independently using TOTAL-specific concordance weights; Eurostat TOTAL is the total-flow table. This independent TOTAL is a mapping sensitivity and reconciliation diagnostic, while canonical disaggregated TOTAL outputs are derived as DOM + IMP."
                 ),
             }.get(comparison_mode, ""),
         }

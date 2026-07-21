@@ -104,6 +104,11 @@ set -x
   --exio-to-eurostat-mapping-csv "$CONCORDANCE_CSV" \
   --outdir "$OUT_SPLIT"
 
+"$PY" "$ROOT_DIR/scripts/derive_total_iot_flow.py" \
+  --outdir "$OUT_SPLIT" \
+  --rtol "$FLOW_IDENTITY_RTOL" \
+  --atol "$FLOW_IDENTITY_ATOL"
+
 "$PY" - "$OUT_SPLIT" "$IDENTITY_MAPPING_CSV" "$OUTPUT_SUFFIX" <<'PY'
 from __future__ import annotations
 
