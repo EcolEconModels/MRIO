@@ -13,6 +13,7 @@ from ecolecon_mrio.disaggregation import SplitProfiles, calc_A, calc_x
 from ecolecon_mrio.exiobase3 import (
     ExioRegionSlice,
     load_exiobase3_region_slice,
+    read_exiobase3_region_export_vector,
 )
 from ecolecon_mrio.exiobase3_extensions import (
     extract_quantity_and_price as extract_exio_quantity_and_price,
@@ -293,7 +294,7 @@ def build_projection_matrix_for_split_profiles(
     else:
         raw_order = list(dict.fromkeys(str(sector).strip() for sector in raw_exio_sectors if str(sector).strip()))
 
-    P = pd.DataFrame(0.0, index=row_labels, columns=raw_order, dtype="float64")
+    P = pd.DataFrame(0.0, index=pd.Index(row_labels), columns=pd.Index(raw_order), dtype="float64")
     if P.empty:
         return P
 
@@ -619,7 +620,7 @@ def _split_supplementary_rows_columnwise(
     V = eurostat_V.copy().astype("float64")
     V.index = V.index.astype(str)
     V.columns = V.columns.astype(str)
-    V_split = pd.DataFrame(0.0, index=V.index, columns=list(map(str, sectors_new)), dtype="float64")
+    V_split = pd.DataFrame(0.0, index=V.index, columns=pd.Index(map(str, sectors_new)), dtype="float64")
     diagnostics: list[dict[str, object]] = []
 
     for parent in map(str, sectors_old):
@@ -791,6 +792,50 @@ def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
     return None
 
 
+
+def _project_export_donor_for_split(
+    *,
+    exio_slice: ExioRegionSlice,
+    split_profiles: Mapping[str, SplitProfiles],
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+    emitted_labels: Sequence[str],
+) -> tuple[pd.Series, str]:
+    """Build child-level export donors for one primitive flow.
+
+    Domestic exports use actual Austrian-origin EXIO exports to foreign
+    intermediate and final users. Imported-product exports/re-exports are not
+    route-identifiable in a conventional MRIO, so IMP uses Austria's import-use
+    product composition as an explicit, reported proxy.
+    """
+    P = build_projection_matrix_for_split_profiles(
+        split_profiles=split_profiles,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+        raw_exio_sectors=list(map(str, exio_slice.sectors)),
+        emitted_labels=emitted_labels,
+    )
+    if exio_slice.flow == "domestic":
+        raw = read_exiobase3_region_export_vector(
+            source_zip=exio_slice.source_zip,
+            region=exio_slice.region,
+        )
+        method = "exio_origin_export_share"
+    elif exio_slice.flow == "imports":
+        raw = (
+            exio_slice.Z_domestic.sum(axis=1)
+            + exio_slice.Y_region.sum(axis=1).reindex(exio_slice.Z_domestic.index).fillna(0.0)
+        ).astype("float64")
+        method = "import_use_share_proxy_for_reexports"
+    else:
+        raise ValueError("Canonical splitting supports only primitive DOM and IMP flows.")
+    raw = raw.reindex(P.columns).fillna(0.0).astype("float64")
+    projected = pd.Series(
+        P.to_numpy(dtype="float64") @ raw.to_numpy(dtype="float64"),
+        index=P.index.copy(),
+        dtype="float64",
+        name="export_donor",
+    )
+    return projected, method
+
 def _split_iot_using_donor_blocks(
     *,
     eurostat_Z: pd.DataFrame,
@@ -811,8 +856,8 @@ def _split_iot_using_donor_blocks(
 
     sectors_old = list(map(str, Z.index))
     sectors_new = _expanded_sector_order(sectors_old=sectors_old, split_profiles=split_profiles)
-    Z_split = pd.DataFrame(0.0, index=sectors_new, columns=sectors_new, dtype="float64")
-    Y_split = pd.DataFrame(0.0, index=sectors_new, columns=Y.columns.astype(str), dtype="float64")
+    Z_split = pd.DataFrame(0.0, index=pd.Index(sectors_new), columns=pd.Index(sectors_new), dtype="float64")
+    Y_split = pd.DataFrame(0.0, index=pd.Index(sectors_new), columns=Y.columns.astype(str), dtype="float64")
 
     _, donor_Z, donor_Y = project_exio_donor_blocks_for_split_profiles(
         exio_Z=exio_slice.Z_domestic,
@@ -824,6 +869,8 @@ def _split_iot_using_donor_blocks(
     )
 
     fallback_records: list[dict[str, object]] = []
+    export_donor: pd.Series | None = None
+    export_donor_method: str | None = None
 
     for row_sector in sectors_old:
         row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
@@ -851,8 +898,8 @@ def _split_iot_using_donor_blocks(
                 )
                 alloc = pd.DataFrame(
                     np.outer(row_share.to_numpy(), col_share.to_numpy()) * cell_total,
-                    index=row_labels,
-                    columns=col_labels,
+                    index=pd.Index(row_labels),
+                    columns=pd.Index(col_labels),
                 )
                 fallback_records.append(
                     {
@@ -871,8 +918,8 @@ def _split_iot_using_donor_blocks(
                 )
                 alloc = pd.DataFrame(
                     row_share.to_numpy().reshape(-1, 1) * cell_total,
-                    index=row_labels,
-                    columns=col_labels,
+                    index=pd.Index(row_labels),
+                    columns=pd.Index(col_labels),
                 )
                 fallback_records.append(
                     {
@@ -891,8 +938,8 @@ def _split_iot_using_donor_blocks(
                 )
                 alloc = pd.DataFrame(
                     col_share.to_numpy().reshape(1, -1) * cell_total,
-                    index=row_labels,
-                    columns=col_labels,
+                    index=pd.Index(row_labels),
+                    columns=pd.Index(col_labels),
                 )
                 fallback_records.append(
                     {
@@ -906,7 +953,7 @@ def _split_iot_using_donor_blocks(
                     }
                 )
             else:
-                alloc = pd.DataFrame([[cell_total]], index=row_labels, columns=col_labels)
+                alloc = pd.DataFrame([[cell_total]], index=pd.Index(row_labels), columns=pd.Index(col_labels))
                 fallback_records.append(
                     {
                         "row_sector": str(row_sector),
@@ -933,7 +980,32 @@ def _split_iot_using_donor_blocks(
                 continue
             keys = _fd_category_keys_for_eurostat_code(str(fd_code))
             donor_share = None
-            if keys:
+            is_export = str(fd_code) == "P6" or str(fd_code).startswith("P6_")
+            if is_export:
+                if export_donor is None:
+                    export_donor, export_donor_method = _project_export_donor_for_split(
+                        exio_slice=exio_slice,
+                        split_profiles=split_profiles,
+                        eurostat_sector_mapping=eurostat_sector_mapping,
+                        emitted_labels=sectors_new,
+                    )
+                assert export_donor_method is not None
+                donor_values = export_donor.reindex(row_labels).fillna(0.0).astype("float64")
+                donor_total = float(donor_values.sum())
+                if np.isfinite(donor_total) and donor_total > 0.0:
+                    donor_share = donor_values / donor_total
+                    fallback_records.append(
+                        {
+                            "row_sector": str(row_sector),
+                            "col_sector": str(fd_code),
+                            "cell_total": float(fd_total),
+                            "row_labels": "|".join(map(str, row_labels)),
+                            "col_labels": str(fd_code),
+                            "donor_total": donor_total,
+                            "fallback_type": export_donor_method,
+                        }
+                    )
+            elif keys:
                 cols = [col for col in donor_Y.columns if any(key in str(col).lower() for key in keys)]
                 if cols:
                     donor_values = donor_Y.reindex(index=row_labels, columns=cols).fillna(0.0).sum(axis=1)

@@ -5,12 +5,42 @@ import argparse
 import shlex
 import sys
 from pathlib import Path
+from typing import cast
+
+import pandas as pd
 
 from ecolecon_mrio.concordance_audit_flows import FlowAuditRun, run_single_flow_audit, write_flow_consolidated_outputs
-from ecolecon_mrio.exio_eurostat_concordance_audit import load_default_label_maps
+from ecolecon_mrio.exio_eurostat_concordance_audit import ConcordanceAuditResult, load_default_label_maps
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _require_additive_audit_fields(
+    result: ConcordanceAuditResult,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.DataFrame, pd.Series, pd.Series]:
+    required = {
+        "mapped_z": result.mapped_z,
+        "mapped_y": result.mapped_y,
+        "mapped_x": result.mapped_x,
+        "eurostat_z": result.eurostat_z,
+        "eurostat_y_total": result.eurostat_y_total,
+        "eurostat_x": result.eurostat_x,
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        raise ValueError(
+            "Cannot construct additive mapped TOTAL; "
+            f"missing audit result fields: {missing}"
+        )
+    return (
+        cast(pd.DataFrame, result.mapped_z),
+        cast(pd.Series, result.mapped_y),
+        cast(pd.Series, result.mapped_x),
+        cast(pd.DataFrame, result.eurostat_z),
+        cast(pd.Series, result.eurostat_y_total),
+        cast(pd.Series, result.eurostat_x),
+    )
 
 
 def main() -> int:
@@ -68,8 +98,38 @@ def main() -> int:
         )
         runs[comparison_mode] = FlowAuditRun(mode=comparison_mode, exio_flow=exio_flow, eurostat_flow=eurostat_flow, result=result)
 
+    additive_dir = output_root / "additive_total"
+    additive_dir.mkdir(parents=True, exist_ok=True)
+    dom_z, dom_y, dom_x, dom_euro_z, dom_euro_y, dom_euro_x = _require_additive_audit_fields(
+        runs["domestic"].result
+    )
+    imp_z, imp_y, imp_x, imp_euro_z, imp_euro_y, imp_euro_x = _require_additive_audit_fields(
+        runs["imports"].result
+    )
+    rows: list[dict[str, object]] = []
+    for metric, dom_values, imp_values, dom_euro, imp_euro in (
+        ("TOTAL_USE_Z_PLUS_Y", dom_x, imp_x, dom_euro_x, imp_euro_x),
+        ("Y_FINAL_DEMAND_TOTAL", dom_y, imp_y, dom_euro_y, imp_euro_y),
+        ("Z_ROW_INTERMEDIATE_SALES", dom_z.sum(axis=1), imp_z.sum(axis=1), dom_euro_z.sum(axis=1), imp_euro_z.sum(axis=1)),
+    ):
+        codes = sorted(set(map(str, dom_values.index)).union(map(str, imp_values.index)))
+        exio = dom_values.reindex(codes).fillna(0.0) + imp_values.reindex(codes).fillna(0.0)
+        euro = dom_euro.reindex(codes).fillna(0.0) + imp_euro.reindex(codes).fillna(0.0)
+        for code in codes:
+            gap = float(exio.loc[code] - euro.loc[code])
+            rows.append({
+                "metric": metric,
+                "target_code": code,
+                "exio_additive_total": float(exio.loc[code]),
+                "eurostat_additive_total": float(euro.loc[code]),
+                "signed_gap": gap,
+                "abs_gap": abs(gap),
+                "rel_gap": abs(gap) / max(abs(float(euro.loc[code])), 1e-12),
+            })
+    pd.DataFrame(rows).to_csv(additive_dir / "additive_total_comparison.csv", index=False)
+
     if not getattr(args, "include_independent_total", True):
-        print("Wrote domestic and import audits; independently mapped TOTAL was skipped.", flush=True)
+        print("Wrote domestic, import, and additive-total audits; independently mapped TOTAL was skipped.", flush=True)
         return 0
 
     _, euro_labels = load_default_label_maps(REPO_ROOT)

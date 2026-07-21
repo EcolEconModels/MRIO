@@ -143,7 +143,13 @@ def _read_region_x_from_exio_zip(*, zip_path: Path, region: str) -> pd.Series:
     if not bool(region_mask.any()):
         raise ValueError(f"EXIOBASE x.txt has no rows for region={region!r}.")
     region_frame = frame.loc[region_mask, ["sector", value_col]].copy()
-    values = pd.to_numeric(region_frame[value_col], errors="coerce").fillna(0.0).astype("float64")
+    raw_values = region_frame[value_col]
+    if not isinstance(raw_values, pd.Series):
+        raise ValueError(f"EXIOBASE x.txt output column {value_col!r} is not one-dimensional.")
+    values = pd.to_numeric(raw_values, errors="coerce")
+    if not isinstance(values, pd.Series):
+        raise TypeError("EXIOBASE x.txt numeric output conversion did not produce a Series.")
+    values = values.fillna(0.0).astype("float64")
     sectors = pd.Index(region_frame["sector"].astype(str), name="sector")
     return pd.Series(values.to_numpy(dtype=float), index=sectors, name="x_region")
 
@@ -231,6 +237,75 @@ def _read_region_use_table_from_exio_zip(
     )
 
 
+
+def _read_region_exports_member_from_exio_zip(
+    *,
+    zip_path: Path,
+    member_name: str,
+    region: str,
+) -> pd.Series:
+    """Sum one region's product exports to all foreign destinations.
+
+    For ``Z.txt`` this is intermediate exports; for ``Y.txt`` it is final-demand
+    exports. Rows are restricted to products produced in ``region`` and columns
+    to destination regions other than ``region``.
+    """
+    with zipfile.ZipFile(zip_path) as zf:
+        with _open_exio_zip_text(zf, member_name) as fh:
+            destination_regions = next(fh).rstrip("\n\r").split("\t")[2:]
+            next(fh)  # sector/final-demand labels
+            next(fh)  # units
+            keep_positions = [
+                idx for idx, destination in enumerate(destination_regions)
+                if str(destination) != str(region)
+            ]
+            if not keep_positions:
+                raise ValueError(f"EXIOBASE {member_name} has no foreign destination columns.")
+            max_keep = max(keep_positions)
+            values_by_sector: dict[str, float] = {}
+            order: list[str] = []
+            for row_idx, line in enumerate(fh):
+                try:
+                    row_region, row_sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                except ValueError:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} malformed row at position {row_idx}"
+                    ) from None
+                if str(row_region) != str(region):
+                    continue
+                numeric = _numeric_tail_from_exio_line(line)
+                if numeric.size <= max_keep:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} row width mismatch at row {row_idx}: "
+                        f"got {numeric.size}, need column {max_keep + 1}."
+                    )
+                sector = str(row_sector)
+                if sector not in values_by_sector:
+                    values_by_sector[sector] = 0.0
+                    order.append(sector)
+                values_by_sector[sector] += float(numeric[keep_positions].sum())
+    return pd.Series(
+        [values_by_sector[sector] for sector in order],
+        index=pd.Index(order, name="sector"),
+        dtype="float64",
+        name=f"{member_name}_exports",
+    )
+
+
+def read_exiobase3_region_export_vector(*, source_zip: str | Path, region: str) -> pd.Series:
+    """Return product exports from ``region`` to all foreign intermediate/final users."""
+    zip_path = Path(source_zip)
+    z_exports = _read_region_exports_member_from_exio_zip(
+        zip_path=zip_path, member_name="Z.txt", region=region
+    )
+    y_exports = _read_region_exports_member_from_exio_zip(
+        zip_path=zip_path, member_name="Y.txt", region=region
+    )
+    sectors = z_exports.index.union(y_exports.index, sort=False)
+    return z_exports.reindex(sectors, fill_value=0.0).add(
+        y_exports.reindex(sectors, fill_value=0.0), fill_value=0.0
+    ).rename("exports")
+
 def _load_exio_region_slice_direct_from_zip(
     *,
     year: int,
@@ -269,7 +344,7 @@ def _load_exio_region_slice_direct_from_zip(
 
     sectors = pd.Index(Z_use.index.astype(str), name="sector")
     x_region = x_output.reindex(sectors)
-    missing_x = list(x_region.index[x_region.isna()])
+    missing_x = [str(sector) for sector, value in x_region.items() if pd.isna(value)]
     if missing_x:
         raise ValueError(f"EXIOBASE x.txt is missing output values for slice sectors: {missing_x[:10]!r}")
     return ExioRegionSlice(
