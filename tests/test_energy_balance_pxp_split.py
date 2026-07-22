@@ -9,7 +9,6 @@ import pytest
 from ecolecon_mrio.energy_balance_pxp import (
     build_energy_balance_component_values,
     build_price_resolution,
-    build_split_profiles_from_component_values,
     build_energy_balance_pxp_quantity_lookup,
     compile_energy_balance_pxp_split_plan,
     load_energy_balance_dictionary_frame,
@@ -214,7 +213,7 @@ def test_component_values_include_selector_and_parent_residuals() -> None:
 
 def test_compile_and_run_split_uses_existing_disaggregation_api() -> None:
     Z = pd.DataFrame([[100.0]], index=["CPA_C20"], columns=["CPA_C20"])
-    Y = pd.DataFrame([[900.0]], index=["CPA_C20"], columns=["FD"])
+    Y = pd.DataFrame([[900.0]], index=["CPA_C20"], columns=["P3"])
     plan = compile_energy_balance_pxp_split_plan(
         Z=Z,
         Y=Y,

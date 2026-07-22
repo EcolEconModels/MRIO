@@ -5,13 +5,14 @@ import json
 import re
 from pathlib import Path
 import warnings
-from typing import Mapping, Sequence
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.disaggregation import SplitProfiles, disaggregate_and_balance
 from ecolecon_mrio.eurostat_energy_balances import load_eurostat_energy_balance_slice
+from ecolecon_mrio.iot_flow_semantics import atomic_final_demand_columns
 
 ALLOWED_PARENTS: frozenset[str] = frozenset({"CPA_C19", "CPA_C20", "CPA_D"})
 ALLOWED_COMPONENT_KINDS: frozenset[str] = frozenset(
@@ -1061,6 +1062,7 @@ def run_energy_balance_pxp_split(
     return disaggregate_and_balance(
         Z,
         Y,
+        final_demand_columns=atomic_final_demand_columns(Y.columns),
         split_profiles=plan.split_profiles,
         column_allocator=plan.column_allocator,
         balancing_scope=balancing_scope,

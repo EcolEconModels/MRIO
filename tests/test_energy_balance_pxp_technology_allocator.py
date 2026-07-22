@@ -119,6 +119,7 @@ def test_disaggregation_preserves_allocator_column_target_in_local_mode() -> Non
     result = disaggregate_and_balance(
         Z,
         Y,
+        final_demand_columns=list(Y.columns),
         split_profiles={"CPA_C20": prof},
         column_allocator=column_allocator,
         balancing_scope="local",

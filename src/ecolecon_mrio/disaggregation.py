@@ -37,7 +37,7 @@ class SplitProfiles:
 class DisaggregationResult:
     """
     Result of disaggregation operation.
-    
+
     Attributes:
         Z: Balanced intermediate transactions matrix
         Y: Balanced final demand matrix
@@ -74,7 +74,7 @@ def normalize_share(series: pd.Series | pd.DataFrame, *, name: str) -> pd.Series
 def _outer_share_matrix(row_share: pd.Series, col_share: pd.Series) -> pd.DataFrame:
     """
     Build outer product matrix from normalized share vectors.
-    
+
     Since both input shares sum to 1, their outer product also sums to 1.
     No additional normalization is needed.
     """
@@ -140,6 +140,33 @@ def _column_share_for(
     if not np.isfinite(total) or total <= 0:
         return fallback
     return override_s / total
+
+
+def _select_final_demand_block(
+    Y: pd.DataFrame,
+    final_demand_columns: Sequence[str],
+) -> pd.DataFrame:
+    """Return the explicit non-overlapping final-demand block used by the kernel."""
+    requested = pd.Index(list(map(str, final_demand_columns)))
+    if requested.empty:
+        raise ValueError("final_demand_columns must contain at least one selected column.")
+    if requested.has_duplicates:
+        duplicates = requested[requested.duplicated()].astype(str).tolist()
+        raise ValueError(f"final_demand_columns contains duplicates: {duplicates[:20]!r}")
+
+    Y_ord = Y.copy().astype("float64")
+    Y_ord.index = Y_ord.index.astype(str)
+    Y_ord.columns = Y_ord.columns.astype(str)
+    if Y_ord.columns.has_duplicates:
+        duplicates = Y_ord.columns[Y_ord.columns.duplicated()].astype(str).tolist()
+        raise ValueError(f"Y contains duplicate columns: {duplicates[:20]!r}")
+    missing = [str(code) for code in requested if str(code) not in set(Y_ord.columns)]
+    if missing:
+        raise ValueError(f"Selected final-demand columns are absent from Y: {missing[:20]!r}")
+    selected = Y_ord.loc[:, requested].copy()
+    if not np.isfinite(selected.to_numpy(dtype="float64")).all():
+        raise ValueError("Selected final-demand block contains non-finite values.")
+    return selected
 
 
 def expand_io_tables(
@@ -277,10 +304,6 @@ def build_targets(
     return x_new, u_new, fd_targets
 
 
-def calc_x(Z: pd.DataFrame, Y: pd.DataFrame) -> pd.Series:
-    return (Z.sum(axis=1) + Y.sum(axis=1)).astype("float64")
-
-
 def calc_A(Z: pd.DataFrame, x: pd.Series) -> pd.DataFrame:
     x_safe = x.replace(0.0, np.nan)
     return Z.div(x_safe, axis=1).fillna(0.0)
@@ -290,6 +313,7 @@ def disaggregate_and_balance(
     Z: pd.DataFrame,
     Y: pd.DataFrame,
     *,
+    final_demand_columns: Sequence[str],
     split_profiles: Mapping[str, SplitProfiles],
     column_allocator: Mapping[str, Mapping[str, pd.Series]] | None = None,
     balancing_scope: str = "local",
@@ -298,7 +322,7 @@ def disaggregate_and_balance(
     create_io_system: bool = True,
 ) -> DisaggregationResult:
     """
-    Expand Z/Y using `split_profiles`, then biproportionally balance [Z|Y] to targets.
+    Expand Z and an explicit selected final-demand block, then balance [Z|Y_selected].
 
     Balancing uses RAS if feasible; otherwise it falls back to GRAS.
 
@@ -307,19 +331,25 @@ def disaggregate_and_balance(
     - "local": keep the untouched blocks fixed and only balance cells that touch the
       newly-created subsectors (recommended when you want the original IO table to
       remain identical outside the split sectors).
-    
+
     Parameters:
         Z: Square intermediate transactions matrix
-        Y: Final demand matrix (same row index as Z)
-        split_profiles: Disaggregation share profiles
+        Y: Source final-demand table; only ``final_demand_columns`` enter this kernel.
+        final_demand_columns: Explicit non-overlapping columns that define final use and output.
+        split_profiles: Disaggregation share profiles. In global mode ``output_share`` is a hard
+            row target. In local mode it is only an expansion prior: fixed Y rows and the clean
+            expanded [Z|Y_selected] row totals are the hard constraints.
         max_iter: Maximum iterations for balancing
         tol: Convergence tolerance
         create_io_system: If True and pymrio available, create IOSystem object
-        
+
     Returns:
         DisaggregationResult with balanced tables and optional IOSystem
     """
-    Z0, Y0 = expand_io_tables(Z, Y, split_profiles=split_profiles, column_allocator=column_allocator)
+    Y_selected = _select_final_demand_block(Y, final_demand_columns)
+    Z0, Y0 = expand_io_tables(
+        Z, Y_selected, split_profiles=split_profiles, column_allocator=column_allocator
+    )
 
     balancing_scope_n = str(balancing_scope).strip().lower()
     if balancing_scope_n not in {"global", "local"}:
@@ -328,7 +358,7 @@ def disaggregate_and_balance(
     preserve_allocator_column_targets = column_allocator is not None and balancing_scope_n == "local"
     x_target, u_target, fd_targets = build_targets(
         Z,
-        Y,
+        Y_selected,
         split_profiles=split_profiles,
         sectors_new=Z0.index,
         Z0=Z0,
@@ -383,7 +413,7 @@ def disaggregate_and_balance(
     M_bal_df = pd.DataFrame(M_bal, index=M0.index, columns=M0.columns)
     Z_bal = M_bal_df.loc[:, Z0.columns]
     Y_bal = M_bal_df.loc[:, Y0.columns]
-    x_bal = calc_x(Z_bal, Y_bal)
+    x_bal = Z_bal.sum(axis=1).add(Y_bal.sum(axis=1), fill_value=0.0).astype("float64")
     A_bal = calc_A(Z_bal, x_bal)
 
     # Optional: Create pymrio IOSystem for advanced analysis
