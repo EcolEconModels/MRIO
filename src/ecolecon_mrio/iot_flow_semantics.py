@@ -139,6 +139,19 @@ def atomic_final_demand(Y: pd.DataFrame) -> pd.DataFrame:
     return Y_ord.loc[:, cols].copy()
 
 
+def source_atomic_final_demand(Y: pd.DataFrame) -> pd.DataFrame:
+    """Select the non-overlapping basis from a published source table.
+
+    Published aggregate controls may differ from their independently rounded
+    details.  This source-only selector therefore chooses the same atomic basis
+    without applying the strict generated aggregate/detail identity check.
+    """
+    Y_ord = Y.copy().astype("float64")
+    Y_ord.columns = Y_ord.columns.astype(str)
+    cols = atomic_final_demand_columns(Y_ord.columns)
+    return Y_ord.loc[:, cols].copy()
+
+
 def enforce_final_demand_display_identities(Y: pd.DataFrame) -> pd.DataFrame:
     """Return Y with aggregate display columns derived from complete atomic details.
 

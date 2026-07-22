@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from ecolecon_mrio.eurostat_iot import infer_source_rounding_quantum
-from ecolecon_mrio.iot_flow_semantics import rounded_source_control_diagnostic
+from ecolecon_mrio.iot_flow_semantics import (
+    atomic_final_demand,
+    rounded_source_control_diagnostic,
+    source_atomic_final_demand,
+)
 
 
 def test_infer_two_decimal_source_quantum() -> None:
@@ -49,3 +54,28 @@ def test_rounding_bound_uses_underlying_component_count() -> None:
         atol=0.0,
     )
     assert diagnostic["rounding_bound"] == pytest.approx(0.04)
+
+def test_published_source_basis_allows_rounded_aggregate_controls() -> None:
+    Y = pd.DataFrame(
+        {
+            "P3": [6.01],
+            "P3_S13": [1.0],
+            "P3_S14": [2.0],
+            "P3_S15": [3.0],
+            "P5": [15.01],
+            "P51G": [4.0],
+            "P52": [5.0],
+            "P53": [6.0],
+            "P6": [7.0],
+        },
+        index=pd.Index(["a"]),
+    )
+
+    with pytest.raises(ValueError, match="P3 aggregate/detail identity"):
+        atomic_final_demand(Y)
+
+    source_atomic = source_atomic_final_demand(Y)
+    assert list(source_atomic.columns) == [
+        "P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53", "P6"
+    ]
+    assert float(source_atomic.sum(axis=1).iloc[0]) == pytest.approx(28.0)

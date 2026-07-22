@@ -14,10 +14,10 @@ import pandas as pd
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot
 from ecolecon_mrio.iot_flow_semantics import (
-    atomic_final_demand,
     flow_use_total,
     refresh_supplementary_rows,
     rounded_source_control_diagnostic,
+    source_atomic_final_demand,
     technical_coefficients,
 )
 from ecolecon_mrio.iot_identities import supplementary_accounting_identity_kind
@@ -142,7 +142,7 @@ def _derived_y_control(
         counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
         return values, counts
 
-    atomic = atomic_final_demand(Y)
+    atomic = source_atomic_final_demand(Y)
     values = atomic.sum(axis=1).astype("float64")
     counts = atomic.notna().sum(axis=1).astype("int64")
     if identity == "TFU":
@@ -152,6 +152,16 @@ def _derived_y_control(
         counts = reference.Z.notna().sum(axis=1).add(counts, fill_value=0).astype("int64")
         return values, counts
     raise ValueError(f"Unsupported rounded Y control: {identity}")
+
+
+def _derived_source_output(reference: ParsedEurostatIOT) -> tuple[pd.Series, pd.Series]:
+    """Derive source output and term counts without exact control validation."""
+    atomic = source_atomic_final_demand(reference.Y)
+    values = reference.Z.sum(axis=1).add(atomic.sum(axis=1), fill_value=0.0).astype("float64")
+    counts = reference.Z.notna().sum(axis=1).add(
+        atomic.notna().sum(axis=1), fill_value=0
+    ).astype("int64")
+    return values, counts
 
 
 def _validate_rounded_series(
@@ -480,7 +490,9 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     if published_v is None:
         raise ValueError("Eurostat DOM published output row cannot be read without DOM V data.")
     published_output = published_v.loc[published_output_rows[0]].astype("float64")
-    derived_output = flow_use_total(dom_reference.Z, dom_reference.Y).reindex(published_output.index)
+    derived_output, derived_output_counts = _derived_source_output(dom_reference)
+    derived_output = derived_output.reindex(published_output.index)
+    derived_output_counts = derived_output_counts.reindex(published_output.index)
     diagnostics: list[dict[str, object]] = []
     child_parent = _child_to_parent(manifest, source_codes)
     for flow in ("DOM", "IMP", "TOTAL"):
@@ -522,9 +534,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             if output_row is not None:
                 row_code, published = output_row
                 derived_control = derived_output.reindex(published.index)
-                counts = dom_reference.Z.notna().sum(axis=1).add(
-                    atomic_final_demand(dom_reference.Y).notna().sum(axis=1), fill_value=0
-                ).astype("int64").reindex(published.index)
+                counts = derived_output_counts.reindex(published.index)
                 _assert_close(
                     f"{flow} generated P1 reconstruction",
                     reconstructed_v.loc[row_code],
@@ -550,11 +560,10 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
                 if len(imports_rows) != 1:
                     raise ValueError(f"{flow} TS_BP validation requires one imports row, found {imports_rows!r}")
                 imports = reference.V.loc[imports_rows[0]].astype("float64").reindex(published.index)
-                derived_output_control = flow_use_total(reference.Z, reference.Y).reindex(published.index)
+                derived_output_control, output_counts = _derived_source_output(reference)
+                derived_output_control = derived_output_control.reindex(published.index)
                 derived_control = derived_output_control.add(imports, fill_value=0.0)
-                counts = reference.Z.notna().sum(axis=1).add(
-                    atomic_final_demand(reference.Y).notna().sum(axis=1), fill_value=0
-                ).add(1).astype("int64").reindex(published.index)
+                counts = output_counts.add(1).astype("int64").reindex(published.index)
                 _assert_close(
                     f"{flow} generated TS_BP reconstruction",
                     reconstructed_v.loc[row_code],
