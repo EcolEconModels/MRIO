@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Mapping as ABCMapping
 from pathlib import Path
-from typing import Mapping, Sequence, cast
+from typing import Callable, Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.balancing import BalanceStats
-from ecolecon_mrio.disaggregation import SplitProfiles, calc_A, calc_x
+from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exiobase3 import (
     ExioRegionSlice,
     load_exiobase3_region_slice,
@@ -20,9 +20,13 @@ from ecolecon_mrio.exiobase3_extensions import (
 )
 from ecolecon_mrio.iot_identities import (
     final_demand_identity_totals,
-    find_imports_vector,
     refresh_m_identity_rows,
     supplementary_accounting_identity_kind,
+)
+from ecolecon_mrio.iot_flow_semantics import (
+    enforce_final_demand_display_identities,
+    flow_use_total,
+    technical_coefficients,
 )
 
 
@@ -464,7 +468,7 @@ def _validate_split_reconstruction(
 
     Z_back = Z_back.reindex(index=Z_expected.index, columns=Z_expected.columns).fillna(0.0)
     Y_back = Y_back.reindex(index=Y_expected.index, columns=Y_expected.columns).fillna(0.0)
-    x_expected = (Z_expected.sum(axis=1) + Y_expected.sum(axis=1)).astype("float64")
+    x_expected = flow_use_total(Z_expected, Y_expected)
     x_back = x_back.reindex(index=x_expected.index).fillna(0.0)
     z_row_expected = Z_expected.sum(axis=1).astype("float64")
     z_col_expected = Z_expected.sum(axis=0).astype("float64")
@@ -635,7 +639,7 @@ def _split_supplementary_rows_columnwise(
 
         for row_code in map(str, V.index):
             identity_kind = supplementary_accounting_identity_kind(row_code)
-            if identity_kind is not None:
+            if identity_kind in {"output", "intermediate_use"}:
                 continue
             row_total = float(V.loc[row_code, parent])
             if prof is None:
@@ -717,48 +721,6 @@ def _split_supplementary_rows_columnwise(
                     }
                 )
 
-    if x_identity is not None and z_col_use is not None:
-        value_added = (x_identity - z_col_use).astype("float64")
-        for row_code in list(map(str, V_split.index)):
-            if supplementary_accounting_identity_kind(row_code) == "value_added":
-                mass_before = float(V_split.loc[row_code].sum())
-                V_split.loc[row_code, V_split.columns] = value_added
-                diagnostics.append(
-                    {
-                        "row_code": row_code,
-                        "parent_code": "__accounting_identity__",
-                        "child_codes": identity_child_codes,
-                        "allocation_method": "accounting_identity_value_added_residual",
-                        "denominator": 1.0,
-                        "fallback_reason": "",
-                        "mass_before": mass_before,
-                        "mass_after": float(V_split.loc[row_code].sum()),
-                        "weights": "derived_from_split_x_minus_Z_column_sums",
-                    }
-                )
-
-    if x_identity is not None:
-        imports_vector = find_imports_vector(V_split, V_split.columns)
-        if imports_vector is None:
-            imports_vector = pd.Series(0.0, index=V_split.columns, dtype="float64")
-        for row_code in list(map(str, V_split.index)):
-            if supplementary_accounting_identity_kind(row_code) == "total_supply":
-                mass_before = float(V_split.loc[row_code].sum())
-                V_split.loc[row_code, V_split.columns] = x_identity + imports_vector
-                diagnostics.append(
-                    {
-                        "row_code": row_code,
-                        "parent_code": "__accounting_identity__",
-                        "child_codes": identity_child_codes,
-                        "allocation_method": "accounting_identity_x_plus_imports",
-                        "denominator": 1.0,
-                        "fallback_reason": "",
-                        "mass_before": mass_before,
-                        "mass_after": float(V_split.loc[row_code].sum()),
-                        "weights": "derived_from_split_x_plus_imports",
-                    }
-                )
-
     M_out, M_diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split, Z_split=Z_split)
     diagnostics.extend(M_diagnostics)
     diag = pd.DataFrame(diagnostics) if diagnostics else None
@@ -799,6 +761,7 @@ def _project_export_donor_for_split(
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     emitted_labels: Sequence[str],
+    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_region_export_vector,
 ) -> tuple[pd.Series, str]:
     """Build child-level export donors for one primitive flow.
 
@@ -814,7 +777,7 @@ def _project_export_donor_for_split(
         emitted_labels=emitted_labels,
     )
     if exio_slice.flow == "domestic":
-        raw = read_exiobase3_region_export_vector(
+        raw = export_vector_loader(
             source_zip=exio_slice.source_zip,
             region=exio_slice.region,
         )
@@ -846,6 +809,7 @@ def _split_iot_using_donor_blocks(
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     create_io_system: bool,
+    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_region_export_vector,
 ) -> SplitResult:
     Z = eurostat_Z.copy().astype("float64")
     Y = eurostat_Y.copy().astype("float64")
@@ -988,6 +952,7 @@ def _split_iot_using_donor_blocks(
                         split_profiles=split_profiles,
                         eurostat_sector_mapping=eurostat_sector_mapping,
                         emitted_labels=sectors_new,
+                        export_vector_loader=export_vector_loader,
                     )
                 assert export_donor_method is not None
                 donor_values = export_donor.reindex(row_labels).fillna(0.0).astype("float64")
@@ -1028,8 +993,9 @@ def _split_iot_using_donor_blocks(
                 )
             Y_split.loc[row_labels, fd_code] = donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64") * fd_total
 
-    x_split = calc_x(Z_split, Y_split)
-    A_split = calc_A(Z_split, x_split)
+    Y_split = enforce_final_demand_display_identities(Y_split)
+    x_split = flow_use_total(Z_split, Y_split)
+    A_split = technical_coefficients(Z_split, x_split)
     V_split, M_split, supplementary_diagnostics = _split_supplementary_rows_columnwise(
         eurostat_V=eurostat_V,
         eurostat_M=eurostat_M,
@@ -1541,6 +1507,7 @@ def split_iot_using_exiobase_split_profiles(
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
     quantity_price_cache_dir: str | Path | None = None,
+    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_region_export_vector,
     create_io_system: bool = True,
 ) -> SplitResult:
     """
@@ -1626,6 +1593,7 @@ def split_iot_using_exiobase_split_profiles(
         split_profiles=profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
         create_io_system=create_io_system,
+        export_vector_loader=export_vector_loader,
     )
 
     _validate_split_reconstruction(

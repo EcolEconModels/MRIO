@@ -27,7 +27,8 @@ def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> N
     )
 
     eurostat_Z = pd.DataFrame([[12.0, 3.0], [4.0, 5.0]], index=["A", "B"], columns=["A", "B"])
-    eurostat_Y = pd.DataFrame({"FD": [1.0, 2.0]}, index=["A", "B"])
+    # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
+    eurostat_Y = pd.DataFrame({"P3": [1.0, 2.0]}, index=["A", "B"])
     shares = pd.Series([0.5, 0.5], index=["a1", "a2"], dtype="float64")
     split_profiles = {
         "A": SplitProfiles(
@@ -46,7 +47,6 @@ def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> N
         eurostat_Y=eurostat_Y,
         exio_slice=exio_slice,
         split_profiles=split_profiles,
-        sector_to_exio_sectors={"A": ["a1", "a2"]},
         eurostat_sector_mapping=None,
         create_io_system=False,
     )

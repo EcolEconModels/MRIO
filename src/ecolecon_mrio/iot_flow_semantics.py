@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.iot_identities import (
+    find_imports_vector,
     refresh_m_identity_rows,
     supplementary_accounting_identity_kind,
 )
@@ -84,6 +85,28 @@ def atomic_final_demand(Y: pd.DataFrame) -> pd.DataFrame:
     return Y_ord.loc[:, cols].copy()
 
 
+def enforce_final_demand_display_identities(Y: pd.DataFrame) -> pd.DataFrame:
+    """Return Y with aggregate display columns derived from complete atomic details.
+
+    Aggregate and detailed final-demand columns are never allocated independently.
+    Complete P3/P5 detail partitions determine their aggregate display columns; P6
+    remains aggregate-authoritative because its detail codes are not assumed to be
+    an exhaustive additive partition. TU and TFU are derived display identities.
+    """
+    out = Y.copy().astype("float64")
+    out.columns = out.columns.astype(str)
+    for aggregate, detail in (("P3", _P3_DETAIL), ("P5", _P5_DETAIL)):
+        if set(detail).issubset(out.columns):
+            out.loc[:, aggregate] = out.loc[:, list(detail)].sum(axis=1).astype("float64")
+    atomic = atomic_final_demand(out)
+    tfu = atomic.sum(axis=1).astype("float64")
+    if "TFU" in out.columns:
+        out.loc[:, "TFU"] = tfu
+    if "TU" in out.columns:
+        raise ValueError("TU requires Z and must be derived at workbook/identity construction, not inside Y alone.")
+    return out
+
+
 def flow_use_total(Z: pd.DataFrame, Y: pd.DataFrame) -> pd.Series:
     use = Z.sum(axis=1).add(atomic_final_demand(Y).sum(axis=1), fill_value=0.0).astype("float64")
     use.name = "use_total"
@@ -148,11 +171,11 @@ def refresh_supplementary_rows(
             elif flow_role == "TOTAL" and kind == "value_added":
                 V_out.loc[row_code, cols] = x - z_col
             elif flow_role == "TOTAL" and kind == "total_supply":
-                imports = pd.Series(0.0, index=cols, dtype="float64")
-                for candidate in ("P7", "P7_CIF", "P7_FOB", "Imports", "Imports of goods and services"):
-                    if candidate in V_out.index:
-                        imports = V_out.loc[candidate].reindex(cols).fillna(0.0).astype("float64")
-                        break
-                V_out.loc[row_code, cols] = x + imports
+                imports = find_imports_vector(V_out, cols)
+                if imports is None:
+                    raise ValueError(
+                        f"TOTAL supply row {row_code!r} exists but no imports bridge can be identified."
+                    )
+                V_out.loc[row_code, cols] = x + imports.reindex(cols).astype("float64")
     M_out = refresh_m_identity_rows(M, Y=Y, Z=Z)
     return V_out, M_out

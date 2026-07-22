@@ -78,3 +78,16 @@ def test_parent_aggregation_reconstructs_original_cells() -> None:
     got = MODULE._aggregate_square(split, mapping, pd.Index(["a", "b"]))
     expected = pd.DataFrame([[12.0, 9.0], [15.0, 9.0]], index=pd.Index(["a", "b"]), columns=pd.Index(["a", "b"]))
     pd.testing.assert_frame_equal(got, expected)
+
+
+def test_assert_close_rejects_nan_mask_mismatch() -> None:
+    left = pd.Series([1.0, float("nan")], index=pd.Index(["a", "b"]))
+    right = pd.Series([1.0, 2.0], index=pd.Index(["a", "b"]))
+    with pytest.raises(ValueError):
+        MODULE._assert_close("nan mask", left, right, rtol=1e-9, atol=1e-6)
+
+
+def test_aggregate_rows_rejects_orphan_parent() -> None:
+    frame = pd.DataFrame({"P3": [1.0, 2.0]}, index=pd.Index(["child", "orphan"]))
+    with pytest.raises(ValueError, match="orphan"):
+        MODULE._aggregate_rows(frame, {"child": "parent"}, pd.Index(["parent"]))

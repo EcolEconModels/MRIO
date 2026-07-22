@@ -3,6 +3,7 @@ from __future__ import annotations
 import zipfile
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -273,7 +274,8 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
         index=euro_sectors,
         columns=euro_sectors,
     )
-    euro_Y = pd.DataFrame({"FD": [3.0, 2.0, 1.0]}, index=euro_sectors)
+    # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
+    euro_Y = pd.DataFrame({"P3": [3.0, 2.0, 1.0]}, index=euro_sectors)
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -351,7 +353,8 @@ def test_write_energy_split_report_xlsx(tmp_path):
         index=euro_sectors,
         columns=euro_sectors,
     )
-    euro_Y = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=euro_sectors)
+    # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
+    euro_Y = pd.DataFrame({"P3": [1.0, 1.0, 1.0]}, index=euro_sectors)
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -404,7 +407,8 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
 
     euro_sectors = ["CPA_D", "A"]
     euro_Z = pd.DataFrame([[10.0, 1.0], [1.0, 5.0]], index=euro_sectors, columns=euro_sectors)
-    euro_Y = pd.DataFrame({"FD": [3.0, 2.0]}, index=euro_sectors)
+    # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
+    euro_Y = pd.DataFrame({"P3": [3.0, 2.0]}, index=euro_sectors)
 
     sector_to_exio = {
         "CPA_D": {
@@ -555,11 +559,17 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
     euro_Z = pd.DataFrame([[0.0]], index=["A"], columns=["A"])
     euro_Y = pd.DataFrame({"P3": [100.0], "P6": [100.0]}, index=["A"])
 
+    def injected_export_loader(*, source_zip, region):
+        assert source_zip == tmp_path / "IOT_2020_pxp.zip"
+        assert region == "AT"
+        return pd.Series([10.0, 90.0], index=exio_sectors, dtype="float64")
+
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
         eurostat_Y=euro_Y,
         exio_slice=exio_slice,
         sector_to_exio_sectors={"A": ["a1", "a2"]},
+        export_vector_loader=injected_export_loader,
         create_io_system=False,
     )
 
@@ -569,9 +579,76 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
     assert res.Y.loc["a2", "P6"] == pytest.approx(90.0)
 
 
+def test_import_donor_uses_documented_import_use_proxy(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["a1", "a2"]
+    Z_domestic = pd.DataFrame([[3.0, 0.0], [0.0, 1.0]], index=exio_sectors, columns=exio_sectors)
+    Y_region = pd.DataFrame({"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors)
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=Z_domestic.sum(axis=1) + Y_region.sum(axis=1),
+        source_zip=tmp_path / "not-needed.zip",
+        flow="imports",
+    )
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["A"]),
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"A": exio_sectors},
+        create_io_system=False,
+    )
+    assert result.Y.loc["a1", "P6"] == pytest.approx(100.0 * 4.0 / 6.0)
+    assert result.Y.loc["a2", "P6"] == pytest.approx(100.0 * 2.0 / 6.0)
+
+
+def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    exio_sectors = ["a1", "a2"]
+    # Keep profile construction valid; the injected export donor is the zero
+    # mass condition under test.
+    Z_domestic = pd.DataFrame(np.eye(2), index=exio_sectors, columns=exio_sectors)
+    Y_region = pd.DataFrame({"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors)
+    exio_slice = ExioRegionSlice(
+        year=2020,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(exio_sectors),
+        Z_domestic=Z_domestic,
+        Y_region=Y_region,
+        x_region=Y_region.sum(axis=1),
+        source_zip=tmp_path / "not-needed.zip",
+    )
+
+    def zero_export_loader(*, source_zip, region):
+        return pd.Series([0.0, 0.0], index=exio_sectors, dtype="float64")
+
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["A"]),
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"A": exio_sectors},
+        export_vector_loader=zero_export_loader,
+        create_io_system=False,
+    )
+    assert result.Y.loc["a1", "P6"] == pytest.approx(50.0)
+    assert result.Y.loc["a2", "P6"] == pytest.approx(50.0)
+    assert result.fallback_diagnostics is not None
+    assert "final_demand_share" in set(result.fallback_diagnostics["fallback_type"].astype(str))
+
+
 def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+    from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
     exio_sectors = ["p24.d", "p24.g", "c21"]
     Z_domestic = pd.DataFrame(
@@ -628,7 +705,7 @@ def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path)
     assert float(res.Z.loc["CPA_C21", child_codes].sum()) == pytest.approx(euro_Z.loc["CPA_C21", "CPA_C20"])
     assert float(res.Y.loc[child_codes, "P3"].sum()) == pytest.approx(euro_Y.loc["CPA_C20", "P3"])
     pd.testing.assert_series_equal(
-        (res.Z.sum(axis=1) + res.Y.sum(axis=1)).astype("float64"),
+        flow_use_total(res.Z, res.Y),
         res.x.astype("float64"),
         check_names=False,
     )
@@ -727,7 +804,9 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
     assert res.V is not None
     assert res.M is not None
     expected_intermediate = res.Z.sum(axis=0).astype("float64")
-    expected_value_added = (res.x - expected_intermediate).astype("float64")
+    # Primitive DOM value added remains monetary source data, disaggregated by
+    # the documented output-share proxy; it is not replaced by a residual.
+    expected_value_added = pd.Series([10.0, 80.0], index=res.V.columns, dtype="float64")
     pd.testing.assert_series_equal(
         res.V.loc["Value added, gross"].astype("float64"),
         expected_value_added,
@@ -738,19 +817,23 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
         expected_intermediate,
         check_names=False,
     )
+    # Primitive DOM total supply remains the published monetary row, allocated
+    # by its documented input-use proxy rather than replaced by split output.
+    expected_total_supply = pd.Series(
+        [888.0 / 9.0, 888.0 * 8.0 / 9.0],
+        index=res.V.columns,
+        dtype="float64",
+    )
     pd.testing.assert_series_equal(
         res.V.loc["Total supply at basic prices"].astype("float64"),
-        res.x.astype("float64"),
+        expected_total_supply,
         check_names=False,
     )
+    assert float(res.V.loc["Total supply at basic prices"].sum()) == pytest.approx(888.0)
     assert pd.isna(res.M.loc["Value added, gross", "P3"])
     assert res.M.loc["Total intermediate consumption /final use", "P3"] == pytest.approx(float(res.Y.sum(axis=0)["P3"]))
     assert res.supplementary_diagnostics is not None
-    identity_rows = {
-        "Value added, gross",
-        "Total intermediate consumption /final use",
-        "Total supply at basic prices",
-    }
+    identity_rows = {"Total intermediate consumption /final use"}
     proxy_rows = res.supplementary_diagnostics.loc[
         ~res.supplementary_diagnostics["parent_code"].astype(str).eq("__accounting_identity__"),
         "row_code",

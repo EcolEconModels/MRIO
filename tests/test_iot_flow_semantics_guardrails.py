@@ -75,3 +75,98 @@ def test_technical_coefficients_allows_structurally_zero_activity() -> None:
     Z = pd.DataFrame([[0.0]], index=pd.Index(["a"]), columns=pd.Index(["a"]))
     A = technical_coefficients(Z, pd.Series([0.0], index=["a"]))
     assert float(A.loc["a", "a"]) == 0.0
+
+
+def test_display_aggregates_are_derived_from_atomic_details() -> None:
+    from ecolecon_mrio.iot_flow_semantics import enforce_final_demand_display_identities
+
+    Y = pd.DataFrame(
+        {
+            "P3": [999.0],
+            "P3_S13": [1.0],
+            "P3_S14": [2.0],
+            "P3_S15": [3.0],
+            "P5": [999.0],
+            "P51G": [4.0],
+            "P52": [5.0],
+            "P53": [6.0],
+            "P6": [7.0],
+        },
+        index=pd.Index(["a"]),
+    )
+    out = enforce_final_demand_display_identities(Y)
+    assert out.loc["a", "P3"] == 6.0
+    assert out.loc["a", "P5"] == 15.0
+    assert out.loc["a", "P6"] == 7.0
+
+
+def test_total_supply_requires_identifiable_imports_bridge() -> None:
+    from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows
+
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[1.0]], index=idx, columns=idx)
+    Y = pd.DataFrame({"P3": [2.0]}, index=idx)
+    V = pd.DataFrame([[0.0]], index=pd.Index(["Total supply at basic prices"]), columns=idx)
+    with pytest.raises(ValueError, match="no imports bridge"):
+        refresh_supplementary_rows(V, None, Z=Z, Y=Y, output=pd.Series([3.0], index=idx), flow_role="TOTAL")
+
+
+def test_total_supply_uses_explicit_imports_bridge() -> None:
+    from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows
+
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[1.0]], index=idx, columns=idx)
+    Y = pd.DataFrame({"P3": [2.0]}, index=idx)
+    V = pd.DataFrame(
+        [[4.0], [0.0]],
+        index=pd.Index(["Imports of goods and services", "Total supply at basic prices"]),
+        columns=idx,
+    )
+    refreshed, _ = refresh_supplementary_rows(
+        V,
+        None,
+        Z=Z,
+        Y=Y,
+        output=pd.Series([3.0], index=idx),
+        flow_role="TOTAL",
+    )
+    assert refreshed is not None
+    assert refreshed.loc["Total supply at basic prices", "a"] == 7.0
+
+
+def test_primitive_flow_supply_row_is_source_preserved() -> None:
+    from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows
+
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[1.0]], index=idx, columns=idx)
+    Y = pd.DataFrame({"P3": [2.0]}, index=idx)
+    V = pd.DataFrame([[42.0]], index=pd.Index(["Total supply at basic prices"]), columns=idx)
+    refreshed, _ = refresh_supplementary_rows(
+        V,
+        None,
+        Z=Z,
+        Y=Y,
+        output=pd.Series([3.0], index=idx),
+        flow_role="DOM",
+    )
+    assert refreshed is not None
+    assert refreshed.loc["Total supply at basic prices", "a"] == 42.0
+
+
+def test_no_total_supply_row_does_not_require_imports_bridge() -> None:
+    from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows
+
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[1.0]], index=idx, columns=idx)
+    Y = pd.DataFrame({"P3": [2.0]}, index=idx)
+    V = pd.DataFrame([[5.0]], index=pd.Index(["Taxes less subsidies on products"]), columns=idx)
+    refreshed, _ = refresh_supplementary_rows(
+        V,
+        None,
+        Z=Z,
+        Y=Y,
+        output=pd.Series([3.0], index=idx),
+        flow_role="TOTAL",
+    )
+    assert refreshed is not None
+    assert refreshed.loc["Taxes less subsidies on products", "a"] == 5.0

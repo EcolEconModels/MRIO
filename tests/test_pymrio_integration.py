@@ -137,7 +137,8 @@ def test_split_result_has_io_system():
         index=euro_sectors,
         columns=euro_sectors,
     )
-    euro_Y = pd.DataFrame({"FD": [3.0, 2.0]}, index=euro_sectors)
+    # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
+    euro_Y = pd.DataFrame({"P3": [3.0, 2.0]}, index=euro_sectors)
     
     # Run split
     res = split_iot_using_exiobase_split_profiles(

@@ -66,16 +66,22 @@ def _add_frames(dom: pd.DataFrame, imp: pd.DataFrame) -> pd.DataFrame:
 
 
 def _max_gap(left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series) -> float:
-    if isinstance(left, pd.DataFrame) and isinstance(right, pd.DataFrame):
-        rows = left.index.union(right.index, sort=False)
-        cols = left.columns.union(right.columns, sort=False)
-        diff = left.reindex(index=rows, columns=cols, fill_value=0.0) - right.reindex(index=rows, columns=cols, fill_value=0.0)
-    elif isinstance(left, pd.Series) and isinstance(right, pd.Series):
-        idx = left.index.union(right.index, sort=False)
-        diff = left.reindex(idx, fill_value=0.0) - right.reindex(idx, fill_value=0.0)
-    else:
+    if type(left) is not type(right):
         raise TypeError("Both objects must be DataFrames or both must be Series")
-    return float(np.nanmax(np.abs(diff.to_numpy()))) if diff.size else 0.0
+    if isinstance(left, pd.DataFrame):
+        if not left.index.equals(right.index) or not left.columns.equals(right.columns):
+            return float("inf")
+        if not left.isna().equals(right.isna()):
+            return float("inf")
+        values = (left - right).to_numpy(dtype="float64")
+    else:
+        if not left.index.equals(right.index):
+            return float("inf")
+        if not left.isna().equals(right.isna()):
+            return float("inf")
+        values = (left - right).to_numpy(dtype="float64")
+    finite = values[np.isfinite(values)]
+    return float(np.max(np.abs(finite))) if finite.size else 0.0
 
 
 def _assert_close(label: str, left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series, *, rtol: float, atol: float) -> float:
@@ -124,17 +130,42 @@ def _aggregate_square(frame: pd.DataFrame, child_parent: Mapping[str, str], sour
     cols = pd.Index([child_parent.get(str(code), str(code)) for code in frame.columns])
     row_agg = cast(pd.DataFrame, frame.groupby(rows, sort=False).sum())
     col_agg = cast(pd.DataFrame, row_agg.T.groupby(cols, sort=False).sum().T)
-    return cast(pd.DataFrame, col_agg.reindex(index=source_codes, columns=source_codes, fill_value=0.0))
+    expected = set(source_codes.astype(str))
+    if set(col_agg.index.astype(str)) != expected or set(col_agg.columns.astype(str)) != expected:
+        raise ValueError(
+            "Split reconstruction produced missing/orphan parent sectors: "
+            f"rows_extra={sorted(set(col_agg.index.astype(str)) - expected)!r}, "
+            f"rows_missing={sorted(expected - set(col_agg.index.astype(str)))!r}, "
+            f"cols_extra={sorted(set(col_agg.columns.astype(str)) - expected)!r}, "
+            f"cols_missing={sorted(expected - set(col_agg.columns.astype(str)))!r}."
+        )
+    return cast(pd.DataFrame, col_agg.reindex(index=source_codes, columns=source_codes))
 
 
 def _aggregate_rows(frame: pd.DataFrame, child_parent: Mapping[str, str], source_codes: pd.Index) -> pd.DataFrame:
     groups = pd.Index([child_parent.get(str(code), str(code)) for code in frame.index])
-    return cast(pd.DataFrame, frame.groupby(groups, sort=False).sum().reindex(index=source_codes, fill_value=0.0))
+    grouped = cast(pd.DataFrame, frame.groupby(groups, sort=False).sum())
+    expected = set(source_codes.astype(str))
+    if set(grouped.index.astype(str)) != expected:
+        raise ValueError(
+            "Row reconstruction produced missing/orphan parent sectors: "
+            f"extra={sorted(set(grouped.index.astype(str)) - expected)!r}, "
+            f"missing={sorted(expected - set(grouped.index.astype(str)))!r}."
+        )
+    return cast(pd.DataFrame, grouped.reindex(index=source_codes))
 
 
 def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], source_codes: pd.Index) -> pd.DataFrame:
     groups = pd.Index([child_parent.get(str(code), str(code)) for code in frame.columns])
-    return cast(pd.DataFrame, frame.T.groupby(groups, sort=False).sum().T.reindex(columns=source_codes, fill_value=0.0))
+    grouped = cast(pd.DataFrame, frame.T.groupby(groups, sort=False).sum().T)
+    expected = set(source_codes.astype(str))
+    if set(grouped.columns.astype(str)) != expected:
+        raise ValueError(
+            "Column reconstruction produced missing/orphan parent sectors: "
+            f"extra={sorted(set(grouped.columns.astype(str)) - expected)!r}, "
+            f"missing={sorted(expected - set(grouped.columns.astype(str)))!r}."
+        )
+    return cast(pd.DataFrame, grouped.reindex(columns=source_codes))
 
 
 def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> list[dict[str, object]]:
@@ -279,6 +310,31 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             storage_folder=default_data_root() / "eurostat",
         )
     source_codes = references["TOTAL"].Z.index.astype(str)
+    dom_reference = references["DOM"]
+    published_v = dom_reference.V
+    if published_v is None:
+        published_output_rows: list[str] = []
+    else:
+        published_output_rows = [
+            str(code) for code in published_v.index
+            if supplementary_accounting_identity_kind(str(code)) == "output"
+        ]
+    if len(published_output_rows) != 1:
+        raise ValueError(
+            "Expected exactly one published Eurostat DOM output row, found "
+            f"{published_output_rows!r}."
+        )
+    if published_v is None:
+        raise ValueError("Eurostat DOM published output row cannot be read without DOM V data.")
+    published_output = published_v.loc[published_output_rows[0]].astype("float64")
+    derived_output = flow_use_total(dom_reference.Z, dom_reference.Y).reindex(published_output.index)
+    _assert_close(
+        "Eurostat DOM published output versus Z plus atomic final demand",
+        derived_output,
+        published_output,
+        rtol=rtol,
+        atol=atol,
+    )
     child_parent = _child_to_parent(manifest, source_codes)
     diagnostics: list[dict[str, object]] = []
     for flow in ("DOM", "IMP", "TOTAL"):

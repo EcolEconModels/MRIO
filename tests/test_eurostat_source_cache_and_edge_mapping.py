@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exio_share_split import (
@@ -8,6 +9,7 @@ from ecolecon_mrio.exio_share_split import (
     map_exio_emission_intensity,
     raw_exio_members_from_split_profiles,
 )
+from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
 
 def _one_child_profile() -> dict[str, SplitProfiles]:
@@ -403,12 +405,13 @@ def test_supplementary_rows_use_row_specific_proxy_hierarchy():
     assert V_split is not None
     assert M_out is not None
     assert diag is not None
-    assert V_split.loc["B1G", "child_output_heavy"] == 8.0
-    assert V_split.loc["B1G", "child_input_heavy"] == 4.0
+    # Primitive source rows remain monetary and preserve their parent total.
+    assert V_split.loc["B1G", "child_output_heavy"] == 80.0
+    assert V_split.loc["B1G", "child_input_heavy"] == 20.0
+    assert float(V_split.loc["B1G"].sum()) == pytest.approx(100.0)
     assert V_split.loc["OTHER_ROW", "child_output_heavy"] == 25.0
     assert V_split.loc["OTHER_ROW", "child_input_heavy"] == 75.0
-    assert "accounting_identity_value_added_residual" in set(diag["allocation_method"])
-    assert "output_share_proxy_for_value_added_row" not in set(diag["allocation_method"])
+    assert "output_share_proxy_for_value_added_row" in set(diag["allocation_method"])
     assert "projected_exio_column_use_proxy" in set(diag["allocation_method"])
     assert pd.isna(M_out.loc["B1G", "P3"])
 
@@ -452,7 +455,16 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
     V = pd.DataFrame([[100.0, 200.0, 300.0]], index=["B1G"], columns=all_children)
     M = pd.DataFrame([[5.0]], index=["B1G"], columns=["P3"])
 
-    result = aggregate_iot(Z, Y, mapping, V=V, M=M, keep_unmapped=False, create_io_system=False)
+    result = aggregate_iot(
+        Z,
+        Y,
+        mapping,
+        V=V,
+        M=M,
+        output=flow_use_total(Z, Y),
+        keep_unmapped=False,
+        create_io_system=False,
+    )
 
     expected_Z = pd.DataFrame(
         [[12.0, 9.0], [15.0, 9.0]],
@@ -470,7 +482,7 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
 
     pd.testing.assert_frame_equal(result.Z, expected_Z)
     pd.testing.assert_frame_equal(result.Y, expected_Y)
-    pd.testing.assert_series_equal(result.x, expected_x)
+    pd.testing.assert_series_equal(result.x, expected_x.rename("x"))
     assert result.V is not None
     assert result.M is not None
     pd.testing.assert_frame_equal(result.V, expected_V)
@@ -598,7 +610,16 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     )
     assert not audit.empty
 
-    expected = aggregate_iot(Z, Y, augmented_mapping, V=V, M=M, keep_unmapped=False, create_io_system=False)
+    expected = aggregate_iot(
+        Z,
+        Y,
+        augmented_mapping,
+        V=V,
+        M=M,
+        output=flow_use_total(Z, Y),
+        keep_unmapped=False,
+        create_io_system=False,
+    )
     expected.Z.to_csv(agg_dir / "Z_agg.csv")
     expected.Y.to_csv(agg_dir / "Y_agg.csv")
     expected.x.to_csv(agg_dir / "x_agg.csv")
@@ -803,7 +824,7 @@ def test_p1_supplementary_row_uses_output_share_proxy():
 
 
 
-def test_accounting_identity_rows_are_derived_from_split_tables():
+def test_primitive_supplementary_rows_preserve_source_values():
     from ecolecon_mrio.exio_share_split import _split_supplementary_rows_columnwise
 
     children = pd.Index(["child_a", "child_b"])
@@ -843,9 +864,10 @@ def test_accounting_identity_rows_are_derived_from_split_tables():
     pd.testing.assert_series_equal(V_split.loc["P2_ADJ"], Z_split.sum(axis=0), check_names=False)
     expected_imports = pd.Series([5.0, 15.0], index=children, dtype="float64")
     pd.testing.assert_series_equal(V_split.loc["P7"], expected_imports, check_names=False)
-    pd.testing.assert_series_equal(V_split.loc["TS_BP"], x_split + expected_imports, check_names=False)
+    expected_supply = pd.Series([30.0, 90.0], index=children, dtype="float64")
+    pd.testing.assert_series_equal(V_split.loc["TS_BP"], expected_supply, check_names=False)
+    assert float(V_split.loc["TS_BP"].sum()) == pytest.approx(120.0)
     assert diag is not None
     methods = set(diag["allocation_method"].astype(str))
     assert "accounting_identity_x_split" in methods
     assert "accounting_identity_z_column_sum" in methods
-    assert "accounting_identity_x_plus_imports" in methods
