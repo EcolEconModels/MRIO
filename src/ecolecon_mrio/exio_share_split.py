@@ -24,6 +24,7 @@ from ecolecon_mrio.iot_identities import (
     supplementary_accounting_identity_kind,
 )
 from ecolecon_mrio.iot_flow_semantics import (
+    derived_final_demand_control_columns,
     enforce_final_demand_display_identities,
     flow_use_total,
     technical_coefficients,
@@ -822,6 +823,8 @@ def _split_iot_using_donor_blocks(
     sectors_new = _expanded_sector_order(sectors_old=sectors_old, split_profiles=split_profiles)
     Z_split = pd.DataFrame(0.0, index=pd.Index(sectors_new), columns=pd.Index(sectors_new), dtype="float64")
     Y_split = pd.DataFrame(0.0, index=pd.Index(sectors_new), columns=Y.columns.astype(str), dtype="float64")
+    derived_fd_controls = set(derived_final_demand_control_columns(Y.columns))
+    allocated_fd_columns = [code for code in Y.columns.astype(str) if code not in derived_fd_controls]
 
     _, donor_Z, donor_Y = project_exio_donor_blocks_for_split_profiles(
         exio_Z=exio_slice.Z_domestic,
@@ -935,10 +938,12 @@ def _split_iot_using_donor_blocks(
     for row_sector in sectors_old:
         row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
         if len(row_labels) == 1:
-            Y_split.loc[row_labels[0], :] = Y.loc[row_sector, :].to_numpy(dtype="float64")
+            Y_split.loc[row_labels[0], allocated_fd_columns] = (
+                Y.loc[row_sector, allocated_fd_columns].to_numpy(dtype="float64")
+            )
             continue
 
-        for fd_code in Y.columns.astype(str):
+        for fd_code in allocated_fd_columns:
             fd_total = float(Y.loc[row_sector, fd_code])
             if fd_total == 0.0:
                 continue
@@ -993,7 +998,7 @@ def _split_iot_using_donor_blocks(
                 )
             Y_split.loc[row_labels, fd_code] = donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64") * fd_total
 
-    Y_split = enforce_final_demand_display_identities(Y_split)
+    Y_split = enforce_final_demand_display_identities(Y_split, Z=Z_split)
     x_split = flow_use_total(Z_split, Y_split)
     A_split = technical_coefficients(Z_split, x_split)
     V_split, M_split, supplementary_diagnostics = _split_supplementary_rows_columnwise(

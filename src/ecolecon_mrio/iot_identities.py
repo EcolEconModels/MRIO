@@ -113,40 +113,6 @@ def find_imports_vector(V: pd.DataFrame | None, columns: pd.Index | list[str]) -
     return None
 
 
-def derive_v_identity_rows(
-    V: pd.DataFrame | None,
-    *,
-    Z: pd.DataFrame,
-    x: pd.Series,
-) -> pd.DataFrame | None:
-    if V is None:
-        return None
-
-    out = V.copy().astype("float64")
-    out.index = out.index.astype(str)
-    out.columns = out.columns.astype(str)
-    cols = pd.Index(out.columns.astype(str))
-    Z_ord = Z.reindex(index=cols, columns=cols).fillna(0.0).astype("float64")
-    x_ord = x.reindex(cols).fillna(0.0).astype("float64")
-    intermediate_use = Z_ord.sum(axis=0).astype("float64")
-    value_added = (x_ord - intermediate_use).astype("float64")
-    imports = find_imports_vector(out, cols)
-    if imports is None:
-        imports = pd.Series(0.0, index=cols, dtype="float64")
-
-    for row_code in list(map(str, out.index)):
-        kind = supplementary_accounting_identity_kind(row_code)
-        if kind == "output":
-            out.loc[row_code, cols] = x_ord
-        elif kind == "intermediate_use":
-            out.loc[row_code, cols] = intermediate_use
-        elif kind == "value_added":
-            out.loc[row_code, cols] = value_added
-        elif kind == "total_supply":
-            out.loc[row_code, cols] = x_ord + imports
-    return out
-
-
 def refresh_m_identity_rows(
     M: pd.DataFrame | None,
     *,

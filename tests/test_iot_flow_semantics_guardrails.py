@@ -170,3 +170,30 @@ def test_no_total_supply_row_does_not_require_imports_bridge() -> None:
     )
     assert refreshed is not None
     assert refreshed.loc["Taxes less subsidies on products", "a"] == 5.0
+
+def test_derived_final_demand_controls_and_tu_are_rebuilt() -> None:
+    from ecolecon_mrio.iot_flow_semantics import (
+        derived_final_demand_control_columns,
+        enforce_final_demand_display_identities,
+    )
+
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[10.0]], index=idx, columns=idx)
+    Y = pd.DataFrame(
+        {
+            "P3": [999.0],
+            "P3_S13": [1.0],
+            "P3_S14": [2.0],
+            "P3_S15": [3.0],
+            "P6": [4.0],
+            "TFU": [999.0],
+            "TU": [999.0],
+        },
+        index=idx,
+    )
+
+    assert derived_final_demand_control_columns(Y.columns) == ["P3", "TFU", "TU"]
+    out = enforce_final_demand_display_identities(Y, Z=Z)
+    assert out.loc["a", "P3"] == 6.0
+    assert out.loc["a", "TFU"] == 10.0
+    assert out.loc["a", "TU"] == 20.0

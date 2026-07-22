@@ -152,15 +152,32 @@ def source_atomic_final_demand(Y: pd.DataFrame) -> pd.DataFrame:
     return Y_ord.loc[:, cols].copy()
 
 
-def enforce_final_demand_display_identities(Y: pd.DataFrame) -> pd.DataFrame:
-    """Return Y with aggregate display columns derived from complete atomic details.
+def derived_final_demand_control_columns(columns: pd.Index | list[str]) -> list[str]:
+    """Return display controls that must be derived rather than allocated."""
+    cols = set(map(str, columns))
+    derived: list[str] = []
+    if "P3" in cols and set(_P3_DETAIL).issubset(cols):
+        derived.append("P3")
+    if "P5" in cols and set(_P5_DETAIL).issubset(cols):
+        derived.append("P5")
+    derived.extend(code for code in ("TFU", "TU") if code in cols)
+    return derived
 
-    Aggregate and detailed final-demand columns are never allocated independently.
+
+def enforce_final_demand_display_identities(
+    Y: pd.DataFrame,
+    *,
+    Z: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Return Y with aggregate display columns derived from atomic uses.
+
     Complete P3/P5 detail partitions determine their aggregate display columns; P6
     remains aggregate-authoritative because its detail codes are not assumed to be
-    an exhaustive additive partition. TU and TFU are derived display identities.
+    exhaustive. TFU is the non-overlapping final-use total. TU additionally includes
+    row-wise intermediate use and therefore requires an aligned Z whenever present.
     """
     out = Y.copy().astype("float64")
+    out.index = out.index.astype(str)
     out.columns = out.columns.astype(str)
     for aggregate, detail in (("P3", _P3_DETAIL), ("P5", _P5_DETAIL)):
         if set(detail).issubset(out.columns):
@@ -170,7 +187,13 @@ def enforce_final_demand_display_identities(Y: pd.DataFrame) -> pd.DataFrame:
     if "TFU" in out.columns:
         out.loc[:, "TFU"] = tfu
     if "TU" in out.columns:
-        raise ValueError("TU requires Z and must be derived at workbook/identity construction, not inside Y alone.")
+        if Z is None:
+            raise ValueError("TU requires Z for row-wise intermediate use.")
+        Z_ord = Z.copy().astype("float64")
+        Z_ord.index = Z_ord.index.astype(str)
+        if not Z_ord.index.equals(out.index):
+            raise ValueError("TU derivation requires Z and Y to have identical row indices.")
+        out.loc[:, "TU"] = Z_ord.sum(axis=1).add(tfu, fill_value=0.0).astype("float64")
     return out
 
 
