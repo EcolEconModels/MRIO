@@ -18,6 +18,7 @@ from ecolecon_mrio.iot_flow_semantics import (
     refresh_supplementary_rows,
     technical_coefficients,
 )
+from ecolecon_mrio.iot_identities import supplementary_accounting_identity_kind
 
 _FRAME_FILES = ("Z", "Y", "V", "M")
 _SPLIT_NAMES = {name: f"{name}_split.csv" for name in _FRAME_FILES}
@@ -176,6 +177,70 @@ def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> li
     return diagnostics
 
 
+
+def _validate_v_flow_contract(
+    *,
+    dirs: Mapping[str, Path],
+    suffix: str,
+    atol: float,
+    rtol: float,
+) -> list[dict[str, object]]:
+    name = "V_split.csv" if suffix == "split" else "V_agg.csv"
+    paths = {flow: directory / name for flow, directory in dirs.items()}
+    if not any(path.is_file() for path in paths.values()):
+        return []
+    if not all(path.is_file() for path in paths.values()):
+        raise FileNotFoundError(f"{name} must exist for DOM, IMP, and TOTAL")
+    frames = {flow: _read_frame(path) for flow, path in paths.items()}
+    rows = frames["TOTAL"].index
+    if any(not frame.index.equals(rows) or not frame.columns.equals(frames["TOTAL"].columns) for frame in frames.values()):
+        raise ValueError(f"{suffix} V row/column schema differs across flows")
+    diagnostics: list[dict[str, object]] = []
+    x = {flow: _read_series(dirs[flow] / ("x_split.csv" if suffix == "split" else "x_agg.csv")) for flow in dirs}
+    Z = {flow: _read_frame(dirs[flow] / ("Z_split.csv" if suffix == "split" else "Z_agg.csv")) for flow in dirs}
+    for row in rows.astype(str):
+        kind = supplementary_accounting_identity_kind(row)
+        if kind == "output":
+            for flow in ("DOM", "IMP", "TOTAL"):
+                gap = _assert_close(f"{suffix} V output {flow}", frames[flow].loc[row], x[flow], rtol=rtol, atol=atol)
+                diagnostics.append({"stage": suffix, "object": f"V:{row}:{flow}", "contract": "shared_output", "max_abs_gap": gap, "ok": True})
+        elif kind == "intermediate_use":
+            for flow in ("DOM", "IMP", "TOTAL"):
+                expected = Z[flow].sum(axis=0).astype("float64")
+                gap = _assert_close(f"{suffix} V intermediate use {flow}", frames[flow].loc[row], expected, rtol=rtol, atol=atol)
+                diagnostics.append({"stage": suffix, "object": f"V:{row}:{flow}", "contract": "flow_specific_Z_column_sum", "max_abs_gap": gap, "ok": True})
+        elif kind == "value_added":
+            expected = x["TOTAL"] - Z["TOTAL"].sum(axis=0).astype("float64")
+            gap = _assert_close(f"{suffix} V TOTAL value added", frames["TOTAL"].loc[row], expected, rtol=rtol, atol=atol)
+            diagnostics.append({"stage": suffix, "object": f"V:{row}:TOTAL", "contract": "total_only_identity", "max_abs_gap": gap, "ok": True})
+        elif kind == "total_supply":
+            diagnostics.append({"stage": suffix, "object": f"V:{row}:TOTAL", "contract": "validated_against_source_flow_reconstruction", "ok": True})
+        else:
+            expected = _add_frames(frames["DOM"].loc[[row]], frames["IMP"].loc[[row]]).iloc[0]
+            gap = _assert_close(f"{suffix} V additive row {row}", expected, frames["TOTAL"].loc[row], rtol=rtol, atol=atol)
+            diagnostics.append({"stage": suffix, "object": f"V:{row}", "contract": "DOM+IMP=TOTAL", "max_abs_gap": gap, "ok": True})
+    return diagnostics
+
+
+def _validate_m_flow_contract(
+    *,
+    dirs: Mapping[str, Path],
+    suffix: str,
+    atol: float,
+    rtol: float,
+) -> list[dict[str, object]]:
+    name = "M_split.csv" if suffix == "split" else "M_agg.csv"
+    paths = {flow: directory / name for flow, directory in dirs.items()}
+    if not any(path.is_file() for path in paths.values()):
+        return []
+    if not all(path.is_file() for path in paths.values()):
+        raise FileNotFoundError(f"{name} must exist for DOM, IMP, and TOTAL")
+    frames = {flow: _read_frame(path) for flow, path in paths.items()}
+    expected = _add_frames(frames["DOM"], frames["IMP"])
+    gap = _assert_close(f"{suffix} M DOM+IMP=TOTAL", expected, frames["TOTAL"], rtol=rtol, atol=atol)
+    return [{"stage": suffix, "object": "M", "contract": "DOM+IMP=TOTAL including applicability mask", "max_abs_gap": gap, "ok": True}]
+
+
 def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: Mapping[str, object], eurostat_row_dim: str, eurostat_col_dim: str, eurostat_stk_flow_dim: str = "stk_flow", atol: float = 1e-6, rtol: float = 1e-9) -> None:
     dirs = {flow: outdir / f"{eurostat_stk_flow_dim}={flow}" for flow in ("DOM", "IMP", "TOTAL")}
     for flow in ("DOM", "IMP"):
@@ -202,19 +267,37 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     _write_frame(derived["Y"], dirs["TOTAL"], "Y_split.csv")
     semantic_diagnostics = _apply_contract(dirs, suffix="split", write=True)
 
-    total_filters = dict(eurostat_filters)
-    total_filters[eurostat_stk_flow_dim] = "TOTAL"
-    reference = load_eurostat_iot(dataset=eurostat_dataset, filters=total_filters, row_dim=eurostat_row_dim, col_dim=eurostat_col_dim, storage_folder=default_data_root() / "eurostat")
-    source_codes = reference.Z.index.astype(str)
+    references = {}
+    for flow in ("DOM", "IMP", "TOTAL"):
+        filters = dict(eurostat_filters)
+        filters[eurostat_stk_flow_dim] = flow
+        references[flow] = load_eurostat_iot(
+            dataset=eurostat_dataset,
+            filters=filters,
+            row_dim=eurostat_row_dim,
+            col_dim=eurostat_col_dim,
+            storage_folder=default_data_root() / "eurostat",
+        )
+    source_codes = references["TOTAL"].Z.index.astype(str)
     child_parent = _child_to_parent(manifest, source_codes)
-    diagnostics: list[dict[str, object]] = [
-        {"stage": "split_to_eurostat", "object": "Z", "max_abs_gap": _assert_close("TOTAL Z reconstruction", _aggregate_square(derived["Z"], child_parent, source_codes), reference.Z, rtol=rtol, atol=atol), "ok": True},
-        {"stage": "split_to_eurostat", "object": "Y", "max_abs_gap": _assert_close("TOTAL Y reconstruction", _aggregate_rows(derived["Y"], child_parent, source_codes), reference.Y, rtol=rtol, atol=atol), "ok": True},
-    ]
-    if "V" in derived and reference.V is not None:
-        diagnostics.append({"stage": "split_to_eurostat", "object": "V", "max_abs_gap": _assert_close("TOTAL V reconstruction", _aggregate_columns(_read_frame(dirs["TOTAL"] / "V_split.csv"), child_parent, source_codes), reference.V, rtol=rtol, atol=atol), "ok": True})
-    if "M" in derived and reference.M is not None:
-        diagnostics.append({"stage": "split_to_eurostat", "object": "M", "max_abs_gap": _assert_close("TOTAL M reconstruction", _read_frame(dirs["TOTAL"] / "M_split.csv"), reference.M, rtol=rtol, atol=atol), "ok": True})
+    diagnostics: list[dict[str, object]] = []
+    for flow in ("DOM", "IMP", "TOTAL"):
+        reference = references[flow]
+        flow_dir = dirs[flow]
+        Z_flow = _read_frame(flow_dir / "Z_split.csv")
+        Y_flow = _read_frame(flow_dir / "Y_split.csv")
+        diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "Z", "max_abs_gap": _assert_close(f"{flow} Z reconstruction", _aggregate_square(Z_flow, child_parent, source_codes), reference.Z, rtol=rtol, atol=atol), "ok": True})
+        diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "Y", "max_abs_gap": _assert_close(f"{flow} Y reconstruction", _aggregate_rows(Y_flow, child_parent, source_codes), reference.Y, rtol=rtol, atol=atol), "ok": True})
+        v_path = flow_dir / "V_split.csv"
+        if reference.V is not None:
+            if not v_path.is_file():
+                raise FileNotFoundError(f"{flow} source has supplementary V rows but {v_path} is missing")
+            diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "V", "max_abs_gap": _assert_close(f"{flow} V reconstruction", _aggregate_columns(_read_frame(v_path), child_parent, source_codes), reference.V, rtol=rtol, atol=atol), "ok": True})
+        m_path = flow_dir / "M_split.csv"
+        if reference.M is not None:
+            if not m_path.is_file():
+                raise FileNotFoundError(f"{flow} source has supplementary M rows but {m_path} is missing")
+            diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "M", "max_abs_gap": _assert_close(f"{flow} M reconstruction", _read_frame(m_path), reference.M, rtol=rtol, atol=atol), "ok": True})
     (dirs["TOTAL"] / "exio_selected_sectors.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({
         "flow_construction": "derived_dom_plus_imp",
@@ -235,16 +318,16 @@ def validate_additive_outputs(outdir: Path, *, suffix: str, atol: float, rtol: f
             raise FileNotFoundError(f"Required flow directory not found: {directory}")
     names = _SPLIT_NAMES if suffix == "split" else _AGG_NAMES
     diagnostics: list[dict[str, object]] = []
-    for obj in _FRAME_FILES:
+    for obj in ("Z", "Y"):
         filename = names[obj]
         paths = {flow: directory / filename for flow, directory in dirs.items()}
-        if not any(path.is_file() for path in paths.values()):
-            continue
         if not all(path.is_file() for path in paths.values()):
             raise FileNotFoundError(f"{filename} must exist for DOM, IMP, and TOTAL")
         expected = _add_frames(_read_frame(paths["DOM"]), _read_frame(paths["IMP"]))
         diagnostics.append({"stage": suffix, "object": obj, "max_abs_gap": _assert_close(f"{suffix} {obj} DOM+IMP=TOTAL", expected, _read_frame(paths["TOTAL"]), rtol=rtol, atol=atol), "ok": True})
     diagnostics.extend(_apply_contract(dirs, suffix=suffix, write=False))
+    diagnostics.extend(_validate_v_flow_contract(dirs=dirs, suffix=suffix, atol=atol, rtol=rtol))
+    diagnostics.extend(_validate_m_flow_contract(dirs=dirs, suffix=suffix, atol=atol, rtol=rtol))
     use_name = "use_total_split.csv" if suffix == "split" else "use_total_agg.csv"
     use = {flow: _read_series(directory / use_name) for flow, directory in dirs.items()}
     diagnostics.append({"stage": suffix, "object": "use_total", "max_abs_gap": _assert_close(f"{suffix} use TOTAL=DOM+IMP", use["DOM"].add(use["IMP"], fill_value=0.0), use["TOTAL"], rtol=rtol, atol=atol), "ok": True})

@@ -21,9 +21,9 @@ def _write_flow(root: Path, flow: str, scale: float) -> None:
     d.mkdir(parents=True)
     idx = pd.Index(["a", "b"])
     Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx) * scale
-    Y = pd.DataFrame([[5.0], [6.0]], index=idx, columns=pd.Index(["P3_S14"])) * scale
+    Y = pd.DataFrame([[5.0], [6.0]], index=idx, columns=pd.Index(["P3"])) * scale
     V = pd.DataFrame([[7.0, 8.0]], index=pd.Index(["D1"]), columns=idx) * scale
-    M = pd.DataFrame([[9.0]], index=pd.Index(["TU"]), columns=pd.Index(["P3_S14"])) * scale
+    M = pd.DataFrame([[9.0]], index=pd.Index(["TU"]), columns=pd.Index(["P3"])) * scale
     for name, frame in (("Z_split.csv", Z), ("Y_split.csv", Y), ("V_split.csv", V), ("M_split.csv", M)):
         frame.to_csv(d / name)
     (d / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")

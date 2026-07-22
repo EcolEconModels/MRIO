@@ -1743,6 +1743,14 @@ def _write_sfc_workbook(
     contract_rows: list[dict[str, object]] = []
     parsed_v = parsed.V.astype("float64") if parsed.V is not None else None
     parsed_m = parsed.M.astype("float64") if parsed.M is not None else None
+    if V_ord is not None:
+        missing_v_columns = sorted(set(product_codes_order) - set(V_ord.columns.astype(str)))
+        if missing_v_columns:
+            raise ValueError(f"Transformed V is missing applicable product columns: {missing_v_columns!r}")
+    if M_ord is not None:
+        missing_m_columns = sorted(set(fd_codes_order_no_total) - set(M_ord.columns.astype(str)))
+        if missing_m_columns:
+            raise ValueError(f"Transformed M is missing applicable final-demand columns: {missing_m_columns!r}")
     imports_vector = find_imports_vector(V_ord, product_codes_order)
 
     for offset, row_code in enumerate(source_rows):
@@ -1774,7 +1782,11 @@ def _write_sfc_workbook(
                     "Supplementary product row cannot be reconstructed without authoritative V: "
                     f"code={row_code!r}, label={row_label!r}, source_present={source_v_row is not None}."
                 )
-            product_vector = V_ord.loc[output_v_row].reindex(product_codes_order).astype("float64")
+            product_vector = V_ord.loc[output_v_row].reindex(product_codes_order)
+            if product_vector.isna().any():
+                missing_cells = product_vector.index[product_vector.isna()].astype(str).tolist()
+                raise ValueError(f"Supplementary V row {row_code!r} has missing applicable cells: {missing_cells!r}")
+            product_vector = product_vector.astype("float64")
             product_method = "flow_specific_v_disaggregation"
 
         if kind == "intermediate_use":
@@ -1791,7 +1803,11 @@ def _write_sfc_workbook(
                     "Supplementary final-demand row cannot be reconstructed without authoritative M: "
                     f"code={row_code!r}, label={row_label!r}, source_present={source_m_row is not None}."
                 )
-            fd_vector = M_ord.loc[output_m_row].reindex(fd_codes_order_no_total).astype("float64")
+            fd_vector = M_ord.loc[output_m_row].reindex(fd_codes_order_no_total)
+            if fd_vector.isna().any():
+                missing_cells = fd_vector.index[fd_vector.isna()].astype(str).tolist()
+                raise ValueError(f"Supplementary M row {row_code!r} has missing applicable cells: {missing_cells!r}")
+            fd_vector = fd_vector.astype("float64")
             fd_method = "flow_specific_m_disaggregation"
             non_applicable = ""
 
