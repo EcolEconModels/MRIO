@@ -20,6 +20,60 @@ _ACCOUNTING_RTOL = 1e-9
 _ACCOUNTING_ATOL = 1e-6
 
 
+def rounded_source_control_diagnostic(
+    *,
+    identity: str,
+    published: float,
+    derived: float,
+    component_term_count: int,
+    source_rounding_quantum: float,
+    rtol: float = _ACCOUNTING_RTOL,
+    atol: float = _ACCOUNTING_ATOL,
+) -> dict[str, object]:
+    """Validate one independently rounded published control.
+
+    Generated accounting identities remain subject to ordinary ``atol``/``rtol``.
+    This helper is only for a published control compared with a sum of independently
+    rounded source components.
+    """
+    if not np.isfinite(source_rounding_quantum) or source_rounding_quantum <= 0.0:
+        raise ValueError(f"Invalid source rounding quantum: {source_rounding_quantum!r}")
+    if component_term_count < 1:
+        raise ValueError(f"{identity}: component_term_count must be positive")
+    if not np.isfinite(published) or not np.isfinite(derived):
+        raise ValueError(f"{identity}: published and derived values must be finite")
+
+    signed_gap = float(published - derived)
+    absolute_gap = abs(signed_gap)
+    scale = max(abs(float(published)), abs(float(derived)))
+    floating_tolerance = max(float(atol), float(rtol) * scale)
+    rounding_bound = (
+        0.5 * float(source_rounding_quantum) * (int(component_term_count) + 1)
+        + floating_tolerance
+    )
+    ok = absolute_gap <= rounding_bound
+    diagnostic: dict[str, object] = {
+        "identity": str(identity),
+        "published_value": float(published),
+        "derived_value": float(derived),
+        "signed_gap": signed_gap,
+        "absolute_gap": absolute_gap,
+        "source_rounding_quantum": float(source_rounding_quantum),
+        "component_term_count": int(component_term_count),
+        "rounding_bound": rounding_bound,
+        "floating_tolerance": floating_tolerance,
+        "ok": ok,
+    }
+    if not ok:
+        raise ValueError(
+            f"Published Eurostat {identity} control failed: "
+            f"published={published:.12g}, derived={derived:.12g}, "
+            f"abs_gap={absolute_gap:.12g}, rounding_bound={rounding_bound:.12g}, "
+            f"source_quantum={source_rounding_quantum:.12g}, "
+            f"component_terms={component_term_count}."
+        )
+    return diagnostic
+
 def _choose_family(columns: set[str], *, aggregate: str, detail: tuple[str, ...]) -> list[str]:
     present = [code for code in detail if code in columns]
     if len(present) == len(detail):

@@ -12,10 +12,12 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
-from ecolecon_mrio.eurostat_iot import load_eurostat_iot
+from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot
 from ecolecon_mrio.iot_flow_semantics import (
+    atomic_final_demand,
     flow_use_total,
     refresh_supplementary_rows,
+    rounded_source_control_diagnostic,
     technical_coefficients,
 )
 from ecolecon_mrio.iot_identities import supplementary_accounting_identity_kind
@@ -92,6 +94,154 @@ def _assert_close(label: str, left: pd.DataFrame | pd.Series, right: pd.DataFram
         raise ValueError(f"{label} failed: max_abs_gap={gap:.12g}, tolerance={tolerance:.12g}")
     return gap
 
+
+_ROUNDED_Y_CONTROLS = ("P3", "P5", "TFU", "TU")
+
+
+def _resolve_source_rounding_quantum(
+    references: Mapping[str, ParsedEurostatIOT],
+    override: float | None,
+) -> float:
+    if override is not None:
+        if not np.isfinite(override) or override <= 0.0:
+            raise ValueError("--source-rounding-quantum must be finite and positive")
+        return float(override)
+    inferred = {
+        float(reference.meta["source_rounding_quantum"])
+        for reference in references.values()
+        if reference.meta.get("source_rounding_quantum") is not None
+    }
+    if len(inferred) != 1:
+        raise ValueError(
+            "Could not establish one source rounding quantum across DOM/IMP/TOTAL; "
+            f"inferred={sorted(inferred)!r}. Pass --source-rounding-quantum explicitly."
+        )
+    quantum = inferred.pop()
+    if not np.isfinite(quantum) or quantum <= 0.0:
+        raise ValueError(f"Invalid inferred source rounding quantum: {quantum!r}")
+    return quantum
+
+
+def _derived_y_control(
+    reference: ParsedEurostatIOT,
+    identity: str,
+) -> tuple[pd.Series, pd.Series]:
+    Y = reference.Y.astype("float64")
+    if identity == "P3":
+        detail = ["P3_S13", "P3_S14", "P3_S15"]
+        if not set(detail).issubset(Y.columns):
+            raise ValueError("P3 published-control validation requires its complete detail partition")
+        values = Y.loc[:, detail].sum(axis=1).astype("float64")
+        counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
+        return values, counts
+    if identity == "P5":
+        detail = ["P51G", "P52", "P53"]
+        if not set(detail).issubset(Y.columns):
+            raise ValueError("P5 published-control validation requires its complete detail partition")
+        values = Y.loc[:, detail].sum(axis=1).astype("float64")
+        counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
+        return values, counts
+
+    atomic = atomic_final_demand(Y)
+    values = atomic.sum(axis=1).astype("float64")
+    counts = atomic.notna().sum(axis=1).astype("int64")
+    if identity == "TFU":
+        return values, counts
+    if identity == "TU":
+        values = reference.Z.sum(axis=1).add(values, fill_value=0.0).astype("float64")
+        counts = reference.Z.notna().sum(axis=1).add(counts, fill_value=0).astype("int64")
+        return values, counts
+    raise ValueError(f"Unsupported rounded Y control: {identity}")
+
+
+def _validate_rounded_series(
+    *,
+    flow: str,
+    identity: str,
+    published: pd.Series,
+    derived: pd.Series,
+    component_counts: pd.Series,
+    source_rounding_quantum: float,
+    rtol: float,
+    atol: float,
+) -> list[dict[str, object]]:
+    labels = published.index
+    if not derived.index.equals(labels) or not component_counts.index.equals(labels):
+        raise ValueError(f"{flow} {identity}: rounded-control index mismatch")
+    diagnostics: list[dict[str, object]] = []
+    for code in labels.astype(str):
+        diagnostic = rounded_source_control_diagnostic(
+            identity=identity,
+            published=float(published.loc[code]),
+            derived=float(derived.loc[code]),
+            component_term_count=int(component_counts.loc[code]),
+            source_rounding_quantum=source_rounding_quantum,
+            rtol=rtol,
+            atol=atol,
+        )
+        diagnostic.update({"stage": "source_control", "flow": flow, "product_code": code})
+        diagnostics.append(diagnostic)
+    return diagnostics
+
+
+def _validate_y_source_reconstruction(
+    *,
+    flow: str,
+    reconstructed: pd.DataFrame,
+    reference: ParsedEurostatIOT,
+    source_rounding_quantum: float,
+    rtol: float,
+    atol: float,
+) -> list[dict[str, object]]:
+    common_controls = [
+        code for code in _ROUNDED_Y_CONTROLS
+        if code in reference.Y.columns and code in reconstructed.columns
+    ]
+    ordinary_columns = [code for code in reference.Y.columns if str(code) not in set(common_controls)]
+    _assert_close(
+        f"{flow} ordinary Y reconstruction",
+        reconstructed.loc[:, ordinary_columns],
+        reference.Y.loc[:, ordinary_columns],
+        rtol=rtol,
+        atol=atol,
+    )
+    diagnostics: list[dict[str, object]] = []
+    for identity in common_controls:
+        derived, counts = _derived_y_control(reference, identity)
+        _assert_close(
+            f"{flow} generated {identity} reconstruction",
+            reconstructed.loc[:, identity],
+            derived,
+            rtol=rtol,
+            atol=atol,
+        )
+        diagnostics.extend(
+            _validate_rounded_series(
+                flow=flow,
+                identity=identity,
+                published=reference.Y.loc[:, identity].astype("float64"),
+                derived=derived,
+                component_counts=counts,
+                source_rounding_quantum=source_rounding_quantum,
+                rtol=rtol,
+                atol=atol,
+            )
+        )
+    return diagnostics
+
+
+def _published_v_row(reference: ParsedEurostatIOT, identity_kind: str) -> tuple[str, pd.Series] | None:
+    if reference.V is None:
+        return None
+    rows = [
+        str(code) for code in reference.V.index
+        if supplementary_accounting_identity_kind(str(code)) == identity_kind
+    ]
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise ValueError(f"Expected at most one {identity_kind} source row, found {rows!r}")
+    return rows[0], reference.V.loc[rows[0]].astype("float64")
 
 def _manifest_children(value: object) -> list[str]:
     if isinstance(value, dict):
@@ -272,7 +422,7 @@ def _validate_m_flow_contract(
     return [{"stage": suffix, "object": "M", "contract": "DOM+IMP=TOTAL including applicability mask", "max_abs_gap": gap, "ok": True}]
 
 
-def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: Mapping[str, object], eurostat_row_dim: str, eurostat_col_dim: str, eurostat_stk_flow_dim: str = "stk_flow", atol: float = 1e-6, rtol: float = 1e-9) -> None:
+def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: Mapping[str, object], eurostat_row_dim: str, eurostat_col_dim: str, eurostat_stk_flow_dim: str = "stk_flow", source_rounding_quantum: float | None = None, atol: float = 1e-6, rtol: float = 1e-9) -> None:
     dirs = {flow: outdir / f"{eurostat_stk_flow_dim}={flow}" for flow in ("DOM", "IMP", "TOTAL")}
     for flow in ("DOM", "IMP"):
         if not dirs[flow].is_dir():
@@ -309,6 +459,9 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             col_dim=eurostat_col_dim,
             storage_folder=default_data_root() / "eurostat",
         )
+    resolved_source_rounding_quantum = _resolve_source_rounding_quantum(
+        references, source_rounding_quantum
+    )
     source_codes = references["TOTAL"].Z.index.astype(str)
     dom_reference = references["DOM"]
     published_v = dom_reference.V
@@ -328,27 +481,92 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         raise ValueError("Eurostat DOM published output row cannot be read without DOM V data.")
     published_output = published_v.loc[published_output_rows[0]].astype("float64")
     derived_output = flow_use_total(dom_reference.Z, dom_reference.Y).reindex(published_output.index)
-    _assert_close(
-        "Eurostat DOM published output versus Z plus atomic final demand",
-        derived_output,
-        published_output,
-        rtol=rtol,
-        atol=atol,
-    )
-    child_parent = _child_to_parent(manifest, source_codes)
     diagnostics: list[dict[str, object]] = []
+    child_parent = _child_to_parent(manifest, source_codes)
     for flow in ("DOM", "IMP", "TOTAL"):
         reference = references[flow]
         flow_dir = dirs[flow]
         Z_flow = _read_frame(flow_dir / "Z_split.csv")
         Y_flow = _read_frame(flow_dir / "Y_split.csv")
         diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "Z", "max_abs_gap": _assert_close(f"{flow} Z reconstruction", _aggregate_square(Z_flow, child_parent, source_codes), reference.Z, rtol=rtol, atol=atol), "ok": True})
-        diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "Y", "max_abs_gap": _assert_close(f"{flow} Y reconstruction", _aggregate_rows(Y_flow, child_parent, source_codes), reference.Y, rtol=rtol, atol=atol), "ok": True})
+        reconstructed_y = _aggregate_rows(Y_flow, child_parent, source_codes)
+        diagnostics.extend(
+            _validate_y_source_reconstruction(
+                flow=flow,
+                reconstructed=reconstructed_y,
+                reference=reference,
+                source_rounding_quantum=resolved_source_rounding_quantum,
+                rtol=rtol,
+                atol=atol,
+            )
+        )
         v_path = flow_dir / "V_split.csv"
         if reference.V is not None:
             if not v_path.is_file():
                 raise FileNotFoundError(f"{flow} source has supplementary V rows but {v_path} is missing")
-            diagnostics.append({"stage": "split_to_eurostat", "flow": flow, "object": "V", "max_abs_gap": _assert_close(f"{flow} V reconstruction", _aggregate_columns(_read_frame(v_path), child_parent, source_codes), reference.V, rtol=rtol, atol=atol), "ok": True})
+            reconstructed_v = _aggregate_columns(_read_frame(v_path), child_parent, source_codes)
+            rounded_rows = {
+                row for row in reference.V.index.astype(str)
+                if supplementary_accounting_identity_kind(row) == "output"
+                or (flow == "TOTAL" and supplementary_accounting_identity_kind(row) == "total_supply")
+            }
+            ordinary_rows = [row for row in reference.V.index.astype(str) if row not in rounded_rows]
+            _assert_close(
+                f"{flow} ordinary V reconstruction",
+                reconstructed_v.loc[ordinary_rows],
+                reference.V.loc[ordinary_rows],
+                rtol=rtol,
+                atol=atol,
+            )
+            output_row = _published_v_row(reference, "output")
+            if output_row is not None:
+                row_code, published = output_row
+                derived_control = derived_output.reindex(published.index)
+                counts = dom_reference.Z.notna().sum(axis=1).add(
+                    atomic_final_demand(dom_reference.Y).notna().sum(axis=1), fill_value=0
+                ).astype("int64").reindex(published.index)
+                _assert_close(
+                    f"{flow} generated P1 reconstruction",
+                    reconstructed_v.loc[row_code],
+                    derived_control,
+                    rtol=rtol,
+                    atol=atol,
+                )
+                diagnostics.extend(_validate_rounded_series(
+                    flow=flow, identity="P1", published=published, derived=derived_control,
+                    component_counts=counts, source_rounding_quantum=resolved_source_rounding_quantum,
+                    rtol=rtol, atol=atol,
+                ))
+            supply_row = _published_v_row(reference, "total_supply") if flow == "TOTAL" else None
+            if supply_row is not None:
+                row_code, published = supply_row
+                if reference.V is None:
+                    raise ValueError(f"{flow} TS_BP validation requires V")
+                imports_rows = [
+                    str(code) for code in reference.V.index
+                    if str(code).strip().upper() in {"P7", "P7_CIF", "P7_FOB", "IMPORTS"}
+                    or "imports" in str(code).casefold()
+                ]
+                if len(imports_rows) != 1:
+                    raise ValueError(f"{flow} TS_BP validation requires one imports row, found {imports_rows!r}")
+                imports = reference.V.loc[imports_rows[0]].astype("float64").reindex(published.index)
+                derived_output_control = flow_use_total(reference.Z, reference.Y).reindex(published.index)
+                derived_control = derived_output_control.add(imports, fill_value=0.0)
+                counts = reference.Z.notna().sum(axis=1).add(
+                    atomic_final_demand(reference.Y).notna().sum(axis=1), fill_value=0
+                ).add(1).astype("int64").reindex(published.index)
+                _assert_close(
+                    f"{flow} generated TS_BP reconstruction",
+                    reconstructed_v.loc[row_code],
+                    derived_control,
+                    rtol=rtol,
+                    atol=atol,
+                )
+                diagnostics.extend(_validate_rounded_series(
+                    flow=flow, identity="TS_BP", published=published, derived=derived_control,
+                    component_counts=counts, source_rounding_quantum=resolved_source_rounding_quantum,
+                    rtol=rtol, atol=atol,
+                ))
         m_path = flow_dir / "M_split.csv"
         if reference.M is not None:
             if not m_path.is_file():
@@ -400,6 +618,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--eurostat-col-dim")
     parser.add_argument("--eurostat-stk-flow-dim", default="stk_flow")
     parser.add_argument("--rtol", type=float, default=1e-9)
+    parser.add_argument(
+        "--source-rounding-quantum",
+        type=float,
+        help="Override the inferred source reporting quantum for rounded published controls.",
+    )
     parser.add_argument("--atol", type=float, default=1e-6)
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.validate_only:
@@ -408,7 +631,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     required = (args.eurostat_dataset, args.eurostat_filters, args.eurostat_row_dim, args.eurostat_col_dim)
     if not all(required):
         parser.error("derivation requires Eurostat dataset, filters, row dimension, and column dimension")
-    derive_total_flow(args.outdir, eurostat_dataset=str(args.eurostat_dataset), eurostat_filters=json.loads(str(args.eurostat_filters)), eurostat_row_dim=str(args.eurostat_row_dim), eurostat_col_dim=str(args.eurostat_col_dim), eurostat_stk_flow_dim=str(args.eurostat_stk_flow_dim), rtol=args.rtol, atol=args.atol)
+    derive_total_flow(args.outdir, eurostat_dataset=str(args.eurostat_dataset), eurostat_filters=json.loads(str(args.eurostat_filters)), eurostat_row_dim=str(args.eurostat_row_dim), eurostat_col_dim=str(args.eurostat_col_dim), eurostat_stk_flow_dim=str(args.eurostat_stk_flow_dim), source_rounding_quantum=args.source_rounding_quantum, rtol=args.rtol, atol=args.atol)
     return 0
 
 

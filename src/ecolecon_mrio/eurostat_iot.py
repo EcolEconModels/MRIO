@@ -252,6 +252,37 @@ def sdmx_json_to_series(payload: Mapping[str, Any], *, value_key: str = "value")
     return pd.Series(obs_val, index=mi)
 
 
+def infer_source_rounding_quantum(
+    payload: Mapping[str, Any],
+    *,
+    value_key: str = "value",
+) -> float | None:
+    """Infer the smallest decimal reporting quantum present in an SDMX payload.
+
+    Eurostat controls are independently rounded source observations.  The
+    inference uses the decimal representation retained by ``json.loads`` and
+    therefore avoids imposing a dataset-wide hard-coded quantum.
+    """
+    values = payload.get(value_key)
+    if not isinstance(values, dict) or not values:
+        return None
+
+    max_decimal_places = 0
+    found_numeric = False
+    for value in values.values():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        found_numeric = True
+        text = format(value, ".15g").lower()
+        mantissa, _, exponent_text = text.partition("e")
+        exponent = int(exponent_text) if exponent_text else 0
+        decimals = len(mantissa.partition(".")[2])
+        max_decimal_places = max(max_decimal_places, max(0, decimals - exponent))
+
+    if not found_numeric:
+        return None
+    return 10.0 ** (-max_decimal_places)
+
 def describe_eurostat_dataset(
     dataset: str,
     *,
@@ -461,6 +492,7 @@ def parse_eurostat_iot(
         "row_codes_not_in_intermediate_columns": sorted(row_codes - set(ind_cols)),
         "intermediate_columns_not_in_rows": sorted(set(ind_cols) - row_codes),
         "identified_supplementary_rows": lower_rows,
+        "source_rounding_quantum": infer_source_rounding_quantum(payload, value_key=value_key),
     }
     return ParsedEurostatIOT(Z=Z, Y=Y, meta=meta, V=V, M=M)
 
