@@ -20,7 +20,7 @@ from ecolecon_mrio.iot_flow_semantics import (
     source_atomic_final_demand,
     technical_coefficients,
 )
-from ecolecon_mrio.iot_identities import supplementary_accounting_identity_kind
+from ecolecon_mrio.iot_identities import find_imports_vector, supplementary_accounting_identity_kind
 
 _FRAME_FILES = ("Z", "Y", "V", "M")
 _SPLIT_NAMES = {name: f"{name}_split.csv" for name in _FRAME_FILES}
@@ -552,18 +552,25 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
                 row_code, published = supply_row
                 if reference.V is None:
                     raise ValueError(f"{flow} TS_BP validation requires V")
-                imports_rows = [
-                    str(code) for code in reference.V.index
-                    if str(code).strip().upper() in {"P7", "P7_CIF", "P7_FOB", "IMPORTS"}
-                    or "imports" in str(code).casefold()
+                required_products = pd.Index(reference.Z.columns.astype(str))
+                missing_published = [
+                    str(code) for code in required_products if str(code) not in set(published.index.astype(str))
                 ]
-                if len(imports_rows) != 1:
-                    raise ValueError(f"{flow} TS_BP validation requires one imports row, found {imports_rows!r}")
-                imports = reference.V.loc[imports_rows[0]].astype("float64").reindex(published.index)
+                if missing_published:
+                    raise ValueError(
+                        f"{flow} published TS_BP is missing products: {missing_published[:20]!r}"
+                    )
+                published = published.reindex(required_products).astype("float64")
+                imports = find_imports_vector(reference.V, required_products)
+                if imports is None:
+                    raise ValueError(f"{flow} TS_BP validation requires one imports row")
                 derived_output_control, output_counts = _derived_source_output(reference)
-                derived_output_control = derived_output_control.reindex(published.index)
-                derived_control = derived_output_control.add(imports, fill_value=0.0)
-                counts = output_counts.add(1).astype("int64").reindex(published.index)
+                derived_output_control = derived_output_control.reindex(required_products)
+                if derived_output_control.isna().any():
+                    missing = required_products[derived_output_control.isna()].astype(str).tolist()
+                    raise ValueError(f"{flow} TS_BP output is missing products: {missing[:20]!r}")
+                derived_control = derived_output_control + imports
+                counts = output_counts.add(1).astype("int64").reindex(required_products)
                 _assert_close(
                     f"{flow} generated TS_BP reconstruction",
                     reconstructed_v.loc[row_code],

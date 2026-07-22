@@ -94,23 +94,48 @@ def is_imports_row(row_code: object) -> bool:
 
 
 def find_imports_vector(V: pd.DataFrame | None, columns: pd.Index | list[str]) -> pd.Series | None:
+    """Return one complete finite imports row aligned to the requested products.
+
+    Missing products and non-finite values are accounting defects, not zero imports.
+    Multiple recognised imports rows are ambiguous and therefore rejected.
+    """
     if V is None:
         return None
 
     cols = pd.Index(list(map(str, columns)))
+    if cols.has_duplicates:
+        duplicates = cols[cols.duplicated()].astype(str).tolist()
+        raise ValueError(f"Requested imports columns contain duplicates: {duplicates[:20]!r}")
+
     V_ord = V.copy().astype("float64")
     V_ord.index = V_ord.index.astype(str)
     V_ord.columns = V_ord.columns.astype(str)
+    if V_ord.columns.has_duplicates:
+        duplicates = V_ord.columns[V_ord.columns.duplicated()].astype(str).tolist()
+        raise ValueError(f"Supplementary V contains duplicate product columns: {duplicates[:20]!r}")
 
-    preferred = ["P7", "Imports of goods and services", "P7_CIF", "P7_FOB", "Imports"]
-    for candidate in preferred:
-        if candidate in V_ord.index:
-            return V_ord.loc[candidate].reindex(cols).fillna(0.0).astype("float64")
+    matches = [str(row_code) for row_code in V_ord.index if is_imports_row(row_code)]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one imports row, found {matches!r}")
+    if V_ord.index.has_duplicates:
+        duplicate_matches = [row for row in matches if int((V_ord.index == row).sum()) > 1]
+        if duplicate_matches:
+            raise ValueError(f"Imports row labels are duplicated: {duplicate_matches!r}")
 
-    for row_code in V_ord.index.astype(str):
-        if is_imports_row(row_code):
-            return V_ord.loc[row_code].reindex(cols).fillna(0.0).astype("float64")
-    return None
+    missing = [str(code) for code in cols if str(code) not in set(V_ord.columns)]
+    if missing:
+        raise ValueError(f"Imports row is missing required product columns: {missing[:20]!r}")
+
+    row = V_ord.loc[matches[0], cols]
+    if not isinstance(row, pd.Series):
+        raise ValueError(f"Imports row {matches[0]!r} is not unique")
+    values = row.to_numpy(dtype="float64")
+    if not np.isfinite(values).all():
+        bad = cols[~np.isfinite(values)].astype(str).tolist()
+        raise ValueError(f"Imports row contains non-finite values for products: {bad[:20]!r}")
+    return row.astype("float64")
 
 
 def refresh_m_identity_rows(

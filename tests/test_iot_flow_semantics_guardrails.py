@@ -197,3 +197,52 @@ def test_derived_final_demand_controls_and_tu_are_rebuilt() -> None:
     assert out.loc["a", "P3"] == 6.0
     assert out.loc["a", "TFU"] == 10.0
     assert out.loc["a", "TU"] == 20.0
+
+def test_imports_vector_rejects_ambiguous_rows() -> None:
+    from ecolecon_mrio.iot_identities import find_imports_vector
+
+    V = pd.DataFrame(
+        [[1.0], [1.0]],
+        index=pd.Index(["P7", "Imports of goods and services"]),
+        columns=pd.Index(["a"]),
+    )
+    with pytest.raises(ValueError, match="exactly one imports row"):
+        find_imports_vector(V, pd.Index(["a"]))
+
+
+def test_imports_vector_rejects_missing_product_coverage() -> None:
+    from ecolecon_mrio.iot_identities import find_imports_vector
+
+    V = pd.DataFrame([[1.0]], index=pd.Index(["P7"]), columns=pd.Index(["a"]))
+    with pytest.raises(ValueError, match="missing required product columns"):
+        find_imports_vector(V, pd.Index(["a", "b"]))
+
+
+def test_imports_vector_rejects_non_finite_values() -> None:
+    from ecolecon_mrio.iot_identities import find_imports_vector
+
+    V = pd.DataFrame([[float("nan")]], index=pd.Index(["P7"]), columns=pd.Index(["a"]))
+    with pytest.raises(ValueError, match="non-finite values"):
+        find_imports_vector(V, pd.Index(["a"]))
+
+
+def test_total_supply_rejects_incomplete_imports_bridge() -> None:
+    from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows
+
+    idx = pd.Index(["a", "b"])
+    Z = pd.DataFrame(0.0, index=idx, columns=idx)
+    Y = pd.DataFrame({"P3": [1.0, 2.0]}, index=idx)
+    V = pd.DataFrame(
+        [[3.0], [0.0]],
+        index=pd.Index(["P7", "TS_BP"]),
+        columns=pd.Index(["a"]),
+    )
+    with pytest.raises(ValueError, match="Supplementary V columns are absent from Z|missing required product columns"):
+        refresh_supplementary_rows(
+            V,
+            None,
+            Z=Z,
+            Y=Y,
+            output=pd.Series([1.0, 2.0], index=idx),
+            flow_role="TOTAL",
+        )

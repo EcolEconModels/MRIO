@@ -261,11 +261,17 @@ def refresh_supplementary_rows(
             elif flow_role == "TOTAL" and kind == "value_added":
                 V_out.loc[row_code, cols] = x - z_col
             elif flow_role == "TOTAL" and kind == "total_supply":
-                imports = find_imports_vector(V_out, cols)
+                required_products = pd.Index(Z.columns.astype(str))
+                imports = find_imports_vector(V_out, required_products)
                 if imports is None:
                     raise ValueError(
                         f"TOTAL supply row {row_code!r} exists but no imports bridge can be identified."
                     )
-                V_out.loc[row_code, cols] = x + imports.reindex(cols).astype("float64")
+                required_output = output.reindex(required_products)
+                if required_output.isna().any():
+                    required_index = cast(pd.Index, required_output.index)
+                    missing = required_index[required_output.isna()].astype(str).tolist()
+                    raise ValueError(f"TOTAL supply output is missing products: {missing[:20]!r}")
+                V_out.loc[row_code, required_products] = required_output.astype("float64") + imports
     M_out = refresh_m_identity_rows(M, Y=Y, Z=Z)
     return V_out, M_out
