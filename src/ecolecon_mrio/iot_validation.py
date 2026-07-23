@@ -66,7 +66,7 @@ class RowIdentityPolicy:
     total_use_column: str | None = None
     output_row: str | None = None
     imports_row: str | None = None
-    total_supply_basic_row: str | None = None
+    supply_equals_use_row: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +82,16 @@ class ColumnIdentityPolicy:
     gross_value_added_row: str | None = None
     output_row: str | None = None
     valuation_adjustment_rows: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CrossFlowPolicy:
+    """Map TOTAL-table controls to DOM/IMP cross-flow accounting roles."""
+
+    total_output_row: str | None = None
+    total_imports_row: str | None = None
+    imported_use_intermediate_row: str | None = None
+    imported_use_final_row: str | None = None
 
 
 def _normalise_frame(frame: pd.DataFrame, *, name: str) -> pd.DataFrame:
@@ -110,7 +120,9 @@ def _comparison_check(
     explanation: str,
 ) -> InvariantCheck:
     observed_aligned = observed.astype("float64")
-    derived_aligned = derived.reindex(observed_aligned.index).astype("float64")
+    derived_aligned = derived.astype("float64")
+    if not observed_aligned.index.equals(derived_aligned.index):
+        raise ValueError(f"{check_id}: compared series must have identical ordered labels")
     values_observed = observed_aligned.to_numpy(dtype="float64")
     values_derived = derived_aligned.to_numpy(dtype="float64")
     finite = np.isfinite(values_observed) & np.isfinite(values_derived)
@@ -133,6 +145,46 @@ def _comparison_check(
         max_abs_gap=max_abs_gap,
         tolerance=max_tolerance,
         affected_labels=tuple(failed_labels[:50]),
+        explanation=explanation,
+    )
+
+
+def _frame_comparison_check(
+    *,
+    check_id: str,
+    category: str,
+    block: str,
+    observed: pd.DataFrame,
+    derived: pd.DataFrame,
+    rtol: float,
+    atol: float,
+    explanation: str,
+) -> InvariantCheck:
+    if not observed.index.equals(derived.index) or not observed.columns.equals(derived.columns):
+        raise ValueError(f"{check_id}: compared frames must have identical ordered labels")
+    observed_values = observed.to_numpy(dtype="float64")
+    derived_values = derived.to_numpy(dtype="float64")
+    finite = np.isfinite(observed_values) & np.isfinite(derived_values)
+    tolerance = atol + rtol * np.maximum(np.abs(observed_values), np.abs(derived_values))
+    gaps = np.abs(observed_values - derived_values)
+    passed = finite & (gaps <= tolerance)
+    failed_positions = np.argwhere(~passed)
+    failed_labels = tuple(
+        f"{observed.index[int(row)]}|{observed.columns[int(column)]}"
+        for row, column in failed_positions[:50]
+    )
+    finite_gaps = gaps[np.isfinite(gaps)]
+    finite_tolerances = tolerance[np.isfinite(tolerance)]
+    return InvariantCheck(
+        check_id=check_id,
+        category=category,
+        status="pass" if not failed_labels else "fail",
+        severity="error",
+        flow_role="TOTAL",
+        block=block,
+        max_abs_gap=float(finite_gaps.max()) if finite_gaps.size else float("inf"),
+        tolerance=float(finite_tolerances.max()) if finite_tolerances.size else float(atol),
+        affected_labels=failed_labels,
         explanation=explanation,
     )
 
@@ -335,18 +387,18 @@ def validate_structural_and_row_invariants(
                 )
             )
     else:
-        if policy.total_supply_basic_row is None:
+        if policy.supply_equals_use_row is None:
             checks.append(
                 _missing_role_check(
                     check_id="row.total_supply_equals_use",
                     flow_role=flow_role,
                     block="V",
-                    explanation="No total-supply-at-basic-prices row was declared by policy.",
+                    explanation="No same-valuation supply control row was declared by policy.",
                 )
             )
         else:
             total_supply = _require_finite_row(
-                V_ord, str(policy.total_supply_basic_row), "total supply", block_name="V"
+                V_ord, str(policy.supply_equals_use_row), "total supply", block_name="V"
             )
             checks.append(
                 _comparison_check(
@@ -358,7 +410,7 @@ def validate_structural_and_row_invariants(
                     derived=row_use_total,
                     rtol=rtol,
                     atol=atol,
-                    explanation="Total supply at basic prices must equal total intermediate and final use.",
+                    explanation="Supply and use must balance at the common valuation selected by policy.",
                 )
             )
             if policy.output_row is not None and policy.imports_row is not None:
@@ -374,7 +426,7 @@ def validate_structural_and_row_invariants(
                         derived=output.add(imports, fill_value=0.0),
                         rtol=rtol,
                         atol=atol,
-                        explanation="Total supply at basic prices must equal domestic output plus imports.",
+                        explanation="The selected supply control must equal domestic output plus imports at the declared valuation.",
                     )
                 )
             else:
@@ -444,7 +496,6 @@ def validate_column_invariants(
                 explanation="No intermediate-consumption row was declared by policy.",
             )
         )
-        observed_intermediate = None
     else:
         observed_intermediate = _require_finite_row(
             V_ord,
@@ -505,5 +556,122 @@ def validate_column_invariants(
                 ),
             )
         )
+
+    return InvariantReport(checks=tuple(checks))
+
+
+def validate_cross_flow_invariants(
+    *,
+    total_Z: pd.DataFrame,
+    total_Y: pd.DataFrame,
+    domestic_Z: pd.DataFrame,
+    domestic_Y: pd.DataFrame,
+    imports_Z: pd.DataFrame,
+    imports_Y: pd.DataFrame,
+    final_demand_columns: Sequence[str],
+    total_V: pd.DataFrame | None = None,
+    total_M: pd.DataFrame | None = None,
+    policy: CrossFlowPolicy = CrossFlowPolicy(),
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> InvariantReport:
+    """Validate generated TOTAL, DOM and IMP transaction and control bridges."""
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("rtol and atol must be non-negative")
+
+    total_Z_ord = _normalise_frame(total_Z, name="total_Z")
+    domestic_Z_ord = _normalise_frame(domestic_Z, name="domestic_Z")
+    imports_Z_ord = _normalise_frame(imports_Z, name="imports_Z")
+    total_Y_ord = _normalise_frame(total_Y, name="total_Y")
+    domestic_Y_ord = _normalise_frame(domestic_Y, name="domestic_Y")
+    imports_Y_ord = _normalise_frame(imports_Y, name="imports_Y")
+
+    for name, frame in (("total_Z", total_Z_ord), ("domestic_Z", domestic_Z_ord), ("imports_Z", imports_Z_ord)):
+        if not frame.index.equals(frame.columns):
+            raise ValueError(f"{name} must be square with identical ordered row and column labels")
+        if not np.isfinite(frame.to_numpy(dtype="float64")).all():
+            raise ValueError(f"{name} contains non-finite transaction values")
+    if not domestic_Z_ord.index.equals(total_Z_ord.index) or not imports_Z_ord.index.equals(total_Z_ord.index):
+        raise ValueError("TOTAL, DOM and IMP Z blocks must have identical ordered product domains")
+
+    for name, frame in (("total_Y", total_Y_ord), ("domestic_Y", domestic_Y_ord), ("imports_Y", imports_Y_ord)):
+        if not frame.index.equals(total_Z_ord.index):
+            raise ValueError(f"{name} rows must exactly match the ordered Z product domain")
+
+    selected = tuple(map(str, final_demand_columns))
+    if not selected:
+        raise ValueError("final_demand_columns must contain at least one column")
+    selected_index = pd.Index(selected)
+    if selected_index.has_duplicates:
+        duplicates = selected_index[selected_index.duplicated()].astype(str).tolist()
+        raise ValueError(f"final_demand_columns contains duplicates: {duplicates[:20]!r}")
+    for name, frame in (("total_Y", total_Y_ord), ("domestic_Y", domestic_Y_ord), ("imports_Y", imports_Y_ord)):
+        missing = [column for column in selected if column not in set(frame.columns)]
+        if missing:
+            raise ValueError(f"Selected final-demand columns are absent from {name}: {missing[:20]!r}")
+
+    total_atomic_Y = total_Y_ord.loc[:, list(selected)]
+    domestic_atomic_Y = domestic_Y_ord.loc[:, list(selected)]
+    imports_atomic_Y = imports_Y_ord.loc[:, list(selected)]
+    for name, frame in (("total_Y", total_atomic_Y), ("domestic_Y", domestic_atomic_Y), ("imports_Y", imports_atomic_Y)):
+        if not np.isfinite(frame.to_numpy(dtype="float64")).all():
+            raise ValueError(f"Selected final-demand block in {name} contains non-finite values")
+
+    checks: list[InvariantCheck] = [
+        _frame_comparison_check(
+            check_id="cross_flow.intermediate_transactions",
+            category="cross_flow",
+            block="Z_TOTAL|Z_DOM|Z_IMP",
+            observed=total_Z_ord,
+            derived=domestic_Z_ord + imports_Z_ord,
+            rtol=rtol,
+            atol=atol,
+            explanation="TOTAL intermediate transactions must equal DOM plus IMP cell by cell.",
+        ),
+        _frame_comparison_check(
+            check_id="cross_flow.final_uses",
+            category="cross_flow",
+            block="Y_TOTAL|Y_DOM|Y_IMP",
+            observed=total_atomic_Y,
+            derived=domestic_atomic_Y + imports_atomic_Y,
+            rtol=rtol,
+            atol=atol,
+            explanation="TOTAL atomic final uses must equal DOM plus IMP cell by cell.",
+        ),
+    ]
+
+    total_V_ord = None if total_V is None else _normalise_frame(total_V, name="total_V")
+    if total_V_ord is not None and not total_V_ord.columns.equals(total_Z_ord.columns):
+        raise ValueError("total_V columns must exactly match the ordered Z product domain")
+    total_M_ord = None if total_M is None else _normalise_frame(total_M, name="total_M")
+
+    domestic_supply = domestic_Z_ord.sum(axis=1).add(domestic_atomic_Y.sum(axis=1), fill_value=0.0).astype("float64")
+    imported_supply = imports_Z_ord.sum(axis=1).add(imports_atomic_Y.sum(axis=1), fill_value=0.0).astype("float64")
+
+    bridge_specs = (
+        ("cross_flow.domestic_output_bridge", policy.total_output_row, "V_TOTAL|Z_DOM|Y_DOM", "TOTAL-table output", domestic_supply, "TOTAL-table output must equal DOM intermediate plus final uses by product."),
+        ("cross_flow.imported_supply_bridge", policy.total_imports_row, "V_TOTAL|Z_IMP|Y_IMP", "TOTAL-table imports", imported_supply, "TOTAL-table imports must equal all IMP intermediate and final uses by product."),
+    )
+    for check_id, label, block, role_name, derived, explanation in bridge_specs:
+        if label is None:
+            checks.append(_missing_role_check(check_id=check_id, category="cross_flow", flow_role="TOTAL", block=block, explanation=f"No {role_name} row was declared by policy."))
+        else:
+            checks.append(_comparison_check(check_id=check_id, category="cross_flow", flow_role="TOTAL", block=block, observed=_require_finite_row(total_V_ord, str(label), role_name, block_name="total_V"), derived=derived, rtol=rtol, atol=atol, explanation=explanation))
+
+    if policy.imported_use_intermediate_row is None:
+        checks.append(_missing_role_check(check_id="cross_flow.imported_intermediate_use", category="cross_flow", flow_role="TOTAL", block="V_TOTAL|Z_IMP", explanation="No imported-intermediate-use control row was declared by policy."))
+    else:
+        checks.append(_comparison_check(check_id="cross_flow.imported_intermediate_use", category="cross_flow", flow_role="TOTAL", block="V_TOTAL|Z_IMP", observed=_require_finite_row(total_V_ord, str(policy.imported_use_intermediate_row), "imported intermediate use", block_name="total_V"), derived=imports_Z_ord.sum(axis=0).astype("float64"), rtol=rtol, atol=atol, explanation="Imported-use controls under production columns must equal IMP Z column sums."))
+
+    if policy.imported_use_final_row is None:
+        checks.append(_missing_role_check(check_id="cross_flow.imported_final_use", category="cross_flow", flow_role="TOTAL", block="M_TOTAL|Y_IMP", explanation="No imported-final-use control row was declared by policy."))
+    else:
+        if total_M_ord is None:
+            raise ValueError("imported final use row was declared but total_M is absent")
+        missing_M = [column for column in selected if column not in set(total_M_ord.columns)]
+        if missing_M:
+            raise ValueError(f"Selected final-demand columns are absent from total_M: {missing_M[:20]!r}")
+        observed_final = _require_finite_row(total_M_ord.loc[:, list(selected)], str(policy.imported_use_final_row), "imported final use", block_name="total_M")
+        checks.append(_comparison_check(check_id="cross_flow.imported_final_use", category="cross_flow", flow_role="TOTAL", block="M_TOTAL|Y_IMP", observed=observed_final, derived=imports_atomic_Y.sum(axis=0).astype("float64"), rtol=rtol, atol=atol, explanation="Imported-use controls under final-use columns must equal IMP Y column sums."))
 
     return InvariantReport(checks=tuple(checks))

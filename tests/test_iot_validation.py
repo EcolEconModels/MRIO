@@ -4,11 +4,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import ecolecon_mrio.iot_validation as iot_validation_module
+
 from ecolecon_mrio.iot_validation import (
     ColumnIdentityPolicy,
+    CrossFlowPolicy,
     InvariantReport,
     RowIdentityPolicy,
     validate_column_invariants,
+    validate_cross_flow_invariants,
     validate_structural_and_row_invariants,
 )
 
@@ -49,7 +53,7 @@ def test_report_collects_checks_and_require_ok() -> None:
             total_use_column="TU",
             output_row="P1",
             imports_row="P7",
-            total_supply_basic_row="TS_BP",
+            supply_equals_use_row="TS_BP",
         ),
     )
     assert report.ok
@@ -79,7 +83,7 @@ def test_generated_row_failure_is_reported_without_early_raise() -> None:
             total_use_column="TU",
             output_row="P1",
             imports_row="P7",
-            total_supply_basic_row="TS_BP",
+            supply_equals_use_row="TS_BP",
         ),
     )
     assert not report.ok
@@ -252,3 +256,70 @@ def test_undeclared_column_controls_are_not_applicable() -> None:
     )
     assert report.ok
     assert all(check.status == "not_applicable" for check in report.checks)
+
+
+def _valid_cross_flow_blocks() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    idx = pd.Index(["a", "b"])
+    fd = pd.Index(["FD1", "FD2"])
+    domestic_Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx)
+    imports_Z = pd.DataFrame([[0.5, 1.0], [1.5, 2.0]], index=idx, columns=idx)
+    domestic_Y = pd.DataFrame([[1.0, 2.0], [2.0, 1.0]], index=idx, columns=fd)
+    imports_Y = pd.DataFrame([[0.5, 1.0], [1.0, 0.5]], index=idx, columns=fd)
+    total_Z = domestic_Z + imports_Z
+    total_Y = domestic_Y + imports_Y
+    total_V = pd.DataFrame([domestic_Z.sum(axis=1) + domestic_Y.sum(axis=1), imports_Z.sum(axis=1) + imports_Y.sum(axis=1), imports_Z.sum(axis=0)], index=pd.Index(["P1", "P7", "UI"]), columns=idx)
+    total_M = pd.DataFrame([imports_Y.sum(axis=0)], index=pd.Index(["UI"]), columns=fd)
+    return total_Z, total_Y, domestic_Z, domestic_Y, imports_Z, imports_Y, total_V, total_M
+
+
+def test_cross_flow_validates_complete_triplet_and_import_bridges() -> None:
+    total_Z, total_Y, domestic_Z, domestic_Y, imports_Z, imports_Y, total_V, total_M = _valid_cross_flow_blocks()
+    report = validate_cross_flow_invariants(total_Z=total_Z, total_Y=total_Y, domestic_Z=domestic_Z, domestic_Y=domestic_Y, imports_Z=imports_Z, imports_Y=imports_Y, final_demand_columns=["FD1", "FD2"], total_V=total_V, total_M=total_M, policy=CrossFlowPolicy(total_output_row="P1", total_imports_row="P7", imported_use_intermediate_row="UI", imported_use_final_row="UI"))
+    assert report.ok
+    assert {check.check_id for check in report.checks} == {"cross_flow.intermediate_transactions", "cross_flow.final_uses", "cross_flow.domestic_output_bridge", "cross_flow.imported_supply_bridge", "cross_flow.imported_intermediate_use", "cross_flow.imported_final_use"}
+
+
+def test_cross_flow_reports_specific_transaction_cells() -> None:
+    total_Z, total_Y, domestic_Z, domestic_Y, imports_Z, imports_Y, _, _ = _valid_cross_flow_blocks()
+    total_Z.loc["a", "b"] += 1.0
+    total_Y.loc["b", "FD2"] += 2.0
+    report = validate_cross_flow_invariants(total_Z=total_Z, total_Y=total_Y, domestic_Z=domestic_Z, domestic_Y=domestic_Y, imports_Z=imports_Z, imports_Y=imports_Y, final_demand_columns=["FD1", "FD2"])
+    failed = {check.check_id: check for check in report.checks if check.status == "fail"}
+    assert failed["cross_flow.intermediate_transactions"].affected_labels == ("a|b",)
+    assert failed["cross_flow.final_uses"].affected_labels == ("b|FD2",)
+
+
+def test_comparison_rejects_silent_series_domain_loss() -> None:
+    observed = pd.Series([1.0], index=pd.Index(["a"]))
+    derived = pd.Series([1.0, 2.0], index=pd.Index(["a", "extra"]))
+    with pytest.raises(ValueError, match="identical ordered labels"):
+        iot_validation_module._comparison_check(
+            check_id="test.domain",
+            category="test",
+            flow_role="TOTAL",
+            block="test",
+            observed=observed,
+            derived=derived,
+            rtol=1e-9,
+            atol=1e-6,
+            explanation="test",
+        )
+
+
+def test_cross_flow_reports_import_control_failures_separately() -> None:
+    total_Z, total_Y, domestic_Z, domestic_Y, imports_Z, imports_Y, total_V, total_M = _valid_cross_flow_blocks()
+    total_V.loc["P7", "a"] += 1.0
+    total_V.loc["UI", "b"] += 1.0
+    total_M.loc["UI", "FD1"] += 1.0
+    report = validate_cross_flow_invariants(total_Z=total_Z, total_Y=total_Y, domestic_Z=domestic_Z, domestic_Y=domestic_Y, imports_Z=imports_Z, imports_Y=imports_Y, final_demand_columns=["FD1", "FD2"], total_V=total_V, total_M=total_M, policy=CrossFlowPolicy(total_imports_row="P7", imported_use_intermediate_row="UI", imported_use_final_row="UI"))
+    failed = {check.check_id: check for check in report.checks if check.status == "fail"}
+    assert failed["cross_flow.imported_supply_bridge"].affected_labels == ("a",)
+    assert failed["cross_flow.imported_intermediate_use"].affected_labels == ("b",)
+    assert failed["cross_flow.imported_final_use"].affected_labels == ("FD1",)
+
+
+def test_cross_flow_optional_controls_are_not_applicable() -> None:
+    total_Z, total_Y, domestic_Z, domestic_Y, imports_Z, imports_Y, _, _ = _valid_cross_flow_blocks()
+    report = validate_cross_flow_invariants(total_Z=total_Z, total_Y=total_Y, domestic_Z=domestic_Z, domestic_Y=domestic_Y, imports_Z=imports_Z, imports_Y=imports_Y, final_demand_columns=["FD1", "FD2"])
+    assert report.ok
+    assert sum(check.status == "not_applicable" for check in report.checks) == 4
