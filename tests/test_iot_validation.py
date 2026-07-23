@@ -5,8 +5,10 @@ import pandas as pd
 import pytest
 
 from ecolecon_mrio.iot_validation import (
+    ColumnIdentityPolicy,
     InvariantReport,
     RowIdentityPolicy,
+    validate_column_invariants,
     validate_structural_and_row_invariants,
 )
 
@@ -148,3 +150,105 @@ def test_undeclared_optional_controls_are_not_applicable() -> None:
     assert report.ok
     assert all(check.status == "not_applicable" for check in report.checks)
     assert isinstance(report, InvariantReport)
+
+
+def test_column_accounts_use_explicit_valuation_adjustments() -> None:
+    idx = pd.Index(["a", "b"])
+    Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx)
+    V = pd.DataFrame(
+        {
+            "a": [0.5, 4.5, 1.5, 6.0],
+            "b": [1.0, 7.0, 2.0, 9.0],
+        },
+        index=pd.Index(["TAX", "P2_ADJ", "B1G", "P1"]),
+    )
+    report = validate_column_invariants(
+        Z=Z,
+        V=V,
+        flow_role="TOTAL",
+        policy=ColumnIdentityPolicy(
+            intermediate_consumption_row="P2_ADJ",
+            gross_value_added_row="B1G",
+            output_row="P1",
+            valuation_adjustment_rows=("TAX",),
+        ),
+    )
+    assert report.ok
+    assert {check.check_id for check in report.checks} == {
+        "column.intermediate_consumption",
+        "column.output_components",
+    }
+
+
+def test_column_accounts_do_not_infer_valuation_adjustments() -> None:
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[4.0]], index=idx, columns=idx)
+    V = pd.DataFrame(
+        [[2.0], [4.0], [3.0], [7.0]],
+        index=pd.Index(["TAX", "P2", "B1G", "P1"]),
+        columns=idx,
+    )
+    report = validate_column_invariants(
+        Z=Z,
+        V=V,
+        flow_role="TOTAL",
+        policy=ColumnIdentityPolicy(
+            intermediate_consumption_row="P2",
+            gross_value_added_row="B1G",
+            output_row="P1",
+        ),
+    )
+    assert report.ok
+
+
+def test_column_accounts_collect_specific_failed_columns() -> None:
+    idx = pd.Index(["a", "b"])
+    Z = pd.DataFrame([[1.0, 0.0], [2.0, 3.0]], index=idx, columns=idx)
+    V = pd.DataFrame(
+        {"a": [3.0, 2.0, 5.0], "b": [4.0, 1.0, 7.0]},
+        index=pd.Index(["P2", "B1G", "P1"]),
+    )
+    report = validate_column_invariants(
+        Z=Z,
+        V=V,
+        flow_role="TOTAL",
+        policy=ColumnIdentityPolicy(
+            intermediate_consumption_row="P2",
+            gross_value_added_row="B1G",
+            output_row="P1",
+        ),
+    )
+    failed = {check.check_id: check for check in report.checks if check.status == "fail"}
+    assert failed["column.intermediate_consumption"].affected_labels == ("b",)
+    assert failed["column.output_components"].affected_labels == ("b",)
+
+
+def test_column_policy_rejects_duplicate_or_missing_adjustment_rows() -> None:
+    idx = pd.Index(["a"])
+    Z = pd.DataFrame([[1.0]], index=idx, columns=idx)
+    V = pd.DataFrame([[1.0]], index=pd.Index(["P2"]), columns=idx)
+    with pytest.raises(ValueError, match="contains duplicates"):
+        validate_column_invariants(
+            Z=Z,
+            V=V,
+            flow_role="TOTAL",
+            policy=ColumnIdentityPolicy(valuation_adjustment_rows=("TAX", "TAX")),
+        )
+    with pytest.raises(ValueError, match="valuation adjustment row is absent"):
+        validate_column_invariants(
+            Z=Z,
+            V=V,
+            flow_role="TOTAL",
+            policy=ColumnIdentityPolicy(valuation_adjustment_rows=("TAX",)),
+        )
+
+
+def test_undeclared_column_controls_are_not_applicable() -> None:
+    idx = pd.Index(["a"])
+    report = validate_column_invariants(
+        Z=pd.DataFrame([[1.0]], index=idx, columns=idx),
+        V=None,
+        flow_role="DOM",
+    )
+    assert report.ok
+    assert all(check.status == "not_applicable" for check in report.checks)

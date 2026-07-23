@@ -69,6 +69,21 @@ class RowIdentityPolicy:
     total_supply_basic_row: str | None = None
 
 
+@dataclass(frozen=True)
+class ColumnIdentityPolicy:
+    """Map source rows to generated production-column accounting roles.
+
+    ``valuation_adjustment_rows`` is explicit and may be empty. The validator
+    never infers whether product taxes, subsidies, margins or other valuation
+    rows belong in intermediate consumption from their labels.
+    """
+
+    intermediate_consumption_row: str | None = None
+    gross_value_added_row: str | None = None
+    output_row: str | None = None
+    valuation_adjustment_rows: tuple[str, ...] = ()
+
+
 def _normalise_frame(frame: pd.DataFrame, *, name: str) -> pd.DataFrame:
     out = frame.copy().astype("float64")
     out.index = out.index.astype(str)
@@ -123,11 +138,16 @@ def _comparison_check(
 
 
 def _missing_role_check(
-    *, check_id: str, flow_role: FlowRole, block: str, explanation: str
+    *,
+    check_id: str,
+    flow_role: FlowRole,
+    block: str,
+    explanation: str,
+    category: str = "row_identity",
 ) -> InvariantCheck:
     return InvariantCheck(
         check_id=check_id,
-        category="row_identity",
+        category=category,
         status="not_applicable",
         severity="info",
         flow_role=flow_role,
@@ -137,6 +157,25 @@ def _missing_role_check(
         affected_labels=(),
         explanation=explanation,
     )
+
+
+def _require_finite_row(
+    frame: pd.DataFrame | None,
+    label: str,
+    role_name: str,
+    *,
+    block_name: str,
+) -> pd.Series:
+    if frame is None:
+        raise ValueError(f"{role_name} row was declared but {block_name} is absent")
+    if label not in frame.index:
+        raise ValueError(f"Declared {role_name} row is absent from {block_name}: {label!r}")
+    row = frame.loc[label]
+    if not isinstance(row, pd.Series):
+        raise ValueError(f"Declared {role_name} row is not unique: {label!r}")
+    if not np.isfinite(row.to_numpy(dtype="float64")).all():
+        raise ValueError(f"Declared {role_name} row contains non-finite values: {label!r}")
+    return row.astype("float64")
 
 
 def validate_structural_and_row_invariants(
@@ -247,18 +286,6 @@ def validate_structural_and_row_invariants(
     if V_ord is not None and not V_ord.columns.equals(Z_ord.columns):
         raise ValueError("V columns must exactly match the ordered Z product domain")
 
-    def require_v_row(label: str, role_name: str) -> pd.Series:
-        if V_ord is None:
-            raise ValueError(f"{role_name} row was declared but V is absent")
-        if label not in V_ord.index:
-            raise ValueError(f"Declared {role_name} row is absent from V: {label!r}")
-        row = V_ord.loc[label]
-        if not isinstance(row, pd.Series):
-            raise ValueError(f"Declared {role_name} row is not unique: {label!r}")
-        if not np.isfinite(row.to_numpy(dtype="float64")).all():
-            raise ValueError(f"Declared {role_name} row contains non-finite values: {label!r}")
-        return row.astype("float64")
-
     if flow_role == "DOM":
         if policy.output_row is None:
             checks.append(
@@ -276,7 +303,7 @@ def validate_structural_and_row_invariants(
                     category="row_identity",
                     flow_role=flow_role,
                     block="V",
-                    observed=require_v_row(str(policy.output_row), "output"),
+                    observed=_require_finite_row(V_ord, str(policy.output_row), "output", block_name="V"),
                     derived=row_use_total,
                     rtol=rtol,
                     atol=atol,
@@ -300,7 +327,7 @@ def validate_structural_and_row_invariants(
                     category="row_identity",
                     flow_role=flow_role,
                     block="V",
-                    observed=require_v_row(str(policy.imports_row), "imports"),
+                    observed=_require_finite_row(V_ord, str(policy.imports_row), "imports", block_name="V"),
                     derived=row_use_total,
                     rtol=rtol,
                     atol=atol,
@@ -318,7 +345,9 @@ def validate_structural_and_row_invariants(
                 )
             )
         else:
-            total_supply = require_v_row(str(policy.total_supply_basic_row), "total supply")
+            total_supply = _require_finite_row(
+                V_ord, str(policy.total_supply_basic_row), "total supply", block_name="V"
+            )
             checks.append(
                 _comparison_check(
                     check_id="row.total_supply_equals_use",
@@ -333,8 +362,8 @@ def validate_structural_and_row_invariants(
                 )
             )
             if policy.output_row is not None and policy.imports_row is not None:
-                output = require_v_row(str(policy.output_row), "output")
-                imports = require_v_row(str(policy.imports_row), "imports")
+                output = _require_finite_row(V_ord, str(policy.output_row), "output", block_name="V")
+                imports = _require_finite_row(V_ord, str(policy.imports_row), "imports", block_name="V")
                 checks.append(
                     _comparison_check(
                         check_id="row.total_supply_components",
@@ -357,5 +386,124 @@ def validate_structural_and_row_invariants(
                         explanation="Output and imports rows were not both declared by policy.",
                     )
                 )
+
+    return InvariantReport(checks=tuple(checks))
+
+
+def validate_column_invariants(
+    *,
+    Z: pd.DataFrame,
+    V: pd.DataFrame | None,
+    flow_role: FlowRole,
+    policy: ColumnIdentityPolicy = ColumnIdentityPolicy(),
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> InvariantReport:
+    """Validate generated production-column intermediate-input and value-added accounts.
+
+    The policy explicitly declares every valuation-adjustment row added to the
+    column sum of ``Z``. This function does not infer tax, subsidy or margin
+    treatment from row labels and does not apply published-source rounding.
+    """
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unsupported flow_role: {flow_role!r}")
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("rtol and atol must be non-negative")
+
+    Z_ord = _normalise_frame(Z, name="Z")
+    if not Z_ord.index.equals(Z_ord.columns):
+        raise ValueError("Z must be square with identical ordered row and column labels")
+    if not np.isfinite(Z_ord.to_numpy(dtype="float64")).all():
+        raise ValueError("Z contains non-finite transaction values")
+
+    V_ord = None if V is None else _normalise_frame(V, name="V")
+    if V_ord is not None and not V_ord.columns.equals(Z_ord.columns):
+        raise ValueError("V columns must exactly match the ordered Z product domain")
+
+    adjustment_labels = tuple(map(str, policy.valuation_adjustment_rows))
+    adjustment_index = pd.Index(adjustment_labels)
+    if adjustment_index.has_duplicates:
+        duplicates = adjustment_index[adjustment_index.duplicated()].astype(str).tolist()
+        raise ValueError(f"valuation_adjustment_rows contains duplicates: {duplicates[:20]!r}")
+
+    intermediate = Z_ord.sum(axis=0).astype("float64")
+    for label in adjustment_labels:
+        intermediate = intermediate.add(
+            _require_finite_row(V_ord, label, "valuation adjustment", block_name="V"),
+            fill_value=0.0,
+        ).astype("float64")
+
+    checks: list[InvariantCheck] = []
+    if policy.intermediate_consumption_row is None:
+        checks.append(
+            _missing_role_check(
+                check_id="column.intermediate_consumption",
+                category="column_identity",
+                flow_role=flow_role,
+                block="V|Z",
+                explanation="No intermediate-consumption row was declared by policy.",
+            )
+        )
+        observed_intermediate = None
+    else:
+        observed_intermediate = _require_finite_row(
+            V_ord,
+            str(policy.intermediate_consumption_row),
+            "intermediate consumption",
+            block_name="V",
+        )
+        checks.append(
+            _comparison_check(
+                check_id="column.intermediate_consumption",
+                category="column_identity",
+                flow_role=flow_role,
+                block="V|Z",
+                observed=observed_intermediate,
+                derived=intermediate,
+                rtol=rtol,
+                atol=atol,
+                explanation=(
+                    "Intermediate consumption must equal the Z column sum plus exactly "
+                    "the valuation-adjustment rows declared by policy."
+                ),
+            )
+        )
+
+    if policy.output_row is None or policy.gross_value_added_row is None:
+        checks.append(
+            _missing_role_check(
+                check_id="column.output_components",
+                category="column_identity",
+                flow_role=flow_role,
+                block="V|Z",
+                explanation="Output and gross-value-added rows were not both declared by policy.",
+            )
+        )
+    else:
+        output = _require_finite_row(
+            V_ord, str(policy.output_row), "output", block_name="V"
+        )
+        value_added = _require_finite_row(
+            V_ord,
+            str(policy.gross_value_added_row),
+            "gross value added",
+            block_name="V",
+        )
+        checks.append(
+            _comparison_check(
+                check_id="column.output_components",
+                category="column_identity",
+                flow_role=flow_role,
+                block="V|Z",
+                observed=output,
+                derived=intermediate.add(value_added, fill_value=0.0),
+                rtol=rtol,
+                atol=atol,
+                explanation=(
+                    "Output must equal policy-defined intermediate consumption plus "
+                    "gross value added."
+                ),
+            )
+        )
 
     return InvariantReport(checks=tuple(checks))
