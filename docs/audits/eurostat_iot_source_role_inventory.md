@@ -281,6 +281,29 @@ For Austria 2021, capture and inspect for each of `TOTAL`, `DOM`, and `IMP`:
 The first read-only audit command should print these facts before attempting any
 uncertain numerical invariant.
 
+## Schema-resolution audit outputs
+
+The read-only Austria audit now emits two additional evidence tables before any
+new source-role policy is adopted:
+
+- `iot_source_schema.csv` inventories every parsed row and column code, source
+  label, dimension, block, axis and current compatibility-role hint for each
+  `DOM`, `IMP` and `TOTAL` table;
+- `iot_supplementary_row_profiles.csv` records positional supplementary-row
+  statistics separately for `V` and `M`, including finite, zero, non-zero and
+  non-finite counts and finite sums/ranges.
+
+These files are evidence, not authoritative economics dictionaries. Existing
+label recognisers are exposed only as `compatibility_hint_only` values. They do
+not settle `P2_ADJ`, value-added, imports valuation, tax/margin roles, or
+applicability. Because `parse_eurostat_iot()` currently fills sparse SDMX cells
+with zero, zero/non-zero profiles cannot distinguish a reported economic zero
+from a missing or structurally non-applicable source observation.
+
+The Austria 2021 production audit must be reviewed before converting any hint
+into a validator policy or integrating validation into Energy-Balance, EXIO or
+pymrio routes.
+
 ## Decisions deferred by this patch
 
 This documentation patch deliberately does not decide:

@@ -10,6 +10,10 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot_variants
+from ecolecon_mrio.iot_identities import (
+    is_imports_row,
+    supplementary_accounting_identity_kind,
+)
 from ecolecon_mrio.iot_flow_semantics import (
     rounded_source_control_diagnostic,
     source_atomic_final_demand,
@@ -398,6 +402,164 @@ def audit_variants(
     return InvariantReport(checks=tuple(checks))
 
 
+
+def _dimension_label(parsed: ParsedEurostatIOT, *, dimension: str, code: str) -> str:
+    dimensions = parsed.meta.get("dimensions")
+    if not isinstance(dimensions, Mapping):
+        return str(code)
+    labels = dimensions.get(str(dimension))
+    if not isinstance(labels, Mapping):
+        return str(code)
+    value = labels.get(str(code))
+    return str(code) if value is None else str(value)
+
+
+def _current_role_hint(
+    *,
+    block: str,
+    axis: str,
+    code: str,
+    atomic_final_demand: set[str],
+) -> str:
+    if block == "Z":
+        return "transaction_product"
+    if block == "Y" and axis == "row":
+        return "supplied_product"
+    if block == "Y" and axis == "column":
+        if code in atomic_final_demand:
+            return "atomic_final_demand"
+        if code in PARTITIONS:
+            return "published_aggregate_control"
+        if code in {"TFU", "TU"}:
+            return "published_total_control"
+        return "unresolved_final_use_or_control"
+    if block == "V" and axis == "column":
+        return "using_product"
+    if block == "M" and axis == "column":
+        return "final_use_column"
+    if axis == "row" and block in {"V", "M"}:
+        identity = supplementary_accounting_identity_kind(code)
+        if identity is not None:
+            return f"compatibility_identity_hint:{identity}"
+        if is_imports_row(code):
+            return "compatibility_identity_hint:imports"
+        return "unresolved_supplementary_row"
+    return "unresolved"
+
+
+def _schema_rows(
+    variants: Mapping[str, ParsedEurostatIOT],
+    *,
+    dataset: str,
+    geo: str,
+    year: int,
+    row_dim: str,
+    col_dim: str,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for flow, parsed in variants.items():
+        try:
+            atomic = set(source_atomic_final_demand(parsed.Y).columns.astype(str))
+        except ValueError:
+            atomic = set()
+        block_specs = (
+            ("Z", parsed.Z, row_dim, col_dim),
+            ("Y", parsed.Y, row_dim, col_dim),
+            ("V", parsed.V, row_dim, col_dim),
+            ("M", parsed.M, row_dim, col_dim),
+        )
+        for block, frame, index_dimension, column_dimension in block_specs:
+            if frame is None:
+                continue
+            for axis, labels, dimension in (
+                ("row", frame.index.astype(str), index_dimension),
+                ("column", frame.columns.astype(str), column_dimension),
+            ):
+                for position, code in enumerate(labels):
+                    rows.append(
+                        {
+                            "dataset": dataset,
+                            "geo": geo,
+                            "year": year,
+                            "flow_role": flow,
+                            "block": block,
+                            "axis": axis,
+                            "position": position,
+                            "dimension": dimension,
+                            "code": str(code),
+                            "label": _dimension_label(
+                                parsed,
+                                dimension=dimension,
+                                code=str(code),
+                            ),
+                            "current_role_hint": _current_role_hint(
+                                block=block,
+                                axis=axis,
+                                code=str(code),
+                                atomic_final_demand=atomic,
+                            ),
+                            "role_authority": "compatibility_hint_only_not_validated_economic_role",
+                        }
+                    )
+    return rows
+
+
+def _supplementary_profile_rows(
+    variants: Mapping[str, ParsedEurostatIOT],
+    *,
+    dataset: str,
+    geo: str,
+    year: int,
+    row_dim: str,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for flow, parsed in variants.items():
+        for block, frame in (("V", parsed.V), ("M", parsed.M)):
+            if frame is None:
+                continue
+            for position, row_code in enumerate(frame.index.astype(str)):
+                values = frame.iloc[position, :].to_numpy(dtype="float64")
+                finite = np.isfinite(values)
+                finite_values = values[finite]
+                identity = supplementary_accounting_identity_kind(row_code)
+                role_hint = (
+                    f"compatibility_identity_hint:{identity}"
+                    if identity is not None
+                    else "compatibility_identity_hint:imports"
+                    if is_imports_row(row_code)
+                    else "unresolved_supplementary_row"
+                )
+                rows.append(
+                    {
+                        "dataset": dataset,
+                        "geo": geo,
+                        "year": year,
+                        "flow_role": flow,
+                        "block": block,
+                        "row_position": position,
+                        "row_code": str(row_code),
+                        "row_label": _dimension_label(
+                            parsed,
+                            dimension=row_dim,
+                            code=str(row_code),
+                        ),
+                        "current_role_hint": role_hint,
+                        "role_authority": "compatibility_hint_only_not_validated_economic_role",
+                        "n_cells": int(values.size),
+                        "n_finite": int(finite.sum()),
+                        "n_non_finite": int((~finite).sum()),
+                        "n_zero": int((finite_values == 0.0).sum()),
+                        "n_nonzero": int((finite_values != 0.0).sum()),
+                        "finite_sum": float(finite_values.sum()) if finite_values.size else None,
+                        "finite_min": float(finite_values.min()) if finite_values.size else None,
+                        "finite_max": float(finite_values.max()) if finite_values.size else None,
+                        "applicability_status": (
+                            "not_resolvable_from_parsed_table_because_sparse_sdmx_cells_are_filled_with_zero"
+                        ),
+                    }
+                )
+    return rows
+
 def write_audit_outputs(
     *,
     variants: Mapping[str, ParsedEurostatIOT],
@@ -407,6 +569,8 @@ def write_audit_outputs(
     geo: str,
     year: int,
     unit: str,
+    row_dim: str,
+    col_dim: str,
 ) -> InvariantReport:
     report = audit_variants(variants, requested_flows=requested_flows)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -416,6 +580,25 @@ def write_audit_outputs(
     pd.DataFrame(
         _domain_rows(variants, dataset=dataset, geo=geo, year=year, unit=unit)
     ).to_csv(outdir / "iot_domain_summary.csv", index=False)
+    pd.DataFrame(
+        _schema_rows(
+            variants,
+            dataset=dataset,
+            geo=geo,
+            year=year,
+            row_dim=row_dim,
+            col_dim=col_dim,
+        )
+    ).to_csv(outdir / "iot_source_schema.csv", index=False)
+    pd.DataFrame(
+        _supplementary_profile_rows(
+            variants,
+            dataset=dataset,
+            geo=geo,
+            year=year,
+            row_dim=row_dim,
+        )
+    ).to_csv(outdir / "iot_supplementary_row_profiles.csv", index=False)
     return report
 
 
@@ -465,6 +648,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         geo=args.geo,
         year=args.year,
         unit=args.unit,
+        row_dim=args.row_dim,
+        col_dim=args.col_dim,
     )
     print(f"Wrote {len(report.checks)} checks to {Path(args.outdir)}")
     return 0

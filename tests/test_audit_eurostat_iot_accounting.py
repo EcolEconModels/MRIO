@@ -29,7 +29,20 @@ def _variant(*, z: float, p3_detail: tuple[float, float, float], p6: float) -> P
             index=pd.Index(["P1"]),
             columns=pd.Index(["P3", "P3_S13", "P3_S14", "P3_S15", "P6"]),
         ),
-        meta={"source_rounding_quantum": 0.01},
+        meta={
+            "source_rounding_quantum": 0.01,
+            "dimensions": {
+                "prd_ava": {"a": "Product A", "P1": "Output"},
+                "prd_use": {
+                    "a": "Product A",
+                    "P3": "Final consumption",
+                    "P3_S13": "Government consumption",
+                    "P3_S14": "Household consumption",
+                    "P3_S15": "NPISH consumption",
+                    "P6": "Exports",
+                },
+            },
+        },
     )
 
 
@@ -67,15 +80,39 @@ def test_audit_writes_required_csv_outputs(tmp_path: Path) -> None:
         geo="AT",
         year=2021,
         unit="MIO_EUR",
+        row_dim="prd_ava",
+        col_dim="prd_use",
     )
     assert report.ok
     expected = {
         "iot_invariant_checks.csv",
         "iot_invariant_failures.csv",
         "iot_domain_summary.csv",
+        "iot_source_schema.csv",
+        "iot_supplementary_row_profiles.csv",
     }
     assert {path.name for path in tmp_path.iterdir()} == expected
     domain = pd.read_csv(tmp_path / "iot_domain_summary.csv")
     assert set(domain["flow_role"]) == {"DOM", "IMP", "TOTAL"}
     assert set(domain["valuation"]) == {"not_resolved_from_current_parser_metadata"}
     assert domain["parser_missingness_contract"].str.contains("filled with zero").all()
+
+    schema = pd.read_csv(tmp_path / "iot_source_schema.csv")
+    output_rows = schema.loc[
+        (schema["block"] == "V")
+        & (schema["axis"] == "row")
+        & (schema["code"] == "P1")
+    ]
+    assert set(output_rows["label"]) == {"Output"}
+    assert set(output_rows["current_role_hint"]) == {
+        "compatibility_identity_hint:output"
+    }
+    assert set(schema["role_authority"]) == {
+        "compatibility_hint_only_not_validated_economic_role"
+    }
+
+    profiles = pd.read_csv(tmp_path / "iot_supplementary_row_profiles.csv")
+    assert set(profiles["flow_role"]) == {"DOM", "IMP", "TOTAL"}
+    assert set(profiles["row_code"]) == {"P1"}
+    assert set(profiles["n_cells"]) == {1, 5}
+    assert profiles["applicability_status"].str.contains("filled_with_zero").all()
