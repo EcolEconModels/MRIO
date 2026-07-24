@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 FlowRole = Literal["DOM", "IMP", "TOTAL"]
-CheckStatus = Literal["pass", "fail", "not_applicable"]
+CheckStatus = Literal["pass", "fail", "not_applicable", "not_tested"]
 CheckSeverity = Literal["error", "warning", "info"]
 
 
@@ -23,6 +23,10 @@ class InvariantCheck:
     tolerance: float | None
     affected_labels: tuple[str, ...]
     explanation: str
+    published: float | None = None
+    derived: float | None = None
+    signed_gap: float | None = None
+    relative_gap: float | None = None
 
 
 @dataclass(frozen=True)
@@ -50,7 +54,11 @@ class InvariantReport:
                     "severity": check.severity,
                     "flow_role": check.flow_role,
                     "block": check.block,
+                    "published": check.published,
+                    "derived": check.derived,
+                    "signed_gap": check.signed_gap,
                     "max_abs_gap": check.max_abs_gap,
+                    "relative_gap": check.relative_gap,
                     "tolerance": check.tolerance,
                     "affected_labels": "|".join(check.affected_labels),
                     "explanation": check.explanation,
@@ -58,6 +66,16 @@ class InvariantReport:
                 for check in self.checks
             ]
         )
+
+
+@dataclass(frozen=True)
+class BlockMetadata:
+    """Declare comparison-critical unit and valuation metadata for one block."""
+
+    unit: str
+    valuation: str
+    price_measure: str = "current"
+    scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -109,6 +127,7 @@ class FinalDemandPartitionPolicy:
     """Declare generated final-demand aggregate/detail identities."""
 
     partitions: tuple[AdditivePartition, ...] = ()
+    allow_component_reuse: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,6 +135,7 @@ class ValueAddedPartitionPolicy:
     """Declare generated value-added aggregate/component identities."""
 
     partitions: tuple[AdditivePartition, ...] = ()
+    allow_component_reuse: bool = False
 
 def _normalise_frame(frame: pd.DataFrame, *, name: str) -> pd.DataFrame:
     out = frame.copy().astype("float64")
@@ -128,6 +148,25 @@ def _normalise_frame(frame: pd.DataFrame, *, name: str) -> pd.DataFrame:
         duplicates = out.columns[out.columns.duplicated()].astype(str).tolist()
         raise ValueError(f"{name} contains duplicate column labels: {duplicates[:20]!r}")
     return out
+
+
+def _gap_diagnostics(
+    observed: np.ndarray,
+    derived: np.ndarray,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    finite = np.isfinite(observed) & np.isfinite(derived)
+    if not finite.any():
+        return None, None, None, None
+    signed = observed - derived
+    absolute = np.abs(signed)
+    masked_absolute = np.where(finite, absolute, -np.inf)
+    flat_position = int(np.argmax(masked_absolute))
+    published = float(observed.flat[flat_position])
+    calculated = float(derived.flat[flat_position])
+    signed_gap = float(signed.flat[flat_position])
+    denominator = max(abs(published), abs(calculated))
+    relative_gap = 0.0 if denominator == 0.0 else signed_gap / denominator
+    return published, calculated, signed_gap, float(relative_gap)
 
 
 def _comparison_check(
@@ -158,6 +197,10 @@ def _comparison_check(
     finite_tolerances = tolerance[np.isfinite(tolerance)]
     max_abs_gap = float(finite_gaps.max()) if finite_gaps.size else float("inf")
     max_tolerance = float(finite_tolerances.max()) if finite_tolerances.size else float(atol)
+    published, calculated, signed_gap, relative_gap = _gap_diagnostics(
+        values_observed,
+        values_derived,
+    )
     return InvariantCheck(
         check_id=check_id,
         category=category,
@@ -169,6 +212,10 @@ def _comparison_check(
         tolerance=max_tolerance,
         affected_labels=tuple(failed_labels[:50]),
         explanation=explanation,
+        published=published,
+        derived=calculated,
+        signed_gap=signed_gap,
+        relative_gap=relative_gap,
     )
 
 
@@ -199,6 +246,10 @@ def _frame_comparison_check(
     )
     finite_gaps = gaps[np.isfinite(gaps)]
     finite_tolerances = tolerance[np.isfinite(tolerance)]
+    published, calculated, signed_gap, relative_gap = _gap_diagnostics(
+        observed_values,
+        derived_values,
+    )
     return InvariantCheck(
         check_id=check_id,
         category=category,
@@ -210,6 +261,10 @@ def _frame_comparison_check(
         tolerance=float(finite_tolerances.max()) if finite_tolerances.size else float(atol),
         affected_labels=failed_labels,
         explanation=explanation,
+        published=published,
+        derived=calculated,
+        signed_gap=signed_gap,
+        relative_gap=relative_gap,
     )
 
 
@@ -225,6 +280,28 @@ def _missing_role_check(
         check_id=check_id,
         category=category,
         status="not_applicable",
+        severity="info",
+        flow_role=flow_role,
+        block=block,
+        max_abs_gap=None,
+        tolerance=None,
+        affected_labels=(),
+        explanation=explanation,
+    )
+
+
+def _not_tested_check(
+    *,
+    check_id: str,
+    category: str,
+    flow_role: FlowRole,
+    block: str,
+    explanation: str,
+) -> InvariantCheck:
+    return InvariantCheck(
+        check_id=check_id,
+        category=category,
+        status="not_tested",
         severity="info",
         flow_role=flow_role,
         block=block,
@@ -705,6 +782,7 @@ def _validated_partitions(
     partitions: Sequence[AdditivePartition],
     *,
     policy_name: str,
+    allow_component_reuse: bool,
 ) -> tuple[AdditivePartition, ...]:
     normalized = tuple(
         AdditivePartition(
@@ -742,6 +820,19 @@ def _validated_partitions(
             raise ValueError(
                 f"{policy_name} partition {partition.check_id!r} includes its aggregate as a component"
             )
+    if not allow_component_reuse:
+        owners_by_component: dict[str, str] = {}
+        reused: list[str] = []
+        for partition in normalized:
+            for component in partition.components:
+                previous = owners_by_component.setdefault(component, partition.check_id)
+                if previous != partition.check_id:
+                    reused.append(component)
+        if reused:
+            raise ValueError(
+                f"{policy_name} reuses components across partitions: "
+                f"{sorted(set(reused))[:20]!r}"
+            )
     return normalized
 
 
@@ -762,6 +853,7 @@ def validate_final_demand_partitions(
     partitions = _validated_partitions(
         policy.partitions,
         policy_name="final-demand partition policy",
+        allow_component_reuse=policy.allow_component_reuse,
     )
     if not partitions:
         return InvariantReport(
@@ -827,6 +919,7 @@ def validate_value_added_partitions(
     partitions = _validated_partitions(
         policy.partitions,
         policy_name="value-added partition policy",
+        allow_component_reuse=policy.allow_component_reuse,
     )
     if not partitions:
         return InvariantReport(
@@ -1033,6 +1126,107 @@ def validate_reaggregation_conservation(
                 explanation=(
                     "The expanded block must recover the authoritative source block "
                     "exactly after applying the declared child-to-parent mappings."
+                ),
+            ),
+        )
+    )
+
+
+def validate_applicability_contract(
+    *,
+    values: pd.DataFrame,
+    applicability: pd.DataFrame,
+    flow_role: FlowRole,
+    block: str,
+    check_id: str = "structural.applicability",
+) -> InvariantReport:
+    """Validate the distinction between applicable values and structural N/A cells."""
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unsupported flow_role: {flow_role!r}")
+    values_ord = values.copy().astype("float64")
+    values_ord.index = values_ord.index.astype(str)
+    values_ord.columns = values_ord.columns.astype(str)
+    if values_ord.index.has_duplicates or values_ord.columns.has_duplicates:
+        raise ValueError("values contains duplicate labels")
+
+    mask = applicability.copy()
+    mask.index = mask.index.astype(str)
+    mask.columns = mask.columns.astype(str)
+    if mask.index.has_duplicates or mask.columns.has_duplicates:
+        raise ValueError("applicability contains duplicate labels")
+    if not values_ord.index.equals(mask.index) or not values_ord.columns.equals(mask.columns):
+        raise ValueError("values and applicability must have identical ordered labels")
+    if not all(dtype == bool for dtype in mask.dtypes):  # noqa: E721
+        raise ValueError("applicability must contain boolean values only")
+
+    value_array = values_ord.to_numpy(dtype="float64")
+    mask_array = mask.to_numpy(dtype=bool)
+    invalid_applicable = mask_array & ~np.isfinite(value_array)
+    invalid_non_applicable = ~mask_array & np.isfinite(value_array)
+    invalid = invalid_applicable | invalid_non_applicable
+    positions = np.argwhere(invalid)
+    labels = tuple(
+        f"{values_ord.index[int(row)]}|{values_ord.columns[int(column)]}"
+        for row, column in positions[:50]
+    )
+    return InvariantReport(
+        checks=(
+            InvariantCheck(
+                check_id=str(check_id),
+                category="structural_applicability",
+                status="pass" if not labels else "fail",
+                severity="error",
+                flow_role=flow_role,
+                block=str(block),
+                max_abs_gap=None,
+                tolerance=None,
+                affected_labels=labels,
+                explanation=(
+                    "Applicable cells must contain finite values, while structurally "
+                    "non-applicable cells must remain non-finite rather than being "
+                    "converted to economic zeros."
+                ),
+            ),
+        )
+    )
+
+
+def validate_metadata_compatibility(
+    *,
+    left: BlockMetadata,
+    right: BlockMetadata,
+    flow_role: FlowRole,
+    block: str,
+    check_id: str = "structural.metadata_compatibility",
+) -> InvariantReport:
+    """Validate unit, valuation, price-measure and scaling compatibility."""
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unsupported flow_role: {flow_role!r}")
+    if not np.isfinite(float(left.scale)) or not np.isfinite(float(right.scale)):
+        raise ValueError("metadata scales must be finite and positive")
+    if left.scale <= 0.0 or right.scale <= 0.0:
+        raise ValueError("metadata scales must be finite and positive")
+
+    mismatches = tuple(
+        field_name
+        for field_name in ("unit", "valuation", "price_measure", "scale")
+        if getattr(left, field_name) != getattr(right, field_name)
+    )
+    return InvariantReport(
+        checks=(
+            InvariantCheck(
+                check_id=str(check_id),
+                category="structural_metadata",
+                status="pass" if not mismatches else "fail",
+                severity="error",
+                flow_role=flow_role,
+                block=str(block),
+                max_abs_gap=None,
+                tolerance=None,
+                affected_labels=mismatches,
+                explanation=(
+                    "Blocks may be compared or added only when unit, valuation, price "
+                    "measure and monetary scaling are identical."
                 ),
             ),
         )

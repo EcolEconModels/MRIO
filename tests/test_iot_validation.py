@@ -15,9 +15,12 @@ from ecolecon_mrio.iot_validation import (
     validate_cross_flow_invariants,
     validate_structural_and_row_invariants,
     AdditivePartition,
+    BlockMetadata,
     FinalDemandPartitionPolicy,
     ValueAddedPartitionPolicy,
+    validate_applicability_contract,
     validate_final_demand_partitions,
+    validate_metadata_compatibility,
     validate_reaggregation_conservation,
     validate_value_added_partitions,
 )
@@ -426,7 +429,6 @@ def test_partition_policy_rejects_ambiguous_definitions() -> None:
 
 
 def test_generated_value_added_partition_supports_signed_components() -> None:
-    columns = pd.Index(["a", "b"])
     V = pd.DataFrame(
         {
             "a": [3.0, -0.5, 1.0, 2.5, 6.0],
@@ -451,7 +453,6 @@ def test_generated_value_added_partition_supports_signed_components() -> None:
 
 
 def test_value_added_partition_reports_columns_and_optional_policy() -> None:
-    columns = pd.Index(["a", "b"])
     V = pd.DataFrame(
         {"a": [2.0, 3.0, 5.0], "b": [1.0, 4.0, 6.0]},
         index=pd.Index(["D1", "B2A3G", "B1G"]),
@@ -618,3 +619,127 @@ def test_reaggregation_requires_exact_identity_axis_when_mapping_is_absent() -> 
             check_id="reaggregation.control",
             block="control",
         )
+
+
+def test_invariant_report_preserves_signed_audit_diagnostics() -> None:
+    observed = pd.Series([10.0, 5.0], index=pd.Index(["a", "b"]))
+    derived = pd.Series([8.0, 5.0], index=pd.Index(["a", "b"]))
+    check = iot_validation_module._comparison_check(
+        check_id="audit.series",
+        category="source_control",
+        flow_role="TOTAL",
+        block="control",
+        observed=observed,
+        derived=derived,
+        rtol=0.0,
+        atol=0.0,
+        explanation="test",
+    )
+    assert check.published == 10.0
+    assert check.derived == 8.0
+    assert check.signed_gap == 2.0
+    assert check.relative_gap == pytest.approx(0.2)
+    frame = InvariantReport(checks=(check,)).to_frame()
+    assert frame.loc[0, "signed_gap"] == 2.0
+    assert frame.loc[0, "relative_gap"] == pytest.approx(0.2)
+
+
+def test_not_tested_is_distinct_from_not_applicable() -> None:
+    check = iot_validation_module._not_tested_check(
+        check_id="gdp.income",
+        category="economy_wide",
+        flow_role="TOTAL",
+        block="V",
+        explanation="Required income components are unavailable.",
+    )
+    assert check.status == "not_tested"
+    assert InvariantReport(checks=(check,)).ok
+
+
+def test_applicability_contract_preserves_zero_and_structural_na() -> None:
+    values = pd.DataFrame(
+        [[0.0, np.nan], [2.0, 3.0]],
+        index=pd.Index(["a", "b"]),
+        columns=pd.Index(["x", "y"]),
+    )
+    applicability = pd.DataFrame(
+        [[True, False], [True, True]],
+        index=values.index,
+        columns=values.columns,
+    )
+    assert validate_applicability_contract(
+        values=values,
+        applicability=applicability,
+        flow_role="TOTAL",
+        block="M",
+    ).ok
+
+    bad = values.copy()
+    bad.loc["a", "y"] = 0.0
+    bad.loc["b", "x"] = np.nan
+    report = validate_applicability_contract(
+        values=bad,
+        applicability=applicability,
+        flow_role="TOTAL",
+        block="M",
+    )
+    assert not report.ok
+    assert report.checks[0].affected_labels == ("a|y", "b|x")
+
+
+def test_metadata_compatibility_rejects_valuation_or_scale_mismatch() -> None:
+    reference = BlockMetadata(unit="MEUR", valuation="basic_prices", scale=1.0)
+    compatible = BlockMetadata(unit="MEUR", valuation="basic_prices", scale=1.0)
+    assert validate_metadata_compatibility(
+        left=reference,
+        right=compatible,
+        flow_role="DOM",
+        block="Z|Y",
+    ).ok
+
+    incompatible = BlockMetadata(
+        unit="MEUR",
+        valuation="purchasers_prices",
+        scale=1_000_000.0,
+    )
+    report = validate_metadata_compatibility(
+        left=reference,
+        right=incompatible,
+        flow_role="DOM",
+        block="Z|Y",
+    )
+    assert not report.ok
+    assert report.checks[0].affected_labels == ("valuation", "scale")
+
+
+def test_partition_component_reuse_requires_explicit_opt_in() -> None:
+    Y = pd.DataFrame(
+        {"A": [1.0], "B": [2.0], "AB": [3.0], "ABC": [4.0], "AC": [2.0], "C": [1.0]},
+        index=pd.Index(["row"]),
+    )
+    partitions = (
+        AdditivePartition(check_id="partition.ab", aggregate="AB", components=("A", "B")),
+        AdditivePartition(check_id="partition.abc", aggregate="ABC", components=("AB", "C")),
+    )
+    assert validate_final_demand_partitions(
+        Y=Y,
+        flow_role="TOTAL",
+        policy=FinalDemandPartitionPolicy(partitions=partitions),
+    ).ok
+
+    reused = (
+        AdditivePartition(check_id="partition.one", aggregate="AB", components=("A", "B")),
+        AdditivePartition(check_id="partition.two", aggregate="AC", components=("A", "C")),
+    )
+    with pytest.raises(ValueError, match="reuses components"):
+        validate_final_demand_partitions(
+            Y=Y,
+            flow_role="TOTAL",
+            policy=FinalDemandPartitionPolicy(partitions=reused),
+        )
+    report = validate_final_demand_partitions(
+        Y=Y,
+        flow_role="TOTAL",
+        policy=FinalDemandPartitionPolicy(partitions=reused, allow_component_reuse=True),
+    )
+    assert report.ok
