@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
+from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
 from scripts.audit_eurostat_iot_accounting import audit_variants, write_audit_outputs
 
 
@@ -69,6 +70,17 @@ def test_read_only_audit_reports_source_rounding_failure() -> None:
     failed = {check.check_id: check for check in report.checks if check.status == "fail"}
     assert failed["source.cross_flow.Z"].severity == "warning"
     assert failed["source.cross_flow.Z"].affected_labels == ("a|a",)
+
+
+def test_full_policy_is_opt_in_for_reduced_audit_fixtures() -> None:
+    report = audit_variants(
+        _valid_variants(),
+        requested_flows=["DOM", "IMP", "TOTAL"],
+        accounting_policy=NAIO_10_CP1700_ACCOUNTING_POLICY,
+    )
+    failed = {check.check_id: check for check in report.checks if check.status == "fail"}
+    assert "full.atomic.dom" in failed
+    assert failed["full.atomic.dom"].severity == "error"
 
 
 def test_audit_writes_required_csv_outputs(tmp_path: Path) -> None:

@@ -378,3 +378,34 @@ row schemas. It does not transform source data, infer missingness, or validate
 any excluded economic equation. Shadow integration must use these exclusions
 unchanged until further source metadata or independent methodological evidence
 resolves them.
+
+## Generic full-table accounting policy and Austria evidence
+
+The subsequent full-table validator uses the generic
+`NAIO_10_CP1700_ACCOUNTING_POLICY`, rather than an Austria-specific numerical
+definition. It declares the product-by-product table layout, the seven-column
+atomic final-demand basis, nested P3/P5/P6 and P7 partitions, row roles, and
+the named V-to-M total controls. It contains no country, year, product count or
+product order.
+
+`AT_2021_NAIO_10_CP1700_EVIDENCE` remains separate. It records the reviewed
+65-product Austria source, its observed 17 final-use columns and positional
+supplementary schemas, its `MIO_EUR` unit and its 0.01 reporting quantum. It
+also records which source identities were numerically confirmed within the
+existing source-rounding rule. This is evidence for the policy, not a shortcut
+that makes the policy Austria-only.
+
+The source audit distinguishes five epistemic states: recognised role,
+candidate identity, numerically confirmed source identity, authorised source
+identity, and strict generated identity. In particular, source labels and a
+rounding-scale numerical agreement do not by themselves authorize a valuation
+or GDP interpretation.
+
+For Austria 2021 the generic validator reports source-rounded passes for the
+declared final-demand partitions, CPA totals, P2/D21 bridge, production-account
+rows, imports bridges, total supply and named V-to-M totals. It reports
+`not_tested` for parser-destroyed applicability, comprehensive metadata
+compatibility, the exact economic meaning of displayed Y `TOTAL`, D1's missing
+D12 component, and GDP. The latter remains untested because this parsed object
+does not establish the national purchasers-price and territorial-adjustment
+controls needed to apply the ESA GDP formulas without double counting.

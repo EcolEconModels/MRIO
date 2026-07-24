@@ -10,6 +10,11 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot_variants
+from ecolecon_mrio.eurostat_iot_source_policy import (
+    NAIO_10_CP1700_ACCOUNTING_POLICY,
+    EurostatIOTAccountingPolicy,
+)
+from ecolecon_mrio.iot_full_table_validation import validate_eurostat_iot_full_table
 from ecolecon_mrio.iot_identities import (
     is_imports_row,
     supplementary_accounting_identity_kind,
@@ -245,6 +250,7 @@ def audit_variants(
     variants: Mapping[str, ParsedEurostatIOT],
     *,
     requested_flows: Sequence[str],
+    accounting_policy: EurostatIOTAccountingPolicy | None = None,
 ) -> InvariantReport:
     checks: list[InvariantCheck] = []
     for flow in requested_flows:
@@ -399,6 +405,14 @@ def audit_variants(
                     explanation=f"Atomic final-demand selection failed: {error}",
                 )
             )
+    if accounting_policy is not None:
+        checks.extend(
+            validate_eurostat_iot_full_table(
+                variants,
+                policy=accounting_policy,
+                mode="source",
+            ).checks
+        )
     return InvariantReport(checks=tuple(checks))
 
 
@@ -686,8 +700,13 @@ def write_audit_outputs(
     unit: str,
     row_dim: str,
     col_dim: str,
+    accounting_policy: EurostatIOTAccountingPolicy | None = None,
 ) -> InvariantReport:
-    report = audit_variants(variants, requested_flows=requested_flows)
+    report = audit_variants(
+        variants,
+        requested_flows=requested_flows,
+        accounting_policy=accounting_policy,
+    )
     outdir.mkdir(parents=True, exist_ok=True)
     checks = report.to_frame()
     checks.to_csv(outdir / "iot_invariant_checks.csv", index=False)
@@ -772,6 +791,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         unit=args.unit,
         row_dim=args.row_dim,
         col_dim=args.col_dim,
+        accounting_policy=(
+            NAIO_10_CP1700_ACCOUNTING_POLICY
+            if args.dataset == NAIO_10_CP1700_ACCOUNTING_POLICY.dataset
+            else None
+        ),
     )
     print(f"Wrote {len(report.checks)} checks to {Path(args.outdir)}")
     return 0

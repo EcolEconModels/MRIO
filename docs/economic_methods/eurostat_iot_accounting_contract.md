@@ -611,6 +611,47 @@ peculiarities are documented:
 - unavailable optional identities are reported as not tested, not silently
   passed.
 
+## Generic `naio_10_cp1700` full-table policy
+
+`EurostatIOTAccountingPolicy` is the dataset/table-type policy for the
+product-by-product `naio_10_cp1700` layout. It is not a country, year, product
+count, or product-order profile. The Austria 2021 observation is kept as a
+separate evidence record, so a future country can satisfy the same policy with
+its own product domain and reviewed source schema.
+
+The policy selects exactly this atomic computational final-demand basis:
+
+\[
+\{P3\_S13, P3\_S14, P3\_S15, P51G, P52, P53, P6\}.
+\]
+
+It validates the nested published controls `P3`, `P5M`, `P5`, `P6_B0`, and
+`P6` separately. `TFU`, `TU`, `TOTAL`, and regional P6 controls are never
+added to the atomic basis. This preserves a complete non-overlapping use block
+while still auditing every displayed source control.
+
+The full report covers structural domains, final-demand partitions, `CPA_TOTAL`
+in both V and M, the declared `P2_ADJ`/`D21X31` bridge, production-account
+identities, DOM/IMP/TOTAL Z and atomic-Y decomposition, imported-use controls,
+`P7` geography, `TS_BP`, and explicitly named V-to-M grand totals. It does not
+assert blanket `V_TOTAL = V_DOM + V_IMP` or `M_TOTAL = M_DOM + M_IMP`: these
+blocks contain flow-specific account controls rather than one uniformly
+additive matrix.
+
+Published-source checks call the existing quantisation-aware source-rounding
+diagnostic. Generated-table mode uses strict floating-point tolerance and does
+not receive a source-rounding allowance. Missing mandatory schema entries are
+structural failures; unavailable optional evidence is reported as
+`not_tested`; and a source table parsed after sparse SDMX zero filling reports
+applicability as `not_tested` rather than claiming that zero proves
+applicability.
+
+ESA establishes GDP production, expenditure, and income formulas, but this
+parsed IOT does not itself establish the required national product-tax,
+purchasers-price, CIF/FOB, and territorial-adjustment controls. GDP checks
+therefore remain explicit `not_tested` results. Automatic disaggregation,
+reaggregation, and pymrio integration remain later validation stages.
+
 ## Unresolved questions that must precede implementation
 
 The source-role inventory must resolve or explicitly defer:

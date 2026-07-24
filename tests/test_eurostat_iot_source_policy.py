@@ -5,6 +5,8 @@ import pandas as pd
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.eurostat_iot_source_policy import (
     AT_2021_NAIO_10_CP1700_PROFILE,
+    AT_2021_NAIO_10_CP1700_EVIDENCE,
+    NAIO_10_CP1700_ACCOUNTING_POLICY,
     EurostatIOTSourceProfile,
     validate_source_profile_schema,
 )
@@ -66,6 +68,23 @@ def test_reviewed_profile_records_only_authorized_equations() -> None:
         for code in question.excluded_codes
     }
     assert {"P2_ADJ", "D21X31", "D29X39", "IMP"}.issubset(excluded)
+
+
+def test_generic_policy_is_separate_from_austria_source_evidence() -> None:
+    policy = NAIO_10_CP1700_ACCOUNTING_POLICY
+    assert policy.dataset == "naio_10_cp1700"
+    assert "AT" not in policy.policy_id
+    assert policy.atomic_final_demand_columns == (
+        "P3_S13",
+        "P3_S14",
+        "P3_S15",
+        "P51G",
+        "P52",
+        "P53",
+        "P6",
+    )
+    assert AT_2021_NAIO_10_CP1700_EVIDENCE.product_count == 65
+    assert policy.identity_states["gdp"] == "candidate_identity"
 
 
 def test_profile_schema_accepts_exact_reviewed_domains() -> None:
