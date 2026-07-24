@@ -90,6 +90,7 @@ def test_audit_writes_required_csv_outputs(tmp_path: Path) -> None:
         "iot_domain_summary.csv",
         "iot_source_schema.csv",
         "iot_supplementary_row_profiles.csv",
+        "iot_schema_resolution_questions.csv",
     }
     assert {path.name for path in tmp_path.iterdir()} == expected
     domain = pd.read_csv(tmp_path / "iot_domain_summary.csv")
@@ -116,3 +117,23 @@ def test_audit_writes_required_csv_outputs(tmp_path: Path) -> None:
     assert set(profiles["row_code"]) == {"P1"}
     assert set(profiles["n_cells"]) == {1, 5}
     assert profiles["applicability_status"].str.contains("filled_with_zero").all()
+
+    questions = pd.read_csv(tmp_path / "iot_schema_resolution_questions.csv")
+    assert set(questions["question_id"]) == {
+        "p2_adj_valuation",
+        "supply_use_valuation",
+        "final_demand_exhaustiveness",
+        "supplementary_block_orientation",
+        "tax_margin_roles",
+        "imports_valuation",
+        "source_missingness",
+    }
+    assert set(questions["evidence_authority"]) == {
+        "descriptive_source_evidence_not_accounting_policy"
+    }
+    final_demand = questions.loc[
+        questions["question_id"] == "final_demand_exhaustiveness"
+    ].iloc[0]
+    assert final_demand["status"] == "evidence_collected_not_resolved"
+    assert "P3" in str(final_demand["candidate_codes"])
+    assert bool(final_demand["all_requested_flows_represented"])

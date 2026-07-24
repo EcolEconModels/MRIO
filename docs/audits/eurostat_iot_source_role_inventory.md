@@ -304,6 +304,23 @@ The Austria 2021 production audit must be reviewed before converting any hint
 into a validator policy or integrating validation into Energy-Balance, EXIO or
 pymrio routes.
 
+
+### Schema-resolution question table
+
+The audit also writes `iot_schema_resolution_questions.csv`. This is a compact
+review index over the source-schema and supplementary-row evidence. It records
+candidate codes, labels, blocks and flow coverage for the unresolved questions
+that must be settled before shadow integration: `P2_ADJ` valuation, common
+supply/use valuation, final-demand exhaustiveness, `V`/`M` orientation,
+tax/margin roles, imports valuation and source missingness.
+
+The table is deliberately descriptive. A row with
+`evidence_collected_not_resolved` means relevant candidates were found; it does
+not approve a role, equation or valuation. A row with
+`no_candidate_found_not_resolved` is likewise not evidence that the economic
+concept is absent from the source. The actual Austria 2021 output must be
+reviewed together with Eurostat metadata before any validator policy is added.
+
 ## Decisions deferred by this patch
 
 This documentation patch deliberately does not decide:

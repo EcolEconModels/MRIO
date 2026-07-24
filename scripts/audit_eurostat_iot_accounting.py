@@ -560,6 +560,121 @@ def _supplementary_profile_rows(
                 )
     return rows
 
+
+_SCHEMA_RESOLUTION_QUESTIONS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        "p2_adj_valuation",
+        "Determine the valuation meaning of P2_ADJ and whether it is an intermediate-consumption control or includes valuation adjustments.",
+        ("P2_ADJ", "P2ADJ"),
+        ("compatibility_identity_hint:intermediate_use",),
+    ),
+    (
+        "supply_use_valuation",
+        "Determine whether TS_BP and TU are expressed at a common valuation and which bridge components are required.",
+        ("TS_BP", "TOTAL_SUPPLY_AT_BASIC_PRICES", "TU"),
+        ("compatibility_identity_hint:total_supply", "published_total_control"),
+    ),
+    (
+        "final_demand_exhaustiveness",
+        "Confirm which P3, P5 and P6 detail families are exhaustive in the Austria source and which aggregates remain authoritative controls.",
+        ("P3", "P3_S13", "P3_S14", "P3_S15", "P5", "P51G", "P52", "P53", "P6"),
+        ("atomic_final_demand", "published_aggregate_control"),
+    ),
+    (
+        "supplementary_block_orientation",
+        "Confirm the economic orientation and role coverage of V versus M supplementary blocks.",
+        (),
+        ("unresolved_supplementary_row",),
+    ),
+    (
+        "tax_margin_roles",
+        "Locate product-tax, subsidy, trade-margin and transport-margin controls and determine their valuation role.",
+        (),
+        (),
+    ),
+    (
+        "imports_valuation",
+        "Confirm the authoritative imports row, CIF or FOB valuation, and its bridge to complete imported uses.",
+        ("P7", "P7_CIF", "P7_FOB", "IMPORTS"),
+        ("compatibility_identity_hint:imports",),
+    ),
+    (
+        "source_missingness",
+        "Resolve whether sparse absent SDMX observations mean zero, missing, confidential or structurally non-applicable before applicability policy is encoded.",
+        (),
+        (),
+    ),
+)
+
+
+def _schema_resolution_question_rows(
+    schema_rows: Sequence[Mapping[str, object]],
+    supplementary_rows: Sequence[Mapping[str, object]],
+    *,
+    requested_flows: Sequence[str],
+) -> list[dict[str, object]]:
+    evidence = [dict(row) for row in schema_rows]
+    supplementary = [dict(row) for row in supplementary_rows]
+    all_rows = evidence + supplementary
+    rows: list[dict[str, object]] = []
+    for question_id, decision_required, codes, hints in _SCHEMA_RESOLUTION_QUESTIONS:
+        candidates: list[dict[str, object]] = []
+        if question_id == "supplementary_block_orientation":
+            candidates = supplementary
+        elif question_id == "tax_margin_roles":
+            keywords = ("tax", "subsid", "margin")
+            candidates = [
+                row
+                for row in all_rows
+                if any(
+                    keyword in f"{row.get('code', row.get('row_code', ''))} {row.get('label', row.get('row_label', ''))}".casefold()
+                    for keyword in keywords
+                )
+            ]
+        elif question_id == "source_missingness":
+            candidates = supplementary
+        else:
+            code_set = set(codes)
+            hint_set = set(hints)
+            candidates = [
+                row
+                for row in all_rows
+                if str(row.get("code", row.get("row_code", ""))) in code_set
+                or str(row.get("current_role_hint", "")) in hint_set
+            ]
+
+        candidate_codes = sorted(
+            {
+                str(row.get("code", row.get("row_code", "")))
+                for row in candidates
+                if str(row.get("code", row.get("row_code", "")))
+            }
+        )
+        candidate_labels = sorted(
+            {
+                str(row.get("label", row.get("row_label", "")))
+                for row in candidates
+                if str(row.get("label", row.get("row_label", "")))
+            }
+        )
+        flows = sorted({str(row.get("flow_role", "")) for row in candidates if row.get("flow_role")})
+        blocks = sorted({str(row.get("block", "")) for row in candidates if row.get("block")})
+        rows.append(
+            {
+                "question_id": question_id,
+                "status": "evidence_collected_not_resolved" if candidates else "no_candidate_found_not_resolved",
+                "candidate_count": len(candidates),
+                "candidate_codes": "|".join(candidate_codes),
+                "candidate_labels": "|".join(candidate_labels),
+                "flows_present": "|".join(flows),
+                "all_requested_flows_represented": set(map(str, requested_flows)).issubset(set(flows)),
+                "blocks_present": "|".join(blocks),
+                "decision_required": decision_required,
+                "evidence_authority": "descriptive_source_evidence_not_accounting_policy",
+            }
+        )
+    return rows
+
 def write_audit_outputs(
     *,
     variants: Mapping[str, ParsedEurostatIOT],
@@ -580,25 +695,32 @@ def write_audit_outputs(
     pd.DataFrame(
         _domain_rows(variants, dataset=dataset, geo=geo, year=year, unit=unit)
     ).to_csv(outdir / "iot_domain_summary.csv", index=False)
+    schema_rows = _schema_rows(
+        variants,
+        dataset=dataset,
+        geo=geo,
+        year=year,
+        row_dim=row_dim,
+        col_dim=col_dim,
+    )
+    supplementary_rows = _supplementary_profile_rows(
+        variants,
+        dataset=dataset,
+        geo=geo,
+        year=year,
+        row_dim=row_dim,
+    )
+    pd.DataFrame(schema_rows).to_csv(outdir / "iot_source_schema.csv", index=False)
+    pd.DataFrame(supplementary_rows).to_csv(
+        outdir / "iot_supplementary_row_profiles.csv", index=False
+    )
     pd.DataFrame(
-        _schema_rows(
-            variants,
-            dataset=dataset,
-            geo=geo,
-            year=year,
-            row_dim=row_dim,
-            col_dim=col_dim,
+        _schema_resolution_question_rows(
+            schema_rows,
+            supplementary_rows,
+            requested_flows=requested_flows,
         )
-    ).to_csv(outdir / "iot_source_schema.csv", index=False)
-    pd.DataFrame(
-        _supplementary_profile_rows(
-            variants,
-            dataset=dataset,
-            geo=geo,
-            year=year,
-            row_dim=row_dim,
-        )
-    ).to_csv(outdir / "iot_supplementary_row_profiles.csv", index=False)
+    ).to_csv(outdir / "iot_schema_resolution_questions.csv", index=False)
     return report
 
 
