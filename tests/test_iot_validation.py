@@ -14,6 +14,11 @@ from ecolecon_mrio.iot_validation import (
     validate_column_invariants,
     validate_cross_flow_invariants,
     validate_structural_and_row_invariants,
+    AdditivePartition,
+    FinalDemandPartitionPolicy,
+    ValueAddedPartitionPolicy,
+    validate_final_demand_partitions,
+    validate_value_added_partitions,
 )
 
 
@@ -323,3 +328,147 @@ def test_cross_flow_optional_controls_are_not_applicable() -> None:
     report = validate_cross_flow_invariants(total_Z=total_Z, total_Y=total_Y, domestic_Z=domestic_Z, domestic_Y=domestic_Y, imports_Z=imports_Z, imports_Y=imports_Y, final_demand_columns=["FD1", "FD2"])
     assert report.ok
     assert sum(check.status == "not_applicable" for check in report.checks) == 4
+
+
+def test_generated_final_demand_partitions_validate_multiple_aggregates() -> None:
+    idx = pd.Index(["a", "b"])
+    Y = pd.DataFrame(
+        {
+            "P3_S13": [1.0, 2.0],
+            "P3_S14": [2.0, 1.0],
+            "P3": [3.0, 3.0],
+            "P51G": [4.0, 1.0],
+            "P52": [1.0, -0.5],
+            "P5": [5.0, 0.5],
+        },
+        index=idx,
+    )
+    report = validate_final_demand_partitions(
+        Y=Y,
+        flow_role="TOTAL",
+        policy=FinalDemandPartitionPolicy(
+            partitions=(
+                AdditivePartition(
+                    check_id="partition.final_consumption",
+                    aggregate="P3",
+                    components=("P3_S13", "P3_S14"),
+                ),
+                AdditivePartition(
+                    check_id="partition.capital_formation",
+                    aggregate="P5",
+                    components=("P51G", "P52"),
+                ),
+            )
+        ),
+    )
+    assert report.ok
+    assert {check.check_id for check in report.checks} == {
+        "partition.final_consumption",
+        "partition.capital_formation",
+    }
+
+
+def test_generated_final_demand_partition_reports_affected_products() -> None:
+    idx = pd.Index(["a", "b"])
+    Y = pd.DataFrame(
+        {"P3_A": [1.0, 2.0], "P3_B": [2.0, 3.0], "P3": [3.0, 6.0]},
+        index=idx,
+    )
+    report = validate_final_demand_partitions(
+        Y=Y,
+        flow_role="DOM",
+        policy=FinalDemandPartitionPolicy(
+            partitions=(
+                AdditivePartition(
+                    check_id="partition.final_consumption",
+                    aggregate="P3",
+                    components=("P3_A", "P3_B"),
+                ),
+            )
+        ),
+    )
+    assert not report.ok
+    assert report.checks[0].affected_labels == ("b",)
+
+
+def test_partition_policy_rejects_ambiguous_definitions() -> None:
+    idx = pd.Index(["a"])
+    Y = pd.DataFrame({"P3": [1.0], "P3_A": [1.0]}, index=idx)
+    with pytest.raises(ValueError, match="duplicate components"):
+        validate_final_demand_partitions(
+            Y=Y,
+            flow_role="TOTAL",
+            policy=FinalDemandPartitionPolicy(
+                partitions=(
+                    AdditivePartition(
+                        check_id="partition.p3",
+                        aggregate="P3",
+                        components=("P3_A", "P3_A"),
+                    ),
+                )
+            ),
+        )
+    with pytest.raises(ValueError, match="includes its aggregate"):
+        validate_final_demand_partitions(
+            Y=Y,
+            flow_role="TOTAL",
+            policy=FinalDemandPartitionPolicy(
+                partitions=(
+                    AdditivePartition(
+                        check_id="partition.p3",
+                        aggregate="P3",
+                        components=("P3",),
+                    ),
+                )
+            ),
+        )
+
+
+def test_generated_value_added_partition_supports_signed_components() -> None:
+    columns = pd.Index(["a", "b"])
+    V = pd.DataFrame(
+        {
+            "a": [3.0, -0.5, 1.0, 2.5, 6.0],
+            "b": [4.0, -1.0, 2.0, 3.0, 8.0],
+        },
+        index=pd.Index(["D1", "D29_D39", "P51C", "B2A3N", "B1G"]),
+    )
+    report = validate_value_added_partitions(
+        V=V,
+        flow_role="TOTAL",
+        policy=ValueAddedPartitionPolicy(
+            partitions=(
+                AdditivePartition(
+                    check_id="partition.gross_value_added",
+                    aggregate="B1G",
+                    components=("D1", "D29_D39", "P51C", "B2A3N"),
+                ),
+            )
+        ),
+    )
+    assert report.ok
+
+
+def test_value_added_partition_reports_columns_and_optional_policy() -> None:
+    columns = pd.Index(["a", "b"])
+    V = pd.DataFrame(
+        {"a": [2.0, 3.0, 5.0], "b": [1.0, 4.0, 6.0]},
+        index=pd.Index(["D1", "B2A3G", "B1G"]),
+    )
+    report = validate_value_added_partitions(
+        V=V,
+        flow_role="DOM",
+        policy=ValueAddedPartitionPolicy(
+            partitions=(
+                AdditivePartition(
+                    check_id="partition.gross_value_added",
+                    aggregate="B1G",
+                    components=("D1", "B2A3G"),
+                ),
+            )
+        ),
+    )
+    assert report.checks[0].affected_labels == ("b",)
+    empty = validate_value_added_partitions(V=None, flow_role="DOM")
+    assert empty.ok
+    assert empty.checks[0].status == "not_applicable"

@@ -94,6 +94,29 @@ class CrossFlowPolicy:
     imported_use_final_row: str | None = None
 
 
+
+@dataclass(frozen=True)
+class AdditivePartition:
+    """Declare one aggregate equal to a complete, non-overlapping component set."""
+
+    check_id: str
+    aggregate: str
+    components: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FinalDemandPartitionPolicy:
+    """Declare generated final-demand aggregate/detail identities."""
+
+    partitions: tuple[AdditivePartition, ...] = ()
+
+
+@dataclass(frozen=True)
+class ValueAddedPartitionPolicy:
+    """Declare generated value-added aggregate/component identities."""
+
+    partitions: tuple[AdditivePartition, ...] = ()
+
 def _normalise_frame(frame: pd.DataFrame, *, name: str) -> pd.DataFrame:
     out = frame.copy().astype("float64")
     out.index = out.index.astype(str)
@@ -674,4 +697,187 @@ def validate_cross_flow_invariants(
         observed_final = _require_finite_row(total_M_ord.loc[:, list(selected)], str(policy.imported_use_final_row), "imported final use", block_name="total_M")
         checks.append(_comparison_check(check_id="cross_flow.imported_final_use", category="cross_flow", flow_role="TOTAL", block="M_TOTAL|Y_IMP", observed=observed_final, derived=imports_atomic_Y.sum(axis=0).astype("float64"), rtol=rtol, atol=atol, explanation="Imported-use controls under final-use columns must equal IMP Y column sums."))
 
+    return InvariantReport(checks=tuple(checks))
+
+
+def _validated_partitions(
+    partitions: Sequence[AdditivePartition],
+    *,
+    policy_name: str,
+) -> tuple[AdditivePartition, ...]:
+    normalized = tuple(
+        AdditivePartition(
+            check_id=str(partition.check_id),
+            aggregate=str(partition.aggregate),
+            components=tuple(map(str, partition.components)),
+        )
+        for partition in partitions
+    )
+    check_ids = pd.Index([partition.check_id for partition in normalized])
+    if check_ids.has_duplicates:
+        duplicates = check_ids[check_ids.duplicated()].astype(str).tolist()
+        raise ValueError(f"{policy_name} contains duplicate check_id values: {duplicates[:20]!r}")
+    aggregates = pd.Index([partition.aggregate for partition in normalized])
+    if aggregates.has_duplicates:
+        duplicates = aggregates[aggregates.duplicated()].astype(str).tolist()
+        raise ValueError(f"{policy_name} contains duplicate aggregate roles: {duplicates[:20]!r}")
+    for partition in normalized:
+        if not partition.check_id:
+            raise ValueError(f"{policy_name} contains an empty check_id")
+        if not partition.aggregate:
+            raise ValueError(f"{policy_name} contains an empty aggregate label")
+        if not partition.components:
+            raise ValueError(
+                f"{policy_name} partition {partition.check_id!r} must contain at least one component"
+            )
+        component_index = pd.Index(partition.components)
+        if component_index.has_duplicates:
+            duplicates = component_index[component_index.duplicated()].astype(str).tolist()
+            raise ValueError(
+                f"{policy_name} partition {partition.check_id!r} contains duplicate components: "
+                f"{duplicates[:20]!r}"
+            )
+        if partition.aggregate in set(partition.components):
+            raise ValueError(
+                f"{policy_name} partition {partition.check_id!r} includes its aggregate as a component"
+            )
+    return normalized
+
+
+def validate_final_demand_partitions(
+    *,
+    Y: pd.DataFrame,
+    flow_role: FlowRole,
+    policy: FinalDemandPartitionPolicy = FinalDemandPartitionPolicy(),
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> InvariantReport:
+    """Validate exact generated aggregate/detail identities across Y columns."""
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unsupported flow_role: {flow_role!r}")
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("rtol and atol must be non-negative")
+    Y_ord = _normalise_frame(Y, name="Y")
+    partitions = _validated_partitions(
+        policy.partitions,
+        policy_name="final-demand partition policy",
+    )
+    if not partitions:
+        return InvariantReport(
+            checks=(
+                _missing_role_check(
+                    check_id="partition.final_demand",
+                    category="partition_identity",
+                    flow_role=flow_role,
+                    block="Y",
+                    explanation="No final-demand aggregate/detail partitions were declared by policy.",
+                ),
+            )
+        )
+
+    checks: list[InvariantCheck] = []
+    for partition in partitions:
+        required = (partition.aggregate, *partition.components)
+        missing = [label for label in required if label not in set(Y_ord.columns)]
+        if missing:
+            raise ValueError(
+                f"Declared final-demand partition {partition.check_id!r} is missing Y columns: "
+                f"{missing[:20]!r}"
+            )
+        block = Y_ord.loc[:, list(required)]
+        if not np.isfinite(block.to_numpy(dtype="float64")).all():
+            raise ValueError(
+                f"Declared final-demand partition {partition.check_id!r} contains non-finite values"
+            )
+        observed = cast(pd.Series, Y_ord[partition.aggregate]).astype("float64")
+        derived = Y_ord.loc[:, list(partition.components)].sum(axis=1).astype("float64")
+        checks.append(
+            _comparison_check(
+                check_id=partition.check_id,
+                category="partition_identity",
+                flow_role=flow_role,
+                block="Y",
+                observed=observed,
+                derived=derived,
+                rtol=rtol,
+                atol=atol,
+                explanation=(
+                    f"Final-demand aggregate {partition.aggregate!r} must equal the complete "
+                    f"declared component set {partition.components!r}."
+                ),
+            )
+        )
+    return InvariantReport(checks=tuple(checks))
+
+
+def validate_value_added_partitions(
+    *,
+    V: pd.DataFrame | None,
+    flow_role: FlowRole,
+    policy: ValueAddedPartitionPolicy = ValueAddedPartitionPolicy(),
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> InvariantReport:
+    """Validate exact generated value-added aggregate/component identities across V rows."""
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unsupported flow_role: {flow_role!r}")
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("rtol and atol must be non-negative")
+    partitions = _validated_partitions(
+        policy.partitions,
+        policy_name="value-added partition policy",
+    )
+    if not partitions:
+        return InvariantReport(
+            checks=(
+                _missing_role_check(
+                    check_id="partition.value_added",
+                    category="partition_identity",
+                    flow_role=flow_role,
+                    block="V",
+                    explanation="No value-added aggregate/component partitions were declared by policy.",
+                ),
+            )
+        )
+    if V is None:
+        raise ValueError("Value-added partitions were declared but V is absent")
+    V_ord = _normalise_frame(V, name="V")
+
+    checks: list[InvariantCheck] = []
+    for partition in partitions:
+        required = (partition.aggregate, *partition.components)
+        missing = [label for label in required if label not in set(V_ord.index)]
+        if missing:
+            raise ValueError(
+                f"Declared value-added partition {partition.check_id!r} is missing V rows: "
+                f"{missing[:20]!r}"
+            )
+        block = V_ord.loc[list(required), :]
+        if not np.isfinite(block.to_numpy(dtype="float64")).all():
+            raise ValueError(
+                f"Declared value-added partition {partition.check_id!r} contains non-finite values"
+            )
+        observed = _require_finite_row(
+            V_ord,
+            partition.aggregate,
+            "value-added aggregate",
+            block_name="V",
+        )
+        derived = V_ord.loc[list(partition.components), :].sum(axis=0).astype("float64")
+        checks.append(
+            _comparison_check(
+                check_id=partition.check_id,
+                category="partition_identity",
+                flow_role=flow_role,
+                block="V",
+                observed=observed,
+                derived=derived,
+                rtol=rtol,
+                atol=atol,
+                explanation=(
+                    f"Value-added aggregate {partition.aggregate!r} must equal the complete "
+                    f"declared component set {partition.components!r}."
+                ),
+            )
+        )
     return InvariantReport(checks=tuple(checks))
