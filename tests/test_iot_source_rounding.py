@@ -79,3 +79,18 @@ def test_published_source_basis_allows_rounded_aggregate_controls() -> None:
         "P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53", "P6"
     ]
     assert float(source_atomic.sum(axis=1).iloc[0]) == pytest.approx(28.0)
+
+def test_rounded_control_can_return_failed_audit_diagnostic() -> None:
+    diagnostic = rounded_source_control_diagnostic(
+        identity="P3",
+        published=6.03,
+        derived=6.0,
+        component_term_count=3,
+        source_rounding_quantum=0.01,
+        rtol=1e-9,
+        atol=1e-6,
+        raise_on_failure=False,
+    )
+    assert diagnostic["ok"] is False
+    assert diagnostic["signed_gap"] == pytest.approx(0.03)
+    assert diagnostic["rounding_bound"] == pytest.approx(0.020001)

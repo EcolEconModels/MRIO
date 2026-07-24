@@ -29,6 +29,7 @@ def rounded_source_control_diagnostic(
     source_rounding_quantum: float,
     rtol: float = _ACCOUNTING_RTOL,
     atol: float = _ACCOUNTING_ATOL,
+    raise_on_failure: bool = True,
 ) -> dict[str, object]:
     """Validate one independently rounded published control.
 
@@ -64,7 +65,7 @@ def rounded_source_control_diagnostic(
         "floating_tolerance": floating_tolerance,
         "ok": ok,
     }
-    if not ok:
+    if not ok and raise_on_failure:
         raise ValueError(
             f"Published Eurostat {identity} control failed: "
             f"published={published:.12g}, derived={derived:.12g}, "
