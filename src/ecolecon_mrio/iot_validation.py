@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Sequence, cast
+from typing import Literal, Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -177,6 +177,7 @@ def _frame_comparison_check(
     check_id: str,
     category: str,
     block: str,
+    flow_role: FlowRole = "TOTAL",
     observed: pd.DataFrame,
     derived: pd.DataFrame,
     rtol: float,
@@ -203,7 +204,7 @@ def _frame_comparison_check(
         category=category,
         status="pass" if not failed_labels else "fail",
         severity="error",
-        flow_role="TOTAL",
+        flow_role=flow_role,
         block=block,
         max_abs_gap=float(finite_gaps.max()) if finite_gaps.size else float("inf"),
         tolerance=float(finite_tolerances.max()) if finite_tolerances.size else float(atol),
@@ -881,3 +882,158 @@ def validate_value_added_partitions(
             )
         )
     return InvariantReport(checks=tuple(checks))
+
+def _normalise_axis_parent_map(
+    mapping: Mapping[str, str] | None,
+    *,
+    child_labels: pd.Index,
+    parent_labels: pd.Index,
+    axis_name: str,
+) -> dict[str, str]:
+    child = child_labels.astype(str)
+    parent = parent_labels.astype(str)
+    if mapping is None:
+        if not child.equals(parent):
+            raise ValueError(
+                f"{axis_name} aggregation mapping is absent, so child and parent labels "
+                "must be identical and ordered"
+            )
+        return {label: label for label in child}
+
+    normalized = {str(key): str(value) for key, value in mapping.items()}
+    if len(normalized) != len(mapping):
+        raise ValueError(
+            f"{axis_name} aggregation mapping has keys that collide after string normalization"
+        )
+
+    child_set = set(child)
+    mapping_set = set(normalized)
+    missing_children = sorted(child_set - mapping_set)
+    extra_children = sorted(mapping_set - child_set)
+    if missing_children or extra_children:
+        raise ValueError(
+            f"{axis_name} aggregation mapping must cover exactly the child labels; "
+            f"missing={missing_children[:20]!r}, extra={extra_children[:20]!r}"
+        )
+
+    parent_set = set(parent)
+    unknown_parents = sorted(set(normalized.values()) - parent_set)
+    if unknown_parents:
+        raise ValueError(
+            f"{axis_name} aggregation mapping references unknown parent labels: "
+            f"{unknown_parents[:20]!r}"
+        )
+    uncovered_parents = sorted(parent_set - set(normalized.values()))
+    if uncovered_parents:
+        raise ValueError(
+            f"{axis_name} aggregation mapping leaves parent labels uncovered: "
+            f"{uncovered_parents[:20]!r}"
+        )
+    return normalized
+
+
+def _reaggregate_frame(
+    expanded: pd.DataFrame,
+    *,
+    parent_index: pd.Index,
+    parent_columns: pd.Index,
+    row_parent_by_child: Mapping[str, str] | None,
+    column_parent_by_child: Mapping[str, str] | None,
+) -> pd.DataFrame:
+    row_map = _normalise_axis_parent_map(
+        row_parent_by_child,
+        child_labels=expanded.index,
+        parent_labels=parent_index,
+        axis_name="row",
+    )
+    column_map = _normalise_axis_parent_map(
+        column_parent_by_child,
+        child_labels=expanded.columns,
+        parent_labels=parent_columns,
+        axis_name="column",
+    )
+
+    parent_row_positions = {
+        label: position for position, label in enumerate(parent_index.astype(str))
+    }
+    parent_column_positions = {
+        label: position for position, label in enumerate(parent_columns.astype(str))
+    }
+    row_aggregation = np.zeros((len(parent_index), len(expanded.index)), dtype="float64")
+    column_aggregation = np.zeros(
+        (len(parent_columns), len(expanded.columns)), dtype="float64"
+    )
+    for child_position, child_label in enumerate(expanded.index.astype(str)):
+        row_aggregation[parent_row_positions[row_map[child_label]], child_position] = 1.0
+    for child_position, child_label in enumerate(expanded.columns.astype(str)):
+        column_aggregation[
+            parent_column_positions[column_map[child_label]], child_position
+        ] = 1.0
+
+    values = (
+        row_aggregation
+        @ expanded.to_numpy(dtype="float64")
+        @ column_aggregation.T
+    )
+    return pd.DataFrame(
+        values,
+        index=parent_index,
+        columns=parent_columns,
+        dtype="float64",
+    )
+
+
+def validate_reaggregation_conservation(
+    *,
+    source: pd.DataFrame,
+    expanded: pd.DataFrame,
+    flow_role: FlowRole,
+    check_id: str,
+    block: str,
+    row_parent_by_child: Mapping[str, str] | None = None,
+    column_parent_by_child: Mapping[str, str] | None = None,
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> InvariantReport:
+    # Validate that an expanded labelled block reaggregates to its source block.
+    if flow_role not in {"DOM", "IMP", "TOTAL"}:
+        raise ValueError(f"Unsupported flow_role: {flow_role!r}")
+    if not str(check_id):
+        raise ValueError("check_id must be non-empty")
+    if not str(block):
+        raise ValueError("block must be non-empty")
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("rtol and atol must be non-negative")
+
+    source_ord = _normalise_frame(source, name="source")
+    expanded_ord = _normalise_frame(expanded, name="expanded")
+    if not np.isfinite(source_ord.to_numpy(dtype="float64")).all():
+        raise ValueError("source contains non-finite values")
+    if not np.isfinite(expanded_ord.to_numpy(dtype="float64")).all():
+        raise ValueError("expanded contains non-finite values")
+
+    reaggregated = _reaggregate_frame(
+        expanded_ord,
+        parent_index=source_ord.index,
+        parent_columns=source_ord.columns,
+        row_parent_by_child=row_parent_by_child,
+        column_parent_by_child=column_parent_by_child,
+    )
+    return InvariantReport(
+        checks=(
+            _frame_comparison_check(
+                check_id=str(check_id),
+                category="reaggregation_conservation",
+                flow_role=flow_role,
+                block=str(block),
+                observed=source_ord,
+                derived=reaggregated,
+                rtol=rtol,
+                atol=atol,
+                explanation=(
+                    "The expanded block must recover the authoritative source block "
+                    "exactly after applying the declared child-to-parent mappings."
+                ),
+            ),
+        )
+    )

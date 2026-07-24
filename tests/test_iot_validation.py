@@ -18,6 +18,7 @@ from ecolecon_mrio.iot_validation import (
     FinalDemandPartitionPolicy,
     ValueAddedPartitionPolicy,
     validate_final_demand_partitions,
+    validate_reaggregation_conservation,
     validate_value_added_partitions,
 )
 
@@ -472,3 +473,148 @@ def test_value_added_partition_reports_columns_and_optional_policy() -> None:
     empty = validate_value_added_partitions(V=None, flow_role="DOM")
     assert empty.ok
     assert empty.checks[0].status == "not_applicable"
+
+def _expand_square_block(
+    source: pd.DataFrame,
+    *,
+    children: tuple[str, ...],
+    parent_by_child: dict[str, str],
+    share_by_child: dict[str, float],
+) -> pd.DataFrame:
+    expanded = pd.DataFrame(0.0, index=pd.Index(children), columns=pd.Index(children))
+    for row_child in children:
+        for column_child in children:
+            expanded.loc[row_child, column_child] = (
+                source.loc[parent_by_child[row_child], parent_by_child[column_child]]
+                * share_by_child[row_child]
+                * share_by_child[column_child]
+            )
+    return expanded
+
+
+def test_reaggregation_conserves_split_rows_and_columns() -> None:
+    parents = pd.Index(["a", "b"])
+    source = pd.DataFrame(
+        [[10.0, 20.0], [30.0, 40.0]],
+        index=parents,
+        columns=parents,
+    )
+    children = ("a_1", "a_2", "b")
+    parent_by_child = {"a_1": "a", "a_2": "a", "b": "b"}
+    shares = {"a_1": 0.4, "a_2": 0.6, "b": 1.0}
+    expanded = _expand_square_block(
+        source,
+        children=children,
+        parent_by_child=parent_by_child,
+        share_by_child=shares,
+    )
+    report = validate_reaggregation_conservation(
+        source=source,
+        expanded=expanded,
+        flow_role="TOTAL",
+        check_id="reaggregation.Z",
+        block="Z",
+        row_parent_by_child=parent_by_child,
+        column_parent_by_child=parent_by_child,
+    )
+    assert report.ok
+    assert report.checks[0].category == "reaggregation_conservation"
+
+
+def test_reaggregation_supports_row_only_final_demand_split() -> None:
+    source = pd.DataFrame(
+        {"FD1": [10.0, 20.0], "FD2": [4.0, 8.0]},
+        index=pd.Index(["a", "b"]),
+    )
+    expanded = pd.DataFrame(
+        {"FD1": [4.0, 6.0, 20.0], "FD2": [1.6, 2.4, 8.0]},
+        index=pd.Index(["a_1", "a_2", "b"]),
+    )
+    report = validate_reaggregation_conservation(
+        source=source,
+        expanded=expanded,
+        flow_role="DOM",
+        check_id="reaggregation.Y",
+        block="Y",
+        row_parent_by_child={"a_1": "a", "a_2": "a", "b": "b"},
+    )
+    assert report.ok
+
+
+def test_reaggregation_reports_specific_failed_parent_cell() -> None:
+    source = pd.DataFrame(
+        [[10.0]],
+        index=pd.Index(["a"]),
+        columns=pd.Index(["a"]),
+    )
+    expanded = pd.DataFrame(
+        [[3.0, 2.0], [2.0, 4.0]],
+        index=pd.Index(["a_1", "a_2"]),
+        columns=pd.Index(["a_1", "a_2"]),
+    )
+    report = validate_reaggregation_conservation(
+        source=source,
+        expanded=expanded,
+        flow_role="IMP",
+        check_id="reaggregation.Z",
+        block="Z",
+        row_parent_by_child={"a_1": "a", "a_2": "a"},
+        column_parent_by_child={"a_1": "a", "a_2": "a"},
+    )
+    assert not report.ok
+    assert report.checks[0].affected_labels == ("a|a",)
+
+
+def test_reaggregation_rejects_incomplete_or_unknown_mappings() -> None:
+    source = pd.DataFrame(
+        [[1.0]],
+        index=pd.Index(["a"]),
+        columns=pd.Index(["FD"]),
+    )
+    expanded = pd.DataFrame(
+        [[0.4], [0.6]],
+        index=pd.Index(["a_1", "a_2"]),
+        columns=pd.Index(["FD"]),
+    )
+    with pytest.raises(ValueError, match="cover exactly the child labels"):
+        validate_reaggregation_conservation(
+            source=source,
+            expanded=expanded,
+            flow_role="TOTAL",
+            check_id="reaggregation.Y",
+            block="Y",
+            row_parent_by_child={"a_1": "a"},
+        )
+    with pytest.raises(ValueError, match="unknown parent labels"):
+        validate_reaggregation_conservation(
+            source=source,
+            expanded=expanded,
+            flow_role="TOTAL",
+            check_id="reaggregation.Y",
+            block="Y",
+            row_parent_by_child={"a_1": "a", "a_2": "unknown"},
+        )
+
+
+def test_reaggregation_requires_exact_identity_axis_when_mapping_is_absent() -> None:
+    source = pd.DataFrame(
+        [[1.0]],
+        index=pd.Index(["row"]),
+        columns=pd.Index(["FD"]),
+    )
+    expanded = pd.DataFrame(
+        [[1.0]],
+        index=pd.Index(["row"]),
+        columns=pd.Index(["other"]),
+    )
+    with pytest.raises(
+        ValueError,
+        match="child and parent labels must be identical and ordered",
+    ):
+        validate_reaggregation_conservation(
+            source=source,
+            expanded=expanded,
+            flow_role="TOTAL",
+            check_id="reaggregation.control",
+            block="control",
+        )
