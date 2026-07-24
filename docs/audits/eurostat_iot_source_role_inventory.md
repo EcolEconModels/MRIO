@@ -352,3 +352,29 @@ The next implementation stages should be:
 8. shadow integration in Energy-Balance and EXIO routes;
 9. blocking generated-table validation; and
 10. removal of duplicate economics checks after numerical equivalence is proven.
+
+## Reviewed Austria 2021 source profile
+
+The production audit at commit `eccc63de229a3dfeac80650545bb8482f3aa1794`
+confirmed one identical ordered 65-product domain for `DOM`, `IMP`, and `TOTAL`,
+one identical ordered 17-column final-demand domain, complete rounded P3 and P5
+partitions, aggregate-authoritative P6, and source-rounded `TOTAL = DOM + IMP`
+for Z and the atomic final-demand basis.
+
+`src/ecolecon_mrio/eurostat_iot_source_policy.py` records those facts as the
+reviewed `AT_2021_NAIO_10_CP1700_PROFILE`. It also records source-code roles for
+P1, B1G, P7, and TS_BP while authorizing numerical equations only where the
+existing accounting contract and production audit provide sufficient evidence.
+
+The profile deliberately excludes unresolved interpretations from numerical
+policy: P2_ADJ valuation, TS_BP/TU valuation equivalence, regional P6 detail
+exhaustiveness, a complete B1G decomposition, tax/margin bridges, the DOM `IMP`
+row versus IMP-flow bridge, and source applicability or missingness. Presence in
+the reviewed schema is not authorization to use such a row in an accounting
+equation.
+
+The profile validator checks exact source domains and positional supplementary
+row schemas. It does not transform source data, infer missingness, or validate
+any excluded economic equation. Shadow integration must use these exclusions
+unchanged until further source metadata or independent methodological evidence
+resolves them.
