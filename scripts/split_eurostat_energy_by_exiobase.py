@@ -780,7 +780,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return "domestic"
 
     p = argparse.ArgumentParser(
-        description="Split Eurostat AT IOT energy sectors (NACE 19/35) using EXIOBASE shares and RAS/GRAS-balance."
+        description="Split Eurostat IOT sectors using EXIOBASE donor blocks and conservative source-parent reconstruction."
     )
     p.add_argument(
         "--data-root",
@@ -835,6 +835,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=["auto", "domestic", "imports", "total"],
         help="Which EXIO use-slice to derive split shares from. "
         "auto maps Eurostat stk_flow DOM/IMP/TOTAL -> EXIO domestic/imports/total.",
+    )
+    p.add_argument(
+        "--source-rounding-quantum",
+        type=float,
+        default=None,
+        help="Optional reporting quantum for independently rounded published Eurostat controls; overrides dataset metadata and is required for rounded local-file controls.",
     )
     p.add_argument(
         "--no-mapping-consistency-check",
@@ -1350,9 +1356,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     eurostat_sector_mapping=flow_sector_mapping,
                     coverage_expected_exio_sectors=coverage_expected_exio,
                     coverage_tol=args.coverage_tol,
-                    source_rounding_quantum=float(
-                        parsed_variant.meta.get("source_rounding_quantum", 0.01)
-                    ),
+                    source_rounding_quantum=args.source_rounding_quantum
+                    if args.source_rounding_quantum is not None
+                    else parsed_variant.meta.get("source_rounding_quantum"),
                     extract_quantity_and_price=extract_qp
                     and flow_has_origin_weighted_extension_proxies,
                     quantity_price_extensions=qp_extensions
@@ -1628,9 +1634,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         eurostat_sector_mapping=full_sector_mapping,
         coverage_expected_exio_sectors=coverage_expected_exio,
         coverage_tol=args.coverage_tol,
-        source_rounding_quantum=float(parsed.meta.get("source_rounding_quantum", 0.01))
-        if parsed is not None
-        else 0.01,
+        source_rounding_quantum=args.source_rounding_quantum
+        if args.source_rounding_quantum is not None
+        else (
+            parsed.meta.get("source_rounding_quantum") if parsed is not None else None
+        ),
         extract_quantity_and_price=extract_qp
         and single_has_origin_weighted_extension_proxies,
         quantity_price_extensions=qp_extensions

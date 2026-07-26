@@ -236,7 +236,6 @@ def test_wp1_accepts_explicit_weights_and_rejects_cellwise_or_p5m_drift(
             split_profiles=result.split_profiles,
             Z_split=mutated_z,
             Y_split=result.Y,
-            x_split=result.x,
         )
 
     corrupted_y = result.Y.copy()
@@ -248,7 +247,6 @@ def test_wp1_accepts_explicit_weights_and_rejects_cellwise_or_p5m_drift(
             split_profiles=result.split_profiles,
             Z_split=result.Z,
             Y_split=corrupted_y,
-            x_split=result.x,
         )
 
 

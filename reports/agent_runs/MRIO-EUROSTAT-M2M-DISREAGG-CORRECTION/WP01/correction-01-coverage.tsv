@@ -1,0 +1,7 @@
+requirement_id	status	primary_location	primary_test_or_evidence
+MAP-01	implemented	mapping_csv._resolve_split_weights_for_source_group	missing-key versus zero-value resolver path
+MAP-02	implemented	exio_share_split._source_targets_from_eurostat_mapping	DOM/IMP structural-child tests
+MAP-04	implemented	exio_share_split._validate_projection_donor_domain	pre-projection donor-domain guard
+SPLIT-02	implemented	exio_share_split._validate_split_reconstruction	atomic Y plus P3/P5/TFU/TU controls
+SPLIT-04	implemented	exio_share_split._validate_emitted_children	child ownership and parent collision checks
+API-01	implemented	split_eurostat_energy_by_exiobase.main	balancing-free CLI help and donor API

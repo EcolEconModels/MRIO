@@ -966,7 +966,6 @@ def test_validate_split_reconstruction_preserves_original_final_demand_columns()
         split_profiles=split_profiles,
         Z_split=Z_split,
         Y_split=Y_split,
-        x_split=x_split,
     )
 
 
@@ -1019,5 +1018,4 @@ def test_validate_split_reconstruction_raises_on_final_demand_drift():
             split_profiles=split_profiles,
             Z_split=Z_split,
             Y_split=Y_split,
-            x_split=x_split,
         )

@@ -490,6 +490,11 @@ def _validate_emitted_children(
                 raise ValueError(
                     f"Emitted split child is blank: parent={str(parent)!r}."
                 )
+            if label == str(parent) and len(profile.subsectors) != 1:
+                raise ValueError(
+                    "An emitted child may equal its own parent only for a one-child identity: "
+                    f"label={label!r}, parent={str(parent)!r}."
+                )
             owners.setdefault(label, []).append(str(parent))
 
     duplicates = {
@@ -505,6 +510,52 @@ def _validate_emitted_children(
             "Emitted split child labels collide with retained unsplit Eurostat sectors: "
             f"{collisions!r}"
         )
+    split_parents = set(map(str, split_profiles))
+    parent_code_collisions = {
+        label: parents
+        for label, parents in owners.items()
+        if label in split_parents and any(parent != label for parent in parents)
+    }
+    if parent_code_collisions:
+        raise ValueError(
+            "Emitted split child labels collide with another split parent: "
+            f"{parent_code_collisions!r}"
+        )
+
+
+def _validate_projection_donor_domain(
+    *,
+    exio_slice: ExioRegionSlice,
+    sectors_old: Sequence[str],
+    split_profiles: Mapping[str, SplitProfiles],
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> None:
+    """Fail before projection if any emitted-table donor would otherwise be filled with zero."""
+    available = set(map(str, exio_slice.sectors))
+    required: list[tuple[str, str, str, str]] = []
+    for parent, profile in split_profiles.items():
+        for child, members in (profile.subsector_to_exio_sectors or {}).items():
+            for member in members:
+                required.append((str(member), str(child), str(parent), "split-child"))
+    if eurostat_sector_mapping is not None:
+        split_parents = set(map(str, split_profiles))
+        for target, members in eurostat_sector_mapping.items():
+            if (
+                str(target) not in set(map(str, sectors_old))
+                or str(target) in split_parents
+            ):
+                continue
+            for member, weight in members.items():
+                if float(weight) != 0.0:
+                    required.append(
+                        (str(member), str(target), str(target), "retained-sector")
+                    )
+    missing = [item for item in required if item[0] not in available]
+    if missing:
+        code, label, parent, side = missing[0]
+        raise ValueError(
+            f"Required EXIO projection donor is absent: raw_exio_code={code!r}, emitted_label={label!r}, eurostat_parent={parent!r}, flow={exio_slice.flow!r}, side={side!r}."
+        )
 
 
 def _validate_split_reconstruction(
@@ -514,8 +565,7 @@ def _validate_split_reconstruction(
     split_profiles: Mapping[str, SplitProfiles],
     Z_split: pd.DataFrame,
     Y_split: pd.DataFrame,
-    x_split: pd.Series,
-    source_rounding_quantum: float = 0.01,
+    source_rounding_quantum: float | None = None,
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> None:
@@ -534,16 +584,11 @@ def _validate_split_reconstruction(
     Y_back = _aggregate_rows_to_original(
         Y_split.astype("float64"), split_profiles=split_profiles
     )
-    x_back = _aggregate_rows_to_original(
-        x_split.astype("float64").to_frame("x"), split_profiles=split_profiles
-    )["x"]
 
     Z_back = Z_back.reindex(index=Z_expected.index, columns=Z_expected.columns).fillna(
         0.0
     )
     Y_back = Y_back.reindex(index=Y_expected.index).fillna(0.0)
-    x_expected = flow_use_total(Z_expected, Y_expected)
-    x_back = x_back.reindex(index=x_expected.index).fillna(0.0)
     # Compare each original Z cell, not only its row/column margins.
     Y_expected_atomic = source_atomic_final_demand(Y_expected)
     Y_back_atomic = (
@@ -554,7 +599,6 @@ def _validate_split_reconstruction(
     checks = [
         ("Z", Z_back, Z_expected),
         ("Y atomic", Y_back_atomic, Y_expected_atomic),
-        ("x", x_back, x_expected),
     ]
     errors: list[str] = []
     for label, actual, expected in checks:
@@ -590,6 +634,23 @@ def _validate_split_reconstruction(
                     f"{label} reconstruction failed: largest_abs_gap={gap:.10f} at {where}."
                 )
 
+    def _source_control(
+        identity: str, published: float, derived: float, terms: int
+    ) -> None:
+        if np.isclose(published, derived, rtol=rtol, atol=atol):
+            return
+        if source_rounding_quantum is None:
+            raise ValueError(
+                f"{identity}: source_rounding_quantum is required for a rounded published control."
+            )
+        rounded_source_control_diagnostic(
+            identity=identity,
+            published=published,
+            derived=derived,
+            component_term_count=terms,
+            source_rounding_quantum=source_rounding_quantum,
+        )
+
     # Published aggregate controls may be independently rounded in the source.
     # Generated controls must, however, equal their generated components strictly.
     for aggregate, source_detail, generated_detail in (
@@ -602,12 +663,11 @@ def _validate_split_reconstruction(
         ):
             continue
         for parent in Y_expected.index.astype(str):
-            rounded_source_control_diagnostic(
-                identity=f"{aggregate}[{parent}]",
-                published=float(Y_expected.loc[parent, aggregate]),
-                derived=float(Y_expected.loc[parent, list(source_detail)].sum()),
-                component_term_count=len(source_detail),
-                source_rounding_quantum=source_rounding_quantum,
+            _source_control(
+                f"{aggregate}[{parent}]",
+                float(Y_expected.loc[parent, aggregate]),
+                float(Y_expected.loc[parent, list(source_detail)].sum()),
+                len(source_detail),
             )
         if aggregate in Y_back.columns and set(generated_detail).issubset(
             Y_back.columns
@@ -620,6 +680,40 @@ def _validate_split_reconstruction(
                 errors.append(
                     f"Generated {aggregate} control failed: parent={where!r}, absolute_gap={gap:.12g}."
                 )
+
+    atomic_expected = source_atomic_final_demand(Y_expected)
+    atomic_back = source_atomic_final_demand(Y_back)
+    for parent in Y_expected.index.astype(str):
+        source_tfu = float(atomic_expected.loc[parent].sum())
+        if "TFU" in Y_expected.columns:
+            _source_control(
+                f"TFU[{parent}]",
+                float(Y_expected.loc[parent, "TFU"]),
+                source_tfu,
+                len(atomic_expected.columns),
+            )
+        source_tu = float(Z_expected.loc[parent].sum()) + source_tfu
+        if "TU" in Y_expected.columns:
+            _source_control(
+                f"TU[{parent}]",
+                float(Y_expected.loc[parent, "TU"]),
+                source_tu,
+                len(Z_expected.columns) + len(atomic_expected.columns),
+            )
+    if "TFU" in Y_back.columns:
+        gap = Y_back["TFU"].sub(atomic_back.sum(axis=1))
+        if not np.allclose(gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
+            where, value = _largest_abs_gap(gap)
+            errors.append(
+                f"Generated TFU control failed: parent={where!r}, absolute_gap={value:.12g}."
+            )
+    if "TU" in Y_back.columns:
+        gap = Y_back["TU"].sub(Z_back.sum(axis=1).add(atomic_back.sum(axis=1)))
+        if not np.allclose(gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
+            where, value = _largest_abs_gap(gap)
+            errors.append(
+                f"Generated TU control failed: parent={where!r}, absolute_gap={value:.12g}."
+            )
 
     if errors:
         raise ValueError(
@@ -1335,6 +1429,27 @@ def build_split_profiles_from_exiobase_domestic_block(
         Z_inputs_sum = Z_rr.sum(axis=0)
         Y_fd_sum = Y_r.sum(axis=1)
 
+        def _require_usable_parent_profile(
+            parent: object,
+            children: pd.Series,
+            output: pd.Series,
+            sales: pd.Series,
+            inputs: pd.Series,
+            final_demand: pd.Series,
+        ) -> None:
+            masses = {
+                "output": float(output.sum()),
+                "sales": float(sales.sum()),
+                "input": float(inputs.sum()),
+                "final_demand": float(final_demand.sum()),
+            }
+            if not all(np.isfinite(value) for value in masses.values()) or all(
+                value <= 0.0 for value in masses.values()
+            ):
+                raise ValueError(
+                    f"All-zero or non-finite EXIO donor profile: eurostat_parent={str(parent)!r}, flow={exio_slice.flow!r}, emitted_children={list(map(str, children.index))!r}, donor_masses={masses!r}."
+                )
+
         for aggregate, exio_sectors in sector_to_exio_sectors.items():
             if isinstance(exio_sectors, ABCMapping):
                 subsector_to_exio: dict[str, list[str]] = {}
@@ -1405,6 +1520,10 @@ def build_split_profiles_from_exiobase_domestic_block(
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
+                )
+
+                _require_usable_parent_profile(
+                    aggregate, x_sub, x_sub, sales_sub, inputs_sub, fd_sub
                 )
 
                 output_share = normalize_share(x_sub, name=f"{aggregate}.output_share")
@@ -1501,6 +1620,10 @@ def build_split_profiles_from_exiobase_domestic_block(
                         for sub, members in subsector_to_exio.items()
                     },
                     dtype="float64",
+                )
+
+                _require_usable_parent_profile(
+                    aggregate, x_sub, x_sub, sales_sub, inputs_sub, fd_sub
                 )
 
                 output_share = normalize_share(x_sub, name=f"{aggregate}.output_share")
@@ -1812,7 +1935,7 @@ def split_iot_using_exiobase_split_profiles(
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_tol: float = 0.0,
-    source_rounding_quantum: float = 0.01,
+    source_rounding_quantum: float | None = None,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
@@ -1828,6 +1951,12 @@ def split_iot_using_exiobase_split_profiles(
     The allocation uses full donor blocks for Z and donor final-demand-category shares for Y.
     Where donor information is unavailable, it falls back to the existing marginal-share logic.
     """
+    if source_rounding_quantum is not None and (
+        not np.isfinite(source_rounding_quantum) or source_rounding_quantum <= 0.0
+    ):
+        raise ValueError(
+            "source_rounding_quantum must be finite and positive when provided."
+        )
     effective_sector_to_exio_sectors = _edge_aware_sector_to_exio_sectors(
         sector_to_exio_sectors,
         eurostat_sector_mapping=eurostat_sector_mapping,
@@ -1840,6 +1969,12 @@ def split_iot_using_exiobase_split_profiles(
     )
     _validate_emitted_children(
         sectors_old=list(map(str, eurostat_Z.index)), split_profiles=profiles
+    )
+    _validate_projection_donor_domain(
+        exio_slice=exio_slice,
+        sectors_old=list(map(str, eurostat_Z.index)),
+        split_profiles=profiles,
+        eurostat_sector_mapping=eurostat_sector_mapping,
     )
 
     if coverage_expected_exio_sectors is not None:
@@ -1924,7 +2059,6 @@ def split_iot_using_exiobase_split_profiles(
         split_profiles=profiles,
         Z_split=res.Z,
         Y_split=res.Y,
-        x_split=res.x,
         source_rounding_quantum=source_rounding_quantum,
     )
 
@@ -1989,7 +2123,7 @@ def split_iot_using_exiobase_shares(
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     coverage_tol: float = 0.0,
-    source_rounding_quantum: float = 0.01,
+    source_rounding_quantum: float | None = None,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,

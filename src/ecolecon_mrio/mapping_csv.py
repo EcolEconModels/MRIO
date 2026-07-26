@@ -415,8 +415,19 @@ def _resolve_split_weights_for_source_group(
             "Split mapping rows require a year-specific output reference when weights are omitted."
         )
 
+    normalized_keys = [_normalize_text(key) for key in keys]
+    missing_keys = [key for key in normalized_keys if key not in reference]
+    if missing_keys:
+        source = str(group["exio_sector"].iloc[0])
+        raise ValueError(
+            "Authorised calculated split is missing reference keys: "
+            f"source_code={source!r}, missing_targets={missing_keys!r}, "
+            f"structural_targets={keys!r}, reference_type="
+            f"{'target_code' if reference is target_output_by_code else 'target_label'}"
+        )
+
     weights = np.array(
-        [max(0.0, float(reference.get(_normalize_text(key), 0.0))) for key in keys],
+        [max(0.0, float(reference[key])) for key in normalized_keys],
         dtype="float64",
     )
     total = float(weights.sum())
