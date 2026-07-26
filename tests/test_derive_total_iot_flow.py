@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -91,3 +92,65 @@ def test_aggregate_rows_rejects_orphan_parent() -> None:
     frame = pd.DataFrame({"P3": [1.0, 2.0]}, index=pd.Index(["child", "orphan"]))
     with pytest.raises(ValueError, match="orphan"):
         MODULE._aggregate_rows(frame, {"child": "parent"}, pd.Index(["parent"]))
+
+
+def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> None:
+    directory = root / f"stk_flow={flow}"
+    directory.mkdir(parents=True)
+    idx = pd.Index(["a", "b"])
+    Z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx) * z_scale
+    Y = pd.DataFrame(
+        {
+            "P3_S13": [1.0, 2.0], "P3_S14": [2.0, 1.0], "P3_S15": [3.0, 1.0],
+            "P51G": [1.0, 2.0], "P52": [2.0, 3.0], "P53": [3.0, 4.0],
+            "P3": [6.0, 4.0], "P5M": [5.0, 7.0], "P5": [6.0, 9.0],
+            "TFU": [12.0, 13.0], "TU": [15.0, 20.0],
+        }, index=idx,
+    ) * y_scale
+    Z.to_csv(directory / "Z_split.csv")
+    Y.to_csv(directory / "Y_split.csv")
+    (directory / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")
+
+
+def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_primitive(tmp_path, "DOM", 1.0, 1.0)
+    _write_primitive(tmp_path, "IMP", 2.0, 3.0)
+    sources = {
+        "DOM": pd.DataFrame([[1.0, float("nan")]], index=["m"], columns=["P3", "P5"]),
+        "IMP": pd.DataFrame([[0.0, 2.0]], index=["m"], columns=["P3", "P5"]),
+        "TOTAL": pd.DataFrame([[3.0, 4.0]], index=["m"], columns=["P3", "P5"]),
+    }
+    monkeypatch.setattr(MODULE, "load_eurostat_iot", lambda **kwargs: SimpleNamespace(M=sources[kwargs["filters"]["stk_flow"]]))
+    MODULE.derive_total_flow(tmp_path, eurostat_dataset="x", eurostat_filters={}, eurostat_row_dim="r", eurostat_col_dim="c")
+    dom = tmp_path / "stk_flow=DOM"; imp = tmp_path / "stk_flow=IMP"; total = tmp_path / "stk_flow=TOTAL"
+    Z_dom, Z_imp, Z_total = (pd.read_csv(path / "Z_split.csv", index_col=0) for path in (dom, imp, total))
+    Y_dom, Y_imp, Y_total = (pd.read_csv(path / "Y_split.csv", index_col=0) for path in (dom, imp, total))
+    pd.testing.assert_frame_equal(Z_total, Z_dom + Z_imp)
+    for col in ("P3_S13", "P51G", "P52", "P53"):
+        pd.testing.assert_series_equal(Y_total[col], Y_dom[col] + Y_imp[col], check_names=False)
+    pd.testing.assert_series_equal(Y_total["P5M"], Y_total["P52"] + Y_total["P53"], check_names=False)
+    pd.testing.assert_series_equal(Y_total["P5"], Y_total["P51G"] + Y_total["P5M"], check_names=False)
+    x = pd.read_csv(dom / "x_split.csv", index_col=0).iloc[:, 0]
+    for directory, Z in ((dom, Z_dom), (imp, Z_imp), (total, Z_total)):
+        pd.testing.assert_series_equal(pd.read_csv(directory / "x_split.csv", index_col=0).iloc[:, 0], x, check_names=False)
+        expected_a = technical_coefficients(Z, x)
+        pd.testing.assert_frame_equal(pd.read_csv(directory / "A_split.csv", index_col=0), expected_a)
+    for flow, expected in sources.items():
+        got = pd.read_csv(tmp_path / f"stk_flow={flow}" / "M_split.csv", index_col=0)
+        pd.testing.assert_frame_equal(got, expected)
+    assert not (total / "V_split.csv").exists()
+
+
+def test_derive_rejects_different_child_order(tmp_path: Path) -> None:
+    _write_primitive(tmp_path, "DOM", 1.0, 1.0)
+    _write_primitive(tmp_path, "IMP", 1.0, 1.0)
+    path = tmp_path / "stk_flow=IMP" / "Z_split.csv"
+    Z = pd.read_csv(path, index_col=0).iloc[::-1, ::-1]
+    Z.to_csv(path)
+    with pytest.raises(ValueError, match="child topology/order differs"):
+        MODULE.derive_total_flow(tmp_path, eurostat_dataset="x", eurostat_filters={}, eurostat_row_dim="r", eurostat_col_dim="c")
+
+
+def test_published_m_mask_validation_fails() -> None:
+    with pytest.raises(ValueError, match="published M"):
+        MODULE._assert_close("published M", pd.DataFrame([[float("nan")]]), pd.DataFrame([[0.0]]), rtol=0.0, atol=0.0)
