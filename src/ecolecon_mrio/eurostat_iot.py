@@ -476,7 +476,7 @@ def parse_eurostat_iot(
     Y = df.loc[ind_cols, fd_cols].astype("float64").fillna(0.0)
     lower_rows = [r for r in industries if r not in set(ind_cols)]
     V = df.loc[lower_rows, ind_cols].astype("float64").fillna(0.0) if lower_rows else None
-    M = df.loc[lower_rows, fd_cols].astype("float64").fillna(0.0) if lower_rows and fd_cols else None
+    M = df.loc[lower_rows, fd_cols].astype("float64") if lower_rows and fd_cols else None
 
     if not Z.index.equals(pd.Index(ind_cols)):
         # Rows are industries; columns are a subset of industries but may be missing/ordered differently.
