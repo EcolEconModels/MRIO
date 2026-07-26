@@ -1246,6 +1246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             assert outdir is not None
             flow_identity_totals: dict[str, dict[str, float]] = {}
             dom_column_profiles = None
+            dom_column_mapping = None
             ordered_flows = sorted(
                 variants,
                 key=lambda value: (0 if str(value) == "DOM" else 1, str(value)),
@@ -1367,6 +1368,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     column_split_profiles=(
                         dom_column_profiles if exio_flow == "imports" else None
                     ),
+                    column_eurostat_sector_mapping=(
+                        dom_column_mapping if exio_flow == "imports" else None
+                    ),
                     coverage_expected_exio_sectors=coverage_expected_exio,
                     coverage_tol=args.coverage_tol,
                     source_rounding_quantum=args.source_rounding_quantum
@@ -1391,6 +1395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 if str(flow) == "DOM":
                     dom_column_profiles = res.split_profiles
+                    dom_column_mapping = flow_sector_mapping
 
                 write_split_core_outputs(
                     res,

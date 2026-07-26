@@ -166,6 +166,11 @@ def test_wp1_rejects_unauthorised_duplicate_mapping_and_missing_donor(
         )
 
     z, y, donor_slice, split_mapping = _core_fixture(tmp_path)
+    from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block
+
+    dom_profiles, _ = build_split_profiles_from_exiobase_domestic_block(
+        donor_slice, sector_to_exio_sectors=split_mapping
+    )
     missing_slice = ExioRegionSlice(
         year=2021,
         system="pxp",
@@ -186,6 +191,7 @@ def test_wp1_rejects_unauthorised_duplicate_mapping_and_missing_donor(
             eurostat_Y=y,
             exio_slice=missing_slice,
             sector_to_exio_sectors=split_mapping,
+            column_split_profiles=dom_profiles,
             create_io_system=False,
         )
 

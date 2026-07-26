@@ -195,6 +195,48 @@ def test_donor_projection_uses_separate_row_and_column_profiles() -> None:
     pd.testing.assert_frame_equal(donor_y, pd.DataFrame({"P3": [5.0, 6.0]}, index=children))
 
 
+def test_mapped_imp_rows_use_imp_weights_and_columns_use_dom_weights() -> None:
+    from ecolecon_mrio.disaggregation import SplitProfiles
+    from ecolecon_mrio.exio_share_split import project_exio_donor_blocks_for_split_profiles
+
+    children = ("s@A", "s@B")
+    shares = pd.Series([0.5, 0.5], index=children)
+    profiles = {"A": SplitProfiles("A", children, shares, shares, shares, shares, {"s@A": ["s"], "s@B": ["s"]})}
+    dom_mapping = {"A": {"s": 0.9}, "B": {"s": 0.1}}
+    imp_mapping = {"A": {"s": 0.2}, "B": {"s": 0.8}}
+    raw_z = pd.DataFrame([[10.0]], index=["s"], columns=["s"])
+    raw_y = pd.DataFrame({"P3": [4.0]}, index=["s"])
+    _, donor_z, donor_y = project_exio_donor_blocks_for_split_profiles(
+        exio_Z=raw_z, exio_Y=raw_y, split_profiles=profiles,
+        column_split_profiles=profiles, eurostat_sector_mapping=imp_mapping,
+        column_eurostat_sector_mapping=dom_mapping, raw_exio_sectors=["s"],
+        emitted_labels=children,
+    )
+    expected = pd.DataFrame([[1.8, 0.2], [7.2, 0.8]], index=children, columns=children)
+    pd.testing.assert_frame_equal(donor_z, expected)
+    pd.testing.assert_frame_equal(donor_y, pd.DataFrame({"P3": [0.8, 3.2]}, index=children))
+    assert not donor_z.equals(pd.DataFrame([[0.4, 1.6], [1.6, 6.4]], index=children, columns=children))
+
+
+def test_public_import_split_requires_domestic_column_profiles(tmp_path: Path) -> None:
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    raw = pd.Index(["s"])
+    exio = ExioRegionSlice(
+        year=2021, system="pxp", region="AT", flow="imports", sectors=raw,
+        Z_domestic=pd.DataFrame([[1.0]], index=raw, columns=raw),
+        Y_region=pd.DataFrame({"P3": [1.0]}, index=raw),
+        x_region=pd.Series([2.0], index=raw), source_zip=tmp_path / "donors.zip",
+    )
+    with pytest.raises(ValueError, match="requires domestic production-column profiles"):
+        split_iot_using_exiobase_split_profiles(
+            eurostat_Z=pd.DataFrame([[1.0]], index=["A"], columns=["A"]),
+            eurostat_Y=pd.DataFrame({"P3": [1.0]}, index=["A"]), exio_slice=exio,
+            sector_to_exio_sectors={"A": ["s"]}, create_io_system=False,
+        )
+
+
 def test_primitive_zero_output_parent_with_inputs_fails_contextually(tmp_path: Path) -> None:
     from ecolecon_mrio.exio_share_split import _split_iot_using_donor_blocks
 

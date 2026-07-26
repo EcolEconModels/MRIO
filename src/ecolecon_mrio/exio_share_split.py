@@ -396,6 +396,7 @@ def project_exio_donor_blocks_for_split_profiles(
     split_profiles: Mapping[str, SplitProfiles],
     column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
+    column_eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     raw_exio_sectors: Sequence[str] | None = None,
     emitted_labels: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -408,7 +409,11 @@ def project_exio_donor_blocks_for_split_profiles(
     )
     P_column = build_projection_matrix_for_split_profiles(
         split_profiles=column_split_profiles or split_profiles,
-        eurostat_sector_mapping=eurostat_sector_mapping,
+        eurostat_sector_mapping=(
+            column_eurostat_sector_mapping
+            if column_eurostat_sector_mapping is not None
+            else eurostat_sector_mapping
+        ),
         raw_exio_sectors=raw_exio_sectors,
         emitted_labels=emitted_labels,
     )
@@ -1109,6 +1114,7 @@ def _split_iot_using_donor_blocks(
     split_profiles: Mapping[str, SplitProfiles],
     column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+    column_eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     create_io_system: bool,
     export_vector_loader: Callable[
         ..., pd.Series
@@ -1145,6 +1151,7 @@ def _split_iot_using_donor_blocks(
         split_profiles=split_profiles,
         column_split_profiles=column_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
+        column_eurostat_sector_mapping=column_eurostat_sector_mapping,
         raw_exio_sectors=list(map(str, exio_slice.sectors)),
         emitted_labels=sectors_new,
     )
@@ -1993,6 +2000,7 @@ def split_iot_using_exiobase_split_profiles(
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     column_split_profiles: Mapping[str, SplitProfiles] | None = None,
+    column_eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_tol: float = 0.0,
     source_rounding_quantum: float | None = None,
     extract_quantity_and_price: bool = False,
@@ -2015,6 +2023,11 @@ def split_iot_using_exiobase_split_profiles(
     ):
         raise ValueError(
             "source_rounding_quantum must be finite and positive when provided."
+        )
+    if exio_slice.flow == "imports" and column_split_profiles is None:
+        raise ValueError(
+            "IMP primitive splitting requires domestic production-column profiles. "
+            "Run DOM and IMP together or supply column_split_profiles explicitly."
         )
     effective_sector_to_exio_sectors = _edge_aware_sector_to_exio_sectors(
         sector_to_exio_sectors,
@@ -2109,6 +2122,7 @@ def split_iot_using_exiobase_split_profiles(
         split_profiles=profiles,
         column_split_profiles=column_split_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
+        column_eurostat_sector_mapping=column_eurostat_sector_mapping,
         create_io_system=create_io_system,
         export_vector_loader=export_vector_loader,
     )
@@ -2183,6 +2197,7 @@ def split_iot_using_exiobase_shares(
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     column_split_profiles: Mapping[str, SplitProfiles] | None = None,
+    column_eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     coverage_tol: float = 0.0,
     source_rounding_quantum: float | None = None,
@@ -2210,6 +2225,7 @@ def split_iot_using_exiobase_shares(
         sector_patterns=sector_patterns,
         eurostat_sector_mapping=eurostat_sector_mapping,
         column_split_profiles=column_split_profiles,
+        column_eurostat_sector_mapping=column_eurostat_sector_mapping,
         coverage_expected_exio_sectors=coverage_expected_exio_sectors,
         coverage_tol=coverage_tol,
         source_rounding_quantum=source_rounding_quantum,
