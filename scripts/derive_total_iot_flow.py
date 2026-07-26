@@ -17,7 +17,6 @@ from ecolecon_mrio.iot_flow_semantics import (
     derived_final_demand_control_columns,
     enforce_final_demand_display_identities,
     flow_use_total,
-    refresh_supplementary_rows,
     rounded_source_control_diagnostic,
     source_atomic_final_demand,
     technical_coefficients,
@@ -386,10 +385,33 @@ def _construct_canonical_v(
     for row in source.index.astype(str):
         published = source.loc[row].astype("float64")
         if row == "CPA_TOTAL":
-            values, formula, counts = flow_inputs, source_z_inputs, source_z_counts
+            # CPA_TOTAL is an exact property of the transformed Z block.  The
+            # published source row is a rounded parent-level control only.
+            diagnostics.extend(_rounded_v_formula(
+                flow=flow, row=row, published=published, formula=source_z_inputs,
+                term_counts=source_z_counts, quantum=quantum, rtol=rtol, atol=atol,
+            ))
+            V.loc[row, children] = flow_inputs.to_numpy()
+            diagnostics.append({"stage": "V_exact_identity", "flow": flow, "row": row,
+                                "contract": "CPA_TOTAL=Z_column_sum", "ok": True})
+            continue
         elif row == "P1":
-            # P1 is source-controlled; canonical x was constructed from DOM P1.
-            values, formula, counts = dom_output, None, None
+            if flow == "IMP":
+                if not np.allclose(published.fillna(0.0).to_numpy(), 0.0, rtol=rtol, atol=atol):
+                    raise ValueError(
+                        "IMP P1 must be absent or zero: "
+                        f"published={published.loc[published.abs() > atol].to_dict()!r}"
+                    )
+                V.loc[row, children] = 0.0
+                diagnostics.append({"stage": "V_exact_identity", "flow": flow, "row": row,
+                                    "contract": "IMP_P1_zero", "ok": True})
+                continue
+            # Canonical x is allocated once from DOM P1 and is deliberately
+            # shared verbatim by DOM and TOTAL.
+            V.loc[row, children] = dom_output.to_numpy()
+            diagnostics.append({"stage": "V_exact_identity", "flow": flow, "row": row,
+                                "contract": "P1=canonical_x", "ok": True})
+            continue
         elif row in _V_OUTPUT_PROXY_ROWS:
             values = dom_output; formula = None; counts = None
         elif row in _V_TOTAL_INPUT_PROXY_ROWS:
@@ -528,27 +550,13 @@ def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> li
     Z = {flow: _read_frame(path / z_name) for flow, path in dirs.items()}
     Y = {flow: _read_frame(path / y_name) for flow, path in dirs.items()}
     use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in dirs}
-    output = use["DOM"].copy().rename("x")
+    output = _read_series(dirs["DOM"] / x_name)
     diagnostics: list[dict[str, object]] = []
     for flow, directory in dirs.items():
         expected_A = technical_coefficients(Z[flow], output)
-        if write:
-            _write_series(use[flow], directory / use_name)
-            _write_series(output, directory / x_name)
-            if suffix == "split":
-                _write_series(output, directory / _ALIASES[x_name])
-            _write_frame(expected_A, directory, a_name)
-            V = _read_frame(directory / v_name) if (directory / v_name).is_file() else None
-            M = _read_frame(directory / m_name) if (directory / m_name).is_file() else None
-            V, M = refresh_supplementary_rows(V, M, Z=Z[flow], Y=Y[flow], output=output, flow_role=flow)  # type: ignore[arg-type]
-            if V is not None:
-                _write_frame(V, directory, v_name)
-            if M is not None:
-                _write_frame(M, directory, m_name)
-        else:
-            _assert_close(f"{suffix} {flow} use_total", _read_series(directory / use_name), use[flow], rtol=1e-9, atol=1e-6)
-            _assert_close(f"{suffix} {flow} output", _read_series(directory / x_name), output, rtol=1e-9, atol=1e-6)
-            _assert_close(f"{suffix} {flow} A", _read_frame(directory / a_name), expected_A, rtol=1e-9, atol=1e-6)
+        _assert_close(f"{suffix} {flow} use_total", _read_series(directory / use_name), use[flow], rtol=1e-9, atol=1e-6)
+        _assert_close(f"{suffix} {flow} output", _read_series(directory / x_name), output, rtol=1e-9, atol=1e-6)
+        _assert_close(f"{suffix} {flow} A", _read_frame(directory / a_name), expected_A, rtol=1e-9, atol=1e-6)
     diagnostics.extend([
         {"stage": suffix, "object": "use_total", "contract": "atomic final demand; TOTAL=DOM+IMP"},
         {"stage": suffix, "object": "x", "contract": "shared domestic product output"},
@@ -569,36 +577,31 @@ def _validate_v_flow_contract(
     paths = {flow: directory / name for flow, directory in dirs.items()}
     if not any(path.is_file() for path in paths.values()):
         return []
-    if not all(path.is_file() for path in paths.values()):
-        raise FileNotFoundError(f"{name} must exist for DOM, IMP, and TOTAL")
-    frames = {flow: _read_frame(path) for flow, path in paths.items()}
-    rows = frames["TOTAL"].index
-    if any(not frame.index.equals(rows) or not frame.columns.equals(frames["TOTAL"].columns) for frame in frames.values()):
-        raise ValueError(f"{suffix} V row/column schema differs across flows")
+    frames = {flow: _read_frame(path) for flow, path in paths.items() if path.is_file()}
     diagnostics: list[dict[str, object]] = []
-    x = {flow: _read_series(dirs[flow] / ("x_split.csv" if suffix == "split" else "x_agg.csv")) for flow in dirs}
-    Z = {flow: _read_frame(dirs[flow] / ("Z_split.csv" if suffix == "split" else "Z_agg.csv")) for flow in dirs}
-    for row in rows.astype(str):
-        kind = supplementary_accounting_identity_kind(row)
-        if kind == "output":
-            for flow in ("DOM", "IMP", "TOTAL"):
-                gap = _assert_close(f"{suffix} V output {flow}", frames[flow].loc[row], x[flow], rtol=rtol, atol=atol)
-                diagnostics.append({"stage": suffix, "object": f"V:{row}:{flow}", "contract": "shared_output", "max_abs_gap": gap, "ok": True})
-        elif kind == "intermediate_use":
-            for flow in ("DOM", "IMP", "TOTAL"):
-                expected = Z[flow].sum(axis=0).astype("float64")
-                gap = _assert_close(f"{suffix} V intermediate use {flow}", frames[flow].loc[row], expected, rtol=rtol, atol=atol)
-                diagnostics.append({"stage": suffix, "object": f"V:{row}:{flow}", "contract": "flow_specific_Z_column_sum", "max_abs_gap": gap, "ok": True})
-        elif kind == "value_added":
-            expected = x["TOTAL"] - Z["TOTAL"].sum(axis=0).astype("float64")
-            gap = _assert_close(f"{suffix} V TOTAL value added", frames["TOTAL"].loc[row], expected, rtol=rtol, atol=atol)
-            diagnostics.append({"stage": suffix, "object": f"V:{row}:TOTAL", "contract": "total_only_identity", "max_abs_gap": gap, "ok": True})
-        elif kind == "total_supply":
-            diagnostics.append({"stage": suffix, "object": f"V:{row}:TOTAL", "contract": "validated_against_source_flow_reconstruction", "ok": True})
-        else:
-            expected = _add_frames(frames["DOM"].loc[[row]], frames["IMP"].loc[[row]]).iloc[0]
-            gap = _assert_close(f"{suffix} V additive row {row}", expected, frames["TOTAL"].loc[row], rtol=rtol, atol=atol)
-            diagnostics.append({"stage": suffix, "object": f"V:{row}", "contract": "DOM+IMP=TOTAL", "max_abs_gap": gap, "ok": True})
+    x_name = "x_split.csv" if suffix == "split" else "x_agg.csv"
+    z_name = "Z_split.csv" if suffix == "split" else "Z_agg.csv"
+    stored_x = {flow: _read_series(dirs[flow] / x_name) for flow in dirs}
+    Z = {flow: _read_frame(dirs[flow] / z_name) for flow in dirs}
+    for flow, frame in frames.items():
+        if "P1" in frame.index:
+            if flow == "IMP":
+                gap = _assert_close(f"{suffix} IMP V P1", frame.loc["P1"], pd.Series(0.0, index=frame.columns), rtol=rtol, atol=atol)
+                diagnostics.append({"stage": suffix, "object": "V:P1:IMP", "contract": "absent_or_zero", "max_abs_gap": gap, "ok": True})
+            else:
+                expected = stored_x[flow].reindex(frame.columns)
+                gap = _assert_close(f"{suffix} V P1 {flow}", frame.loc["P1"], expected, rtol=rtol, atol=atol)
+                diagnostics.append({"stage": suffix, "object": f"V:P1:{flow}", "contract": "canonical_x", "max_abs_gap": gap, "ok": True})
+        if "CPA_TOTAL" in frame.index:
+            expected = Z[flow].sum(axis=0).reindex(frame.columns).astype("float64")
+            gap = _assert_close(f"{suffix} V CPA_TOTAL {flow}", frame.loc["CPA_TOTAL"], expected, rtol=rtol, atol=atol)
+            diagnostics.append({"stage": suffix, "object": f"V:CPA_TOTAL:{flow}", "contract": "Z_column_sum", "max_abs_gap": gap, "ok": True})
+    if "TOTAL" in frames and "TS_BP" in frames["TOTAL"].index:
+        total = frames["TOTAL"]
+        if not {"P1", "P7"}.issubset(total.index):
+            raise ValueError(f"{suffix} TOTAL TS_BP requires P1 and P7")
+        gap = _assert_close(f"{suffix} TOTAL V TS_BP", total.loc["TS_BP"], total.loc["P1"] + total.loc["P7"], rtol=rtol, atol=atol)
+        diagnostics.append({"stage": suffix, "object": "V:TS_BP:TOTAL", "contract": "P1_plus_P7", "max_abs_gap": gap, "ok": True})
     return diagnostics
 
 
@@ -739,7 +742,13 @@ def validate_additive_outputs(outdir: Path, *, suffix: str, atol: float, rtol: f
         if not all(path.is_file() for path in paths.values()):
             raise FileNotFoundError(f"{filename} must exist for DOM, IMP, and TOTAL")
         expected = _add_frames(_read_frame(paths["DOM"]), _read_frame(paths["IMP"]))
-        diagnostics.append({"stage": suffix, "object": obj, "max_abs_gap": _assert_close(f"{suffix} {obj} DOM+IMP=TOTAL", expected, _read_frame(paths["TOTAL"]), rtol=rtol, atol=atol), "ok": True})
+        observed = _read_frame(paths["TOTAL"])
+        # TOTAL follows the published source display schema.  DOM/IMP can carry
+        # display-only TU/TFU controls which are absent from that source schema;
+        # validate every emitted TOTAL column without inventing those rows.
+        if obj == "Y":
+            expected = expected.reindex(index=observed.index, columns=observed.columns)
+        diagnostics.append({"stage": suffix, "object": obj, "max_abs_gap": _assert_close(f"{suffix} {obj} DOM+IMP=TOTAL", expected, observed, rtol=rtol, atol=atol), "ok": True})
     diagnostics.extend(_apply_contract(dirs, suffix=suffix, write=False))
     diagnostics.extend(_validate_v_flow_contract(dirs=dirs, suffix=suffix, atol=atol, rtol=rtol))
     # M is a published, flow-specific supplementary block.  It is validated

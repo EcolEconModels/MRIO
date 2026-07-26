@@ -193,7 +193,7 @@ def write_split_core_outputs(
             raise ValueError(f"Invalid split output shares for {parent!r}.")
         share_rows.extend({"parent": str(parent), "child": child, "output_share": float(shares.loc[child])} for child in children)
     if share_rows:
-        _write_rows_csv(share_rows, outdir / "split_output_shares.csv", verbose=verbose)
+        _write_rows_csv(pd.DataFrame(share_rows), outdir / "split_output_shares.csv", verbose=verbose)
     for primary_name, legacy_name in SPLIT_OUTPUT_NAME_ALIASES:
         if primary_name.startswith("Z_"):
             _write_df_csv(res.Z, outdir / primary_name, verbose=verbose)

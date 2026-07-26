@@ -230,7 +230,7 @@ def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
 
 def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
-    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+    from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block, split_iot_using_exiobase_split_profiles
 
     exio_sectors = [
         "coke oven products",
@@ -619,7 +619,7 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
 
 def test_import_donor_uses_documented_import_use_proxy(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
-    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+    from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block, split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
     Z_domestic = pd.DataFrame(
@@ -639,11 +639,15 @@ def test_import_donor_uses_documented_import_use_proxy(tmp_path):
         source_zip=tmp_path / "not-needed.zip",
         flow="imports",
     )
+    dom_profiles, _ = build_split_profiles_from_exiobase_domestic_block(
+        exio_slice, sector_to_exio_sectors={"A": exio_sectors}
+    )
     result = split_iot_using_exiobase_split_profiles(
         eurostat_Z=pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
         eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["A"]),
         exio_slice=exio_slice,
         sector_to_exio_sectors={"A": exio_sectors},
+        column_split_profiles=dom_profiles,
         create_io_system=False,
     )
     assert result.Y.loc["a1", "P6"] == pytest.approx(100.0 * 4.0 / 6.0)

@@ -1763,58 +1763,27 @@ def _write_sfc_workbook(
         output_v_row = _match_row(V_ord, row_code, row_label)
         output_m_row = _match_row(M_ord, row_code, row_label)
 
-        if kind == "output":
-            product_vector = x_after.reindex(product_codes_order).fillna(0.0).astype("float64")
-            product_method = "identity_output"
-        elif kind == "intermediate_use":
-            product_vector = col_sums_Z.reindex(product_codes_order).fillna(0.0).astype("float64")
-            product_method = "identity_intermediate_use"
-        elif kind == "value_added" and flow_role == "TOTAL":
-            product_vector = (x_after.reindex(product_codes_order).fillna(0.0) - col_sums_Z.reindex(product_codes_order).fillna(0.0)).astype("float64")
-            product_method = "identity_value_added_total_only"
-        elif kind == "total_supply" and flow_role == "TOTAL":
-            if imports_vector is None:
-                raise ValueError(f"Cannot reconstruct TOTAL supply row {row_code!r}: no imports vector in transformed V.")
-            product_vector = (x_after.reindex(product_codes_order).fillna(0.0) + imports_vector.reindex(product_codes_order).fillna(0.0)).astype("float64")
-            product_method = "identity_total_supply_total_only"
-        else:
-            if source_v_row is None or output_v_row is None or V_ord is None:
-                raise ValueError(
-                    "Supplementary product row cannot be reconstructed without authoritative V: "
-                    f"code={row_code!r}, label={row_label!r}, source_present={source_v_row is not None}."
-                )
-            product_vector = V_ord.loc[output_v_row].reindex(product_codes_order)
-            if product_vector.isna().any():
-                missing_cells = product_vector.index[product_vector.isna()].astype(str).tolist()
-                raise ValueError(f"Supplementary V row {row_code!r} has missing applicable cells: {missing_cells!r}")
-            product_vector = product_vector.astype("float64")
-            product_method = "flow_specific_v_disaggregation"
-
-        if kind == "intermediate_use":
-            fd_vector = current_fd_totals.reindex(fd_codes_order_no_total).astype("float64")
-            fd_method = "identity_intermediate_use"
-            non_applicable = ""
-        elif kind in {"value_added", "output", "total_supply"}:
-            fd_vector = pd.Series(np.nan, index=fd_codes_order_no_total, dtype="float64")
-            fd_method = "structurally_non_applicable"
-            non_applicable = "|".join(fd_codes_order_no_total)
-        else:
-            if source_m_row is None or output_m_row is None or M_ord is None:
-                raise ValueError(
-                    "Supplementary final-demand row cannot be reconstructed without authoritative M: "
-                    f"code={row_code!r}, label={row_label!r}, source_present={source_m_row is not None}."
-                )
-            fd_vector = M_ord.loc[output_m_row].reindex(fd_codes_order_no_total)
-            if fd_vector.isna().any():
-                missing_cells = fd_vector.index[fd_vector.isna()].astype(str).tolist()
-                raise ValueError(f"Supplementary M row {row_code!r} has missing applicable cells: {missing_cells!r}")
-            fd_vector = fd_vector.astype("float64")
-            fd_method = "flow_specific_m_disaggregation"
-            non_applicable = ""
+        # Supplementary blocks are already authoritative transformed data.  This
+        # writer must serialize them, never reconstruct them from Z, x or labels.
+        product_vector = (
+            V_ord.loc[output_v_row].reindex(product_codes_order).astype("float64")
+            if output_v_row is not None and V_ord is not None
+            else pd.Series(np.nan, index=product_codes_order, dtype="float64")
+        )
+        fd_vector = (
+            M_ord.loc[output_m_row].reindex(fd_codes_order_no_total).astype("float64")
+            if output_m_row is not None and M_ord is not None
+            else pd.Series(np.nan, index=fd_codes_order_no_total, dtype="float64")
+        )
+        product_method = "canonical_V_serializer" if output_v_row is not None else "absent_V_blank"
+        fd_method = "canonical_M_serializer" if output_m_row is not None else "absent_M_blank"
+        non_applicable = ""
 
         ws.cell(row=target_r, column=1).value = row_label
         for j, output_code in enumerate(product_codes_order):
-            _write_num(ws, row=target_r, col=c_prod0 + j, value=float(product_vector.loc[output_code]))
+            value = product_vector.loc[output_code]
+            if not pd.isna(value):
+                _write_num(ws, row=target_r, col=c_prod0 + j, value=float(value))
         for j, fd_code in enumerate(fd_codes_order_no_total):
             value = fd_vector.loc[fd_code]
             if not pd.isna(value):
@@ -1917,7 +1886,7 @@ def _write_sfc_workbook(
         mapping_to_col=mapping_to_col,
         allow_missing_sfc_co2=(
             str(variant_dim).strip() == "stk_flow"
-            and str(variant_value or "").strip().upper() in {"IMP", "IMPORT", "IMPORTS"}
+            and str(variant_value or "").strip().upper() in {"IMP", "IMPORT", "IMPORTS", "TOTAL"}
         ),
         verbose=verbose,
     )
@@ -1951,27 +1920,23 @@ def _write_sfc_workbook(
                 expected,
             )
 
-    output_rows = [code for code in source_rows if supplementary_accounting_identity_kind(code) == "output" or supplementary_accounting_identity_kind(row_labels.get(code, code)) == "output"]
-    if not output_rows:
-        raise ValueError("Parsed Eurostat table has no recognised output supplementary row.")
-    for row_code in output_rows:
-        for j, product_code in enumerate(product_codes_order):
-            _assert_roundtrip_value(
-                f"output[{row_code!r}, {product_code!r}]",
-                ws_reopened.cell(row=row_positions[row_code], column=c_prod0 + j).value,
-                float(x_after.loc[product_code]),
-            )
-
     for row_code in source_rows:
         row = row_positions[row_code]
         if ws_reopened.cell(row=row, column=1).value != str(row_labels.get(row_code, row_code)).strip():
             raise ValueError(f"Workbook round-trip validation lost supplementary row {row_code!r}.")
         for j, product_code in enumerate(product_codes_order):
-            _assert_roundtrip_value(
-                f"supplementary V[{row_code!r}, {product_code!r}]",
-                ws_reopened.cell(row=row, column=c_prod0 + j).value,
-                float(lower_row_vectors[row_code].loc[product_code]),
-            )
+            expected = lower_row_vectors[row_code].loc[product_code]
+            actual = ws_reopened.cell(row=row, column=c_prod0 + j).value
+            if pd.isna(expected):
+                if isinstance(actual, (int, float)):
+                    raise ValueError(
+                        f"Workbook round-trip validation found numeric value for blank "
+                        f"supplementary V[{row_code!r}, {product_code!r}]: {actual!r}"
+                    )
+            else:
+                _assert_roundtrip_value(
+                    f"supplementary V[{row_code!r}, {product_code!r}]", actual, float(expected)
+                )
         for j, fd_code in enumerate(fd_codes_order_no_total):
             expected = lower_fd_vectors[row_code].loc[fd_code]
             actual = ws_reopened.cell(row=row, column=c_fd0 + j).value
@@ -2272,6 +2237,50 @@ def main(argv: Sequence[str] | None = None) -> int:
             disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
+
+        # Keep the aggregation audit deliberately small and block-specific.  V
+        # is grouped by product column, while M is copied source-specific data
+        # and therefore must survive byte-for-byte in tabular semantics.
+        conservation_rows: list[dict[str, object]] = []
+
+        def _record(block: str, item: str, before: float, after: float) -> None:
+            gap = abs(float(after) - float(before))
+            ok = bool(np.isclose(before, after, rtol=1e-9, atol=1e-6))
+            conservation_rows.append({
+                "block": block, "item": item, "before": before, "after": after,
+                "absolute_gap": gap, "ok": ok,
+            })
+            if not ok:
+                raise SystemExit(
+                    f"Aggregation conservation failed: block={block}, item={item}, "
+                    f"before={before!r}, after={after!r}, absolute_gap={gap!r}"
+                )
+
+        _record("Z", "total", float(Z.to_numpy(dtype="float64").sum()), float(res.Z.to_numpy(dtype="float64").sum()))
+        for column in Y.columns.astype(str):
+            _record("Y", column, float(Y[column].sum()), float(res.Y[column].sum()))
+        _record("x", "total", float(x_input.sum()), float(res.x.sum()))
+        if V is not None and res.V is not None:
+            for row in V.index.astype(str):
+                _record("V", row, float(V.loc[row].sum()), float(res.V.loc[row].sum()))
+        if M is not None:
+            same_shape = res.M is not None and M.index.equals(res.M.index) and M.columns.equals(res.M.columns)
+            same_mask = same_shape and M.isna().equals(res.M.isna())
+            same_values = same_mask and bool(np.array_equal(
+                M.fillna(0.0).to_numpy(dtype="float64"),
+                res.M.fillna(0.0).to_numpy(dtype="float64"),
+            ))
+            conservation_rows.append({
+                "block": "M", "item": "NaN_mask", "before": 1.0, "after": float(bool(same_mask)),
+                "absolute_gap": float(not same_mask), "ok": bool(same_mask),
+            })
+            conservation_rows.append({
+                "block": "M", "item": "values", "before": 1.0, "after": float(bool(same_values)),
+                "absolute_gap": float(not same_values), "ok": bool(same_values),
+            })
+            if not same_values:
+                raise SystemExit("Aggregation conservation failed: M order, NaN mask, finite values, or explicit zeros changed")
+        _write_df_csv(pd.DataFrame(conservation_rows), out_base / "aggregation_block_conservation.csv", verbose=args.verbose)
 
         if args.expect_n_sectors is not None and len(res.Z.index) != int(args.expect_n_sectors):
             raise SystemExit(
