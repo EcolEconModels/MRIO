@@ -112,6 +112,7 @@ def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> N
     Z.to_csv(directory / "Z_split.csv")
     Y.to_csv(directory / "Y_split.csv")
     (directory / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")
+    pd.DataFrame(columns=["parent", "child", "output_share"]).to_csv(directory / "split_output_shares.csv", index=False)
 
 
 def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

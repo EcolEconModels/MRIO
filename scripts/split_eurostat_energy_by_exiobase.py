@@ -180,6 +180,20 @@ def _legacy_split_info_payload(split_info: dict[str, object]) -> dict[str, objec
 def write_split_core_outputs(
     res, outdir: Path, *, verbose: bool, extra_info: dict | None = None
 ) -> None:
+    outdir.mkdir(parents=True, exist_ok=True)
+    for name in ("x_split.csv", "x_split_balanced.csv", "A_split.csv", "A_split_balanced.csv", "V_split.csv", "V_split_balanced.csv", "supplementary_row_split_diagnostics.csv", "split_output_shares.csv"):
+        (outdir / name).unlink(missing_ok=True)
+    share_rows = []
+    for parent, profile in res.split_profiles.items():
+        children = list(map(str, profile.subsectors))
+        if len(children) <= 1:
+            continue
+        shares = profile.output_share.reindex(children).astype("float64")
+        if not np.isfinite(shares.to_numpy()).all() or (shares < 0).any() or abs(float(shares.sum()) - 1.0) > 1e-12:
+            raise ValueError(f"Invalid split output shares for {parent!r}.")
+        share_rows.extend({"parent": str(parent), "child": child, "output_share": float(shares.loc[child])} for child in children)
+    if share_rows:
+        _write_rows_csv(share_rows, outdir / "split_output_shares.csv", verbose=verbose)
     for primary_name, legacy_name in SPLIT_OUTPUT_NAME_ALIASES:
         if primary_name.startswith("Z_"):
             _write_df_csv(res.Z, outdir / primary_name, verbose=verbose)

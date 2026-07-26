@@ -662,9 +662,16 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     if references["DOM"].V is None or "P1" not in references["DOM"].V.index:
         raise ValueError("DOM source V must contain the source-controlled P1 row.")
     p1_dom = references["DOM"].V.loc["P1"].astype("float64")
+    share_path = dirs["DOM"] / "split_output_shares.csv"
+    if not share_path.is_file():
+        raise FileNotFoundError(f"Missing persisted DOM output shares: {share_path}")
+    share_frame = pd.read_csv(share_path)
+    output_proxy = pd.Series(1.0, index=Z_dom.index.astype(str), dtype="float64")
+    for row in share_frame.itertuples(index=False):
+        output_proxy.loc[str(row.child)] = float(row.output_share)
     x_domestic = _allocate_source_parent_vector(
         published=p1_dom, child_parent=child_parent, children=Z_dom.index,
-        proxy=use["DOM"], flow="DOM", row_code="P1",
+        proxy=output_proxy, flow="DOM", row_code="P1",
     ).rename("x")
     p1_reconstructed = _aggregate_columns(x_domestic.to_frame("P1").T, child_parent, p1_dom.index).loc["P1"]
     _assert_close("DOM P1 parent reconstruction", p1_reconstructed, p1_dom, rtol=0.0, atol=1e-9)
@@ -715,7 +722,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             v_diagnostics.to_csv(dirs[flow] / "supplementary_row_split_diagnostics.csv", index=False)
             diagnostics.extend(rows)
     (dirs["TOTAL"] / "exio_selected_sectors.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({"flow_construction": "DOM_plus_IMP", "x_semantics": "shared_DOM_use_total", "A_semantics": "Z_flow_divided_by_shared_DOM_x", "V_status": "explicit_row_policy"}, indent=2) + "\n", encoding="utf-8")
+    (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({"flow_construction": "DOM_plus_IMP", "x_semantics": "source_controlled_DOM_P1", "A_semantics": "Z_flow_divided_by_shared_DOM_x", "V_status": "explicit_row_policy"}, indent=2) + "\n", encoding="utf-8")
     pd.DataFrame(diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)
 
 
