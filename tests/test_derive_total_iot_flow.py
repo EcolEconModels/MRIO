@@ -107,6 +107,8 @@ def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> N
             "TFU": [12.0, 13.0], "TU": [15.0, 20.0],
         }, index=idx,
     ) * y_scale
+    Y["TFU"] = Y[["P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53"]].sum(axis=1)
+    Y["TU"] = Z.sum(axis=1) + Y["TFU"]
     Z.to_csv(directory / "Z_split.csv")
     Y.to_csv(directory / "Y_split.csv")
     (directory / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")
@@ -120,7 +122,24 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
         "IMP": pd.DataFrame([[0.0, 2.0]], index=["m"], columns=["P3", "P5"]),
         "TOTAL": pd.DataFrame([[3.0, 4.0]], index=["m"], columns=["P3", "P5"]),
     }
-    monkeypatch.setattr(MODULE, "load_eurostat_iot", lambda **kwargs: SimpleNamespace(M=sources[kwargs["filters"]["stk_flow"]]))
+    def fake_source(**kwargs):
+        flow = kwargs["filters"]["stk_flow"]
+        dom = tmp_path / "stk_flow=DOM"; imp = tmp_path / "stk_flow=IMP"
+        Z_dom = pd.read_csv(dom / "Z_split.csv", index_col=0); Z_imp = pd.read_csv(imp / "Z_split.csv", index_col=0)
+        Y_dom = pd.read_csv(dom / "Y_split.csv", index_col=0); Y_imp = pd.read_csv(imp / "Y_split.csv", index_col=0)
+        if flow == "TOTAL":
+            controls = set(MODULE.derived_final_demand_control_columns(Y_dom.columns))
+            Z = Z_dom + Z_imp
+            Y = MODULE.enforce_final_demand_display_identities(Y_dom.drop(columns=list(controls)) + Y_imp.drop(columns=list(controls)), Z=Z)
+        else:
+            Z = Z_dom if flow == "DOM" else Z_imp
+            Y = Y_dom if flow == "DOM" else Y_imp
+        V = None
+        if flow in {"DOM", "TOTAL"}:
+            p1 = MODULE.flow_use_total(Z_dom, Y_dom)
+            V = pd.DataFrame([p1], index=["P1"])
+        return SimpleNamespace(Z=Z, Y=Y, M=sources[flow], V=V, meta={"source_rounding_quantum": 1.0})
+    monkeypatch.setattr(MODULE, "load_eurostat_iot", fake_source)
     MODULE.derive_total_flow(tmp_path, eurostat_dataset="x", eurostat_filters={}, eurostat_row_dim="r", eurostat_col_dim="c")
     dom = tmp_path / "stk_flow=DOM"; imp = tmp_path / "stk_flow=IMP"; total = tmp_path / "stk_flow=TOTAL"
     Z_dom, Z_imp, Z_total = (pd.read_csv(path / "Z_split.csv", index_col=0) for path in (dom, imp, total))
@@ -138,7 +157,7 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
     for flow, expected in sources.items():
         got = pd.read_csv(tmp_path / f"stk_flow={flow}" / "M_split.csv", index_col=0)
         pd.testing.assert_frame_equal(got, expected)
-    assert not (total / "V_split.csv").exists()
+    assert (total / "V_split.csv").exists()
 
 
 def test_derive_rejects_different_child_order(tmp_path: Path) -> None:

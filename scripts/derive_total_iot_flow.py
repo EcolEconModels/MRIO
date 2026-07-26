@@ -97,7 +97,7 @@ def _assert_close(label: str, left: pd.DataFrame | pd.Series, right: pd.DataFram
     return gap
 
 
-_ROUNDED_Y_CONTROLS = ("P3", "P5", "TFU", "TU")
+_ROUNDED_Y_CONTROLS = ("P3", "P5M", "P5", "TFU", "TU")
 
 
 def _resolve_source_rounding_quantum(
@@ -140,6 +140,13 @@ def _derived_y_control(
         detail = ["P51G", "P52", "P53"]
         if not set(detail).issubset(Y.columns):
             raise ValueError("P5 published-control validation requires its complete detail partition")
+        values = Y.loc[:, detail].sum(axis=1).astype("float64")
+        counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
+        return values, counts
+    if identity == "P5M":
+        detail = ["P52", "P53"]
+        if not set(detail).issubset(Y.columns):
+            raise ValueError("P5M published-control validation requires P52 and P53")
         values = Y.loc[:, detail].sum(axis=1).astype("float64")
         counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
         return values, counts
@@ -330,6 +337,186 @@ def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], sou
     return cast(pd.DataFrame, grouped.reindex(columns=source_codes))
 
 
+_V_OUTPUT_PROXY_ROWS = {"B1G", "D1", "D11", "D21X31", "D29X39", "P51C", "B2A3G", "B2A3N"}
+_V_TOTAL_INPUT_PROXY_ROWS = {"P2_ADJ"}
+_V_IMP_INPUT_PROXY_ROWS = {"P7", "P7_B0", "P7_D0", "P7_U2", "P7_U3"}
+
+
+def _rounded_v_formula(
+    *, flow: str, row: str, published: pd.Series, formula: pd.Series,
+    term_counts: pd.Series, quantum: float, rtol: float, atol: float,
+) -> list[dict[str, object]]:
+    diagnostics: list[dict[str, object]] = []
+    for parent in published.index.astype(str):
+        diag = rounded_source_control_diagnostic(
+            identity=f"V:{row}", published=float(published.loc[parent]),
+            derived=float(formula.loc[parent]), component_term_count=int(term_counts.loc[parent]),
+            source_rounding_quantum=quantum, rtol=rtol, atol=atol,
+        )
+        diag.update({"stage": "V_source_control", "flow": flow, "row": row, "parent": parent})
+        diagnostics.append(diag)
+    return diagnostics
+
+
+def _construct_canonical_v(
+    *, flow: str, reference: ParsedEurostatIOT, child_parent: Mapping[str, str],
+    Z: pd.DataFrame, x_domestic: pd.Series, Z_total: pd.DataFrame, Z_imp: pd.DataFrame,
+    source_total_Z: pd.DataFrame, imp_product_proxy: pd.Series,
+    quantum: float, rtol: float, atol: float,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None, list[dict[str, object]]]:
+    if reference.V is None:
+        return None, None, []
+    source = reference.V.copy().astype("float64")
+    source.index = source.index.astype(str); source.columns = source.columns.astype(str)
+    children = pd.Index(Z.columns.astype(str))
+    V = pd.DataFrame(0.0, index=source.index, columns=children, dtype="float64")
+    diagnostics: list[dict[str, object]] = []
+    parent_children: dict[str, list[str]] = {str(parent): [] for parent in source.columns}
+    for child in children:
+        parent = child_parent.get(str(child), str(child))
+        if parent in parent_children:
+            parent_children[parent].append(str(child))
+    dom_output = x_domestic.reindex(children).astype("float64")
+    total_inputs = Z_total.sum(axis=0).reindex(children).astype("float64")
+    imp_inputs = Z_imp.sum(axis=0).reindex(children).astype("float64")
+    imp_products = imp_product_proxy.reindex(children).astype("float64")
+    flow_inputs = Z.sum(axis=0).reindex(children).astype("float64")
+    source_z_inputs = reference.Z.sum(axis=0).astype("float64")
+    source_z_counts = reference.Z.notna().sum(axis=0).astype("int64")
+    for row in source.index.astype(str):
+        published = source.loc[row].astype("float64")
+        if row == "CPA_TOTAL":
+            values, formula, counts = flow_inputs, source_z_inputs, source_z_counts
+        elif row == "P1":
+            # P1 is source-controlled; canonical x was constructed from DOM P1.
+            values, formula, counts = dom_output, None, None
+        elif row in _V_OUTPUT_PROXY_ROWS:
+            values = dom_output; formula = None; counts = None
+        elif row in _V_TOTAL_INPUT_PROXY_ROWS:
+            values = total_inputs; formula = None; counts = None
+        elif row in _V_IMP_INPUT_PROXY_ROWS:
+            values = imp_products; formula = None; counts = None
+        elif row == "IMP":
+            values = imp_inputs; formula = None; counts = None
+        elif row == "TS_BP":
+            if flow != "TOTAL" or "P7" not in V.index:
+                raise ValueError(f"{flow} TS_BP requires TOTAL P7 before derivation")
+            formula = source.loc["P1"].astype("float64") + source.loc["P7"].astype("float64")
+            counts = pd.Series(2, index=source.columns, dtype="int64")
+            diagnostics.extend(_rounded_v_formula(flow=flow, row=row, published=published, formula=formula, term_counts=counts, quantum=quantum, rtol=rtol, atol=atol))
+            V.loc[row, children] = x_domestic.reindex(children).to_numpy() + V.loc["P7", children].to_numpy()
+            reconstructed = _aggregate_columns(V.loc[[row]], child_parent, source.columns).loc[row]
+            _assert_close(f"{flow} TS_BP parent reconstruction", reconstructed, formula, rtol=0.0, atol=1e-9)
+            diagnostics.append({"flow": flow, "row_code": row, "policy": "derived_P1_plus_P7", "source_value": float(published.sum()), "child_sum": float(V.loc[row].sum()), "absolute_gap": float((reconstructed - published).abs().max()), "proxy_denominator": float("nan")})
+            continue
+        else:
+            if float(np.nan_to_num(published.to_numpy(dtype="float64"), nan=0.0).sum()) != 0.0:
+                raise ValueError(f"Unknown nonzero V row: flow={flow!r}, row={row!r}")
+            continue
+        if formula is not None:
+            diagnostics.extend(_rounded_v_formula(flow=flow, row=row, published=published, formula=formula.reindex(source.columns), term_counts=counts.reindex(source.columns), quantum=quantum, rtol=rtol, atol=atol))
+        for parent in source.columns.astype(str):
+            child_list = parent_children.get(parent, [])
+            value = float(published.loc[parent])
+            if len(child_list) == 1:
+                V.loc[row, child_list[0]] = value
+                diagnostics.append({"flow": flow, "row_code": row, "parent": parent, "children": "|".join(child_list), "policy": "direct_copy", "source_value": value, "child_sum": value, "absolute_gap": 0.0, "proxy_denominator": float("nan")})
+                continue
+            if value == 0.0:
+                continue
+            proxy = values.reindex(child_list).astype("float64")
+            denominator = float(proxy.sum())
+            if not np.isfinite(denominator) or denominator <= 0.0:
+                raise ValueError(
+                    f"V proxy has no usable mass: flow={flow!r}, row={row!r}, parent={parent!r}, "
+                    f"children={child_list!r}, published value={value!r}, proxy={proxy.to_dict()!r}, denominator={denominator!r}."
+                )
+            V.loc[row, child_list] = proxy.to_numpy() * (value / denominator)
+            diagnostics.append({
+                "flow": flow, "row_code": row, "parent": parent,
+                "children": "|".join(child_list), "policy": (
+                    "derived" if row in {"CPA_TOTAL", "P1"}
+                    else "domestic_output_share" if row in _V_OUTPUT_PROXY_ROWS
+                    else "total_input_share" if row in _V_TOTAL_INPUT_PROXY_ROWS
+                    else "IMP_product_row_use_share" if row in _V_IMP_INPUT_PROXY_ROWS
+                    else "imported_input_share"
+                ), "source_value": value, "child_sum": float(V.loc[row, child_list].sum()),
+                "absolute_gap": abs(float(V.loc[row, child_list].sum()) - value),
+                "proxy_denominator": denominator,
+            })
+        reconstructed = _aggregate_columns(V.loc[[row]], child_parent, source.columns).loc[row]
+        _assert_close(f"{flow} V parent reconstruction {row}", reconstructed, published, rtol=0.0, atol=1e-9)
+        diagnostics.append({"stage": "V_parent_reconstruction", "flow": flow, "row": row, "max_abs_gap": 0.0, "ok": True})
+    if {"P1", "P2_ADJ", "B1G"}.issubset(source.index):
+        base = source.loc["P1"] - source_total_Z.sum(axis=0).reindex(source.columns) - source.loc["B1G"]
+        plus = base - source.loc["P2_ADJ"]
+        minus = base + source.loc["P2_ADJ"]
+        production = plus if float(plus.abs().sum()) <= float(minus.abs().sum()) else minus
+        diagnostics.append({"stage": "B1G_diagnostic", "flow": flow, "row_code": "B1G", "policy": "published_source_controlled", "production_residual_max_abs": float(production.abs().max()), "p2_adj_sign": -1 if production is plus else 1})
+    if {"B1G", "D1", "D29X39", "B2A3G"}.issubset(source.index):
+        income = source.loc["B1G"] - (source.loc["D1"] + source.loc["D29X39"] + source.loc["B2A3G"])
+        diagnostics.append({"stage": "B1G_diagnostic", "flow": flow, "row_code": "B1G", "policy": "published_source_controlled", "income_residual_max_abs": float(income.abs().max())})
+    diagnostic_frame = pd.DataFrame(diagnostics)
+    return V, diagnostic_frame, diagnostics
+
+
+def _allocate_source_parent_vector(
+    *, published: pd.Series, child_parent: Mapping[str, str], children: pd.Index,
+    proxy: pd.Series, flow: str, row_code: str,
+) -> pd.Series:
+    out = pd.Series(0.0, index=children, dtype="float64")
+    for parent in published.index.astype(str):
+        child_list = [str(child) for child in children if child_parent.get(str(child), str(child)) == parent]
+        value = float(published.loc[parent])
+        if value == 0.0:
+            continue
+        weights = proxy.reindex(child_list).astype("float64")
+        denominator = float(weights.sum())
+        if not np.isfinite(denominator) or denominator <= 0.0:
+            raise ValueError(
+                f"No usable P1 allocation proxy: flow={flow!r}, row_code={row_code!r}, "
+                f"parent={parent!r}, children={child_list!r}, published_value={value!r}, "
+                f"proxy_denominator={denominator!r}."
+            )
+        out.loc[child_list] = weights.to_numpy() * (value / denominator)
+    return out
+
+
+def _v_policy_preflight(*, references: Mapping[str, ParsedEurostatIOT], child_parent: Mapping[str, str], children: pd.Index, x: pd.Series, total_inputs: pd.Series, imp_inputs: pd.Series, imp_products: pd.Series) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    policy_rows = {"P1", "CPA_TOTAL", "TS_BP"} | _V_OUTPUT_PROXY_ROWS | _V_TOTAL_INPUT_PROXY_ROWS | _V_IMP_INPUT_PROXY_ROWS | {"IMP"}
+    for flow, reference in references.items():
+        if reference.V is None:
+            continue
+        for code in reference.V.index.astype(str):
+            for parent in reference.V.columns.astype(str):
+                value = float(reference.V.loc[code, parent])
+                child_list = [str(c) for c in children if child_parent.get(str(c), str(c)) == parent]
+                if code in {"P1", "CPA_TOTAL", "TS_BP"}:
+                    proxy, name, status = pd.Series(dtype="float64"), "derived", "derived_identity_ok"
+                elif code in _V_OUTPUT_PROXY_ROWS:
+                    proxy, name, status = x.reindex(child_list), "domestic_output", "allocatable"
+                elif code in _V_TOTAL_INPUT_PROXY_ROWS:
+                    proxy, name, status = total_inputs.reindex(child_list), "TOTAL_input", "allocatable"
+                elif code in _V_IMP_INPUT_PROXY_ROWS:
+                    proxy, name, status = imp_products.reindex(child_list), "IMP_product_row_use", "allocatable"
+                elif code == "IMP":
+                    proxy, name, status = imp_inputs.reindex(child_list), "IMP_input", "allocatable"
+                else:
+                    proxy, name, status = pd.Series(dtype="float64"), "none", "unknown_row"
+                denom = float(proxy.sum()) if len(proxy) else float("nan")
+                if len(child_list) == 1:
+                    status = "direct_copy"
+                elif value == 0.0:
+                    status = "zero_source"
+                elif code not in policy_rows:
+                    status = "unknown_row"
+                elif status == "allocatable" and (not np.isfinite(denom) or denom <= 0.0):
+                    status = "zero_proxy_nonzero_source"
+                rows.append({"flow": flow, "row_code": code, "parent": parent, "children": "|".join(child_list), "n_children": len(child_list), "source_value": value, "policy": code, "proxy_name": name, "proxy_denominator": denom, "derived_source_value": float("nan"), "identity_gap": float("nan"), "status": status})
+    return pd.DataFrame(rows)
+
+
 def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> list[dict[str, object]]:
     z_name = "Z_split.csv" if suffix == "split" else "Z_agg.csv"
     y_name = "Y_split.csv" if suffix == "split" else "Y_agg.csv"
@@ -459,12 +646,8 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     Z = {"DOM": Z_dom, "IMP": Z_imp, "TOTAL": Z_total}
     Y = {"DOM": Y_dom, "IMP": Y_imp, "TOTAL": Y_total}
     use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in Z}
-    x_domestic = use["DOM"].rename("x")
-    for flow in Z:
-        _write_series(use[flow], dirs[flow] / "use_total_split.csv")
-        _write_series(x_domestic, dirs[flow] / "x_split.csv")
-        _write_frame(technical_coefficients(Z[flow], x_domestic), dirs[flow], "A_split.csv")
     references: dict[str, ParsedEurostatIOT] = {}
+    diagnostics: list[dict[str, object]] = []
     for flow in ("DOM", "IMP", "TOTAL"):
         filters = dict(eurostat_filters)
         filters[eurostat_stk_flow_dim] = flow
@@ -473,8 +656,67 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             source_m = references[flow].M.copy().astype("float64")
             _write_frame(source_m, dirs[flow], "M_split.csv")
             _assert_close(f"{flow} published M", _read_frame(dirs[flow] / "M_split.csv"), source_m, rtol=0.0, atol=0.0)
+    quantum = _resolve_source_rounding_quantum(references, source_rounding_quantum)
+    source_codes = references["TOTAL"].Z.index.astype(str)
+    child_parent = _child_to_parent(manifest, source_codes)
+    if references["DOM"].V is None or "P1" not in references["DOM"].V.index:
+        raise ValueError("DOM source V must contain the source-controlled P1 row.")
+    p1_dom = references["DOM"].V.loc["P1"].astype("float64")
+    x_domestic = _allocate_source_parent_vector(
+        published=p1_dom, child_parent=child_parent, children=Z_dom.index,
+        proxy=use["DOM"], flow="DOM", row_code="P1",
+    ).rename("x")
+    p1_reconstructed = _aggregate_columns(x_domestic.to_frame("P1").T, child_parent, p1_dom.index).loc["P1"]
+    _assert_close("DOM P1 parent reconstruction", p1_reconstructed, p1_dom, rtol=0.0, atol=1e-9)
+    if references["TOTAL"].V is not None and "P1" in references["TOTAL"].V.index:
+        p1_total = references["TOTAL"].V.loc["P1"].astype("float64")
+        _rounded_v_formula(flow="TOTAL", row="P1_DOM_vs_TOTAL", published=p1_total, formula=p1_dom.reindex(p1_total.index), term_counts=pd.Series(1, index=p1_total.index), quantum=quantum, rtol=rtol, atol=atol)
+    for flow in Z:
+        _write_series(use[flow], dirs[flow] / "use_total_split.csv")
+        _write_series(x_domestic, dirs[flow] / "x_split.csv")
+        _write_frame(technical_coefficients(Z[flow], x_domestic), dirs[flow], "A_split.csv")
+    diagnostics.append({"stage": "row_use_diagnostic", "flow": "DOM", "object": "row_use_minus_p1", "max_abs_gap": float((use["DOM"] - x_domestic).abs().max())})
+    for flow in ("DOM", "IMP"):
+        reference = references[flow]
+        reconstructed_z = _aggregate_square(Z[flow], child_parent, reference.Z.index.astype(str))
+        diagnostics.append({"stage": "source_reconstruction", "flow": flow, "object": "Z", "max_abs_gap": _assert_close(f"{flow} Z reconstruction", reconstructed_z, reference.Z, rtol=rtol, atol=atol), "ok": True})
+        diagnostics.extend(_validate_y_source_reconstruction(flow=flow, reconstructed=_aggregate_rows(Y[flow], child_parent, reference.Z.index.astype(str)), reference=reference, source_rounding_quantum=quantum, rtol=rtol, atol=atol))
+    # Published TOTAL can differ from DOM+IMP by independently rounded source cells.
+    total_z = _aggregate_square(Z_total, child_parent, references["TOTAL"].Z.index.astype(str))
+    total_atomic = _aggregate_rows(source_atomic_final_demand(Y_total), child_parent, references["TOTAL"].Z.index.astype(str))
+    source_atomic = source_atomic_final_demand(references["TOTAL"].Y).reindex(index=total_atomic.index, columns=total_atomic.columns)
+    for object_name, generated, published in (("Z", total_z, references["TOTAL"].Z), ("atomic_Y", total_atomic, source_atomic)):
+        for row in generated.index.astype(str):
+            for col in generated.columns.astype(str):
+                diag = rounded_source_control_diagnostic(identity=f"TOTAL:{object_name}", published=float(published.loc[row, col]), derived=float(generated.loc[row, col]), component_term_count=2, source_rounding_quantum=quantum, rtol=rtol, atol=atol)
+                diag.update({"stage": "TOTAL_source_reconstruction", "flow": "TOTAL", "object": object_name, "row": row, "column": col})
+                diagnostics.append(diag)
+    total_reconstructed_y = _aggregate_rows(Y_total, child_parent, references["TOTAL"].Z.index.astype(str))
+    for identity in _ROUNDED_Y_CONTROLS:
+        if identity in total_reconstructed_y.columns:
+            expected = _derived_y_control(ParsedEurostatIOT(Z=references["TOTAL"].Z, Y=total_reconstructed_y, V=None, M=None, meta={}), identity)[0]
+            _assert_close(f"TOTAL generated {identity}", total_reconstructed_y[identity], expected, rtol=rtol, atol=atol)
+    preflight = _v_policy_preflight(
+        references=references, child_parent=child_parent, children=Z_dom.index,
+        x=x_domestic, total_inputs=Z_total.sum(axis=0), imp_inputs=Z_imp.sum(axis=0),
+        imp_products=use["IMP"],
+    )
+    preflight.to_csv(outdir / "v_policy_preflight.csv", index=False)
+    problems = preflight.loc[
+        preflight["status"].isin(["unknown_row", "zero_proxy_nonzero_source"])
+        & (preflight["source_value"] != 0.0)
+    ]
+    if not problems.empty:
+        raise ValueError("V policy preflight found genuine gaps:\n" + problems.to_string(index=False))
+    for flow in ("DOM", "IMP", "TOTAL"):
+        V, v_diagnostics, rows = _construct_canonical_v(flow=flow, reference=references[flow], child_parent=child_parent, Z=Z[flow], x_domestic=x_domestic, Z_total=Z_total, Z_imp=Z_imp, source_total_Z=references["TOTAL"].Z, imp_product_proxy=use["IMP"], quantum=quantum, rtol=rtol, atol=atol)
+        if V is not None:
+            _write_frame(V, dirs[flow], "V_split.csv")
+            v_diagnostics.to_csv(dirs[flow] / "supplementary_row_split_diagnostics.csv", index=False)
+            diagnostics.extend(rows)
     (dirs["TOTAL"] / "exio_selected_sectors.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({"flow_construction": "DOM_plus_IMP", "x_semantics": "shared_DOM_use_total", "A_semantics": "Z_flow_divided_by_shared_DOM_x", "V_status": "not_constructed"}, indent=2) + "\n", encoding="utf-8")
+    (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({"flow_construction": "DOM_plus_IMP", "x_semantics": "shared_DOM_use_total", "A_semantics": "Z_flow_divided_by_shared_DOM_x", "V_status": "explicit_row_policy"}, indent=2) + "\n", encoding="utf-8")
+    pd.DataFrame(diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)
 
 
 def validate_additive_outputs(outdir: Path, *, suffix: str, atol: float, rtol: float) -> None:

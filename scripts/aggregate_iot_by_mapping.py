@@ -14,6 +14,7 @@ import pandas as pd
 from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
 )
+from ecolecon_mrio.iot_flow_semantics import flow_use_total
 from ecolecon_mrio.iot_identities import (
     find_imports_vector,
     normalise_supplementary_row_label,
@@ -2122,11 +2123,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 M.columns = M.columns.astype(str)
                 break
 
-        edge_metadata_path = z_dir / "split_child_edges.csv"
         mapping_for_run = dict(mapping)
         mapping_df_for_run = mapping_df.copy()
         edge_mapping_audit = pd.DataFrame()
-        if edge_metadata_path.exists():
+        if args.fail_on_unmapped_split_children:
+            selected_json = (
+                Path(args.split_selected_sectors_json)
+                if args.split_selected_sectors_json
+                else z_dir / "exio_selected_sectors.json"
+            )
+            selected_children = _load_split_selected_children(selected_json)
+            counts = mapping_df["from_sector"].astype(str).value_counts()
+            missing_selected = sorted(child for child in selected_children if int(counts.get(child, 0)) == 0)
+            duplicate_selected = sorted(child for child in selected_children if int(counts.get(child, 0)) != 1)
+            if missing_selected or duplicate_selected:
+                raise SystemExit(
+                    "Strict aggregation mapping must contain every emitted split child exactly once: "
+                    f"missing={missing_selected[:20]!r}, duplicates={duplicate_selected[:20]!r}"
+                )
+        edge_metadata_path = z_dir / "split_child_edges.csv"
+        if edge_metadata_path.exists() and not args.fail_on_unmapped_split_children:
             _vprint(args.verbose, f"Reading: {edge_metadata_path.resolve()}")
             edge_metadata = pd.read_csv(edge_metadata_path)
             mapping_for_run, mapping_df_for_run, edge_mapping_audit = _augment_mapping_from_split_child_edges(
@@ -2149,19 +2165,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{unmapped[:20]}"
             )
 
-        if args.fail_on_unmapped_split_children:
-            selected_json = (
-                Path(args.split_selected_sectors_json)
-                if args.split_selected_sectors_json
-                else z_dir / "exio_selected_sectors.json"
-            )
-            selected_children = _load_split_selected_children(selected_json)
-            missing_selected = sorted(selected_children - mapped_sources)
-            if missing_selected:
-                raise SystemExit(
-                    "Aggregation mapping leaves selected split children unmapped: "
-                    f"{missing_selected[:20]}"
-                )
 
         # Try to load disaggregated sector value-per-physical-input if they exist
         disaggregated_values = None
@@ -2298,6 +2301,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
         _write_df_csv(res.Y, out_base / "Y_agg.csv", verbose=args.verbose)
         _write_series_csv(res.x, out_base / "x_agg.csv", verbose=args.verbose)
+        _write_series_csv(flow_use_total(res.Z, res.Y), out_base / "use_total_agg.csv", verbose=args.verbose)
         _write_df_csv(res.A, out_base / "A_agg.csv", verbose=args.verbose)
         if res.V is not None:
             _write_df_csv(res.V, out_base / "V_agg.csv", verbose=args.verbose)

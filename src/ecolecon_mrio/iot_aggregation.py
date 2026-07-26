@@ -7,7 +7,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.iot_flow_semantics import refresh_supplementary_rows, technical_coefficients
+from ecolecon_mrio.iot_flow_semantics import technical_coefficients
 
 
 @dataclass(frozen=True)
@@ -300,7 +300,6 @@ def aggregate_iot(
     x = output_agg_df["x"].reindex(Z_agg.index).fillna(0.0).astype("float64")
     x.name = "x"
     V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
-    V_agg, _ = refresh_supplementary_rows(V_agg, None, Z=Z_agg, Y=Y_agg, output=x, flow_role=role)  # type: ignore[arg-type]
     M_agg = None if M is None else M.copy()
     A = technical_coefficients(Z_agg, x)
     io_system = None
