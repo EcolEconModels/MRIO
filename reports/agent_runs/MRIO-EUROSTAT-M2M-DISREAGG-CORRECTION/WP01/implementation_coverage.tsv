@@ -1,0 +1,10 @@
+requirement_id	status	implementation_locations	tests	execution_evidence	notes
+MAP-01	implemented	mapping_csv.resolve_weighted_mapping_frame; mapping_csv._resolve_split_weights_for_source_group	test_many_many_split_wp1.py; test_mapping_csv.py	focused pytest passed	One-to-one sources remain 1.0; multi-target sources require complete numeric weights or recognised rules.
+MAP-02	implemented	exio_share_split._source_targets_from_eurostat_mapping	test_many_many_split_wp1.py	focused pytest passed	Zero shares remain structural edges.
+MAP-03	implemented	exio_share_split._edge_aware_sector_to_exio_sectors	test_many_many_split_wp1.py	focused pytest passed	DOM and IMP fixture has identical ordered child labels.
+MAP-04	implemented	exio_share_split.build_split_profiles_from_exiobase_domestic_block	test_many_many_split_wp1.py	focused pytest passed	Error includes missing source, parent, child, and flow.
+SPLIT-01	implemented	exio_share_split._validate_split_reconstruction	test_many_many_split_wp1.py; test_split_eurostat_energy_by_exiobase.py	focused pytest passed	Labelled Z-cell comparison reports both values and signed/absolute gap.
+SPLIT-02	implemented	exio_share_split._validate_split_reconstruction; iot_flow_semantics.source_atomic_final_demand	test_many_many_split_wp1.py; test_iot_source_rounding.py	focused pytest passed	Atomic basis avoids aggregate/detail overlap; source controls use rounding helper.
+SPLIT-03	implemented	iot_flow_semantics.derived_final_demand_control_columns; iot_flow_semantics.enforce_final_demand_display_identities	test_many_many_split_wp1.py; test_iot_flow_semantics.py	focused pytest passed	P5M and P5 are regenerated after primitive allocation.
+SPLIT-04	implemented	exio_share_split._validate_emitted_children	test_many_many_split_wp1.py	focused pytest passed	Blank, duplicate, and retained-sector collisions fail before allocation.
+API-01	implemented	exio_share_split split APIs; split_eurostat_energy_by_exiobase CLI; direct pipeline callers	test_many_many_split_wp1.py; CLI --help	focused pytest and help smoke passed	Inactive RAS/GRAS arguments and BalanceStats are removed only from donor-block path.

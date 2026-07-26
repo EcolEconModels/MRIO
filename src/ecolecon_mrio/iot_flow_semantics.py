@@ -15,6 +15,7 @@ FlowRole = Literal["DOM", "IMP", "TOTAL"]
 
 _P3_DETAIL = ("P3_S13", "P3_S14", "P3_S15")
 _P5_DETAIL = ("P51G", "P52", "P53")
+_P5M_DETAIL = ("P52", "P53")
 _P6_DETAIL = ("P6_B0", "P6_D0", "P6_U2", "P6_U3")
 _ACCOUNTING_RTOL = 1e-9
 _ACCOUNTING_ATOL = 1e-6
@@ -38,7 +39,9 @@ def rounded_source_control_diagnostic(
     rounded source components.
     """
     if not np.isfinite(source_rounding_quantum) or source_rounding_quantum <= 0.0:
-        raise ValueError(f"Invalid source rounding quantum: {source_rounding_quantum!r}")
+        raise ValueError(
+            f"Invalid source rounding quantum: {source_rounding_quantum!r}"
+        )
     if component_term_count < 1:
         raise ValueError(f"{identity}: component_term_count must be positive")
     if not np.isfinite(published) or not np.isfinite(derived):
@@ -75,14 +78,19 @@ def rounded_source_control_diagnostic(
         )
     return diagnostic
 
-def _choose_family(columns: set[str], *, aggregate: str, detail: tuple[str, ...]) -> list[str]:
+
+def _choose_family(
+    columns: set[str], *, aggregate: str, detail: tuple[str, ...]
+) -> list[str]:
     present = [code for code in detail if code in columns]
     if len(present) == len(detail):
         return present
     if aggregate in columns:
         return [aggregate]
     if present:
-        raise ValueError(f"Incomplete {aggregate} detail partition without aggregate: {present!r}")
+        raise ValueError(
+            f"Incomplete {aggregate} detail partition without aggregate: {present!r}"
+        )
     return []
 
 
@@ -100,7 +108,9 @@ def atomic_final_demand_columns(columns: pd.Index | list[str]) -> list[str]:
     selected.extend(_choose_family(cols, aggregate="P5", detail=_P5_DETAIL))
     selected.extend(_choose_p6_family(cols))
     if not selected:
-        raise ValueError("Eurostat Y has no recognised non-overlapping final-demand columns.")
+        raise ValueError(
+            "Eurostat Y has no recognised non-overlapping final-demand columns."
+        )
     return selected
 
 
@@ -124,7 +134,9 @@ def _validate_partition_identity(
         atol=atol,
         equal_nan=False,
     ):
-        gap = float(np.max(np.abs((aggregate_values - detail_values).to_numpy(dtype="float64"))))
+        gap = float(
+            np.max(np.abs((aggregate_values - detail_values).to_numpy(dtype="float64")))
+        )
         raise ValueError(
             f"Eurostat {aggregate} aggregate/detail identity failed before output construction: "
             f"max_abs_gap={gap:.12g}."
@@ -159,6 +171,8 @@ def derived_final_demand_control_columns(columns: pd.Index | list[str]) -> list[
     derived: list[str] = []
     if "P3" in cols and set(_P3_DETAIL).issubset(cols):
         derived.append("P3")
+    if "P5M" in cols and set(_P5M_DETAIL).issubset(cols):
+        derived.append("P5M")
     if "P5" in cols and set(_P5_DETAIL).issubset(cols):
         derived.append("P5")
     derived.extend(code for code in ("TFU", "TU") if code in cols)
@@ -180,9 +194,16 @@ def enforce_final_demand_display_identities(
     out = Y.copy().astype("float64")
     out.index = out.index.astype(str)
     out.columns = out.columns.astype(str)
-    for aggregate, detail in (("P3", _P3_DETAIL), ("P5", _P5_DETAIL)):
-        if set(detail).issubset(out.columns):
-            out.loc[:, aggregate] = out.loc[:, list(detail)].sum(axis=1).astype("float64")
+    # Allocate primitive components first, then regenerate published controls in
+    # dependency order so no aggregate is treated as an independent donor target.
+    if set(_P3_DETAIL).issubset(out.columns):
+        out.loc[:, "P3"] = out.loc[:, list(_P3_DETAIL)].sum(axis=1).astype("float64")
+    if set(_P5M_DETAIL).issubset(out.columns):
+        out.loc[:, "P5M"] = out.loc[:, list(_P5M_DETAIL)].sum(axis=1).astype("float64")
+    if set(_P5_DETAIL).issubset(out.columns):
+        out.loc[:, "P5"] = (
+            out.loc[:, "P51G"].add(out.loc[:, "P5M"], fill_value=0.0).astype("float64")
+        )
     atomic = atomic_final_demand(out)
     tfu = atomic.sum(axis=1).astype("float64")
     if "TFU" in out.columns:
@@ -193,19 +214,27 @@ def enforce_final_demand_display_identities(
         Z_ord = Z.copy().astype("float64")
         Z_ord.index = Z_ord.index.astype(str)
         if not Z_ord.index.equals(out.index):
-            raise ValueError("TU derivation requires Z and Y to have identical row indices.")
+            raise ValueError(
+                "TU derivation requires Z and Y to have identical row indices."
+            )
         out.loc[:, "TU"] = Z_ord.sum(axis=1).add(tfu, fill_value=0.0).astype("float64")
     return out
 
 
 def flow_use_total(Z: pd.DataFrame, Y: pd.DataFrame) -> pd.Series:
-    use = Z.sum(axis=1).add(atomic_final_demand(Y).sum(axis=1), fill_value=0.0).astype("float64")
+    use = (
+        Z.sum(axis=1)
+        .add(atomic_final_demand(Y).sum(axis=1), fill_value=0.0)
+        .astype("float64")
+    )
     use.name = "use_total"
     return use
 
 
 def technical_coefficients(Z: pd.DataFrame, output: pd.Series) -> pd.DataFrame:
-    missing = [str(code) for code in Z.columns if str(code) not in set(map(str, output.index))]
+    missing = [
+        str(code) for code in Z.columns if str(code) not in set(map(str, output.index))
+    ]
     if missing:
         raise ValueError(f"Output vector is missing Z columns: {missing[:20]!r}")
     denom = output.copy().astype("float64")
@@ -223,7 +252,9 @@ def technical_coefficients(Z: pd.DataFrame, output: pd.Series) -> pd.DataFrame:
     invalid_zero = (denom == 0.0) & (z_col_mass > 0.0)
     if bool(invalid_zero.any()):
         bad = denom_index[invalid_zero].astype(str).tolist()
-        raise ValueError(f"Zero output with non-zero intermediate inputs for sectors: {bad[:20]!r}")
+        raise ValueError(
+            f"Zero output with non-zero intermediate inputs for sectors: {bad[:20]!r}"
+        )
     safe = denom.replace(0.0, np.nan)
     return Z.astype("float64").divide(safe, axis="columns").fillna(0.0)
 
@@ -245,13 +276,22 @@ def refresh_supplementary_rows(
         cols = pd.Index(V_out.columns)
         missing_z = sorted(set(cols.astype(str)) - set(Z.columns.astype(str)))
         if missing_z:
-            raise ValueError(f"Supplementary V columns are absent from Z: {missing_z[:20]!r}")
-        z_col = Z.reindex(index=cols, columns=cols).fillna(0.0).sum(axis=0).astype("float64")
+            raise ValueError(
+                f"Supplementary V columns are absent from Z: {missing_z[:20]!r}"
+            )
+        z_col = (
+            Z.reindex(index=cols, columns=cols)
+            .fillna(0.0)
+            .sum(axis=0)
+            .astype("float64")
+        )
         x = output.reindex(cols)
         if x.isna().any():
             x_index = cast(pd.Index, x.index)
             missing = x_index[x.isna()].astype(str).tolist()
-            raise ValueError(f"Output vector is missing supplementary V columns: {missing[:20]!r}")
+            raise ValueError(
+                f"Output vector is missing supplementary V columns: {missing[:20]!r}"
+            )
         x = x.astype("float64")
         for row_code in list(map(str, V_out.index)):
             kind = supplementary_accounting_identity_kind(row_code)
@@ -271,8 +311,14 @@ def refresh_supplementary_rows(
                 required_output = output.reindex(required_products)
                 if required_output.isna().any():
                     required_index = cast(pd.Index, required_output.index)
-                    missing = required_index[required_output.isna()].astype(str).tolist()
-                    raise ValueError(f"TOTAL supply output is missing products: {missing[:20]!r}")
-                V_out.loc[row_code, required_products] = required_output.astype("float64") + imports
+                    missing = (
+                        required_index[required_output.isna()].astype(str).tolist()
+                    )
+                    raise ValueError(
+                        f"TOTAL supply output is missing products: {missing[:20]!r}"
+                    )
+                V_out.loc[row_code, required_products] = (
+                    required_output.astype("float64") + imports
+                )
     M_out = refresh_m_identity_rows(M, Y=Y, Z=Z)
     return V_out, M_out

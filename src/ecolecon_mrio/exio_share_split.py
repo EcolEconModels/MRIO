@@ -8,7 +8,6 @@ from typing import Callable, Mapping, Sequence, cast
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.balancing import BalanceStats
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exiobase3 import (
     ExioRegionSlice,
@@ -27,6 +26,8 @@ from ecolecon_mrio.iot_flow_semantics import (
     derived_final_demand_control_columns,
     enforce_final_demand_display_identities,
     flow_use_total,
+    rounded_source_control_diagnostic,
+    source_atomic_final_demand,
     technical_coefficients,
 )
 
@@ -41,7 +42,6 @@ class SplitResult:
     A: pd.DataFrame
     split_profiles: dict[str, SplitProfiles]
     balancing_method: str
-    balancing_stats: BalanceStats
     exio_selected_sectors: dict[str, list[str]]
     exio_quantity_and_price: pd.DataFrame | None
     V: pd.DataFrame | None = None
@@ -73,6 +73,7 @@ def _aggregate_rows_to_original(
     grouped = out.groupby(level=0).sum()
     return cast(pd.DataFrame, grouped)
 
+
 def _aggregate_square_to_original(
     df: pd.DataFrame,
     *,
@@ -89,6 +90,7 @@ def _aggregate_square_to_original(
     grouped_rows = cast(pd.DataFrame, out.groupby(level=0).sum())
     grouped_cols = cast(pd.DataFrame, grouped_rows.T.groupby(level=0).sum().T)
     return grouped_cols
+
 
 def _largest_abs_gap(diff: pd.DataFrame | pd.Series) -> tuple[str, float]:
     if isinstance(diff, pd.Series):
@@ -108,6 +110,7 @@ def _largest_abs_gap(diff: pd.DataFrame | pd.Series) -> tuple[str, float]:
         label = str(where)
     return label, float(stack.max())
 
+
 def _expanded_sector_order(
     *,
     sectors_old: Sequence[str],
@@ -125,12 +128,15 @@ def _expanded_sector_order(
 def _normalize_vector(values: pd.Series) -> pd.Series:
     numeric_obj = pd.to_numeric(values, errors="coerce")
     if not isinstance(numeric_obj, pd.Series):
-        raise TypeError("Expected normalized donor vector input to remain a pandas Series.")
+        raise TypeError(
+            "Expected normalized donor vector input to remain a pandas Series."
+        )
     numeric = numeric_obj.fillna(0.0).astype("float64")
     total = float(numeric.sum())
     if not np.isfinite(total) or total <= 0:
         raise ValueError("Cannot normalize non-positive donor vector.")
     return numeric / total
+
 
 def _edge_child_source_target(subsector: object) -> tuple[str, str] | None:
     """Return (EXIO source, Eurostat target) for edge-child codes like p24.d@CPA_C20."""
@@ -199,7 +205,9 @@ def _raw_exio_members_from_profiles(profiles: Mapping[str, SplitProfiles]) -> li
     return list(dict.fromkeys(out))
 
 
-def raw_exio_members_from_split_profiles(profiles: Mapping[str, SplitProfiles]) -> list[str]:
+def raw_exio_members_from_split_profiles(
+    profiles: Mapping[str, SplitProfiles],
+) -> list[str]:
     """Return raw EXIO member codes used by split profiles, ignoring edge-child labels."""
     return _raw_exio_members_from_profiles(profiles)
 
@@ -246,7 +254,9 @@ def emitted_sector_to_exio_members_from_split_profiles(
         if prof.subsector_to_exio_sectors:
             for child, members in prof.subsector_to_exio_sectors.items():
                 child_s = str(child).strip()
-                raw_members = [str(member).strip() for member in members if str(member).strip()]
+                raw_members = [
+                    str(member).strip() for member in members if str(member).strip()
+                ]
                 if child_s and raw_members:
                     child_map[child_s] = list(dict.fromkeys(raw_members))
         else:
@@ -283,7 +293,11 @@ def build_projection_matrix_for_split_profiles(
             child_s = str(child).strip()
             if child_s:
                 inferred_children.append(child_s)
-                child_members[child_s] = list(dict.fromkeys(str(member).strip() for member in members if str(member).strip()))
+                child_members[child_s] = list(
+                    dict.fromkeys(
+                        str(member).strip() for member in members if str(member).strip()
+                    )
+                )
             for member in members:
                 member_s = str(member).strip()
                 if member_s and member_s not in inferred_raw:
@@ -297,9 +311,17 @@ def build_projection_matrix_for_split_profiles(
     if raw_exio_sectors is None:
         raw_order = inferred_raw
     else:
-        raw_order = list(dict.fromkeys(str(sector).strip() for sector in raw_exio_sectors if str(sector).strip()))
+        raw_order = list(
+            dict.fromkeys(
+                str(sector).strip()
+                for sector in raw_exio_sectors
+                if str(sector).strip()
+            )
+        )
 
-    P = pd.DataFrame(0.0, index=pd.Index(row_labels), columns=pd.Index(raw_order), dtype="float64")
+    P = pd.DataFrame(
+        0.0, index=pd.Index(row_labels), columns=pd.Index(raw_order), dtype="float64"
+    )
     if P.empty:
         return P
 
@@ -316,14 +338,20 @@ def build_projection_matrix_for_split_profiles(
                     eurostat_sector_mapping=eurostat_sector_mapping,
                 )
                 if np.isfinite(weight) and weight != 0.0:
-                    P.loc[label, member_s] = float(P.loc[label, member_s]) + float(weight)
+                    P.loc[label, member_s] = float(P.loc[label, member_s]) + float(
+                        weight
+                    )
             continue
 
         if eurostat_sector_mapping is not None and label in eurostat_sector_mapping:
             for member, weight in eurostat_sector_mapping[label].items():
                 member_s = str(member).strip()
                 weight_f = float(weight)
-                if member_s in available_raw and np.isfinite(weight_f) and weight_f != 0.0:
+                if (
+                    member_s in available_raw
+                    and np.isfinite(weight_f)
+                    and weight_f != 0.0
+                ):
                     P.loc[label, member_s] = float(P.loc[label, member_s]) + weight_f
             continue
 
@@ -376,6 +404,7 @@ def project_exio_donor_blocks_for_split_profiles(
     )
     return P, Z_projected, Y_projected
 
+
 def _source_targets_from_eurostat_mapping(
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
 ) -> dict[str, dict[str, float]]:
@@ -386,15 +415,17 @@ def _source_targets_from_eurostat_mapping(
         target = str(target_code)
         for source_code, weight in source_weights.items():
             source = str(source_code)
-            weight_float = float(weight)
-            if weight_float == 0.0:
-                continue
-            source_targets.setdefault(source, {})[target] = weight_float
+            # Topology records enabled concordance edges independently of the
+            # flow-specific numerical share.  A zero DOM share still needs the same
+            # source-target child as its positive IMP counterpart.
+            source_targets.setdefault(source, {})[target] = float(weight)
     return source_targets
 
 
 def _edge_aware_sector_to_exio_sectors(
-    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    sector_to_exio_sectors: Mapping[str, Sequence[str]]
+    | Mapping[str, Mapping[str, Sequence[str]]]
+    | None,
     *,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
 ) -> Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None:
@@ -443,6 +474,39 @@ def _edge_aware_sector_to_exio_sectors(
 
     return expanded  # pyright: ignore[reportReturnType]
 
+
+def _validate_emitted_children(
+    *,
+    sectors_old: Sequence[str],
+    split_profiles: Mapping[str, SplitProfiles],
+) -> None:
+    """Validate labels and the one-to-one emitted-child reconstruction contract."""
+    retained = set(map(str, sectors_old)) - set(map(str, split_profiles))
+    owners: dict[str, list[str]] = {}
+    for parent, profile in split_profiles.items():
+        for child in profile.subsectors:
+            label = str(child).strip()
+            if not label:
+                raise ValueError(
+                    f"Emitted split child is blank: parent={str(parent)!r}."
+                )
+            owners.setdefault(label, []).append(str(parent))
+
+    duplicates = {
+        label: parents for label, parents in owners.items() if len(parents) != 1
+    }
+    if duplicates:
+        raise ValueError(f"Emitted split child labels are not unique: {duplicates!r}")
+    collisions = {
+        label: parents for label, parents in owners.items() if label in retained
+    }
+    if collisions:
+        raise ValueError(
+            "Emitted split child labels collide with retained unsplit Eurostat sectors: "
+            f"{collisions!r}"
+        )
+
+
 def _validate_split_reconstruction(
     *,
     eurostat_Z: pd.DataFrame,
@@ -451,10 +515,11 @@ def _validate_split_reconstruction(
     Z_split: pd.DataFrame,
     Y_split: pd.DataFrame,
     x_split: pd.Series,
+    source_rounding_quantum: float = 0.01,
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> None:
-    """Fail fast if split sectors do not aggregate back to the original IO totals."""
+    """Fail fast unless cellwise Z and non-overlapping Y reconstruct exactly."""
 
     Z_expected = eurostat_Z.copy().astype("float64")
     Y_expected = eurostat_Y.copy().astype("float64")
@@ -463,42 +528,97 @@ def _validate_split_reconstruction(
     Y_expected.index = Y_expected.index.astype(str)
     Y_expected.columns = Y_expected.columns.astype(str)
 
-    Z_back = _aggregate_square_to_original(Z_split.astype("float64"), split_profiles=split_profiles)
-    Y_back = _aggregate_rows_to_original(Y_split.astype("float64"), split_profiles=split_profiles)
-    x_back = _aggregate_rows_to_original(x_split.astype("float64").to_frame("x"), split_profiles=split_profiles)["x"]
+    Z_back = _aggregate_square_to_original(
+        Z_split.astype("float64"), split_profiles=split_profiles
+    )
+    Y_back = _aggregate_rows_to_original(
+        Y_split.astype("float64"), split_profiles=split_profiles
+    )
+    x_back = _aggregate_rows_to_original(
+        x_split.astype("float64").to_frame("x"), split_profiles=split_profiles
+    )["x"]
 
-    Z_back = Z_back.reindex(index=Z_expected.index, columns=Z_expected.columns).fillna(0.0)
-    Y_back = Y_back.reindex(index=Y_expected.index, columns=Y_expected.columns).fillna(0.0)
+    Z_back = Z_back.reindex(index=Z_expected.index, columns=Z_expected.columns).fillna(
+        0.0
+    )
+    Y_back = Y_back.reindex(index=Y_expected.index).fillna(0.0)
     x_expected = flow_use_total(Z_expected, Y_expected)
     x_back = x_back.reindex(index=x_expected.index).fillna(0.0)
-    z_row_expected = Z_expected.sum(axis=1).astype("float64")
-    z_col_expected = Z_expected.sum(axis=0).astype("float64")
-    z_row_back = Z_back.sum(axis=1).astype("float64")
-    z_col_back = Z_back.sum(axis=0).astype("float64")
-
+    # Compare each original Z cell, not only its row/column margins.
+    Y_expected_atomic = source_atomic_final_demand(Y_expected)
+    Y_back_atomic = (
+        source_atomic_final_demand(Y_back)
+        .reindex(columns=Y_expected_atomic.columns)
+        .fillna(0.0)
+    )
     checks = [
-        ("Y", Y_back, Y_expected),
-        ("Z row totals", z_row_back, z_row_expected),
-        ("Z column totals", z_col_back, z_col_expected),
+        ("Z", Z_back, Z_expected),
+        ("Y atomic", Y_back_atomic, Y_expected_atomic),
         ("x", x_back, x_expected),
     ]
     errors: list[str] = []
     for label, actual, expected in checks:
         if isinstance(actual, pd.DataFrame):
-            ok = np.allclose(actual.to_numpy(), expected.to_numpy(), rtol=rtol, atol=atol, equal_nan=True)
+            ok = np.allclose(
+                actual.to_numpy(),
+                expected.to_numpy(),
+                rtol=rtol,
+                atol=atol,
+                equal_nan=True,
+            )
+            if not ok:
+                diff = actual - expected
+                where, gap = _largest_abs_gap(diff)
+                row, column = where.split(" -> ", maxsplit=1)
+                errors.append(
+                    f"{label} reconstruction failed: parent_row={row!r}, parent_column={column!r}, "
+                    f"source={float(expected.loc[row, column]):.12g}, reconstructed={float(actual.loc[row, column]):.12g}, "
+                    f"signed_gap={float(diff.loc[row, column]):.12g}, absolute_gap={gap:.12g}."
+                )
+        else:
+            ok = np.allclose(
+                actual.to_numpy(),
+                expected.to_numpy(),
+                rtol=rtol,
+                atol=atol,
+                equal_nan=True,
+            )
             if not ok:
                 diff = actual - expected
                 where, gap = _largest_abs_gap(diff)
                 errors.append(
                     f"{label} reconstruction failed: largest_abs_gap={gap:.10f} at {where}."
                 )
-        else:
-            ok = np.allclose(actual.to_numpy(), expected.to_numpy(), rtol=rtol, atol=atol, equal_nan=True)
-            if not ok:
-                diff = actual - expected
-                where, gap = _largest_abs_gap(diff)
+
+    # Published aggregate controls may be independently rounded in the source.
+    # Generated controls must, however, equal their generated components strictly.
+    for aggregate, source_detail, generated_detail in (
+        ("P3", ("P3_S13", "P3_S14", "P3_S15"), ("P3_S13", "P3_S14", "P3_S15")),
+        ("P5M", ("P52", "P53"), ("P52", "P53")),
+        ("P5", ("P51G", "P52", "P53"), ("P51G", "P5M")),
+    ):
+        if aggregate not in Y_expected.columns or not set(source_detail).issubset(
+            Y_expected.columns
+        ):
+            continue
+        for parent in Y_expected.index.astype(str):
+            rounded_source_control_diagnostic(
+                identity=f"{aggregate}[{parent}]",
+                published=float(Y_expected.loc[parent, aggregate]),
+                derived=float(Y_expected.loc[parent, list(source_detail)].sum()),
+                component_term_count=len(source_detail),
+                source_rounding_quantum=source_rounding_quantum,
+            )
+        if aggregate in Y_back.columns and set(generated_detail).issubset(
+            Y_back.columns
+        ):
+            generated_gap = Y_back[aggregate].sub(
+                Y_back.loc[:, list(generated_detail)].sum(axis=1)
+            )
+            if not np.allclose(generated_gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
+                where, gap = _largest_abs_gap(generated_gap)
                 errors.append(
-                    f"{label} reconstruction failed: largest_abs_gap={gap:.10f} at {where}."
+                    f"Generated {aggregate} control failed: parent={where!r}, absolute_gap={gap:.12g}."
                 )
 
     if errors:
@@ -545,7 +665,11 @@ def _normalized_supplementary_weights(
     weights = numeric_obj.fillna(0.0).astype("float64").clip(lower=0.0)
     denom = float(weights.sum())  # pyright: ignore[reportOptionalMemberAccess]  # pandas Series after runtime guard; stub may infer Optional
     if not np.isfinite(denom) or denom <= 0.0:
-        return pd.Series(1.0 / len(child_list), index=child_list, dtype="float64"), denom, True
+        return (
+            pd.Series(1.0 / len(child_list), index=child_list, dtype="float64"),
+            denom,
+            True,
+        )
     return weights / denom, denom, False  # pyright: ignore[reportOptionalOperand]  # pandas Series after nonzero finite denominator guard
 
 
@@ -618,14 +742,18 @@ def _split_supplementary_rows_columnwise(
     x_split: pd.Series | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     if eurostat_V is None:
-        M_out, diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split, Z_split=Z_split)
+        M_out, diagnostics = _refresh_final_demand_identity_rows(
+            eurostat_M, Y_split=Y_split, Z_split=Z_split
+        )
         diag = pd.DataFrame(diagnostics) if diagnostics else None
         return None, M_out, diag
 
     V = eurostat_V.copy().astype("float64")
     V.index = V.index.astype(str)
     V.columns = V.columns.astype(str)
-    V_split = pd.DataFrame(0.0, index=V.index, columns=pd.Index(map(str, sectors_new)), dtype="float64")
+    V_split = pd.DataFrame(
+        0.0, index=V.index, columns=pd.Index(map(str, sectors_new)), dtype="float64"
+    )
     diagnostics: list[dict[str, object]] = []
 
     for parent in map(str, sectors_old):
@@ -650,11 +778,17 @@ def _split_supplementary_rows_columnwise(
                 fallback_reason = ""
             else:
                 share, method = _supplementary_row_proxy_share(row_code, prof)
-                weights, denominator, used_equal_fallback = _normalized_supplementary_weights(
-                    share,
-                    children=children,
+                weights, denominator, used_equal_fallback = (
+                    _normalized_supplementary_weights(
+                        share,
+                        children=children,
+                    )
                 )
-                fallback_reason = "non_positive_or_non_finite_proxy_denominator" if used_equal_fallback else ""
+                fallback_reason = (
+                    "non_positive_or_non_finite_proxy_denominator"
+                    if used_equal_fallback
+                    else ""
+                )
                 if used_equal_fallback:
                     method = "equal_share_fallback"
 
@@ -671,7 +805,10 @@ def _split_supplementary_rows_columnwise(
                     "fallback_reason": fallback_reason,
                     "mass_before": row_total,
                     "mass_after": float(V_split.loc[row_code, children].sum()),
-                    "weights": "|".join(f"{child}={float(weights.loc[child]):.12g}" for child in children),
+                    "weights": "|".join(
+                        f"{child}={float(weights.loc[child]):.12g}"
+                        for child in children
+                    ),
                 }
             )
 
@@ -680,7 +817,9 @@ def _split_supplementary_rows_columnwise(
     if x_split is not None:
         x_obj = pd.to_numeric(x_split.reindex(V_split.columns), errors="coerce")
         if not isinstance(x_obj, pd.Series):
-            raise TypeError("Expected x_split identity vector to remain a pandas Series.")
+            raise TypeError(
+                "Expected x_split identity vector to remain a pandas Series."
+            )
         x_identity = x_obj.fillna(0.0).astype("float64")
         for row_code in list(map(str, V_split.index)):
             if supplementary_accounting_identity_kind(row_code) == "output":
@@ -702,7 +841,11 @@ def _split_supplementary_rows_columnwise(
 
     z_col_use: pd.Series | None = None
     if Z_split is not None:
-        z_use = Z_split.reindex(index=V_split.columns, columns=V_split.columns).fillna(0.0).astype("float64")
+        z_use = (
+            Z_split.reindex(index=V_split.columns, columns=V_split.columns)
+            .fillna(0.0)
+            .astype("float64")
+        )
         z_col_use = z_use.sum(axis=0).astype("float64")
         for row_code in list(map(str, V_split.index)):
             if supplementary_accounting_identity_kind(row_code) == "intermediate_use":
@@ -722,10 +865,13 @@ def _split_supplementary_rows_columnwise(
                     }
                 )
 
-    M_out, M_diagnostics = _refresh_final_demand_identity_rows(eurostat_M, Y_split=Y_split, Z_split=Z_split)
+    M_out, M_diagnostics = _refresh_final_demand_identity_rows(
+        eurostat_M, Y_split=Y_split, Z_split=Z_split
+    )
     diagnostics.extend(M_diagnostics)
     diag = pd.DataFrame(diagnostics) if diagnostics else None
     return V_split, M_out, diag
+
 
 def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
     code = str(fd_code)
@@ -755,14 +901,15 @@ def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
     return None
 
 
-
 def _project_export_donor_for_split(
     *,
     exio_slice: ExioRegionSlice,
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     emitted_labels: Sequence[str],
-    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_region_export_vector,
+    export_vector_loader: Callable[
+        ..., pd.Series
+    ] = read_exiobase3_region_export_vector,
 ) -> tuple[pd.Series, str]:
     """Build child-level export donors for one primitive flow.
 
@@ -786,11 +933,15 @@ def _project_export_donor_for_split(
     elif exio_slice.flow == "imports":
         raw = (
             exio_slice.Z_domestic.sum(axis=1)
-            + exio_slice.Y_region.sum(axis=1).reindex(exio_slice.Z_domestic.index).fillna(0.0)
+            + exio_slice.Y_region.sum(axis=1)
+            .reindex(exio_slice.Z_domestic.index)
+            .fillna(0.0)
         ).astype("float64")
         method = "import_use_share_proxy_for_reexports"
     else:
-        raise ValueError("Canonical splitting supports only primitive DOM and IMP flows.")
+        raise ValueError(
+            "Canonical splitting supports only primitive DOM and IMP flows."
+        )
     raw = raw.reindex(P.columns).fillna(0.0).astype("float64")
     projected = pd.Series(
         P.to_numpy(dtype="float64") @ raw.to_numpy(dtype="float64"),
@@ -799,6 +950,7 @@ def _project_export_donor_for_split(
         name="export_donor",
     )
     return projected, method
+
 
 def _split_iot_using_donor_blocks(
     *,
@@ -810,7 +962,9 @@ def _split_iot_using_donor_blocks(
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     create_io_system: bool,
-    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_region_export_vector,
+    export_vector_loader: Callable[
+        ..., pd.Series
+    ] = read_exiobase3_region_export_vector,
 ) -> SplitResult:
     Z = eurostat_Z.copy().astype("float64")
     Y = eurostat_Y.copy().astype("float64")
@@ -820,11 +974,19 @@ def _split_iot_using_donor_blocks(
     Y.columns = Y.columns.astype(str)
 
     sectors_old = list(map(str, Z.index))
-    sectors_new = _expanded_sector_order(sectors_old=sectors_old, split_profiles=split_profiles)
-    Z_split = pd.DataFrame(0.0, index=pd.Index(sectors_new), columns=pd.Index(sectors_new), dtype="float64")
-    Y_split = pd.DataFrame(0.0, index=pd.Index(sectors_new), columns=Y.columns.astype(str), dtype="float64")
+    sectors_new = _expanded_sector_order(
+        sectors_old=sectors_old, split_profiles=split_profiles
+    )
+    Z_split = pd.DataFrame(
+        0.0, index=pd.Index(sectors_new), columns=pd.Index(sectors_new), dtype="float64"
+    )
+    Y_split = pd.DataFrame(
+        0.0, index=pd.Index(sectors_new), columns=Y.columns.astype(str), dtype="float64"
+    )
     derived_fd_controls = set(derived_final_demand_control_columns(Y.columns))
-    allocated_fd_columns = [code for code in Y.columns.astype(str) if code not in derived_fd_controls]
+    allocated_fd_columns = [
+        code for code in Y.columns.astype(str) if code not in derived_fd_controls
+    ]
 
     _, donor_Z, donor_Y = project_exio_donor_blocks_for_split_profiles(
         exio_Z=exio_slice.Z_domestic,
@@ -840,9 +1002,17 @@ def _split_iot_using_donor_blocks(
     export_donor_method: str | None = None
 
     for row_sector in sectors_old:
-        row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
+        row_labels = (
+            list(split_profiles[row_sector].subsectors)
+            if row_sector in split_profiles
+            else [row_sector]
+        )
         for col_sector in sectors_old:
-            col_labels = list(split_profiles[col_sector].subsectors) if col_sector in split_profiles else [col_sector]
+            col_labels = (
+                list(split_profiles[col_sector].subsectors)
+                if col_sector in split_profiles
+                else [col_sector]
+            )
             cell_total = float(Z.loc[row_sector, col_sector])
             if cell_total == 0.0:
                 continue
@@ -851,17 +1021,25 @@ def _split_iot_using_donor_blocks(
                 Z_split.loc[row_labels[0], col_labels[0]] = cell_total
                 continue
 
-            donor_values = donor_Z.reindex(index=row_labels, columns=col_labels).fillna(0.0).astype("float64")
+            donor_values = (
+                donor_Z.reindex(index=row_labels, columns=col_labels)
+                .fillna(0.0)
+                .astype("float64")
+            )
 
             donor_total = float(donor_values.to_numpy(dtype="float64").sum())
             if np.isfinite(donor_total) and donor_total > 0.0:
                 alloc = donor_values * (cell_total / donor_total)
             elif row_sector in split_profiles and col_sector in split_profiles:
                 row_share = _normalize_vector(
-                    split_profiles[row_sector].intermediate_sales_share.reindex(row_labels).fillna(0.0)
+                    split_profiles[row_sector]
+                    .intermediate_sales_share.reindex(row_labels)
+                    .fillna(0.0)
                 )
                 col_share = _normalize_vector(
-                    split_profiles[col_sector].intermediate_input_share.reindex(col_labels).fillna(0.0)
+                    split_profiles[col_sector]
+                    .intermediate_input_share.reindex(col_labels)
+                    .fillna(0.0)
                 )
                 alloc = pd.DataFrame(
                     np.outer(row_share.to_numpy(), col_share.to_numpy()) * cell_total,
@@ -881,7 +1059,9 @@ def _split_iot_using_donor_blocks(
                 )
             elif row_sector in split_profiles:
                 row_share = _normalize_vector(
-                    split_profiles[row_sector].intermediate_sales_share.reindex(row_labels).fillna(0.0)
+                    split_profiles[row_sector]
+                    .intermediate_sales_share.reindex(row_labels)
+                    .fillna(0.0)
                 )
                 alloc = pd.DataFrame(
                     row_share.to_numpy().reshape(-1, 1) * cell_total,
@@ -901,7 +1081,9 @@ def _split_iot_using_donor_blocks(
                 )
             elif col_sector in split_profiles:
                 col_share = _normalize_vector(
-                    split_profiles[col_sector].intermediate_input_share.reindex(col_labels).fillna(0.0)
+                    split_profiles[col_sector]
+                    .intermediate_input_share.reindex(col_labels)
+                    .fillna(0.0)
                 )
                 alloc = pd.DataFrame(
                     col_share.to_numpy().reshape(1, -1) * cell_total,
@@ -920,7 +1102,11 @@ def _split_iot_using_donor_blocks(
                     }
                 )
             else:
-                alloc = pd.DataFrame([[cell_total]], index=pd.Index(row_labels), columns=pd.Index(col_labels))
+                alloc = pd.DataFrame(
+                    [[cell_total]],
+                    index=pd.Index(row_labels),
+                    columns=pd.Index(col_labels),
+                )
                 fallback_records.append(
                     {
                         "row_sector": str(row_sector),
@@ -936,11 +1122,15 @@ def _split_iot_using_donor_blocks(
             Z_split.loc[row_labels, col_labels] = alloc.to_numpy(dtype="float64")
 
     for row_sector in sectors_old:
-        row_labels = list(split_profiles[row_sector].subsectors) if row_sector in split_profiles else [row_sector]
+        row_labels = (
+            list(split_profiles[row_sector].subsectors)
+            if row_sector in split_profiles
+            else [row_sector]
+        )
         if len(row_labels) == 1:
-            Y_split.loc[row_labels[0], allocated_fd_columns] = (
-                Y.loc[row_sector, allocated_fd_columns].to_numpy(dtype="float64")
-            )
+            Y_split.loc[row_labels[0], allocated_fd_columns] = Y.loc[
+                row_sector, allocated_fd_columns
+            ].to_numpy(dtype="float64")
             continue
 
         for fd_code in allocated_fd_columns:
@@ -960,7 +1150,9 @@ def _split_iot_using_donor_blocks(
                         export_vector_loader=export_vector_loader,
                     )
                 assert export_donor_method is not None
-                donor_values = export_donor.reindex(row_labels).fillna(0.0).astype("float64")
+                donor_values = (
+                    export_donor.reindex(row_labels).fillna(0.0).astype("float64")
+                )
                 donor_total = float(donor_values.sum())
                 if np.isfinite(donor_total) and donor_total > 0.0:
                     donor_share = donor_values / donor_total
@@ -976,14 +1168,26 @@ def _split_iot_using_donor_blocks(
                         }
                     )
             elif keys:
-                cols = [col for col in donor_Y.columns if any(key in str(col).lower() for key in keys)]
+                cols = [
+                    col
+                    for col in donor_Y.columns
+                    if any(key in str(col).lower() for key in keys)
+                ]
                 if cols:
-                    donor_values = donor_Y.reindex(index=row_labels, columns=cols).fillna(0.0).sum(axis=1)
+                    donor_values = (
+                        donor_Y.reindex(index=row_labels, columns=cols)
+                        .fillna(0.0)
+                        .sum(axis=1)
+                    )
                     donor_total = float(donor_values.sum())
                     if np.isfinite(donor_total) and donor_total > 0.0:
                         donor_share = donor_values / donor_total
             if donor_share is None:
-                donor_share = split_profiles[row_sector].final_demand_share.reindex(row_labels).fillna(0.0)
+                donor_share = (
+                    split_profiles[row_sector]
+                    .final_demand_share.reindex(row_labels)
+                    .fillna(0.0)
+                )
                 donor_share = _normalize_vector(donor_share)
                 fallback_records.append(
                     {
@@ -996,7 +1200,10 @@ def _split_iot_using_donor_blocks(
                         "fallback_type": "final_demand_share",
                     }
                 )
-            Y_split.loc[row_labels, fd_code] = donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64") * fd_total
+            Y_split.loc[row_labels, fd_code] = (
+                donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64")
+                * fd_total
+            )
 
     Y_split = enforce_final_demand_display_identities(Y_split, Z=Z_split)
     x_split = flow_use_total(Z_split, Y_split)
@@ -1034,13 +1241,14 @@ def _split_iot_using_donor_blocks(
         A=A_split,
         split_profiles=dict(split_profiles),
         balancing_method=method,
-        balancing_stats=BalanceStats(0, 0.0, 0.0),
         exio_selected_sectors={},
         exio_quantity_and_price=None,
         V=V_split,
         M=M_split,
         supplementary_diagnostics=supplementary_diagnostics,
-        fallback_diagnostics=pd.DataFrame(fallback_records) if fallback_records else None,
+        fallback_diagnostics=pd.DataFrame(fallback_records)
+        if fallback_records
+        else None,
         io_system=io_system,
     )
 
@@ -1059,6 +1267,7 @@ def _read_table(path: Path) -> pd.DataFrame:
     if suffix in {".xlsx", ".xls"}:
         return pd.read_excel(path, index_col=0)
     raise ValueError(f"Unsupported table format: {path}")
+
 
 def load_local_iot(
     z_path: str | Path,
@@ -1086,10 +1295,13 @@ def load_local_iot(
 
     return Z, Y
 
+
 def build_split_profiles_from_exiobase_domestic_block(
     exio_slice: ExioRegionSlice,
     *,
-    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    sector_to_exio_sectors: Mapping[str, Sequence[str]]
+    | Mapping[str, Mapping[str, Sequence[str]]]
+    | None = None,
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
 ) -> tuple[dict[str, SplitProfiles], dict[str, list[str]]]:
@@ -1101,7 +1313,9 @@ def build_split_profiles_from_exiobase_domestic_block(
     - `sector_patterns`: mapping aggregate -> substring patterns (template/quickstart; less robust).
     """
     if (sector_to_exio_sectors is None) == (sector_patterns is None):
-        raise ValueError("Provide exactly one of sector_to_exio_sectors or sector_patterns.")
+        raise ValueError(
+            "Provide exactly one of sector_to_exio_sectors or sector_patterns."
+        )
 
     profiles: dict[str, SplitProfiles] = {}
     selected: dict[str, list[str]] = {}
@@ -1126,11 +1340,19 @@ def build_split_profiles_from_exiobase_domestic_block(
                 subsector_to_exio: dict[str, list[str]] = {}
                 for sub, members in exio_sectors.items():
                     sub_code = str(sub).strip()
-                    requested_codes = [str(member).strip() for member in members if str(member).strip() != ""]
-                    missing = [code for code in requested_codes if code not in available_codes]
+                    requested_codes = [
+                        str(member).strip()
+                        for member in members
+                        if str(member).strip() != ""
+                    ]
+                    missing = [
+                        code for code in requested_codes if code not in available_codes
+                    ]
                     if missing:
                         raise ValueError(
-                            f"aggregate_sector={aggregate!r}, subsector={sub_code!r}: unknown EXIO sector code(s): {missing!r}"
+                            "Required EXIO donor source is absent before projection: "
+                            f"missing_exio_code={missing!r}, eurostat_parent={str(aggregate)!r}, "
+                            f"emitted_child={sub_code!r}, flow={exio_slice.flow!r}."
                         )
                     subsector_to_exio[sub_code] = requested_codes
 
@@ -1186,10 +1408,16 @@ def build_split_profiles_from_exiobase_domestic_block(
                 )
 
                 output_share = normalize_share(x_sub, name=f"{aggregate}.output_share")
-                sales_share = normalize_share(sales_sub, name=f"{aggregate}.intermediate_sales_share")
-                input_share = normalize_share(inputs_sub, name=f"{aggregate}.intermediate_input_share")
+                sales_share = normalize_share(
+                    sales_sub, name=f"{aggregate}.intermediate_sales_share"
+                )
+                input_share = normalize_share(
+                    inputs_sub, name=f"{aggregate}.intermediate_input_share"
+                )
                 try:
-                    final_demand_share = normalize_share(fd_sub, name=f"{aggregate}.final_demand_share")
+                    final_demand_share = normalize_share(
+                        fd_sub, name=f"{aggregate}.final_demand_share"
+                    )
                 except ValueError:
                     final_demand_share = sales_share.copy()
 
@@ -1206,12 +1434,24 @@ def build_split_profiles_from_exiobase_domestic_block(
                     subsector_to_exio_sectors=subsector_to_exio,
                 )
 
-                selected[str(aggregate)] = list(dict.fromkeys(map(str, subsector_to_exio.keys())))
+                selected[str(aggregate)] = list(
+                    dict.fromkeys(map(str, subsector_to_exio.keys()))
+                )
             else:
-                requested_codes = [str(member).strip() for member in exio_sectors if str(member).strip() != ""]
-                missing = [code for code in requested_codes if code not in available_codes]
+                requested_codes = [
+                    str(member).strip()
+                    for member in exio_sectors
+                    if str(member).strip() != ""
+                ]
+                missing = [
+                    code for code in requested_codes if code not in available_codes
+                ]
                 if missing:
-                    raise ValueError(f"aggregate_sector={aggregate!r}: unknown EXIO sector code(s): {missing!r}")
+                    raise ValueError(
+                        "Required EXIO donor source is absent before projection: "
+                        f"missing_exio_code={missing!r}, eurostat_parent={str(aggregate)!r}, "
+                        f"emitted_child={requested_codes!r}, flow={exio_slice.flow!r}."
+                    )
                 subsector_to_exio = {code: [code] for code in requested_codes}
 
                 x_sub = pd.Series(
@@ -1264,10 +1504,16 @@ def build_split_profiles_from_exiobase_domestic_block(
                 )
 
                 output_share = normalize_share(x_sub, name=f"{aggregate}.output_share")
-                sales_share = normalize_share(sales_sub, name=f"{aggregate}.intermediate_sales_share")
-                input_share = normalize_share(inputs_sub, name=f"{aggregate}.intermediate_input_share")
+                sales_share = normalize_share(
+                    sales_sub, name=f"{aggregate}.intermediate_sales_share"
+                )
+                input_share = normalize_share(
+                    inputs_sub, name=f"{aggregate}.intermediate_input_share"
+                )
                 try:
-                    final_demand_share = normalize_share(fd_sub, name=f"{aggregate}.final_demand_share")
+                    final_demand_share = normalize_share(
+                        fd_sub, name=f"{aggregate}.final_demand_share"
+                    )
                 except ValueError:
                     final_demand_share = sales_share.copy()
 
@@ -1297,21 +1543,57 @@ def build_split_profiles_from_exiobase_domestic_block(
     from ecolecon_mrio.disaggregation import SplitProfiles, normalize_share
 
     for aggregate, patterns in sector_patterns.items():
-        matched = [code for code in available_codes if any(str(pattern).casefold() in code.casefold() for pattern in patterns)]
+        matched = [
+            code
+            for code in available_codes
+            if any(str(pattern).casefold() in code.casefold() for pattern in patterns)
+        ]
         if not matched:
-            raise ValueError(f"aggregate_sector={aggregate!r}: no EXIO sector codes matched patterns {tuple(patterns)!r}")
+            raise ValueError(
+                f"aggregate_sector={aggregate!r}: no EXIO sector codes matched patterns {tuple(patterns)!r}"
+            )
 
         subsector_to_exio = {code: [code] for code in matched}
-        x_sub = pd.Series({sub: float(x_use.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()}, dtype="float64")
-        sales_sub = pd.Series({sub: float(Z_sales_sum.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()}, dtype="float64")
-        inputs_sub = pd.Series({sub: float(Z_inputs_sum.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()}, dtype="float64")
-        fd_sub = pd.Series({sub: float(Y_fd_sum.loc[pd.Index(members)].sum()) for sub, members in subsector_to_exio.items()}, dtype="float64")
+        x_sub = pd.Series(
+            {
+                sub: float(x_use.loc[pd.Index(members)].sum())
+                for sub, members in subsector_to_exio.items()
+            },
+            dtype="float64",
+        )
+        sales_sub = pd.Series(
+            {
+                sub: float(Z_sales_sum.loc[pd.Index(members)].sum())
+                for sub, members in subsector_to_exio.items()
+            },
+            dtype="float64",
+        )
+        inputs_sub = pd.Series(
+            {
+                sub: float(Z_inputs_sum.loc[pd.Index(members)].sum())
+                for sub, members in subsector_to_exio.items()
+            },
+            dtype="float64",
+        )
+        fd_sub = pd.Series(
+            {
+                sub: float(Y_fd_sum.loc[pd.Index(members)].sum())
+                for sub, members in subsector_to_exio.items()
+            },
+            dtype="float64",
+        )
 
         output_share = normalize_share(x_sub, name=f"{aggregate}.output_share")
-        sales_share = normalize_share(sales_sub, name=f"{aggregate}.intermediate_sales_share")
-        input_share = normalize_share(inputs_sub, name=f"{aggregate}.intermediate_input_share")
+        sales_share = normalize_share(
+            sales_sub, name=f"{aggregate}.intermediate_sales_share"
+        )
+        input_share = normalize_share(
+            inputs_sub, name=f"{aggregate}.intermediate_input_share"
+        )
         try:
-            final_demand_share = normalize_share(fd_sub, name=f"{aggregate}.final_demand_share")
+            final_demand_share = normalize_share(
+                fd_sub, name=f"{aggregate}.final_demand_share"
+            )
         except ValueError:
             final_demand_share = sales_share.copy()
 
@@ -1332,7 +1614,9 @@ def _resolve_subsector_to_exio_sectors(
     *,
     agg_sector: str,
     prof: SplitProfiles,
-    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    sector_to_exio_sectors: Mapping[str, Sequence[str]]
+    | Mapping[str, Mapping[str, Sequence[str]]]
+    | None,
 ) -> Mapping[str, Sequence[str]] | None:
     subsector_map = prof.subsector_to_exio_sectors
     if subsector_map:
@@ -1366,7 +1650,9 @@ def _map_exio_ratio_to_disaggregated_sectors(
     *,
     exio_df: pd.DataFrame | None,
     split_profiles: dict[str, SplitProfiles],
-    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None,
+    sector_to_exio_sectors: Mapping[str, Sequence[str]]
+    | Mapping[str, Mapping[str, Sequence[str]]]
+    | None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     numerator_col: str,
     denominator_col: str,
@@ -1376,7 +1662,14 @@ def _map_exio_ratio_to_disaggregated_sectors(
         return None
 
     df = exio_df.copy()
-    required_cols = {"exio_sector", "extension", "stressor", "unit", numerator_col, denominator_col}
+    required_cols = {
+        "exio_sector",
+        "extension",
+        "stressor",
+        "unit",
+        numerator_col,
+        denominator_col,
+    }
     missing_cols = required_cols - set(df.columns)
     if missing_cols:
         raise ValueError(
@@ -1421,9 +1714,15 @@ def _map_exio_ratio_to_disaggregated_sectors(
                 if len(key_tuple) != len(group_cols):
                     continue
                 exio_sector_series = cast(pd.Series, group["exio_sector"])
-                weights = exio_sector_series.map(weight_map).fillna(0.0).astype("float64")
-                num_values = cast(pd.Series, pd.to_numeric(group[numerator_col], errors="coerce")).astype("float64")
-                den_values = cast(pd.Series, pd.to_numeric(group[denominator_col], errors="coerce")).astype("float64")
+                weights = (
+                    exio_sector_series.map(weight_map).fillna(0.0).astype("float64")
+                )
+                num_values = cast(
+                    pd.Series, pd.to_numeric(group[numerator_col], errors="coerce")
+                ).astype("float64")
+                den_values = cast(
+                    pd.Series, pd.to_numeric(group[denominator_col], errors="coerce")
+                ).astype("float64")
 
                 total_num = float((num_values * weights).sum())
                 if not np.isfinite(total_num):
@@ -1448,10 +1747,13 @@ def _map_exio_ratio_to_disaggregated_sectors(
         return None
     return pd.DataFrame(rows)
 
+
 def map_exio_value_per_physical_input(
     exio_quantity_and_price: pd.DataFrame | None,
     split_profiles: dict[str, SplitProfiles],
-    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    sector_to_exio_sectors: Mapping[str, Sequence[str]]
+    | Mapping[str, Mapping[str, Sequence[str]]]
+    | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
 ) -> pd.DataFrame | None:
     """Map EXIOBASE unit-value proxies to emitted disaggregated sectors."""
@@ -1459,7 +1761,10 @@ def map_exio_value_per_physical_input(
         return None
 
     exio_qp = exio_quantity_and_price.copy()
-    if "value_per_physical_input" not in exio_qp.columns and "implied_price" in exio_qp.columns:
+    if (
+        "value_per_physical_input" not in exio_qp.columns
+        and "implied_price" in exio_qp.columns
+    ):
         exio_qp = exio_qp.rename(columns={"implied_price": "value_per_physical_input"})
 
     return _map_exio_ratio_to_disaggregated_sectors(
@@ -1476,7 +1781,9 @@ def map_exio_value_per_physical_input(
 def map_exio_emission_intensity(
     exio_emissions_and_intensity: pd.DataFrame | None,
     split_profiles: dict[str, SplitProfiles],
-    sector_to_exio_sectors: Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    sector_to_exio_sectors: Mapping[str, Sequence[str]]
+    | Mapping[str, Mapping[str, Sequence[str]]]
+    | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
 ) -> pd.DataFrame | None:
     """Map EXIOBASE emissions intensity to emitted disaggregated sectors."""
@@ -1502,17 +1809,17 @@ def split_iot_using_exiobase_split_profiles(
         Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None
     ) = None,
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
-    ras_max_iter: int = 50_000,
-    ras_tol: float = 1e-10,
-    balancing_scope: str = "local",
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_tol: float = 0.0,
+    source_rounding_quantum: float = 0.01,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
     quantity_price_cache_dir: str | Path | None = None,
-    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_region_export_vector,
+    export_vector_loader: Callable[
+        ..., pd.Series
+    ] = read_exiobase3_region_export_vector,
     create_io_system: bool = True,
 ) -> SplitResult:
     """
@@ -1531,12 +1838,17 @@ def split_iot_using_exiobase_split_profiles(
         sector_patterns=sector_patterns,
         eurostat_sector_mapping=eurostat_sector_mapping,
     )
+    _validate_emitted_children(
+        sectors_old=list(map(str, eurostat_Z.index)), split_profiles=profiles
+    )
 
     if coverage_expected_exio_sectors is not None:
         if coverage_tol < 0:
             raise ValueError("coverage_tol must be >= 0")
 
-        use_total = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype("float64")
+        use_total = (
+            exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)
+        ).astype("float64")
         use_total.index = use_total.index.astype(str)
 
         errors: list[str] = []
@@ -1573,7 +1885,12 @@ def split_iot_using_exiobase_split_profiles(
             if coverage < 1.0 - float(coverage_tol):
                 missing = sorted(set(expected_list) - set(selected_list))
                 missing_contrib = (
-                    use_total.loc[missing].sort_values(ascending=False).head(10).to_dict() if missing else {}
+                    use_total.loc[missing]
+                    .sort_values(ascending=False)
+                    .head(10)
+                    .to_dict()
+                    if missing
+                    else {}
                 )
                 errors.append(
                     "Coverage check failed for EXIO constituent set.\n"
@@ -1608,20 +1925,24 @@ def split_iot_using_exiobase_split_profiles(
         Z_split=res.Z,
         Y_split=res.Y,
         x_split=res.x,
+        source_rounding_quantum=source_rounding_quantum,
     )
 
     exio_qp = None
     if extract_quantity_and_price:
-        if quantity_price_extensions is None or quantity_price_stressor_keywords is None:
+        if (
+            quantity_price_extensions is None
+            or quantity_price_stressor_keywords is None
+        ):
             raise ValueError(
                 "When extract_quantity_and_price=True, also provide "
                 "quantity_price_extensions and quantity_price_stressor_keywords."
             )
         exio_sectors = _raw_exio_members_from_profiles(profiles)
 
-        monetary_output = (exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)).astype(
-            "float64"
-        )
+        monetary_output = (
+            exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)
+        ).astype("float64")
         exio_qp = extract_exio_quantity_and_price(
             container=exio_slice.source_zip,
             region=exio_slice.region,
@@ -1639,7 +1960,6 @@ def split_iot_using_exiobase_split_profiles(
         A=res.A,
         split_profiles=res.split_profiles,
         balancing_method=res.balancing_method,
-        balancing_stats=res.balancing_stats,
         exio_selected_sectors=selected,
         exio_quantity_and_price=exio_qp,
         V=res.V,
@@ -1666,12 +1986,10 @@ def split_iot_using_exiobase_shares(
         Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None
     ) = None,
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
-    ras_max_iter: int = 50_000,
-    ras_tol: float = 1e-10,
-    balancing_scope: str = "local",
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     coverage_tol: float = 0.0,
+    source_rounding_quantum: float = 0.01,
     extract_quantity_and_price: bool = False,
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
@@ -1694,12 +2012,10 @@ def split_iot_using_exiobase_shares(
         exio_slice=exio_slice,
         sector_to_exio_sectors=sector_to_exio_sectors,
         sector_patterns=sector_patterns,
-        ras_max_iter=ras_max_iter,
-        ras_tol=ras_tol,
-        balancing_scope=balancing_scope,
         eurostat_sector_mapping=eurostat_sector_mapping,
         coverage_expected_exio_sectors=coverage_expected_exio_sectors,
         coverage_tol=coverage_tol,
+        source_rounding_quantum=source_rounding_quantum,
         extract_quantity_and_price=extract_quantity_and_price,
         quantity_price_extensions=quantity_price_extensions,
         quantity_price_stressor_keywords=quantity_price_stressor_keywords,
@@ -1745,9 +2061,15 @@ def write_split_report_xlsx(
             {
                 "subsector": list(map(str, prof.subsectors)),
                 "output_share": prof.output_share.reindex(prof.subsectors).values,
-                "intermediate_sales_share": prof.intermediate_sales_share.reindex(prof.subsectors).values,
-                "intermediate_input_share": prof.intermediate_input_share.reindex(prof.subsectors).values,
-                "final_demand_share": prof.final_demand_share.reindex(prof.subsectors).values,
+                "intermediate_sales_share": prof.intermediate_sales_share.reindex(
+                    prof.subsectors
+                ).values,
+                "intermediate_input_share": prof.intermediate_input_share.reindex(
+                    prof.subsectors
+                ).values,
+                "final_demand_share": prof.final_demand_share.reindex(
+                    prof.subsectors
+                ).values,
             }
         )
         df.insert(0, "aggregate_sector", str(agg))
@@ -1756,7 +2078,9 @@ def write_split_report_xlsx(
 
     with pd.ExcelWriter(out_path) as xw:  # pyright: ignore[reportAbstractUsage]
         profiles_df.to_excel(xw, sheet_name=_safe_sheet("split_profiles"), index=False)
-        result.Z.loc[subsectors, subsectors].to_excel(xw, sheet_name=_safe_sheet("Z_split_submatrix"))
+        result.Z.loc[subsectors, subsectors].to_excel(
+            xw, sheet_name=_safe_sheet("Z_split_submatrix")
+        )
         result.Y.loc[subsectors, :].to_excel(xw, sheet_name=_safe_sheet("Y_split_rows"))
 
     return out_path

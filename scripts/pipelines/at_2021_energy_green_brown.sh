@@ -81,7 +81,6 @@ CONSISTENCY_ARGS=(
   --exio-doi "$EXIO_DOI" \
   --exio-mapping-csv "$MAP_EXIO_TO_EUROSTAT" \
   --require-mapping-coverage --coverage-tol 0 \
-  --balancing-scope local \
   "${CONSISTENCY_ARGS[@]}" \
   "${EXIO_TO_EUROSTAT_ARGS[@]}" \
   --outdir "$OUT_SPLIT"

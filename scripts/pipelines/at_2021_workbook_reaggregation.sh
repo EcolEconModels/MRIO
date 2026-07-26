@@ -99,7 +99,6 @@ set -x
   --exio-doi "$EXIO_DOI" \
   --exio-mapping-csv "$SPLIT_MAPPING_CSV" \
   --require-mapping-coverage --coverage-tol 0 \
-  --balancing-scope local \
   "${CONSISTENCY_ARGS[@]}" \
   --exio-to-eurostat-mapping-csv "$CONCORDANCE_CSV" \
   --outdir "$OUT_SPLIT"

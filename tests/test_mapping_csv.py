@@ -55,28 +55,41 @@ def test_validate_mapping_weights_fails_on_sum() -> None:
 
 
 def test_read_weighted_mapping(tmp_path: Path) -> None:
-    from ecolecon_mrio.mapping_csv import load_weighted_mapping_frame, read_weighted_mapping
+    from ecolecon_mrio.mapping_csv import (
+        load_weighted_mapping_frame,
+        read_weighted_mapping,
+    )
 
     rows = []
-    for target, source, order in [("CPA_A", "S1", "1"), ("CPA_B", "S1", "2"), ("CPA_A", "S2", "3"), ("CPA_B", "S2", "4")]:
+    for target, source, order in [
+        ("CPA_A", "S1", "1"),
+        ("CPA_B", "S1", "2"),
+        ("CPA_A", "S2", "3"),
+        ("CPA_B", "S2", "4"),
+    ]:
         row = _canonical_base("weighted")
         row["target_code"] = target
         row["target_label"] = target
         row["source_code"] = source
         row["source_label"] = source
         row["order"] = order
+        row["allocation_rule"] = "split-by-output-share"
         rows.append(row)
     csv_path = tmp_path / "weighted.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
 
     frame = load_weighted_mapping_frame(csv_path)
-    mapping = read_weighted_mapping(csv_path, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0})
+    mapping = read_weighted_mapping(
+        csv_path, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0}
+    )
     assert set(frame["aggregate_sector"]) == {"CPA_A", "CPA_B"}
     assert mapping["CPA_A"]["S1"] == pytest.approx(0.25)
     assert mapping["CPA_B"]["S2"] == pytest.approx(0.75)
 
 
-def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(tmp_path: Path) -> None:
+def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(
+    tmp_path: Path,
+) -> None:
     from ecolecon_mrio.mapping_csv import read_weighted_mapping
 
     rows = []
@@ -103,7 +116,9 @@ def test_read_weighted_mapping_can_resolve_split_shares_from_year_outputs(tmp_pa
     csv_path = tmp_path / "weighted_split.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
 
-    mapping = read_weighted_mapping(csv_path, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0})
+    mapping = read_weighted_mapping(
+        csv_path, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0}
+    )
 
     assert mapping["CPA_A"]["S1"] == pytest.approx(0.25)
     assert mapping["CPA_B"]["S1"] == pytest.approx(0.75)
@@ -135,7 +150,10 @@ def test_read_split_mapping_uses_code_columns(tmp_path: Path) -> None:
     from ecolecon_mrio.mapping_csv import load_split_mapping_frame, read_split_mapping
 
     rows = []
-    for source, label in [("p40.11.a", "Electricity by coal"), ("p40.11.b", "Electricity by gas")]:
+    for source, label in [
+        ("p40.11.a", "Electricity by coal"),
+        ("p40.11.b", "Electricity by gas"),
+    ]:
         row = _canonical_base("split")
         row["source_code"] = source
         row["source_label"] = label
@@ -175,12 +193,20 @@ def test_read_split_manifest_uses_exio_to_eurostat_concordance(tmp_path: Path) -
     manifest_path = tmp_path / "energy_green_brown_split.csv"
     pd.DataFrame(
         [
-            {"source_code": "CPA_D", "source_label": "Electricity, gas, steam and air conditioning"},
-            {"source_code": "CPA_C19", "source_label": "Coke and refined petroleum products"},
+            {
+                "source_code": "CPA_D",
+                "source_label": "Electricity, gas, steam and air conditioning",
+            },
+            {
+                "source_code": "CPA_C19",
+                "source_label": "Coke and refined petroleum products",
+            },
         ]
     ).to_csv(manifest_path, index=False)
 
-    mapping = read_split_mapping(manifest_path, exio_to_eurostat_mapping_csv=concordance_path)
+    mapping = read_split_mapping(
+        manifest_path, exio_to_eurostat_mapping_csv=concordance_path
+    )
     assert mapping == {
         "CPA_D": ["p40.11.a", "p40.11.b"],
         "CPA_C19": ["p23.1.a"],
@@ -188,7 +214,10 @@ def test_read_split_manifest_uses_exio_to_eurostat_concordance(tmp_path: Path) -
 
 
 def test_read_aggregation_mapping(tmp_path: Path) -> None:
-    from ecolecon_mrio.mapping_csv import load_aggregation_mapping_frame, read_aggregation_mapping
+    from ecolecon_mrio.mapping_csv import (
+        load_aggregation_mapping_frame,
+        read_aggregation_mapping,
+    )
 
     rows = []
     for source, target in [("A", "X"), ("B", "X")]:
@@ -209,13 +238,30 @@ def test_read_aggregation_mapping(tmp_path: Path) -> None:
 
 
 def test_read_aggregation_manifest(tmp_path: Path) -> None:
-    from ecolecon_mrio.mapping_csv import load_aggregation_mapping_frame, read_aggregation_mapping
+    from ecolecon_mrio.mapping_csv import (
+        load_aggregation_mapping_frame,
+        read_aggregation_mapping,
+    )
 
     csv_path = tmp_path / "energy_green_brown_reaggregation.csv"
     pd.DataFrame(
         [
-            {"source_code": "p40.11.d", "source_label": "Electricity by hydro", "target_code": "ENERGY_GREEN", "target_label": "Energy Green", "enabled": "True", "notes": ""},
-            {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "ENERGY_BROWN", "target_label": "Energy Brown", "enabled": "True", "notes": ""},
+            {
+                "source_code": "p40.11.d",
+                "source_label": "Electricity by hydro",
+                "target_code": "ENERGY_GREEN",
+                "target_label": "Energy Green",
+                "enabled": "True",
+                "notes": "",
+            },
+            {
+                "source_code": "p40.11.a",
+                "source_label": "Electricity by coal",
+                "target_code": "ENERGY_BROWN",
+                "target_label": "Energy Brown",
+                "enabled": "True",
+                "notes": "",
+            },
         ]
     ).to_csv(csv_path, index=False)
 
@@ -247,7 +293,7 @@ def test_read_category_mapping(tmp_path: Path) -> None:
     assert frame.loc[0, "AllocationRule"] == "test"
     assert frame.loc[0, "SourceBalanceRole"] == "final_use"
     assert frame.loc[0, "TargetSectorRole"] == "end_use_sector"
-    assert frame.loc[0, "IncludeInDirectEnergy"] == True
+    assert bool(frame.loc[0, "IncludeInDirectEnergy"])
 
 
 def test_read_category_mapping_requires_explicit_semantic_roles(tmp_path: Path) -> None:
@@ -270,7 +316,9 @@ def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
 
     row = _canonical_base("category-target")
     row["source_code"] = "TI_RPI_DU_E"
-    row["source_label"] = "Transformation input - refineries and petrochemical industry - direct use - energy use"
+    row["source_label"] = (
+        "Transformation input - refineries and petrochemical industry - direct use - energy use"
+    )
     row["target_code"] = "CPA_C19"
     row["target_label"] = "Coke and refined petroleum products"
     row["order"] = "1"
@@ -284,8 +332,7 @@ def test_read_category_mapping_parses_semantic_roles(tmp_path: Path) -> None:
     frame = load_category_mapping_frame(csv_path)
     assert frame.loc[0, "SourceBalanceRole"] == "transformation_input"
     assert frame.loc[0, "TargetSectorRole"] == "transformation_sector"
-    assert frame.loc[0, "IncludeInDirectEnergy"] == True
-
+    assert bool(frame.loc[0, "IncludeInDirectEnergy"])
 
 
 def test_static_mappings_reject_duplicate_source_codes(tmp_path: Path) -> None:
@@ -302,15 +349,36 @@ def test_static_mappings_reject_duplicate_source_codes(tmp_path: Path) -> None:
     mapping_path = tmp_path / "mapping.csv"
     pd.DataFrame(
         [
-            {"source_code": "A", "source_label": "A", "target_code": "B", "target_label": "B", "order": 1, "enabled": True, "notes": "ok"},
-            {"source_code": "A", "source_label": "A", "target_code": "A", "target_label": "A", "order": 2, "enabled": True, "notes": "dup"},
+            {
+                "source_code": "A",
+                "source_label": "A",
+                "target_code": "B",
+                "target_label": "B",
+                "order": 1,
+                "enabled": True,
+                "notes": "ok",
+            },
+            {
+                "source_code": "A",
+                "source_label": "A",
+                "target_code": "A",
+                "target_label": "A",
+                "order": 2,
+                "enabled": True,
+                "notes": "dup",
+            },
         ]
     ).to_csv(mapping_path, index=False)
 
     with pytest.raises(ValueError, match="duplicate source codes"):
-        load_canonical_mapping_frame(mapping_path, dictionary_path, validate_target_codes=False)
+        load_canonical_mapping_frame(
+            mapping_path, dictionary_path, validate_target_codes=False
+        )
 
-def test_resolve_weighted_mapping_frame_accepts_dataframe_and_runtime_reference() -> None:
+
+def test_resolve_weighted_mapping_frame_accepts_dataframe_and_runtime_reference() -> (
+    None
+):
     from ecolecon_mrio.mapping_csv import resolve_weighted_mapping_frame
 
     rows = []
@@ -324,7 +392,9 @@ def test_resolve_weighted_mapping_frame_accepts_dataframe_and_runtime_reference(
         rows.append(row)
     frame = pd.DataFrame(rows)
 
-    resolved = resolve_weighted_mapping_frame(frame, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0})
+    resolved = resolve_weighted_mapping_frame(
+        frame, target_output_by_code={"CPA_A": 2.0, "CPA_B": 6.0}
+    )
 
     weights = dict(zip(resolved["target_code"], resolved["weight"], strict=False))
     assert weights == {"CPA_A": pytest.approx(0.25), "CPA_B": pytest.approx(0.75)}
