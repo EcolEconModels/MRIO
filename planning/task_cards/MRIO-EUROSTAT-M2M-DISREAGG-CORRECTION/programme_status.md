@@ -1,6 +1,6 @@
 # Programme status
 
-Version 1.0; baseline `6adebc884b13751347dfabd5e463d5571c599cd8`.
+Version 1.1; WP02 baseline `e507cbaa6d873a2022a05f8a4c76ce176926e432`.
 
 - WP01: correction_required
-- WP02: planned; blocked on independent WP01 audit
+- WP02: implementing (user-authorised pending combined WP01/WP02 audit)

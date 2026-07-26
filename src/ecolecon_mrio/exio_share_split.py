@@ -649,7 +649,29 @@ def _validate_split_reconstruction(
             derived=derived,
             component_term_count=terms,
             source_rounding_quantum=source_rounding_quantum,
+            rtol=rtol,
+            atol=atol,
         )
+
+    # Generated display controls are identities on each emitted child, before any
+    # parent aggregation could hide offsetting errors between children.
+    child_atomic = source_atomic_final_demand(Y_split)
+    for aggregate, detail in (("P3", ("P3_S13", "P3_S14", "P3_S15")), ("P5M", ("P52", "P53")), ("P5", ("P51G", "P5M"))):
+        if aggregate in Y_split.columns and set(detail).issubset(Y_split.columns):
+            gap = Y_split[aggregate].sub(Y_split.loc[:, list(detail)].sum(axis=1))
+            if not np.allclose(gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
+                child, value = _largest_abs_gap(gap)
+                errors.append(f"Generated {aggregate} child control failed: child={child!r}, absolute_gap={value:.12g}.")
+    if "TFU" in Y_split.columns:
+        gap = Y_split["TFU"].sub(child_atomic.sum(axis=1))
+        if not np.allclose(gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
+            child, value = _largest_abs_gap(gap)
+            errors.append(f"Generated TFU child control failed: child={child!r}, absolute_gap={value:.12g}.")
+    if "TU" in Y_split.columns:
+        gap = Y_split["TU"].sub(Z_split.sum(axis=1).add(child_atomic.sum(axis=1)))
+        if not np.allclose(gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
+            child, value = _largest_abs_gap(gap)
+            errors.append(f"Generated TU child control failed: child={child!r}, absolute_gap={value:.12g}.")
 
     # Published aggregate controls may be independently rounded in the source.
     # Generated controls must, however, equal their generated components strictly.
@@ -667,7 +689,7 @@ def _validate_split_reconstruction(
                 f"{aggregate}[{parent}]",
                 float(Y_expected.loc[parent, aggregate]),
                 float(Y_expected.loc[parent, list(source_detail)].sum()),
-                len(source_detail),
+                int(np.isfinite(Y_expected.loc[parent, list(source_detail)].to_numpy(dtype="float64")).sum()),
             )
         if aggregate in Y_back.columns and set(generated_detail).issubset(
             Y_back.columns
@@ -690,7 +712,7 @@ def _validate_split_reconstruction(
                 f"TFU[{parent}]",
                 float(Y_expected.loc[parent, "TFU"]),
                 source_tfu,
-                len(atomic_expected.columns),
+                int(np.isfinite(atomic_expected.loc[parent].to_numpy(dtype="float64")).sum()),
             )
         source_tu = float(Z_expected.loc[parent].sum()) + source_tfu
         if "TU" in Y_expected.columns:
@@ -698,7 +720,7 @@ def _validate_split_reconstruction(
                 f"TU[{parent}]",
                 float(Y_expected.loc[parent, "TU"]),
                 source_tu,
-                len(Z_expected.columns) + len(atomic_expected.columns),
+                int(np.isfinite(Z_expected.loc[parent].to_numpy(dtype="float64")).sum()) + int(np.isfinite(atomic_expected.loc[parent].to_numpy(dtype="float64")).sum()),
             )
     if "TFU" in Y_back.columns:
         gap = Y_back["TFU"].sub(atomic_back.sum(axis=1))
@@ -836,11 +858,7 @@ def _split_supplementary_rows_columnwise(
     x_split: pd.Series | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     if eurostat_V is None:
-        M_out, diagnostics = _refresh_final_demand_identity_rows(
-            eurostat_M, Y_split=Y_split, Z_split=Z_split
-        )
-        diag = pd.DataFrame(diagnostics) if diagnostics else None
-        return None, M_out, diag
+        return None, None if eurostat_M is None else eurostat_M.copy(), None
 
     V = eurostat_V.copy().astype("float64")
     V.index = V.index.astype(str)
@@ -959,10 +977,8 @@ def _split_supplementary_rows_columnwise(
                     }
                 )
 
-    M_out, M_diagnostics = _refresh_final_demand_identity_rows(
-        eurostat_M, Y_split=Y_split, Z_split=Z_split
-    )
-    diagnostics.extend(M_diagnostics)
+    # M is a supplementary-account/final-demand block, not a product axis: preserve it exactly.
+    M_out = None if eurostat_M is None else eurostat_M.copy()
     diag = pd.DataFrame(diagnostics) if diagnostics else None
     return V_split, M_out, diag
 
@@ -1443,9 +1459,13 @@ def build_split_profiles_from_exiobase_domestic_block(
                 "input": float(inputs.sum()),
                 "final_demand": float(final_demand.sum()),
             }
-            if not all(np.isfinite(value) for value in masses.values()) or all(
-                value <= 0.0 for value in masses.values()
-            ):
+            for profile_type in ("output", "sales", "input"):
+                if not np.isfinite(masses[profile_type]) or masses[profile_type] <= 0.0:
+                    raise ValueError(
+                        f"Invalid required EXIO donor profile: eurostat_parent={str(parent)!r}, flow={exio_slice.flow!r}, "
+                        f"profile_type={profile_type!r}, emitted_children={list(map(str, children.index))!r}, donor_masses={masses!r}."
+                    )
+            if not np.isfinite(masses["final_demand"]):
                 raise ValueError(
                     f"All-zero or non-finite EXIO donor profile: eurostat_parent={str(parent)!r}, flow={exio_slice.flow!r}, emitted_children={list(map(str, children.index))!r}, donor_masses={masses!r}."
                 )
