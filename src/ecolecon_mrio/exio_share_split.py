@@ -38,8 +38,9 @@ class SplitResult:
 
     Z: pd.DataFrame
     Y: pd.DataFrame
-    x: pd.Series
-    A: pd.DataFrame
+    x: pd.Series | None
+    A: pd.DataFrame | None
+    use_total: pd.Series
     split_profiles: dict[str, SplitProfiles]
     balancing_method: str
     exio_selected_sectors: dict[str, list[str]]
@@ -136,6 +137,33 @@ def _normalize_vector(values: pd.Series) -> pd.Series:
     if not np.isfinite(total) or total <= 0:
         raise ValueError("Cannot normalize non-positive donor vector.")
     return numeric / total
+
+
+def _production_column_share(
+    *,
+    parent: str,
+    profile: SplitProfiles,
+    source_column_total: float,
+    flow: str,
+    tolerance: float = 1e-12,
+) -> pd.Series:
+    """DOM-production shares for columns; zero-output children are inactive."""
+    children = pd.Index(profile.subsectors, dtype="object")
+    output = profile.output_share.reindex(children).astype("float64")
+    candidate = profile.intermediate_input_share.reindex(children).astype("float64")
+    weights = candidate.where(output > tolerance, 0.0)
+    mass = float(weights.sum())
+    if source_column_total != 0.0 and (not np.isfinite(mass) or mass <= 0.0):
+        raise ValueError(
+            "No active domestic production child for nonzero source production column: "
+            f"parent={parent!r}, children={children.astype(str).tolist()!r}, "
+            f"DOM output shares={output.to_dict()!r}, "
+            f"candidate column shares={candidate.to_dict()!r}, "
+            f"source column total={source_column_total!r}, flow={flow!r}."
+        )
+    if not np.isfinite(mass) or mass <= 0.0:
+        return pd.Series(0.0, index=children, dtype="float64")
+    return (weights / mass).astype("float64")
 
 
 def _edge_child_source_target(subsector: object) -> tuple[str, str] | None:
@@ -366,17 +394,26 @@ def project_exio_donor_blocks_for_split_profiles(
     exio_Z: pd.DataFrame,
     exio_Y: pd.DataFrame,
     split_profiles: Mapping[str, SplitProfiles],
+    column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
     raw_exio_sectors: Sequence[str] | None = None,
     emitted_labels: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Project raw EXIO donor blocks using ``P Z P.T`` and ``P Y``."""
+    """Project donor blocks as ``P_row Z P_column.T`` and ``P_row Y``."""
     P = build_projection_matrix_for_split_profiles(
         split_profiles=split_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
         raw_exio_sectors=raw_exio_sectors,
         emitted_labels=emitted_labels,
     )
+    P_column = build_projection_matrix_for_split_profiles(
+        split_profiles=column_split_profiles or split_profiles,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+        raw_exio_sectors=raw_exio_sectors,
+        emitted_labels=emitted_labels,
+    )
+    if not P.index.equals(P_column.index):
+        raise ValueError("Row and column profiles must emit identical ordered children.")
     raw_order = list(map(str, P.columns))
 
     Z_raw = exio_Z.copy().astype("float64")
@@ -391,7 +428,7 @@ def project_exio_donor_blocks_for_split_profiles(
 
     p_arr = P.to_numpy(dtype="float64")
     Z_projected = pd.DataFrame(
-        p_arr @ Z_block.to_numpy(dtype="float64") @ p_arr.T,
+        p_arr @ Z_block.to_numpy(dtype="float64") @ P_column.to_numpy(dtype="float64").T,
         index=P.index.copy(),
         columns=P.index.copy(),
         dtype="float64",
@@ -1070,6 +1107,7 @@ def _split_iot_using_donor_blocks(
     eurostat_M: pd.DataFrame | None = None,
     exio_slice: ExioRegionSlice,
     split_profiles: Mapping[str, SplitProfiles],
+    column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     create_io_system: bool,
     export_vector_loader: Callable[
@@ -1084,9 +1122,12 @@ def _split_iot_using_donor_blocks(
     Y.columns = Y.columns.astype(str)
 
     sectors_old = list(map(str, Z.index))
+    column_profiles = column_split_profiles or split_profiles
     sectors_new = _expanded_sector_order(
         sectors_old=sectors_old, split_profiles=split_profiles
     )
+    if _expanded_sector_order(sectors_old=sectors_old, split_profiles=column_profiles) != sectors_new:
+        raise ValueError("Row and column profiles must emit identical ordered children.")
     Z_split = pd.DataFrame(
         0.0, index=pd.Index(sectors_new), columns=pd.Index(sectors_new), dtype="float64"
     )
@@ -1102,6 +1143,7 @@ def _split_iot_using_donor_blocks(
         exio_Z=exio_slice.Z_domestic,
         exio_Y=exio_slice.Y_region,
         split_profiles=split_profiles,
+        column_split_profiles=column_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
         raw_exio_sectors=list(map(str, exio_slice.sectors)),
         emitted_labels=sectors_new,
@@ -1119,8 +1161,8 @@ def _split_iot_using_donor_blocks(
         )
         for col_sector in sectors_old:
             col_labels = (
-                list(split_profiles[col_sector].subsectors)
-                if col_sector in split_profiles
+                list(column_profiles[col_sector].subsectors)
+                if col_sector in column_profiles
                 else [col_sector]
             )
             cell_total = float(Z.loc[row_sector, col_sector])
@@ -1136,20 +1178,35 @@ def _split_iot_using_donor_blocks(
                 .fillna(0.0)
                 .astype("float64")
             )
+            if col_sector in column_profiles:
+                _production_column_share(
+                    parent=str(col_sector),
+                    profile=column_profiles[col_sector],
+                    source_column_total=float(Z.loc[:, col_sector].sum()),
+                    flow=exio_slice.flow,
+                )
+                active_columns = (
+                    column_profiles[col_sector]
+                    .output_share.reindex(col_labels)
+                    .fillna(0.0)
+                    .gt(1e-12)
+                )
+                donor_values = donor_values.mul(active_columns.astype("float64"), axis=1)
 
             donor_total = float(donor_values.to_numpy(dtype="float64").sum())
             if np.isfinite(donor_total) and donor_total > 0.0:
                 alloc = donor_values * (cell_total / donor_total)
-            elif row_sector in split_profiles and col_sector in split_profiles:
+            elif row_sector in split_profiles and col_sector in column_profiles:
                 row_share = _normalize_vector(
                     split_profiles[row_sector]
                     .intermediate_sales_share.reindex(row_labels)
                     .fillna(0.0)
                 )
-                col_share = _normalize_vector(
-                    split_profiles[col_sector]
-                    .intermediate_input_share.reindex(col_labels)
-                    .fillna(0.0)
+                col_share = _production_column_share(
+                    parent=str(col_sector),
+                    profile=column_profiles[col_sector],
+                    source_column_total=float(Z.loc[:, col_sector].sum()),
+                    flow=exio_slice.flow,
                 )
                 alloc = pd.DataFrame(
                     np.outer(row_share.to_numpy(), col_share.to_numpy()) * cell_total,
@@ -1189,11 +1246,12 @@ def _split_iot_using_donor_blocks(
                         "fallback_type": "row_split_sales_share",
                     }
                 )
-            elif col_sector in split_profiles:
-                col_share = _normalize_vector(
-                    split_profiles[col_sector]
-                    .intermediate_input_share.reindex(col_labels)
-                    .fillna(0.0)
+            elif col_sector in column_profiles:
+                col_share = _production_column_share(
+                    parent=str(col_sector),
+                    profile=column_profiles[col_sector],
+                    source_column_total=float(Z.loc[:, col_sector].sum()),
+                    flow=exio_slice.flow,
                 )
                 alloc = pd.DataFrame(
                     col_share.to_numpy().reshape(1, -1) * cell_total,
@@ -1316,50 +1374,30 @@ def _split_iot_using_donor_blocks(
             )
 
     Y_split = enforce_final_demand_display_identities(Y_split, Z=Z_split)
-    x_split = flow_use_total(Z_split, Y_split)
-    A_split = technical_coefficients(Z_split, x_split)
-    V_split, M_split, supplementary_diagnostics = _split_supplementary_rows_columnwise(
-        eurostat_V=eurostat_V,
-        eurostat_M=eurostat_M,
-        sectors_old=sectors_old,
-        sectors_new=sectors_new,
-        split_profiles=split_profiles,
-        Z_split=Z_split,
-        Y_split=Y_split,
-        x_split=x_split,
-    )
-
-    io_system = None
-    if create_io_system:
-        try:
-            import pymrio  # pyright: ignore[reportMissingImports]
-
-            io_system = pymrio.IOSystem()
-            io_system.Z = Z_split
-            io_system.Y = Y_split
-            io_system.x = x_split
-            io_system.A = A_split
-        except ImportError:
-            pass
+    use_total = flow_use_total(Z_split, Y_split)
+    # Primitive flows have no canonical domestic output or technical matrix.
+    # V allocation is deferred because it requires that canonical output.
+    M_split = eurostat_M.copy() if eurostat_M is not None else None
 
     fallback_count = len(fallback_records)
     method = "DONOR_BLOCK" if fallback_count == 0 else "DONOR_BLOCK_WITH_SHARE_FALLBACK"
     return SplitResult(
         Z=Z_split,
         Y=Y_split,
-        x=x_split,
-        A=A_split,
+        x=None,
+        A=None,
+        use_total=use_total,
         split_profiles=dict(split_profiles),
         balancing_method=method,
         exio_selected_sectors={},
         exio_quantity_and_price=None,
-        V=V_split,
+        V=None,
         M=M_split,
-        supplementary_diagnostics=supplementary_diagnostics,
+        supplementary_diagnostics=None,
         fallback_diagnostics=pd.DataFrame(fallback_records)
         if fallback_records
         else None,
-        io_system=io_system,
+        io_system=None,
     )
 
 
@@ -1954,6 +1992,7 @@ def split_iot_using_exiobase_split_profiles(
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
+    column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     coverage_tol: float = 0.0,
     source_rounding_quantum: float | None = None,
     extract_quantity_and_price: bool = False,
@@ -2068,6 +2107,7 @@ def split_iot_using_exiobase_split_profiles(
         eurostat_M=eurostat_M,
         exio_slice=exio_slice,
         split_profiles=profiles,
+        column_split_profiles=column_split_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
         create_io_system=create_io_system,
         export_vector_loader=export_vector_loader,
@@ -2110,8 +2150,9 @@ def split_iot_using_exiobase_split_profiles(
     return SplitResult(
         Z=res.Z,
         Y=res.Y,
-        x=res.x,
-        A=res.A,
+        x=None,
+        A=None,
+        use_total=res.use_total,
         split_profiles=res.split_profiles,
         balancing_method=res.balancing_method,
         exio_selected_sectors=selected,
@@ -2141,6 +2182,7 @@ def split_iot_using_exiobase_shares(
     ) = None,
     sector_patterns: Mapping[str, Sequence[str]] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
+    column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
     coverage_tol: float = 0.0,
     source_rounding_quantum: float | None = None,
@@ -2167,6 +2209,7 @@ def split_iot_using_exiobase_shares(
         sector_to_exio_sectors=sector_to_exio_sectors,
         sector_patterns=sector_patterns,
         eurostat_sector_mapping=eurostat_sector_mapping,
+        column_split_profiles=column_split_profiles,
         coverage_expected_exio_sectors=coverage_expected_exio_sectors,
         coverage_tol=coverage_tol,
         source_rounding_quantum=source_rounding_quantum,

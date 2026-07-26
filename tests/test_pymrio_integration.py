@@ -104,8 +104,8 @@ def test_io_system_calc_system():
     assert np.allclose(product, I, atol=1e-10), "Leontief inverse should satisfy (I-A)*L = I"
 
 
-def test_split_result_has_io_system():
-    """Test that SplitResult also includes IOSystem."""
+def test_primitive_split_result_defers_io_system():
+    """Primitive split has no canonical x/A, so it cannot create pymrio state."""
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
@@ -148,10 +148,9 @@ def test_split_result_has_io_system():
         sector_patterns={"C19": ("coke", "refined")},
     )
 
-    # Verify IOSystem is present
-    assert res.io_system is not None, "SplitResult should have IOSystem"
-    assert hasattr(res.io_system, "Z"), "IOSystem should have Z"
-    assert res.io_system.Z.equals(res.Z), "IOSystem.Z should match result.Z"
+    assert res.io_system is None
+    assert res.x is None and res.A is None
+    assert res.use_total is not None
 
 
 def test_outer_share_matrix_no_redundant_normalization():

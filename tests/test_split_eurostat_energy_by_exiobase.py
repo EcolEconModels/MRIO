@@ -221,16 +221,7 @@ def test_split_supplementary_m_identity_tfu_and_tu_columns() -> None:
     )
 
     assert M_out is not None
-    identity = M_out.loc["Total intermediate consumption / final use"]
-    assert identity["P3"] == pytest.approx(30.0)
-    assert identity["P5"] == pytest.approx(3.0)
-    assert identity["P6"] == pytest.approx(7.0)
-    assert identity["TFU"] == pytest.approx(40.0)
-    assert identity["TU"] == pytest.approx(float(Z_split.to_numpy().sum()) + 40.0)
-    assert diagnostics is not None
-    assert diagnostics["allocation_method"].tolist() == [
-        "accounting_identity_final_demand_column_sum"
-    ]
+    pd.testing.assert_frame_equal(M_out, M)
 
 
 def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
@@ -769,9 +760,10 @@ def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path)
     )
     pd.testing.assert_series_equal(
         flow_use_total(res.Z, res.Y),
-        res.x.astype("float64"),
+        res.use_total.astype("float64"),
         check_names=False,
     )
+    assert res.x is None and res.A is None
 
 
 def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
@@ -872,50 +864,9 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
         create_io_system=False,
     )
 
-    assert res.V is not None
     assert res.M is not None
-    expected_intermediate = res.Z.sum(axis=0).astype("float64")
-    # Primitive DOM value added remains monetary source data, disaggregated by
-    # the documented output-share proxy; it is not replaced by a residual.
-    expected_value_added = pd.Series([10.0, 80.0], index=res.V.columns, dtype="float64")
-    pd.testing.assert_series_equal(
-        res.V.loc["Value added, gross"].astype("float64"),
-        expected_value_added,
-        check_names=False,
-    )
-    pd.testing.assert_series_equal(
-        res.V.loc["Total intermediate consumption /final use"].astype("float64"),
-        expected_intermediate,
-        check_names=False,
-    )
-    # Primitive DOM total supply remains the published monetary row, allocated
-    # by its documented input-use proxy rather than replaced by split output.
-    expected_total_supply = pd.Series(
-        [888.0 / 9.0, 888.0 * 8.0 / 9.0],
-        index=res.V.columns,
-        dtype="float64",
-    )
-    pd.testing.assert_series_equal(
-        res.V.loc["Total supply at basic prices"].astype("float64"),
-        expected_total_supply,
-        check_names=False,
-    )
-    assert float(res.V.loc["Total supply at basic prices"].sum()) == pytest.approx(
-        888.0
-    )
-    assert pd.isna(res.M.loc["Value added, gross", "P3"])
-    assert res.M.loc[
-        "Total intermediate consumption /final use", "P3"
-    ] == pytest.approx(float(res.Y.sum(axis=0)["P3"]))
-    assert res.supplementary_diagnostics is not None
-    identity_rows = {"Total intermediate consumption /final use"}
-    proxy_rows = res.supplementary_diagnostics.loc[
-        ~res.supplementary_diagnostics["parent_code"]
-        .astype(str)
-        .eq("__accounting_identity__"),
-        "row_code",
-    ].astype(str)
-    assert not identity_rows.intersection(set(proxy_rows))
+    assert res.V is None
+    pd.testing.assert_frame_equal(res.M, euro_M)
 
 
 def test_validate_split_reconstruction_preserves_original_final_demand_columns():

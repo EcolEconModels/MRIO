@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
 
 import pandas as pd
+import pytest
 
 
 def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> None:
@@ -114,3 +116,113 @@ def test_donor_block_derives_controls_instead_of_allocating_them(tmp_path: Path)
         assert not set(result.fallback_diagnostics["col_sector"].astype(str)).intersection(
             {"P3", "TFU", "TU"}
         )
+
+
+def _primitive_fixture(tmp_path: Path, *, dom_output: tuple[float, float] = (0.0, 1.0)):
+    from ecolecon_mrio.disaggregation import SplitProfiles
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+
+    children = ("a0", "a1")
+    dom = SplitProfiles(
+        aggregate_sector="A", subsectors=children,
+        output_share=pd.Series(dom_output, index=children),
+        intermediate_sales_share=pd.Series([0.5, 0.5], index=children),
+        intermediate_input_share=pd.Series([0.8, 0.2], index=children),
+        final_demand_share=pd.Series([0.5, 0.5], index=children),
+        subsector_to_exio_sectors={"a0": ["a0"], "a1": ["a1"]},
+    )
+    imp = SplitProfiles(
+        aggregate_sector="A", subsectors=children,
+        output_share=pd.Series([1.0, 0.0], index=children),
+        intermediate_sales_share=pd.Series([0.5, 0.5], index=children),
+        intermediate_input_share=pd.Series([0.1, 0.9], index=children),
+        final_demand_share=pd.Series([0.5, 0.5], index=children),
+        subsector_to_exio_sectors={"a0": ["a0"], "a1": ["a1"]},
+    )
+    raw = ["a0", "a1", "B"]
+    donor = pd.DataFrame(0.0, index=raw, columns=raw)
+    y = pd.DataFrame({"P3": [1.0, 1.0, 1.0]}, index=raw)
+    exio = ExioRegionSlice(
+        year=2021, system="pxp", region="AT", sectors=pd.Index(raw),
+        Z_domestic=donor, Y_region=y, x_region=y.sum(axis=1),
+        source_zip=tmp_path / "donors.zip", flow="imports",
+    )
+    Z = pd.DataFrame([[5.0, 8.0], [2.0, 3.0]], index=["A", "B"], columns=["A", "B"])
+    Y = pd.DataFrame({"P3": [2.0, 1.0]}, index=["A", "B"])
+    return Z, Y, exio, {"A": dom}, {"A": imp}
+
+
+def test_primitive_imp_uses_dom_columns_and_defers_x_a(tmp_path: Path) -> None:
+    from ecolecon_mrio.exio_share_split import _split_iot_using_donor_blocks
+
+    Z, Y, exio, dom_profiles, imp_profiles = _primitive_fixture(tmp_path)
+    dom_result = _split_iot_using_donor_blocks(
+        eurostat_Z=Z, eurostat_Y=Y, exio_slice=exio,
+        split_profiles=dom_profiles, column_split_profiles=dom_profiles,
+        eurostat_sector_mapping=None, create_io_system=False,
+    )
+    result = _split_iot_using_donor_blocks(
+        eurostat_Z=Z, eurostat_Y=Y, exio_slice=exio,
+        split_profiles=imp_profiles, column_split_profiles=dom_profiles,
+        eurostat_sector_mapping=None, create_io_system=False,
+    )
+    assert list(dom_result.Z.index) == list(result.Z.index)
+    assert list(result.Z.index) == ["a0", "a1", "B"]
+    assert list(result.Z.columns) == ["a0", "a1", "B"]
+    assert float(dom_result.Z["a0"].sum()) == 0.0
+    assert float(result.Z["a0"].sum()) == 0.0
+    assert float(result.Z["a1"].sum()) > 0.0
+    assert result.x is None and result.A is None
+    assert result.use_total.equals(result.Z.sum(axis=1) + result.Y["P3"])
+
+
+def test_donor_projection_uses_separate_row_and_column_profiles() -> None:
+    from ecolecon_mrio.disaggregation import SplitProfiles
+    from ecolecon_mrio.exio_share_split import project_exio_donor_blocks_for_split_profiles
+
+    children = ("c0", "c1")
+    shares = pd.Series([0.5, 0.5], index=children)
+    row = SplitProfiles("A", children, shares, shares, shares, shares, {"c0": ["r0"], "c1": ["r1"]})
+    column = SplitProfiles("A", children, shares, shares, shares, shares, {"c0": ["r1"], "c1": ["r0"]})
+    raw_z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=["r0", "r1"], columns=["r0", "r1"])
+    raw_y = pd.DataFrame({"P3": [5.0, 6.0]}, index=["r0", "r1"])
+    _, donor_z, donor_y = project_exio_donor_blocks_for_split_profiles(
+        exio_Z=raw_z, exio_Y=raw_y, split_profiles={"A": row},
+        column_split_profiles={"A": column}, raw_exio_sectors=["r0", "r1"],
+        emitted_labels=children,
+    )
+    pd.testing.assert_frame_equal(donor_z, pd.DataFrame([[2.0, 1.0], [4.0, 3.0]], index=children, columns=children))
+    pd.testing.assert_frame_equal(donor_y, pd.DataFrame({"P3": [5.0, 6.0]}, index=children))
+
+
+def test_primitive_zero_output_parent_with_inputs_fails_contextually(tmp_path: Path) -> None:
+    from ecolecon_mrio.exio_share_split import _split_iot_using_donor_blocks
+
+    Z, Y, exio, dom_profiles, _ = _primitive_fixture(tmp_path, dom_output=(0.0, 0.0))
+    with pytest.raises(ValueError, match="parent='A'.*source column total=.*flow='imports'"):
+        _split_iot_using_donor_blocks(
+            eurostat_Z=Z, eurostat_Y=Y, exio_slice=exio,
+            split_profiles=dom_profiles, column_split_profiles=dom_profiles,
+            eurostat_sector_mapping=None, create_io_system=False,
+        )
+
+
+def test_primitive_writer_emits_use_total_but_not_x_or_a(tmp_path: Path) -> None:
+    from ecolecon_mrio.exio_share_split import _split_iot_using_donor_blocks
+
+    Z, Y, exio, dom_profiles, _ = _primitive_fixture(tmp_path)
+    result = _split_iot_using_donor_blocks(
+        eurostat_Z=Z, eurostat_Y=Y, eurostat_M=pd.DataFrame([[1.0]], index=["m"], columns=["P3"]),
+        exio_slice=exio, split_profiles=dom_profiles, column_split_profiles=dom_profiles,
+        eurostat_sector_mapping=None, create_io_system=False,
+    )
+    script = Path(__file__).resolve().parents[1] / "scripts" / "split_eurostat_energy_by_exiobase.py"
+    spec = importlib.util.spec_from_file_location("split_writer", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.write_split_core_outputs(result, tmp_path / "out", verbose=False)
+    out = tmp_path / "out"
+    assert (out / "Z_split.csv").is_file() and (out / "Y_split.csv").is_file()
+    assert (out / "use_total_split.csv").is_file() and (out / "M_split.csv").is_file()
+    assert not any((out / name).exists() for name in ("x_split.csv", "A_split.csv", "x_split_balanced.csv", "A_split_balanced.csv"))

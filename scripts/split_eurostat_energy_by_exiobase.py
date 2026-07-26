@@ -187,14 +187,13 @@ def write_split_core_outputs(
         elif primary_name.startswith("Y_"):
             _write_df_csv(res.Y, outdir / primary_name, verbose=verbose)
             _write_df_csv(res.Y, outdir / legacy_name, verbose=verbose)
-        elif primary_name.startswith("x_"):
-            _write_series_csv(
-                res.x, outdir / primary_name, verbose=verbose, header=True
-            )
-            _write_series_csv(res.x, outdir / legacy_name, verbose=verbose, header=True)
-        else:
-            _write_df_csv(res.A, outdir / primary_name, verbose=verbose)
-            _write_df_csv(res.A, outdir / legacy_name, verbose=verbose)
+        elif primary_name.startswith(("x_", "A_")):
+            # Primitive splitting has flow use totals, not canonical domestic x/A.
+            continue
+    if res.use_total is not None:
+        _write_series_csv(
+            res.use_total, outdir / "use_total_split.csv", verbose=verbose, header=True
+        )
 
     _write_text(
         outdir / "exio_selected_sectors.json",
@@ -1246,7 +1245,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             assert outdir is not None
             flow_identity_totals: dict[str, dict[str, float]] = {}
-            for flow, parsed_variant in variants.items():
+            dom_column_profiles = None
+            ordered_flows = sorted(
+                variants,
+                key=lambda value: (0 if str(value) == "DOM" else 1, str(value)),
+            )
+            for flow in ordered_flows:
+                parsed_variant = variants[flow]
                 flow_dir = outdir / f"{args.eurostat_stk_flow_dim}={flow}"
                 flow_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1264,6 +1269,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "Skipping EXIO extension CO2/value proxy outputs for IMP flow: "
                         "origin-weighted import intensities are not implemented; AT-region extension "
                         "proxies would be misleading.",
+                    )
+                if exio_flow == "imports" and dom_column_profiles is None:
+                    raise SystemExit(
+                        "IMP primitive splitting requires DOM in --eurostat-stk-flows "
+                        "so production-column profiles are domestic."
                     )
                 flow_sector_mapping: dict[str, dict[str, float]] | None = None
                 flow_sector_notes: dict[str, str] | None = None
@@ -1354,6 +1364,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else sector_patterns,
                     exio_cache_root=data_root,
                     eurostat_sector_mapping=flow_sector_mapping,
+                    column_split_profiles=(
+                        dom_column_profiles if exio_flow == "imports" else None
+                    ),
                     coverage_expected_exio_sectors=coverage_expected_exio,
                     coverage_tol=args.coverage_tol,
                     source_rounding_quantum=args.source_rounding_quantum
@@ -1375,6 +1388,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.verbose,
                     f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)",
                 )
+
+                if str(flow) == "DOM":
+                    dom_column_profiles = res.split_profiles
 
                 write_split_core_outputs(
                     res,
