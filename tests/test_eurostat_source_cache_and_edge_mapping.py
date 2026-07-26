@@ -413,7 +413,7 @@ def test_supplementary_rows_use_row_specific_proxy_hierarchy():
     assert V_split.loc["OTHER_ROW", "child_input_heavy"] == 75.0
     assert "output_share_proxy_for_value_added_row" in set(diag["allocation_method"])
     assert "projected_exio_column_use_proxy" in set(diag["allocation_method"])
-    assert pd.isna(M_out.loc["B1G", "P3"])
+    assert M_out.loc["B1G", "P3"] == pytest.approx(7.0)
 
 
 def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
@@ -473,12 +473,8 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
     )
     expected_Y = pd.DataFrame([[30.0], [30.0]], index=["CPA_C20", "CPA_C21"], columns=["P3"])
     expected_x = expected_Z.sum(axis=1) + expected_Y.sum(axis=1)
-    expected_V = pd.DataFrame(
-        [(expected_x - expected_Z.sum(axis=0)).astype("float64")],
-        index=["B1G"],
-        columns=["CPA_C20", "CPA_C21"],
-    )
-    expected_M = pd.DataFrame([[float("nan")]], index=["B1G"], columns=["P3"])
+    expected_V = pd.DataFrame([[300.0, 300.0]], index=["B1G"], columns=["CPA_C20", "CPA_C21"])
+    expected_M = M.copy()
 
     pd.testing.assert_frame_equal(result.Z, expected_Z)
     pd.testing.assert_frame_equal(result.Y, expected_Y)

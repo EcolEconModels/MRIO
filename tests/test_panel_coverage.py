@@ -24,7 +24,7 @@ def test_attempt_mrio_year_success_and_validator(monkeypatch):
 
     import ecolecon_mrio.panel_coverage as pc
 
-    monkeypatch.setattr(pc, "load_mrio", _fake_load_mrio)
+    monkeypatch.setattr(pc, "_coverage_load_mrio", _fake_load_mrio)
     rec = attempt_mrio_year("exiobase", 2020, validators={"ready": _validator})
     assert rec.load_status == "ok"
     assert rec.calc_all_status == "ok"
@@ -39,7 +39,7 @@ def test_attempt_mrio_year_failure_records_error(monkeypatch):
 
     import ecolecon_mrio.panel_coverage as pc
 
-    monkeypatch.setattr(pc, "load_mrio", _fake_load_mrio)
+    monkeypatch.setattr(pc, "_coverage_load_mrio", _fake_load_mrio)
     rec = attempt_mrio_year("exiobase", 2021)
     assert rec.load_status == "load_error"
     assert "RuntimeError" in rec.load_reason
@@ -118,7 +118,7 @@ def test_attempt_mrio_year_passes_download_control_kwargs(monkeypatch):
 
     import ecolecon_mrio.panel_coverage as pc
 
-    monkeypatch.setattr(pc, 'load_mrio', _fake_load_mrio)
+    monkeypatch.setattr(pc, '_coverage_load_mrio', _fake_load_mrio)
     rec = attempt_mrio_year(
         'exiobase',
         2022,

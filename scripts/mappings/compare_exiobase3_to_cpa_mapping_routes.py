@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -77,6 +79,9 @@ def read_pairs(path: Path, *, route_name: str) -> dict[tuple[str, str], dict[str
     missing = sorted(set(PAIR_COLUMNS) - set(frame.columns))
     if missing:
         raise ValueError(f"{path} missing required columns: {missing}")
+    if "enabled" in frame.columns:
+        enabled = frame["enabled"].map(clean_text).str.casefold()
+        frame = frame.loc[~enabled.isin({"0", "false", "no", "off"})].copy()
     records = cast(list[dict[str, Any]], frame.loc[:, list(PAIR_COLUMNS)].to_dict(orient="records"))
     out: dict[tuple[str, str], dict[str, str]] = {}
     for record in records:

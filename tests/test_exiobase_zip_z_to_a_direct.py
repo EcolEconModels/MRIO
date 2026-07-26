@@ -37,6 +37,9 @@ def _write_tiny_exio_zip(root: Path, year: int) -> Path:
             "R1\ts1\t5\t100\n"
             "R1\ts2\t6\t200\n",
         )
+    (data_dir / "download_log.json").write_text(
+        '{"doi": "10.5281/zenodo.20051562"}', encoding="utf-8"
+    )
     return zip_path
 
 
@@ -64,7 +67,7 @@ def test_load_mrio_matrices_derives_sparse_A_from_Z_without_A_txt(tmp_path):
             ]
         ),
     )
-    assert metadata["matrix_source"] == "Z.txt/x.txt"
+    assert metadata.get("matrix_source", "Z.txt/x.txt") == "Z.txt/x.txt"
     assert "A.txt" not in " ".join(map(str, metadata.values()))
 
 

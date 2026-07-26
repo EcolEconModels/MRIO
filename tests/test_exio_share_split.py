@@ -7,6 +7,37 @@ import pandas as pd
 import pytest
 
 
+def test_output_share_uses_weighted_producer_output_for_canonical_p1(tmp_path: Path) -> None:
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block
+
+    sectors = pd.Index(["a", "b"])
+    # Destination use is equal (20/20), whereas producer output is deliberately
+    # asymmetric (80/20).  The edge-child labels exercise concordance weights.
+    Z = pd.DataFrame([[10.0, 0.0], [0.0, 10.0]], index=sectors, columns=sectors)
+    Y = pd.DataFrame({"FD": [10.0, 10.0]}, index=sectors)
+    exio = ExioRegionSlice(
+        year=2021, system="pxp", region="AT", sectors=sectors,
+        Z_domestic=Z, Y_region=Y,
+        x_region=pd.Series([80.0, 20.0], index=sectors),
+        source_zip=tmp_path / "donor.zip",
+    )
+    profiles, _ = build_split_profiles_from_exiobase_domestic_block(
+        exio,
+        sector_to_exio_sectors={"CPA": {"a@CPA": ["a"], "b@CPA": ["b"]}},
+        eurostat_sector_mapping={"CPA": {"a": 0.5, "b": 1.0}},
+    )
+
+    shares = profiles["CPA"].output_share
+    assert shares.loc["a@CPA"] == pytest.approx(2.0 / 3.0)
+    assert shares.loc["b@CPA"] == pytest.approx(1.0 / 3.0)
+    assert shares.loc["a@CPA"] != pytest.approx(0.5)
+    assert shares.loc["b@CPA"] != pytest.approx(0.5)
+    child_p1 = shares * 120.0
+    assert child_p1.loc["a@CPA"] == pytest.approx(80.0)
+    assert child_p1.loc["b@CPA"] == pytest.approx(40.0)
+
+
 def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> None:
     from ecolecon_mrio.disaggregation import SplitProfiles
     from ecolecon_mrio.exiobase3 import ExioRegionSlice

@@ -685,6 +685,33 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         _write_series(use[flow], dirs[flow] / "use_total_split.csv")
         _write_series(x_domestic, dirs[flow] / "x_split.csv")
         _write_frame(technical_coefficients(Z[flow], x_domestic), dirs[flow], "A_split.csv")
+    analytical_rows: list[dict[str, object]] = []
+    for flow in Z:
+        residual = x_domestic.sub(use[flow], fill_value=0.0)
+        for product_code, value in residual.items():
+            analytical_rows.append({
+                "flow": flow,
+                "product_code": str(product_code),
+                "x": float(x_domestic.loc[product_code]),
+                "use_total": float(use[flow].loc[product_code]),
+                "residual": float(value),
+                "absolute_residual": abs(float(value)),
+            })
+    analytical = pd.DataFrame(analytical_rows)
+    analytical.to_csv(outdir / "analytical_balance_diagnostic.csv", index=False)
+    dom_residual = x_domestic.sub(use["DOM"], fill_value=0.0)
+    dom_max = float(dom_residual.abs().max()) if len(dom_residual) else 0.0
+    dom_scale = max(
+        float(x_domestic.abs().max()) if len(x_domestic) else 0.0,
+        float(use["DOM"].abs().max()) if len(use["DOM"]) else 0.0,
+    )
+    dom_cleared = dom_max <= max(atol, rtol * dom_scale)
+    (outdir / "analytical_status.json").write_text(json.dumps({
+        "DOM_balance_max_abs": dom_max,
+        "DOM_A_status": "leontief_cleared" if dom_cleared else "denominator_only_not_leontief_cleared",
+        "IMP_A_status": "import_coefficients_per_domestic_output",
+        "TOTAL_A_status": "total_input_coefficients_per_domestic_output",
+    }, indent=2) + "\n", encoding="utf-8")
     diagnostics.append({"stage": "row_use_diagnostic", "flow": "DOM", "object": "row_use_minus_p1", "max_abs_gap": float((use["DOM"] - x_domestic).abs().max())})
     for flow in ("DOM", "IMP"):
         reference = references[flow]

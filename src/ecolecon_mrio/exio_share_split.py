@@ -1476,13 +1476,24 @@ def build_split_profiles_from_exiobase_domestic_block(
     selected: dict[str, list[str]] = {}
     exio_sector_index = pd.Index(exio_slice.sectors.astype(str))
     available_codes = set(map(str, exio_sector_index))
+    x_region_index = pd.Index(exio_slice.x_region.index.astype(str))
+    if set(x_region_index) != set(exio_sector_index):
+        raise ValueError(
+            "EXIO producer output sector coverage differs from the donor sector index: "
+            f"missing={sorted(set(exio_sector_index) - set(x_region_index))!r}, "
+            f"extra={sorted(set(x_region_index) - set(exio_sector_index))!r}."
+        )
+    producer_output = exio_slice.x_region.copy()
+    producer_output.index = producer_output.index.astype(str)
+    producer_output = producer_output.reindex(exio_sector_index).astype("float64")
+    if producer_output.isna().any() or not np.isfinite(producer_output.to_numpy()).all() or (producer_output < 0.0).any():
+        raise ValueError("EXIO producer output must be finite, non-negative, and complete for every donor sector.")
 
     if sector_to_exio_sectors is not None:
         from ecolecon_mrio.disaggregation import SplitProfiles, normalize_share
 
         Z_rr = exio_slice.Z_domestic
         Y_r = exio_slice.Y_region
-        x_use = (Z_rr.sum(axis=1) + Y_r.sum(axis=1)).astype("float64")
 
         # Pre-compute sums to avoid repetitive matrix summing in loop
         # These are series indexed by exio sector
@@ -1541,7 +1552,7 @@ def build_split_profiles_from_exiobase_domestic_block(
                 x_sub = pd.Series(
                     {
                         sub: _weighted_exio_member_sum(
-                            x_use,
+                            producer_output,
                             subsector=sub,
                             members=list(map(str, members)),
                             eurostat_sector_mapping=eurostat_sector_mapping,
@@ -1641,7 +1652,7 @@ def build_split_profiles_from_exiobase_domestic_block(
                 x_sub = pd.Series(
                     {
                         sub: _weighted_exio_member_sum(
-                            x_use,
+                            producer_output,
                             subsector=sub,
                             members=list(map(str, members)),
                             eurostat_sector_mapping=eurostat_sector_mapping,
@@ -1723,7 +1734,6 @@ def build_split_profiles_from_exiobase_domestic_block(
     assert sector_patterns is not None
     Z_rr = exio_slice.Z_domestic
     Y_r = exio_slice.Y_region
-    x_use = (Z_rr.sum(axis=1) + Y_r.sum(axis=1)).astype("float64")
     Z_sales_sum = Z_rr.sum(axis=1)
     Z_inputs_sum = Z_rr.sum(axis=0)
     Y_fd_sum = Y_r.sum(axis=1)
@@ -1744,7 +1754,12 @@ def build_split_profiles_from_exiobase_domestic_block(
         subsector_to_exio = {code: [code] for code in matched}
         x_sub = pd.Series(
             {
-                sub: float(x_use.loc[pd.Index(members)].sum())
+                sub: _weighted_exio_member_sum(
+                    producer_output,
+                    subsector=sub,
+                    members=list(map(str, members)),
+                    eurostat_sector_mapping=eurostat_sector_mapping,
+                )
                 for sub, members in subsector_to_exio.items()
             },
             dtype="float64",

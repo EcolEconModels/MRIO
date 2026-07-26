@@ -2220,7 +2220,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(f"Expected one output column in {x_input_path}, found {x_input_frame.shape[1]}")
         x_input = x_input_frame.iloc[:, 0].astype("float64")
         x_input.index = x_input.index.astype(str)
-        flow_role = str(out_base.name).split("=", 1)[-1].upper()
+        flow_role = (
+            str(out_base.name).split("=", 1)[-1].upper()
+            if str(out_base.name).startswith("stk_flow=")
+            else "TOTAL"
+        )
         res = aggregate_iot(
             Z,
             Y,

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 
 def test_compute_mapping_shares_from_outputs_and_disaggregate():
@@ -635,7 +636,9 @@ def test_energy_balance_mapping_covers_cached_nrg_bal_codes():
 
     repo_root = Path(__file__).resolve().parents[1]
     mapping_path = repo_root / "scripts" / "mappings" / "energy_balance_to_cpa65_products_mapping.csv"
-    metadata_path = next((repo_root / "data" / "eurostat" / "nrg_bal_c").glob("*/raw.json"))
+    metadata_path = next((repo_root / "data" / "eurostat" / "nrg_bal_c").glob("*/raw.json"), None)
+    if metadata_path is None:
+        pytest.skip("No cached nrg_bal_c source metadata is available in this test environment.")
 
     mapping = pd.read_csv(mapping_path, dtype=str).fillna("")
     with metadata_path.open("r", encoding="utf-8") as handle:

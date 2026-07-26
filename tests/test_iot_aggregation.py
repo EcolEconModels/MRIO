@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
@@ -110,31 +109,14 @@ def test_aggregate_iot_reaggregates_supplementary_rows_columnwise():
 
     assert res.V is not None
     assert res.M is not None
-    expected_intermediate = res.Z.sum(axis=0).astype("float64")
-    expected_value_added = (res.x - expected_intermediate).astype("float64")
-    pd.testing.assert_series_equal(
-        res.V.loc["Value added, gross"].astype("float64"),
-        expected_value_added,
-        check_names=False,
-    )
-    pd.testing.assert_series_equal(
-        res.V.loc["Total supply at basic prices"].astype("float64"),
-        res.x.add(
-            pd.Series(
-                {"CPA_C20_BIOGASOLINE": 5.0, "CPA_C20_others": 4.0, "CPA_C21": 6.0},
-                dtype="float64",
-            )
-        ).astype("float64"),
-        check_names=False,
-    )
-    assert res.V.loc["Taxes less subsidies on products", "CPA_C20_others"] == pytest.approx(1.0)
-    assert res.V.loc["Taxes less subsidies on products", "CPA_C20_BIOGASOLINE"] == pytest.approx(2.0)
-    assert res.V.loc["Taxes less subsidies on products", "CPA_C21"] == pytest.approx(3.0)
-    assert pd.isna(res.M.loc["Value added, gross", "P3"])
-    assert res.M.loc["Taxes less subsidies on products", "P3"] == pytest.approx(8.0)
+    expected_v = V.copy()
+    expected_v.columns = ["CPA_C20_others", "CPA_C20_BIOGASOLINE", "CPA_C21"]
+    expected_v = expected_v.T.groupby(level=0).sum().T
+    pd.testing.assert_frame_equal(res.V, expected_v)
+    pd.testing.assert_frame_equal(res.M, M)
 
 
-def test_aggregate_iot_refreshes_m_identity_tfu_and_tu_columns():
+def test_aggregate_iot_preserves_m_exactly_including_zero_and_nan():
     from ecolecon_mrio.iot_aggregation import aggregate_iot
 
     sectors = ["A", "B"]
@@ -148,7 +130,7 @@ def test_aggregate_iot_refreshes_m_identity_tfu_and_tu_columns():
         index=sectors,
     )
     M = pd.DataFrame(
-        [[-1.0, -1.0, -1.0, -1.0, -1.0], [5.0, 6.0, 7.0, 8.0, 9.0]],
+        [[float("nan"), 0.0, -1.0, -1.0, -1.0], [5.0, 6.0, 7.0, 8.0, 9.0]],
         index=["Total intermediate consumption / final use", "Other supplementary row"],
         columns=["P3", "P5", "P6", "TFU", "TU"],
     )
@@ -156,10 +138,6 @@ def test_aggregate_iot_refreshes_m_identity_tfu_and_tu_columns():
     res = aggregate_iot(Z, Y, {}, M=M, output=flow_use_total(Z, Y), keep_unmapped=True, create_io_system=False)
 
     assert res.M is not None
-    identity = res.M.loc["Total intermediate consumption / final use"]
-    assert identity["P3"] == pytest.approx(30.0)
-    assert identity["P5"] == pytest.approx(3.0)
-    assert identity["P6"] == pytest.approx(7.0)
-    assert identity["TFU"] == pytest.approx(40.0)
-    assert identity["TU"] == pytest.approx(float(Z.to_numpy().sum()) + 40.0)
-    assert res.M.loc["Other supplementary row", "TU"] == pytest.approx(9.0)
+    pd.testing.assert_frame_equal(res.M, M)
+    assert pd.isna(res.M.iloc[0, 0])
+    assert res.M.iloc[0, 1] == 0.0

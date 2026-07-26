@@ -7,7 +7,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.iot_flow_semantics import technical_coefficients
+from ecolecon_mrio.iot_flow_semantics import flow_use_total, technical_coefficients
 
 
 @dataclass(frozen=True)
@@ -304,6 +304,23 @@ def aggregate_iot(
     A = technical_coefficients(Z_agg, x)
     io_system = None
     if create_io_system:
+        if role != "DOM":
+            raise ValueError(
+                f"{role} flow is a coefficient decomposition sharing domestic output, "
+                "not a standalone balanced Leontief IO system."
+            )
+        dom_use = flow_use_total(Z_agg, Y_agg)
+        residual = x.sub(dom_use, fill_value=0.0)
+        max_gap = float(residual.abs().max()) if len(residual) else 0.0
+        scale = max(
+            float(x.abs().max()) if len(x) else 0.0,
+            float(dom_use.abs().max()) if len(dom_use) else 0.0,
+        )
+        if max_gap > max(1e-6, 1e-9 * scale):
+            raise ValueError(
+                "DOM analytical IO system is not balanced: "
+                f"max_abs_x_minus_use={max_gap:.12g}"
+            )
         try:
             import pymrio  # type: ignore
             io_system = pymrio.IOSystem(Z=Z_agg, Y=Y_agg, x=x)

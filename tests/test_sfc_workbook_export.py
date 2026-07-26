@@ -351,12 +351,12 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
 
     x_after = (z_after.sum(axis=1) + y_after.sum(axis=1)).astype(float)
     col_sums_z = z_after.sum(axis=0).astype(float)
-    expected_value_added = (x_after - col_sums_z).tolist()
-    expected_output = x_after.tolist()
-    expected_intermediate = col_sums_z.tolist()
+    expected_value_added = [999.0, 999.0, 999.0]
+    expected_output = [888.0, 888.0, 888.0]
+    expected_intermediate = [777.0, 777.0, 777.0]
     expected_taxes = [0.25, 0.75, 2.0]
     expected_imports = [1.0, 2.0, 3.0]
-    expected_supply = [round(a + b, 10) for a, b in zip(expected_output, expected_imports, strict=True)]
+    expected_supply = [666.0, 666.0, 666.0]
 
     # Right block above the lower rows is the current aggregated Y matrix.
     assert _row_values(ws, 13, 6, 5) == pytest.approx([8.0, 4.0, 2.0, 21.0, 14.0])
@@ -372,7 +372,7 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
 
     assert _row_values(ws, 12, 6, 5) == pytest.approx([26.0, 13.0, 6.0, 68.0, 45.0])
     assert _row_values(ws, row_lookup["Taxes less subsidies on products"], 6, 5) == pytest.approx([9.0, 8.0, 7.0, 27.0, 24.0])
-    assert _row_values(ws, row_lookup["Total intermediate consumption /final use"], 6, 5) == pytest.approx([26.0, 13.0, 6.0, 68.0, 45.0])
+    assert _row_values(ws, row_lookup["Total intermediate consumption /final use"], 6, 5) == pytest.approx([999.0] * 5)
 
 
 def test_validate_template_reaggregation_raises_on_supplementary_parent_drift(tmp_path: Path) -> None:
@@ -967,6 +967,6 @@ def test_generated_workbook_metadata_does_not_retain_template_values() -> None:
     text = source.read_text(encoding="utf-8")
     assert 'for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure")' in text
     assert 'ws_sum = wb.create_sheet("Summary")' in text
-    assert "flow_specific_v_disaggregation" in text
+    assert "canonical_V_serializer" in text
     assert "_supplementary_fd_row_from_current_shares" not in text
     assert 'output_after=res.x' in text

@@ -1419,6 +1419,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "variant_dim": args.eurostat_stk_flow_dim,
                         "variant_value": flow,
                         "exio_doi": args.exio_doi,
+                        "output_share_basis": "EXIO_x_region_producer_output",
                     },
                 )
 
@@ -1696,7 +1697,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         res,
         outdir,
         verbose=args.verbose,
-        extra_info={"exio_doi": args.exio_doi},
+        extra_info={
+            "exio_doi": args.exio_doi,
+            "output_share_basis": "EXIO_x_region_producer_output",
+        },
     )
 
     if full_sector_mapping is not None:
