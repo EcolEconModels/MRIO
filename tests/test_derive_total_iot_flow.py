@@ -174,3 +174,58 @@ def test_derive_rejects_different_child_order(tmp_path: Path) -> None:
 def test_published_m_mask_validation_fails() -> None:
     with pytest.raises(ValueError, match="published M"):
         MODULE._assert_close("published M", pd.DataFrame([[float("nan")]]), pd.DataFrame([[0.0]]), rtol=0.0, atol=0.0)
+
+
+def test_construct_canonical_v_rejects_signed_unknown_row() -> None:
+    parents = pd.Index(["A", "B"])
+    reference = SimpleNamespace(
+        V=pd.DataFrame([[1.0, -1.0]], index=["UNKNOWN"], columns=parents),
+        Z=pd.DataFrame(0.0, index=parents, columns=parents),
+    )
+    children = pd.Index(["A", "B"])
+    zeros = pd.DataFrame(0.0, index=children, columns=children)
+    with pytest.raises(ValueError, match="Unknown nonzero V row"):
+        MODULE._construct_canonical_v(
+            flow="DOM", reference=reference, child_parent={"A": "A", "B": "B"},
+            Z=zeros, x_domestic=pd.Series([1.0, 1.0], index=children),
+            Z_total=zeros, Z_imp=zeros, source_total_Z=zeros,
+            imp_product_proxy=pd.Series([1.0, 1.0], index=children),
+            quantum=1.0, rtol=0.0, atol=1e-9,
+        )
+
+
+def test_v_policy_preflight_marks_unknown_one_child_as_unknown() -> None:
+    reference = SimpleNamespace(
+        V=pd.DataFrame([[2.0]], index=["UNKNOWN"], columns=["A"]),
+    )
+    preflight = MODULE._v_policy_preflight(
+        references={"DOM": reference}, child_parent={"child": "A"},
+        children=pd.Index(["child"]), x=pd.Series([1.0], index=["child"]),
+        total_inputs=pd.Series([1.0], index=["child"]),
+        imp_inputs=pd.Series([1.0], index=["child"]),
+        imp_products=pd.Series([1.0], index=["child"]),
+    )
+    assert preflight.loc[0, "status"] == "unknown_row"
+
+
+def test_construct_canonical_v_defers_ts_bp_until_p7_is_allocated() -> None:
+    parent = pd.Index(["A"])
+    children = pd.Index(["a1", "a2"])
+    reference = SimpleNamespace(
+        V=pd.DataFrame(
+            [[150.0], [50.0], [100.0]], index=["TS_BP", "P7", "P1"], columns=parent,
+        ),
+        Z=pd.DataFrame(0.0, index=parent, columns=parent),
+    )
+    zeros = pd.DataFrame(0.0, index=children, columns=children)
+    V, _, _ = MODULE._construct_canonical_v(
+        flow="TOTAL", reference=reference, child_parent={"a1": "A", "a2": "A"},
+        Z=zeros, x_domestic=pd.Series([40.0, 60.0], index=children),
+        Z_total=zeros, Z_imp=zeros, source_total_Z=pd.DataFrame(0.0, index=parent, columns=parent),
+        imp_product_proxy=pd.Series([1.0, 3.0], index=children),
+        quantum=1.0, rtol=0.0, atol=1e-9,
+    )
+    assert V is not None
+    pd.testing.assert_series_equal(V.loc["P7"], pd.Series([12.5, 37.5], index=children), check_names=False)
+    pd.testing.assert_series_equal(V.loc["TS_BP"], pd.Series([52.5, 97.5], index=children), check_names=False)
+    assert float(V.loc["TS_BP"].sum()) == 150.0

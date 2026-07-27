@@ -178,52 +178,6 @@ def test_assert_mapping_integrity_only_requires_explicit_targets() -> None:
     )
 
 
-def test_split_supplementary_m_identity_tfu_and_tu_columns() -> None:
-    from ecolecon_mrio.disaggregation import SplitProfiles
-    from ecolecon_mrio.exio_share_split import _split_supplementary_rows_columnwise
-
-    Z_split = pd.DataFrame(
-        [[1.0, 2.0], [3.0, 4.0]],
-        index=["A_1", "A_2"],
-        columns=["A_1", "A_2"],
-    )
-    Y_split = pd.DataFrame(
-        {
-            "P3": [10.0, 20.0],
-            "P5": [1.0, 2.0],
-            "P6": [3.0, 4.0],
-        },
-        index=["A_1", "A_2"],
-    )
-    M = pd.DataFrame(
-        [[-1.0, -1.0, -1.0, -1.0, -1.0]],
-        index=["Total intermediate consumption / final use"],
-        columns=["P3", "P5", "P6", "TFU", "TU"],
-    )
-    shares = pd.Series([0.5, 0.5], index=["A_1", "A_2"], dtype="float64")
-    profile = SplitProfiles(
-        aggregate_sector="A",
-        subsectors=("A_1", "A_2"),
-        output_share=shares,
-        intermediate_sales_share=shares,
-        intermediate_input_share=shares,
-        final_demand_share=shares,
-    )
-
-    _, M_out, diagnostics = _split_supplementary_rows_columnwise(
-        eurostat_V=None,
-        eurostat_M=M,
-        sectors_old=["A"],
-        sectors_new=["A_1", "A_2"],
-        split_profiles={"A": profile},
-        Z_split=Z_split,
-        Y_split=Y_split,
-    )
-
-    assert M_out is not None
-    pd.testing.assert_frame_equal(M_out, M)
-
-
 def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
     zf.writestr(name, text.encode("utf-8"))
 

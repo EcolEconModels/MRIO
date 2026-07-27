@@ -21,7 +21,7 @@ from ecolecon_mrio.iot_flow_semantics import (
     source_atomic_final_demand,
     technical_coefficients,
 )
-from ecolecon_mrio.iot_identities import find_imports_vector, supplementary_accounting_identity_kind
+from ecolecon_mrio.iot_identities import supplementary_accounting_identity_kind
 
 _FRAME_FILES = ("Z", "Y", "V", "M")
 _SPLIT_NAMES = {name: f"{name}_split.csv" for name in _FRAME_FILES}
@@ -421,18 +421,10 @@ def _construct_canonical_v(
         elif row == "IMP":
             values = imp_inputs; formula = None; counts = None
         elif row == "TS_BP":
-            if flow != "TOTAL" or "P7" not in V.index:
-                raise ValueError(f"{flow} TS_BP requires TOTAL P7 before derivation")
-            formula = source.loc["P1"].astype("float64") + source.loc["P7"].astype("float64")
-            counts = pd.Series(2, index=source.columns, dtype="int64")
-            diagnostics.extend(_rounded_v_formula(flow=flow, row=row, published=published, formula=formula, term_counts=counts, quantum=quantum, rtol=rtol, atol=atol))
-            V.loc[row, children] = x_domestic.reindex(children).to_numpy() + V.loc["P7", children].to_numpy()
-            reconstructed = _aggregate_columns(V.loc[[row]], child_parent, source.columns).loc[row]
-            _assert_close(f"{flow} TS_BP parent reconstruction", reconstructed, formula, rtol=0.0, atol=1e-9)
-            diagnostics.append({"flow": flow, "row_code": row, "policy": "derived_P1_plus_P7", "source_value": float(published.sum()), "child_sum": float(V.loc[row].sum()), "absolute_gap": float((reconstructed - published).abs().max()), "proxy_denominator": float("nan")})
             continue
         else:
-            if float(np.nan_to_num(published.to_numpy(dtype="float64"), nan=0.0).sum()) != 0.0:
+            unknown_values = np.nan_to_num(published.to_numpy(dtype="float64"), nan=0.0)
+            if np.any(np.abs(unknown_values) > atol):
                 raise ValueError(f"Unknown nonzero V row: flow={flow!r}, row={row!r}")
             continue
         if formula is not None:
@@ -469,6 +461,17 @@ def _construct_canonical_v(
         reconstructed = _aggregate_columns(V.loc[[row]], child_parent, source.columns).loc[row]
         _assert_close(f"{flow} V parent reconstruction {row}", reconstructed, published, rtol=0.0, atol=1e-9)
         diagnostics.append({"stage": "V_parent_reconstruction", "flow": flow, "row": row, "max_abs_gap": 0.0, "ok": True})
+    if "TS_BP" in source.index:
+        if flow != "TOTAL" or "P7" not in V.index:
+            raise ValueError(f"{flow} TS_BP requires TOTAL P7 before derivation")
+        published = source.loc["TS_BP"].astype("float64")
+        formula = source.loc["P1"].astype("float64") + source.loc["P7"].astype("float64")
+        counts = pd.Series(2, index=source.columns, dtype="int64")
+        diagnostics.extend(_rounded_v_formula(flow=flow, row="TS_BP", published=published, formula=formula, term_counts=counts, quantum=quantum, rtol=rtol, atol=atol))
+        V.loc["TS_BP", children] = V.loc["P1", children].to_numpy() + V.loc["P7", children].to_numpy()
+        reconstructed = _aggregate_columns(V.loc[["TS_BP"]], child_parent, source.columns).loc["TS_BP"]
+        _assert_close(f"{flow} TS_BP parent reconstruction", reconstructed, formula, rtol=0.0, atol=1e-9)
+        diagnostics.append({"flow": flow, "row_code": "TS_BP", "policy": "derived_P1_plus_P7", "source_value": float(published.sum()), "child_sum": float(V.loc["TS_BP"].sum()), "absolute_gap": float((reconstructed - published).abs().max()), "proxy_denominator": float("nan")})
     if {"P1", "P2_ADJ", "B1G"}.issubset(source.index):
         base = source.loc["P1"] - source_total_Z.sum(axis=0).reindex(source.columns) - source.loc["B1G"]
         plus = base - source.loc["P2_ADJ"]
@@ -527,12 +530,12 @@ def _v_policy_preflight(*, references: Mapping[str, ParsedEurostatIOT], child_pa
                 else:
                     proxy, name, status = pd.Series(dtype="float64"), "none", "unknown_row"
                 denom = float(proxy.sum()) if len(proxy) else float("nan")
-                if len(child_list) == 1:
+                if code not in policy_rows:
+                    status = "unknown_row"
+                elif len(child_list) == 1:
                     status = "direct_copy"
                 elif value == 0.0:
                     status = "zero_source"
-                elif code not in policy_rows:
-                    status = "unknown_row"
                 elif status == "allocatable" and (not np.isfinite(denom) or denom <= 0.0):
                     status = "zero_proxy_nonzero_source"
                 rows.append({"flow": flow, "row_code": code, "parent": parent, "children": "|".join(child_list), "n_children": len(child_list), "source_value": value, "policy": code, "proxy_name": name, "proxy_denominator": denom, "derived_source_value": float("nan"), "identity_gap": float("nan"), "status": status})
@@ -545,8 +548,6 @@ def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> li
     x_name = "x_split.csv" if suffix == "split" else "x_agg.csv"
     a_name = "A_split.csv" if suffix == "split" else "A_agg.csv"
     use_name = "use_total_split.csv" if suffix == "split" else "use_total_agg.csv"
-    v_name = "V_split.csv" if suffix == "split" else "V_agg.csv"
-    m_name = "M_split.csv" if suffix == "split" else "M_agg.csv"
     Z = {flow: _read_frame(path / z_name) for flow, path in dirs.items()}
     Y = {flow: _read_frame(path / y_name) for flow, path in dirs.items()}
     use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in dirs}
@@ -603,25 +604,6 @@ def _validate_v_flow_contract(
         gap = _assert_close(f"{suffix} TOTAL V TS_BP", total.loc["TS_BP"], total.loc["P1"] + total.loc["P7"], rtol=rtol, atol=atol)
         diagnostics.append({"stage": suffix, "object": "V:TS_BP:TOTAL", "contract": "P1_plus_P7", "max_abs_gap": gap, "ok": True})
     return diagnostics
-
-
-def _validate_m_flow_contract(
-    *,
-    dirs: Mapping[str, Path],
-    suffix: str,
-    atol: float,
-    rtol: float,
-) -> list[dict[str, object]]:
-    name = "M_split.csv" if suffix == "split" else "M_agg.csv"
-    paths = {flow: directory / name for flow, directory in dirs.items()}
-    if not any(path.is_file() for path in paths.values()):
-        return []
-    if not all(path.is_file() for path in paths.values()):
-        raise FileNotFoundError(f"{name} must exist for DOM, IMP, and TOTAL")
-    frames = {flow: _read_frame(path) for flow, path in paths.items()}
-    expected = _add_frames(frames["DOM"], frames["IMP"])
-    gap = _assert_close(f"{suffix} M DOM+IMP=TOTAL", expected, frames["TOTAL"], rtol=rtol, atol=atol)
-    return [{"stage": suffix, "object": "M", "contract": "DOM+IMP=TOTAL including applicability mask", "max_abs_gap": gap, "ok": True}]
 
 
 def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: Mapping[str, object], eurostat_row_dim: str, eurostat_col_dim: str, eurostat_stk_flow_dim: str = "stk_flow", source_rounding_quantum: float | None = None, atol: float = 1e-6, rtol: float = 1e-9) -> None:

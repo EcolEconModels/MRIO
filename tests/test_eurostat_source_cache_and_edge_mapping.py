@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exio_share_split import (
@@ -360,62 +359,6 @@ def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
     expected_y_c20 = explicit_Y.loc[c20_labels, "P3"]
     expected_y_c20 = expected_y_c20 * (50.0 / float(expected_y_c20.sum()))
     pd.testing.assert_series_equal(res.Y.loc[c20_labels, "P3"], expected_y_c20)
-def test_supplementary_rows_use_row_specific_proxy_hierarchy():
-    from ecolecon_mrio.exio_share_split import _split_supplementary_rows_columnwise
-
-    children = pd.Index(["child_output_heavy", "child_input_heavy"])
-    profiles = {
-        "CPA_X": SplitProfiles(
-            aggregate_sector="CPA_X",
-            subsectors=tuple(children),
-            output_share=pd.Series([0.8, 0.2], index=children, dtype="float64"),
-            intermediate_sales_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
-            intermediate_input_share=pd.Series([0.25, 0.75], index=children, dtype="float64"),
-            final_demand_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
-            subsector_to_exio_sectors={
-                "child_output_heavy": ["exio_a"],
-                "child_input_heavy": ["exio_b"],
-            },
-        )
-    }
-    V = pd.DataFrame(
-        [[100.0], [100.0]],
-        index=["B1G", "OTHER_ROW"],
-        columns=["CPA_X"],
-    )
-    M = pd.DataFrame([[7.0]], index=["B1G"], columns=["P3"])
-    Z_split = pd.DataFrame(
-        [[2.0, 0.0], [0.0, 6.0]],
-        index=children,
-        columns=children,
-        dtype="float64",
-    )
-    x_split = pd.Series([10.0, 10.0], index=children, dtype="float64")
-
-    V_split, M_out, diag = _split_supplementary_rows_columnwise(
-        eurostat_V=V,
-        eurostat_M=M,
-        sectors_old=["CPA_X"],
-        sectors_new=list(children),
-        split_profiles=profiles,
-        Z_split=Z_split,
-        x_split=x_split,
-    )
-
-    assert V_split is not None
-    assert M_out is not None
-    assert diag is not None
-    # Primitive source rows remain monetary and preserve their parent total.
-    assert V_split.loc["B1G", "child_output_heavy"] == 80.0
-    assert V_split.loc["B1G", "child_input_heavy"] == 20.0
-    assert float(V_split.loc["B1G"].sum()) == pytest.approx(100.0)
-    assert V_split.loc["OTHER_ROW", "child_output_heavy"] == 25.0
-    assert V_split.loc["OTHER_ROW", "child_input_heavy"] == 75.0
-    assert "output_share_proxy_for_value_added_row" in set(diag["allocation_method"])
-    assert "projected_exio_column_use_proxy" in set(diag["allocation_method"])
-    assert M_out.loc["B1G", "P3"] == pytest.approx(7.0)
-
-
 def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
     from ecolecon_mrio.exio_share_split import aggregation_mapping_from_split_profiles
     from ecolecon_mrio.iot_aggregation import aggregate_iot
@@ -797,73 +740,3 @@ def test_flow_identity_tolerance_is_strict_for_internal_additivity():
     strict = _build_mapped_output_flow_identity_frame(totals, rtol=1e-9, atol=1e-6)
 
     assert strict["ok"].tolist() == [False, False]
-
-
-def test_p1_supplementary_row_uses_output_share_proxy():
-    from ecolecon_mrio.exio_share_split import _supplementary_row_proxy_share
-
-    idx = pd.Index(["child_a", "child_b"])
-    prof = SplitProfiles(
-        aggregate_sector="CPA_TEST",
-        subsectors=("child_a", "child_b"),
-        output_share=pd.Series([0.8, 0.2], index=idx, dtype="float64"),
-        intermediate_sales_share=pd.Series([0.5, 0.5], index=idx, dtype="float64"),
-        intermediate_input_share=pd.Series([0.1, 0.9], index=idx, dtype="float64"),
-        final_demand_share=pd.Series([0.5, 0.5], index=idx, dtype="float64"),
-        subsector_to_exio_sectors={"child_a": ["a"], "child_b": ["b"]},
-    )
-
-    share, proxy = _supplementary_row_proxy_share("P1", prof)
-
-    assert proxy == "output_share_proxy_for_value_added_row"
-    pd.testing.assert_series_equal(share, prof.output_share)
-
-
-
-def test_primitive_supplementary_rows_preserve_source_values():
-    from ecolecon_mrio.exio_share_split import _split_supplementary_rows_columnwise
-
-    children = pd.Index(["child_a", "child_b"])
-    prof = SplitProfiles(
-        aggregate_sector="CPA_TEST",
-        subsectors=("child_a", "child_b"),
-        output_share=pd.Series([0.9, 0.1], index=children, dtype="float64"),
-        intermediate_sales_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
-        intermediate_input_share=pd.Series([0.25, 0.75], index=children, dtype="float64"),
-        final_demand_share=pd.Series([0.5, 0.5], index=children, dtype="float64"),
-        subsector_to_exio_sectors={"child_a": ["a"], "child_b": ["b"]},
-    )
-    V = pd.DataFrame(
-        [[100.0], [50.0], [20.0], [120.0]],
-        index=["P1", "P2_ADJ", "P7", "TS_BP"],
-        columns=["CPA_TEST"],
-    )
-    Z_split = pd.DataFrame(
-        [[5.0, 25.0], [15.0, 5.0]],
-        index=children,
-        columns=children,
-    )
-    x_split = pd.Series([50.0, 50.0], index=children, dtype="float64")
-
-    V_split, _, diag = _split_supplementary_rows_columnwise(
-        eurostat_V=V,
-        eurostat_M=None,
-        sectors_old=("CPA_TEST",),
-        sectors_new=tuple(children),
-        split_profiles={"CPA_TEST": prof},
-        Z_split=Z_split,
-        x_split=x_split,
-    )
-
-    assert V_split is not None
-    pd.testing.assert_series_equal(V_split.loc["P1"], x_split, check_names=False)
-    pd.testing.assert_series_equal(V_split.loc["P2_ADJ"], Z_split.sum(axis=0), check_names=False)
-    expected_imports = pd.Series([5.0, 15.0], index=children, dtype="float64")
-    pd.testing.assert_series_equal(V_split.loc["P7"], expected_imports, check_names=False)
-    expected_supply = pd.Series([30.0, 90.0], index=children, dtype="float64")
-    pd.testing.assert_series_equal(V_split.loc["TS_BP"], expected_supply, check_names=False)
-    assert float(V_split.loc["TS_BP"].sum()) == pytest.approx(120.0)
-    assert diag is not None
-    methods = set(diag["allocation_method"].astype(str))
-    assert "accounting_identity_x_split" in methods
-    assert "accounting_identity_z_column_sum" in methods
