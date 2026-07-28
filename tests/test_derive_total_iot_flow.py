@@ -229,3 +229,20 @@ def test_construct_canonical_v_defers_ts_bp_until_p7_is_allocated() -> None:
     pd.testing.assert_series_equal(V.loc["P7"], pd.Series([12.5, 37.5], index=children), check_names=False)
     pd.testing.assert_series_equal(V.loc["TS_BP"], pd.Series([52.5, 97.5], index=children), check_names=False)
     assert float(V.loc["TS_BP"].sum()) == 150.0
+
+def test_v_preflight_materiality_uses_atol_and_ignores_nan() -> None:
+    from scripts.derive_total_iot_flow import _material_v_policy_problems
+
+    preflight = pd.DataFrame(
+        {
+            "status": [
+                "unknown_row",
+                "unknown_row",
+                "zero_proxy_nonzero_source",
+                "allocatable",
+            ],
+            "source_value": [1e-12, float("nan"), 2e-6, 10.0],
+        }
+    )
+    problems = _material_v_policy_problems(preflight, atol=1e-6)
+    assert problems.index.tolist() == [2]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generic pipeline: canonical 2021 split -> canonical reaggregation.
+# Year-parameterised pipeline: canonical split -> canonical reaggregation.
 #
 # Required / important env vars:
 #   OUTPUT_SUFFIX=fuels_more|fuels|...
@@ -43,7 +43,7 @@ SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUF
 REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_reaggregation.csv}"
 CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa_products.csv}"
 
-TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_2021_Eurostat.xlsx}"
+TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_${EUROSTAT_TIME}_Eurostat.xlsx}"
 if [[ ! -f "$TEMPLATE_XLSX" ]]; then
   echo "ERROR: Template workbook not found: $TEMPLATE_XLSX" >&2
   exit 1
@@ -140,6 +140,7 @@ for json_path in sorted(out_split.glob("stk_flow=*/exio_selected_sectors.json"))
                     "mapping_set": f"{mapping_set}_identity_generated",
                     "source_code": code,
                     "target_code": code,
+                    "source_parent_code": str(aggregate_code),
                     "enabled": True,
                     "notes": f"Generated from {json_path.name}.",
                 }
@@ -149,6 +150,7 @@ fieldnames = [
     "mapping_set",
     "source_code",
     "target_code",
+    "source_parent_code",
     "enabled",
     "notes",
 ]
@@ -196,7 +198,7 @@ if [[ -n "$CAPITAL_STOCK_SOURCE_CSV" ]]; then
     --official-input-csv "$CAPITAL_STOCK_SOURCE_CSV" \
     --iot-output-csv "$OUT_REAGG/stk_flow=TOTAL/x_agg.csv" \
     --template-xlsx "$MPG4ALL_DIR/capital_stock.xlsx" \
-    --output-xlsx "$MPG4ALL_DIR/capital_stock_2021.xlsx" \
+    --output-xlsx "$MPG4ALL_DIR/capital_stock_${EUROSTAT_TIME}.xlsx" \
     --value-column capital_stock:2 \
     --share-column gross_capital_formation:3 \
     --diagnostic-csv "$OUT_REAGG/stk_flow=TOTAL/capital_stock_output_shares.csv"

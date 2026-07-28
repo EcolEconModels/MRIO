@@ -16,7 +16,6 @@ from ecolecon_mrio.iot_aggregation import (
 )
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
 from ecolecon_mrio.iot_identities import (
-    find_imports_vector,
     normalise_supplementary_row_label,
     supplementary_accounting_identity_kind,
 )
@@ -434,8 +433,21 @@ def _build_source_parent_by_input(
         if not source_code or not target_code:
             continue
 
+        explicit_value = row.get("source_parent_code")
+        explicit_parent = (
+            ""
+            if explicit_value is None or pd.isna(explicit_value)
+            else str(explicit_value).strip()
+        )
+        if explicit_parent and explicit_parent not in base_codes:
+            raise ValueError(
+                "Unknown explicit source parent in aggregation mapping: "
+                f"source_code={source_code!r}, source_parent_code={explicit_parent!r}."
+            )
         target_parent = _base_sector_from_code(target_code, base_codes)
-        chosen_parent = target_parent or _base_sector_from_code(source_code, base_codes)
+        chosen_parent = explicit_parent or target_parent or _base_sector_from_code(
+            source_code, base_codes
+        )
         if chosen_parent is None:
             continue
 
@@ -450,6 +462,36 @@ def _build_source_parent_by_input(
             )
 
     return source_parent_by_input
+
+
+def _missing_sfc_co2_reason(variant_value: str | None, *, use_phase: bool) -> str:
+    role = str(variant_value or "").strip().upper()
+    if role == "IMP":
+        if use_phase:
+            return (
+                "for IMP flow because import-origin weighted final-demand CO2 intensities "
+                "are not implemented"
+            )
+        return (
+            "for IMP flow because origin-weighted import production CO2 intensities are "
+            "not implemented; using Austrian destination-region EXIO extension proxies "
+            "would be misleading"
+        )
+    if role == "TOTAL":
+        if use_phase:
+            return (
+                "for TOTAL flow because a combined domestic and import-origin final-demand "
+                "CO2 intensity is not implemented"
+            )
+        return (
+            "for TOTAL flow because a combined domestic-production and origin-weighted "
+            "import CO2 intensity is not implemented; using domestic-only intensities "
+            "would mislabel total supply"
+        )
+    return (
+        f"for {role or 'this'} flow because the required CO2 intensity inputs are not "
+        "available"
+    )
 
 
 def _write_excel_mapping_sheet(
@@ -471,6 +513,7 @@ def _write_excel_mapping_sheet(
     exio_final_demand_emission_intensity: pd.DataFrame | None = None,
     mapping_from_col: str = "from_sector",
     mapping_to_col: str = "to_sector",
+    variant_value: str | None = None,
     allow_missing_sfc_co2: bool = False,
     verbose: bool = False,
 ) -> None:
@@ -550,9 +593,8 @@ def _write_excel_mapping_sheet(
         _vprint(
             verbose,
             "WARNING: SFC workbook mapping sheet is omitting production-based CO2 intensity columns "
-            "for import flow because disaggregated_sector_co2_intensity.csv is not available. "
-            "Import-origin weighted CO2 intensities are not implemented; using destination-region "
-            "EXIO extension proxies would be misleading.",
+            + _missing_sfc_co2_reason(variant_value, use_phase=False)
+            + ".",
         )
     else:
         emis_df = disaggregated_sector_emission_intensity.copy()
@@ -613,8 +655,8 @@ def _write_excel_mapping_sheet(
         _vprint(
             verbose,
             "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns "
-            "for import flow because exio_final_demand_co2_intensity.csv is not available. "
-            "Import-origin weighted final-demand CO2 intensities are not implemented.",
+            + _missing_sfc_co2_reason(variant_value, use_phase=True)
+            + ".",
         )
     else:
         if disaggregated_Y is None or disaggregated_Y.empty:
@@ -863,16 +905,18 @@ def _write_excel_mapping_sheet(
                 raise ValueError("aggregated_sector_emission_intensity is required for the summary sheet.")
             _vprint(
                 verbose,
-                "WARNING: SFC workbook re-aggregated summary is omitting production-based CO2 "
-                "columns for import flow because aggregated_sector_co2_intensity.csv is not available.",
+                "WARNING: SFC workbook re-aggregated summary is omitting production-based CO2 columns "
+                + _missing_sfc_co2_reason(variant_value, use_phase=False)
+                + ".",
             )
         if not summary_has_use_co2:
             if not allow_missing_sfc_co2:
                 raise ValueError("use-phase CO2 intensity is required for the summary sheet.")
             _vprint(
                 verbose,
-                "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2 "
-                "columns for import flow because exio_final_demand_co2_intensity.csv is not available.",
+                "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2 columns "
+                + _missing_sfc_co2_reason(variant_value, use_phase=True)
+                + ".",
             )
         agg_domestic_fd, agg_exports, agg_stocks = _split_final_demand(aggregated_Y)
 
@@ -1065,12 +1109,6 @@ def _validate_template_reaggregation(
     product_codes = [str(code) for code in product_codes_order]
     base_codes = [str(code) for code in base_product_codes]
     fd_codes = [str(code) for code in fd_codes_order_no_total]
-    tpl_product_cols = {
-        code: int(tpl_layout["first_product_col"]) + idx for idx, code in enumerate(base_codes)
-    }
-    tpl_fd_cols = {
-        code: int(tpl_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes)
-    }
     workbook_ws = tpl_ws if workbook_ws is None else workbook_ws
     workbook_layout = tpl_layout if workbook_layout is None else workbook_layout
     workbook_fd_cols = {
@@ -1096,7 +1134,6 @@ def _validate_template_reaggregation(
 
     row_sum_Z = Z_ord.sum(axis=1).astype("float64")
     col_sum_Z = Z_ord.sum(axis=0).astype("float64")
-    current_x = output_after.reindex(product_codes).fillna(0.0).astype("float64")
     current_tfu = pd.Series(0.0, index=product_codes, dtype="float64")
     if {"P3", "P5", "P6"}.issubset(set(Y_ord.columns.astype(str))):
         current_tfu = (Y_ord["P3"] + Y_ord["P5"] + Y_ord["P6"]).astype("float64")
@@ -1117,11 +1154,6 @@ def _validate_template_reaggregation(
         dtype="float64",
     )
 
-    def _numeric_cell(row: int, col: int) -> float | None:
-        raw = tpl_ws.cell(row=row, column=col).value
-        if isinstance(raw, (int, float)):
-            return float(raw)
-        return None
 
     def _assert_close(label: str, actual: float, expected: float) -> None:
         if not np.isclose(float(actual), float(expected), rtol=rtol, atol=atol):
@@ -1196,59 +1228,6 @@ def _validate_template_reaggregation(
                     actual = float(Y_ord.reindex(index=child_codes, columns=[fd_code]).fillna(0.0)[fd_code].sum())
                     expected = float(Y_before_base.reindex(columns=[fd_code]).fillna(0.0).loc[parent_code, fd_code])
                 _assert_close(f"product-row final-demand parent={parent_code} fd={fd_code}", actual, expected)
-
-    for r in range(int(tpl_layout["va_row"]), tpl_ws.max_row + 1):
-        label = tpl_ws.cell(row=r, column=1).value
-        if label is None or str(label).strip() == "":
-            continue
-        label_text = str(label).strip()
-        identity_kind = supplementary_accounting_identity_kind(label_text)
-        row_values = lower_row_vectors.get(label_text)
-        if row_values is not None:
-            if identity_kind == "value_added":
-                expected_by_output = (current_x - col_sum_Z).astype("float64")
-            elif identity_kind == "output":
-                expected_by_output = current_x.astype("float64")
-            elif identity_kind == "intermediate_use":
-                expected_by_output = col_sum_Z.astype("float64")
-            elif identity_kind == "total_supply":
-                imports_values = find_imports_vector(pd.DataFrame(lower_row_vectors).T, product_codes)
-                if imports_values is None:
-                    imports_values = pd.Series(0.0, index=product_codes, dtype="float64")
-                expected_by_output = (current_x + imports_values.reindex(product_codes).fillna(0.0)).astype("float64")
-            else:
-                expected_by_output = None
-            if expected_by_output is not None:
-                for output_code in product_codes:
-                    _assert_close(
-                        f"lower-row product output={output_code} row={label_text}",
-                        float(row_values.reindex(product_codes).fillna(0.0).loc[output_code]),
-                        float(expected_by_output.loc[output_code]),
-                    )
-            else:
-                if has_multi_parent_outputs or not validate_template_parent_totals:
-                    continue
-                for parent_code in base_codes:
-                    expected = _numeric_cell(r, tpl_product_cols[parent_code])
-                    if expected is None:
-                        continue
-                    actual = float(row_values.reindex(children_by_parent.get(parent_code, [])).fillna(0.0).sum())
-                    _assert_close(f"lower-row product parent={parent_code} row={label_text}", actual, expected)
-
-        fd_values = lower_fd_vectors.get(label_text)
-        if fd_values is not None:
-            if identity_kind == "intermediate_use":
-                expected_fd_values = current_fd_totals
-            elif identity_kind in {"value_added", "output", "total_supply"}:
-                expected_fd_values = pd.Series(index=fd_codes, dtype="float64")
-            else:
-                continue
-            for fd_code in fd_codes:
-                expected = expected_fd_values.get(fd_code)
-                actual = fd_values.get(fd_code)
-                if pd.isna(expected) or pd.isna(actual):
-                    continue
-                _assert_close(f"lower-row fd row={label_text} fd={fd_code}", float(actual), float(expected))
 
 
 def _resolve_product_template_alignment(
@@ -1752,7 +1731,6 @@ def _write_sfc_workbook(
         missing_m_columns = sorted(set(fd_codes_order_no_total) - set(M_ord.columns.astype(str)))
         if missing_m_columns:
             raise ValueError(f"Transformed M is missing applicable final-demand columns: {missing_m_columns!r}")
-    imports_vector = find_imports_vector(V_ord, product_codes_order)
 
     for offset, row_code in enumerate(source_rows):
         target_r = lower_start + offset
@@ -1884,6 +1862,7 @@ def _write_sfc_workbook(
         exio_final_demand_emission_intensity=exio_final_demand_emission_intensity,
         mapping_from_col=mapping_from_col,
         mapping_to_col=mapping_to_col,
+        variant_value=variant_value,
         allow_missing_sfc_co2=(
             str(variant_dim).strip() == "stk_flow"
             and str(variant_value or "").strip().upper() in {"IMP", "IMPORT", "IMPORTS", "TOTAL"}

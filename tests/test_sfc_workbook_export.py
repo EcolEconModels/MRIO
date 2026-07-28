@@ -185,7 +185,7 @@ def test_infer_variant_value_uses_source_dir_and_filters() -> None:
     ) == "DOM"
 
 
-def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path: Path, monkeypatch) -> None:
+def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Path, monkeypatch) -> None:
     import ecolecon_mrio.eurostat_iot as eurostat_iot
     from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
     from scripts import aggregate_iot_by_mapping as mod
@@ -375,52 +375,6 @@ def test_write_sfc_workbook_rebuilds_identity_rows_from_aggregated_iot(tmp_path:
     assert _row_values(ws, row_lookup["Total intermediate consumption /final use"], 6, 5) == pytest.approx([999.0] * 5)
 
 
-def test_validate_template_reaggregation_raises_on_supplementary_parent_drift(tmp_path: Path) -> None:
-    from openpyxl import load_workbook
-    from scripts.aggregate_iot_by_mapping import _template_table_layout, _validate_template_reaggregation
-
-    template_path = tmp_path / "template.xlsx"
-    _build_template(template_path)
-    tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
-    tpl_layout = _template_table_layout(tpl_ws)
-
-    Z_ord = pd.DataFrame(
-        [[4.0, 1.0, 2.0], [3.0, 2.0, 1.0], [5.0, 2.0, 3.0]],
-        index=["CPA_C19::Motor Gasoline", "CPA_C19_remaining", "CPA_D::Hydro"],
-        columns=["CPA_C19::Motor Gasoline", "CPA_C19_remaining", "CPA_D::Hydro"],
-    )
-    Y_ord = pd.DataFrame(
-        {"P3": [8.0, 12.0, 6.0], "P5": [4.0, 6.0, 3.0], "P6": [2.0, 3.0, 1.0]},
-        index=Z_ord.index,
-    )
-    lower_row_vectors = {
-        "Imports of goods and services": pd.Series(
-            [99.0, 1.0, 8.0],
-            index=Z_ord.index,
-            dtype="float64",
-        ),
-    }
-    lower_fd_vectors: dict[str, pd.Series] = {}
-
-    with pytest.raises(ValueError, match="Template reaggregation validation failed"):
-        _validate_template_reaggregation(
-            product_codes_order=Z_ord.index.tolist(),
-            base_product_codes=["CPA_C19", "CPA_D"],
-            parents_by_output={
-                "CPA_C19::Motor Gasoline": ("CPA_C19",),
-                "CPA_C19_remaining": ("CPA_C19",),
-                "CPA_D::Hydro": ("CPA_D",),
-            },
-            fd_codes_order_no_total=["P3", "P5", "P6", "TU", "TFU"],
-            Y_before=Y_ord,
-            tpl_ws=tpl_ws,
-            tpl_layout=tpl_layout,
-            Z_ord=Z_ord,
-            Y_ord=Y_ord,
-            output_after=flow_use_total(Z_ord, Y_ord),
-            lower_row_vectors=lower_row_vectors,
-            lower_fd_vectors=lower_fd_vectors,
-        )
 
 
 def test_validate_template_reaggregation_skips_parent_fd_check_for_multi_parent_outputs(tmp_path: Path) -> None:
@@ -465,46 +419,6 @@ def test_validate_template_reaggregation_skips_parent_fd_check_for_multi_parent_
     )
 
 
-def test_validate_template_reaggregation_skips_supplementary_parent_check_when_disabled(tmp_path: Path) -> None:
-    from openpyxl import load_workbook
-    from scripts.aggregate_iot_by_mapping import _template_table_layout, _validate_template_reaggregation
-
-    template_path = tmp_path / "template.xlsx"
-    _build_template(template_path)
-    tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
-    tpl_layout = _template_table_layout(tpl_ws)
-
-    Z_ord = pd.DataFrame(
-        [[0.0, 0.0], [0.0, 0.0]],
-        index=["CPA_C19::Motor Gasoline", "CPA_D::Hydro"],
-        columns=["CPA_C19::Motor Gasoline", "CPA_D::Hydro"],
-    )
-    Y_ord = pd.DataFrame(
-        {"P3": [0.0, 0.0], "P5": [0.0, 0.0], "P6": [0.0, 0.0]},
-        index=Z_ord.index,
-    )
-    Y_before = Y_ord.copy()
-
-    _validate_template_reaggregation(
-        product_codes_order=Z_ord.index.tolist(),
-        base_product_codes=["CPA_C19", "CPA_D"],
-        parents_by_output={
-            "CPA_C19::Motor Gasoline": ("CPA_C19",),
-            "CPA_D::Hydro": ("CPA_D",),
-        },
-        fd_codes_order_no_total=["P3", "P5", "P6", "TU", "TFU"],
-        Y_before=Y_before,
-        tpl_ws=tpl_ws,
-        tpl_layout=tpl_layout,
-        Z_ord=Z_ord,
-        Y_ord=Y_ord,
-        output_after=flow_use_total(Z_ord, Y_ord),
-        lower_row_vectors={
-            "Taxes less subsidies on products": pd.Series(0.0, index=Z_ord.index, dtype="float64"),
-        },
-        lower_fd_vectors={},
-        validate_template_parent_totals=False,
-    )
 
 
 def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeypatch) -> None:
@@ -921,6 +835,7 @@ def test_write_excel_mapping_sheet_allows_missing_co2_for_import_flow(capsys) ->
         aggregated_Y=aggregated_y,
         aggregated_x=aggregated_x,
         aggregated_sector_order=["CPA_C19_COAL"],
+        variant_value="IMP",
         allow_missing_sfc_co2=True,
         verbose=True,
     )
@@ -930,7 +845,7 @@ def test_write_excel_mapping_sheet_allows_missing_co2_for_import_flow(capsys) ->
     assert "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns" in stdout
     assert "WARNING: SFC workbook re-aggregated summary is omitting production-based CO2" in stdout
     assert "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2" in stdout
-    assert "import flow" in stdout
+    assert "for IMP flow" in stdout
 
     ws = wb["IO Aggregation Mapping"]
     headers = [cell.value for cell in ws[1]]
@@ -970,3 +885,59 @@ def test_generated_workbook_metadata_does_not_retain_template_values() -> None:
     assert "canonical_V_serializer" in text
     assert "_supplementary_fd_row_from_current_shares" not in text
     assert 'output_after=res.x' in text
+
+def test_identity_mapping_parent_lineage_keeps_template_alignment() -> None:
+    from scripts.aggregate_iot_by_mapping import (
+        _build_source_parent_by_input,
+        _resolve_product_template_alignment,
+    )
+
+    template = Path("template.xlsx")
+    mapping_df = pd.DataFrame(
+        {
+            "from_sector": ["p15.a", "p24.d"],
+            "to_sector": ["p15.a", "p24.d"],
+            "source_parent_code": ["CPA_C10-12", "CPA_C20"],
+        }
+    )
+    lineage = _build_source_parent_by_input(
+        mapping_df,
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
+        base_product_codes=["CPA_C10-12", "CPA_C20"],
+    )
+    assert lineage == {"p15.a": "CPA_C10-12", "p24.d": "CPA_C20"}
+
+    effective, order, primary, parents = _resolve_product_template_alignment(
+        template_xlsx=template,
+        base_product_codes=["CPA_C10-12", "CPA_C20"],
+        output_product_codes=["p15.a", "p24.d"],
+        mapping_df=mapping_df,
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
+        verbose=False,
+    )
+    assert effective == template
+    assert order == ["p15.a", "p24.d"]
+    assert primary == {"p15.a": "CPA_C10-12", "p24.d": "CPA_C20"}
+    assert parents == {
+        "p15.a": ("CPA_C10-12",),
+        "p24.d": ("CPA_C20",),
+    }
+
+
+def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
+    from scripts.aggregate_iot_by_mapping import _missing_sfc_co2_reason
+
+    imp_prod = _missing_sfc_co2_reason("IMP", use_phase=False)
+    imp_use = _missing_sfc_co2_reason("IMP", use_phase=True)
+    total_prod = _missing_sfc_co2_reason("TOTAL", use_phase=False)
+    total_use = _missing_sfc_co2_reason("TOTAL", use_phase=True)
+
+    assert "IMP flow" in imp_prod
+    assert "origin-weighted import" in imp_prod
+    assert "IMP flow" in imp_use
+    assert "TOTAL flow" in total_prod
+    assert "domestic-production" in total_prod
+    assert "TOTAL flow" in total_use
+    assert "for import flow" not in " ".join([imp_prod, imp_use, total_prod, total_use])

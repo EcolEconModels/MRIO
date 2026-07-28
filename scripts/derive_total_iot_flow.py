@@ -428,7 +428,23 @@ def _construct_canonical_v(
                 raise ValueError(f"Unknown nonzero V row: flow={flow!r}, row={row!r}")
             continue
         if formula is not None:
-            diagnostics.extend(_rounded_v_formula(flow=flow, row=row, published=published, formula=formula.reindex(source.columns), term_counts=counts.reindex(source.columns), quantum=quantum, rtol=rtol, atol=atol))
+            if counts is None:
+                raise RuntimeError(
+                    "Internal V formula contract has a formula without term counts: "
+                    f"flow={flow!r}, row={row!r}"
+                )
+            diagnostics.extend(
+                _rounded_v_formula(
+                    flow=flow,
+                    row=row,
+                    published=published,
+                    formula=formula.reindex(source.columns),
+                    term_counts=counts.reindex(source.columns),
+                    quantum=quantum,
+                    rtol=rtol,
+                    atol=atol,
+                )
+            )
         for parent in source.columns.astype(str):
             child_list = parent_children.get(parent, [])
             value = float(published.loc[parent])
@@ -542,6 +558,19 @@ def _v_policy_preflight(*, references: Mapping[str, ParsedEurostatIOT], child_pa
     return pd.DataFrame(rows)
 
 
+def _material_v_policy_problems(preflight: pd.DataFrame, *, atol: float) -> pd.DataFrame:
+    source_values = cast(
+        pd.Series,
+        pd.to_numeric(preflight["source_value"], errors="coerce"),
+    )
+    mask = (
+        preflight["status"].isin(["unknown_row", "zero_proxy_nonzero_source"])
+        & source_values.notna()
+        & source_values.abs().gt(float(atol))
+    )
+    return preflight.loc[mask].copy()
+
+
 def _apply_contract(dirs: Mapping[str, Path], *, suffix: str, write: bool) -> list[dict[str, object]]:
     z_name = "Z_split.csv" if suffix == "split" else "Z_agg.csv"
     y_name = "Y_split.csv" if suffix == "split" else "Y_agg.csv"
@@ -637,10 +666,17 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         filters = dict(eurostat_filters)
         filters[eurostat_stk_flow_dim] = flow
         references[flow] = load_eurostat_iot(dataset=eurostat_dataset, filters=filters, row_dim=eurostat_row_dim, col_dim=eurostat_col_dim, storage_folder=default_data_root() / "eurostat")
-        if references[flow].M is not None:
-            source_m = references[flow].M.copy().astype("float64")
+        source_m_raw = references[flow].M
+        if source_m_raw is not None:
+            source_m = source_m_raw.copy().astype("float64")
             _write_frame(source_m, dirs[flow], "M_split.csv")
-            _assert_close(f"{flow} published M", _read_frame(dirs[flow] / "M_split.csv"), source_m, rtol=0.0, atol=0.0)
+            _assert_close(
+                f"{flow} published M",
+                _read_frame(dirs[flow] / "M_split.csv"),
+                source_m,
+                rtol=0.0,
+                atol=0.0,
+            )
     quantum = _resolve_source_rounding_quantum(references, source_rounding_quantum)
     source_codes = references["TOTAL"].Z.index.astype(str)
     child_parent = _child_to_parent(manifest, source_codes)
@@ -652,8 +688,10 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         raise FileNotFoundError(f"Missing persisted DOM output shares: {share_path}")
     share_frame = pd.read_csv(share_path)
     output_proxy = pd.Series(1.0, index=Z_dom.index.astype(str), dtype="float64")
-    for row in share_frame.itertuples(index=False):
-        output_proxy.loc[str(row.child)] = float(row.output_share)
+    for child, output_share in share_frame.loc[
+        :, ["child", "output_share"]
+    ].itertuples(index=False, name=None):
+        output_proxy.loc[str(child)] = float(output_share)
     x_domestic = _allocate_source_parent_vector(
         published=p1_dom, child_parent=child_parent, children=Z_dom.index,
         proxy=output_proxy, flow="DOM", row_code="P1",
@@ -721,17 +759,22 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         imp_products=use["IMP"],
     )
     preflight.to_csv(outdir / "v_policy_preflight.csv", index=False)
-    problems = preflight.loc[
-        preflight["status"].isin(["unknown_row", "zero_proxy_nonzero_source"])
-        & (preflight["source_value"] != 0.0)
-    ]
+    problems = _material_v_policy_problems(preflight, atol=atol)
     if not problems.empty:
         raise ValueError("V policy preflight found genuine gaps:\n" + problems.to_string(index=False))
     for flow in ("DOM", "IMP", "TOTAL"):
         V, v_diagnostics, rows = _construct_canonical_v(flow=flow, reference=references[flow], child_parent=child_parent, Z=Z[flow], x_domestic=x_domestic, Z_total=Z_total, Z_imp=Z_imp, source_total_Z=references["TOTAL"].Z, imp_product_proxy=use["IMP"], quantum=quantum, rtol=rtol, atol=atol)
         if V is not None:
+            if v_diagnostics is None:
+                raise RuntimeError(
+                    "Internal V construction returned a V table without diagnostics: "
+                    f"flow={flow!r}"
+                )
             _write_frame(V, dirs[flow], "V_split.csv")
-            v_diagnostics.to_csv(dirs[flow] / "supplementary_row_split_diagnostics.csv", index=False)
+            v_diagnostics.to_csv(
+                dirs[flow] / "supplementary_row_split_diagnostics.csv",
+                index=False,
+            )
             diagnostics.extend(rows)
     (dirs["TOTAL"] / "exio_selected_sectors.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (dirs["TOTAL"] / "split_info.json").write_text(json.dumps({"flow_construction": "DOM_plus_IMP", "x_semantics": "source_controlled_DOM_P1", "A_semantics": "Z_flow_divided_by_shared_DOM_x", "V_status": "explicit_row_policy"}, indent=2) + "\n", encoding="utf-8")
