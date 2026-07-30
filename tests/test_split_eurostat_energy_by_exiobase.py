@@ -12,9 +12,9 @@ def test_mapping_integrity_check_passes():
     from scripts.split_eurostat_energy_by_exiobase import _assert_mapping_integrity
 
     euro_Z = pd.DataFrame(
-        [[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"]
+        [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["CPA_A", "CPA_B"]), columns=pd.Index(["CPA_A", "CPA_B"])
     )
-    euro_Y = pd.DataFrame({"FD": [100.0, 100.0]}, index=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"FD": [100.0, 100.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
 
@@ -31,15 +31,15 @@ def test_output_consistency_check_uses_destination_use_not_x_region():
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
     euro_Z = pd.DataFrame(
-        [[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"]
+        [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["CPA_A", "CPA_B"]), columns=pd.Index(["CPA_A", "CPA_B"])
     )
-    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
     exio_slice = SimpleNamespace(
         Z_domestic=pd.DataFrame(
-            [[0.0, 0.0], [0.0, 0.0]], index=["S1", "S2"], columns=["S1", "S2"]
+            [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["S1", "S2"]), columns=pd.Index(["S1", "S2"])
         ),
-        Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=["S1", "S2"]),
+        Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=pd.Index(["S1", "S2"])),
         # Deliberately wrong producer-output values. The boundary-correct check
         # must use Z_domestic + Y_region, not x_region.
         x_region=pd.Series([40.0, 40.0], index=["S1", "S2"], dtype="float64"),
@@ -62,15 +62,15 @@ def test_output_consistency_strict_helper_still_fails_on_destination_use_mismatc
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
     euro_Z = pd.DataFrame(
-        [[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"]
+        [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["CPA_A", "CPA_B"]), columns=pd.Index(["CPA_A", "CPA_B"])
     )
-    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
     exio_slice = SimpleNamespace(
         Z_domestic=pd.DataFrame(
-            [[0.0, 0.0], [0.0, 0.0]], index=["S1", "S2"], columns=["S1", "S2"]
+            [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["S1", "S2"]), columns=pd.Index(["S1", "S2"])
         ),
-        Y_region=pd.DataFrame({"P3": [50.0, 100.0]}, index=["S1", "S2"]),
+        Y_region=pd.DataFrame({"P3": [50.0, 100.0]}, index=pd.Index(["S1", "S2"])),
         x_region=pd.Series([999.0, 999.0], index=["S1", "S2"], dtype="float64"),
     )
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
@@ -92,15 +92,15 @@ def test_output_consistency_check_allows_sector_mix_differences_within_total_tol
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
     euro_Z = pd.DataFrame(
-        [[0.0, 0.0], [0.0, 0.0]], index=["CPA_A", "CPA_B"], columns=["CPA_A", "CPA_B"]
+        [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["CPA_A", "CPA_B"]), columns=pd.Index(["CPA_A", "CPA_B"])
     )
-    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=["CPA_A", "CPA_B"])
+    euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
     exio_slice = SimpleNamespace(
         Z_domestic=pd.DataFrame(
-            [[0.0, 0.0], [0.0, 0.0]], index=["S1", "S2"], columns=["S1", "S2"]
+            [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["S1", "S2"]), columns=pd.Index(["S1", "S2"])
         ),
-        Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=["S1", "S2"]),
+        Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=pd.Index(["S1", "S2"])),
         x_region=pd.Series([150.0, 50.0], index=["S1", "S2"], dtype="float64"),
     )
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
@@ -163,10 +163,10 @@ def test_assert_mapping_integrity_only_requires_explicit_targets() -> None:
 
     eurostat_Z = pd.DataFrame(
         [[10.0, 1.0], [2.0, 3.0]],
-        index=["CPA_C19", "CPA_C21"],
-        columns=["CPA_C19", "CPA_C21"],
+        index=pd.Index(["CPA_C19", "CPA_C21"]),
+        columns=pd.Index(["CPA_C19", "CPA_C21"]),
     )
-    eurostat_Y = pd.DataFrame({"FD": [4.0, 5.0]}, index=["CPA_C19", "CPA_C21"])
+    eurostat_Y = pd.DataFrame({"FD": [4.0, 5.0]}, index=pd.Index(["CPA_C19", "CPA_C21"]))
     sector_mapping = {"CPA_C19": {"p24.g": 1.0}}
 
     _assert_mapping_integrity(
@@ -184,7 +184,7 @@ def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
 
 def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
-    from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block, split_iot_using_exiobase_split_profiles
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = [
         "coke oven products",
@@ -192,6 +192,7 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
         "electricity from coal",
         "gas supply",
     ]
+    exio_sectors_index = pd.Index(exio_sectors)
 
     # Minimal EXIO slice (domestic block + one final-demand column).
     Z_domestic = pd.DataFrame(
@@ -201,12 +202,12 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
             [0.1, 0.3, 1.5, 0.4],
             [0.0, 0.2, 0.6, 1.0],
         ],
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
     Y_region = pd.DataFrame(
         {"FD": [1.0, 2.0, 3.0, 4.0]},
-        index=exio_sectors,
+        index=exio_sectors_index,
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
@@ -240,17 +241,18 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
     )
 
     euro_sectors = ["A", "C19", "D35"]
+    euro_sectors_index = pd.Index(euro_sectors)
     euro_Z = pd.DataFrame(
         [
             [10.0, 1.0, 2.0],
             [1.0, 5.0, 1.0],
             [2.0, 1.0, 6.0],
         ],
-        index=euro_sectors,
-        columns=euro_sectors,
+        index=euro_sectors_index,
+        columns=euro_sectors_index,
     )
     # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
-    euro_Y = pd.DataFrame({"P3": [3.0, 2.0, 1.0]}, index=euro_sectors)
+    euro_Y = pd.DataFrame({"P3": [3.0, 2.0, 1.0]}, index=euro_sectors_index)
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -285,12 +287,13 @@ def test_write_energy_split_report_xlsx(tmp_path):
         "electricity",
         "gas",
     ]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
         1.0,
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
-    Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0, 1.0]}, index=exio_sectors)
+    Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0, 1.0]}, index=exio_sectors_index)
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
     zp = tmp_path / "IOT_2020_pxp.zip"
@@ -322,17 +325,18 @@ def test_write_energy_split_report_xlsx(tmp_path):
     )
 
     euro_sectors = ["A", "C19", "D35"]
+    euro_sectors_index = pd.Index(euro_sectors)
     euro_Z = pd.DataFrame(
         [
             [1.0, 1.0, 1.0],
             [1.0, 2.0, 1.0],
             [1.0, 1.0, 3.0],
         ],
-        index=euro_sectors,
-        columns=euro_sectors,
+        index=euro_sectors_index,
+        columns=euro_sectors_index,
     )
     # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
-    euro_Y = pd.DataFrame({"P3": [1.0, 1.0, 1.0]}, index=euro_sectors)
+    euro_Y = pd.DataFrame({"P3": [1.0, 1.0, 1.0]}, index=euro_sectors_index)
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -362,16 +366,17 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
         "Electricity by gas",
         "Transmission services of electricity",
     ]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
         [
             [1.0, 0.2, 0.1],
             [0.3, 1.0, 0.2],
             [0.1, 0.2, 1.0],
         ],
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
-    Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=exio_sectors)
+    Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=exio_sectors_index)
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
     exio_slice = ExioRegionSlice(
@@ -386,11 +391,12 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
     )
 
     euro_sectors = ["CPA_D", "A"]
+    euro_sectors_index = pd.Index(euro_sectors)
     euro_Z = pd.DataFrame(
-        [[10.0, 1.0], [1.0, 5.0]], index=euro_sectors, columns=euro_sectors
+        [[10.0, 1.0], [1.0, 5.0]], index=euro_sectors_index, columns=euro_sectors_index
     )
     # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
-    euro_Y = pd.DataFrame({"P3": [3.0, 2.0]}, index=euro_sectors)
+    euro_Y = pd.DataFrame({"P3": [3.0, 2.0]}, index=euro_sectors_index)
 
     sector_to_exio = {
         "CPA_D": {
@@ -419,6 +425,7 @@ def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2", "b1", "b2"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
         [
             [1.0, 0.0, 90.0, 10.0],
@@ -426,12 +433,12 @@ def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
             [5.0, 0.0, 1.0, 0.0],
             [0.0, 5.0, 0.0, 1.0],
         ],
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
     Y_region = pd.DataFrame(
         {"Final consumption expenditure by households": [1.0, 1.0, 1.0, 1.0]},
-        index=exio_sectors,
+        index=exio_sectors_index,
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
@@ -447,9 +454,9 @@ def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
     )
 
     euro_Z = pd.DataFrame(
-        [[0.0, 200.0], [0.0, 0.0]], index=["A", "B"], columns=["A", "B"]
+        [[0.0, 200.0], [0.0, 0.0]], index=pd.Index(["A", "B"]), columns=pd.Index(["A", "B"])
     )
-    euro_Y = pd.DataFrame({"P3": [2.0, 2.0]}, index=["A", "B"])
+    euro_Y = pd.DataFrame({"P3": [2.0, 2.0]}, index=pd.Index(["A", "B"]))
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -471,6 +478,7 @@ def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["u", "v", "a1", "a2"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
         [
             [1.0, 0.0, 90.0, 10.0],
@@ -478,12 +486,12 @@ def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
             [5.0, 5.0, 1.0, 0.0],
             [5.0, 5.0, 0.0, 1.0],
         ],
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
     Y_region = pd.DataFrame(
         {"Final consumption expenditure by households": [1.0, 1.0, 1.0, 1.0]},
-        index=exio_sectors,
+        index=exio_sectors_index,
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
@@ -500,10 +508,10 @@ def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
 
     euro_Z = pd.DataFrame(
         [[0.0, 0.0, 100.0], [0.0, 0.0, 100.0], [0.0, 0.0, 0.0]],
-        index=["U", "V", "A"],
-        columns=["U", "V", "A"],
+        index=pd.Index(["U", "V", "A"]),
+        columns=pd.Index(["U", "V", "A"]),
     )
-    euro_Y = pd.DataFrame({"P3": [1.0, 1.0, 2.0]}, index=["U", "V", "A"])
+    euro_Y = pd.DataFrame({"P3": [1.0, 1.0, 2.0]}, index=pd.Index(["U", "V", "A"]))
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -525,15 +533,16 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
-        [[1.0, 0.0], [0.0, 1.0]], index=exio_sectors, columns=exio_sectors
+        [[1.0, 0.0], [0.0, 1.0]], index=exio_sectors_index, columns=exio_sectors_index
     )
     Y_region = pd.DataFrame(
         {
             "Final consumption expenditure by households": [90.0, 10.0],
             "Exports: Total (fob)": [10.0, 90.0],
         },
-        index=exio_sectors,
+        index=exio_sectors_index,
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
@@ -548,8 +557,8 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
         source_zip=tmp_path / "IOT_2020_pxp.zip",
     )
 
-    euro_Z = pd.DataFrame([[0.0]], index=["A"], columns=["A"])
-    euro_Y = pd.DataFrame({"P3": [100.0], "P6": [100.0]}, index=["A"])
+    euro_Z = pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"]))
+    euro_Y = pd.DataFrame({"P3": [100.0], "P6": [100.0]}, index=pd.Index(["A"]))
 
     def injected_export_loader(*, source_zip, region):
         assert source_zip == tmp_path / "IOT_2020_pxp.zip"
@@ -576,11 +585,12 @@ def test_import_donor_uses_documented_import_use_proxy(tmp_path):
     from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block, split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
-        [[3.0, 0.0], [0.0, 1.0]], index=exio_sectors, columns=exio_sectors
+        [[3.0, 0.0], [0.0, 1.0]], index=exio_sectors_index, columns=exio_sectors_index
     )
     Y_region = pd.DataFrame(
-        {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors
+        {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors_index
     )
     exio_slice = ExioRegionSlice(
         year=2020,
@@ -597,8 +607,8 @@ def test_import_donor_uses_documented_import_use_proxy(tmp_path):
         exio_slice, sector_to_exio_sectors={"A": exio_sectors}
     )
     result = split_iot_using_exiobase_split_profiles(
-        eurostat_Z=pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
-        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["A"]),
+        eurostat_Z=pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
+        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=pd.Index(["A"])),
         exio_slice=exio_slice,
         sector_to_exio_sectors={"A": exio_sectors},
         column_split_profiles=dom_profiles,
@@ -613,11 +623,12 @@ def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
+    exio_sectors_index = pd.Index(exio_sectors)
     # Keep profile construction valid; the injected export donor is the zero
     # mass condition under test.
-    Z_domestic = pd.DataFrame(np.eye(2), index=exio_sectors, columns=exio_sectors)
+    Z_domestic = pd.DataFrame(np.eye(2), index=exio_sectors_index, columns=exio_sectors_index)
     Y_region = pd.DataFrame(
-        {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors
+        {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors_index
     )
     exio_slice = ExioRegionSlice(
         year=2020,
@@ -634,8 +645,8 @@ def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
         return pd.Series([0.0, 0.0], index=exio_sectors, dtype="float64")
 
     result = split_iot_using_exiobase_split_profiles(
-        eurostat_Z=pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
-        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["A"]),
+        eurostat_Z=pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
+        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=pd.Index(["A"])),
         exio_slice=exio_slice,
         sector_to_exio_sectors={"A": exio_sectors},
         export_vector_loader=zero_export_loader,
@@ -655,18 +666,19 @@ def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path)
     from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
     exio_sectors = ["p24.d", "p24.g", "c21"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
         [
             [10.0, 5.0, 2.0],
             [3.0, 8.0, 1.0],
             [4.0, 2.0, 6.0],
         ],
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
     Y_region = pd.DataFrame(
         {"Final consumption expenditure by households": [20.0, 10.0, 5.0]},
-        index=exio_sectors,
+        index=exio_sectors_index,
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
     exio_slice = ExioRegionSlice(
@@ -681,10 +693,10 @@ def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path)
     )
     euro_Z = pd.DataFrame(
         [[100.0, 20.0], [30.0, 40.0]],
-        index=["CPA_C20", "CPA_C21"],
-        columns=["CPA_C20", "CPA_C21"],
+        index=pd.Index(["CPA_C20", "CPA_C21"]),
+        columns=pd.Index(["CPA_C20", "CPA_C21"]),
     )
-    euro_Y = pd.DataFrame({"P3": [50.0, 60.0]}, index=["CPA_C20", "CPA_C21"])
+    euro_Y = pd.DataFrame({"P3": [50.0, 60.0]}, index=pd.Index(["CPA_C20", "CPA_C21"]))
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -729,12 +741,13 @@ def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["p24.d", "p24.g"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
-        [[1.0, 0.0], [0.0, 1.0]], index=exio_sectors, columns=exio_sectors
+        [[1.0, 0.0], [0.0, 1.0]], index=exio_sectors_index, columns=exio_sectors_index
     )
     Y_region = pd.DataFrame(
         {"Final consumption expenditure by households": [100.0, 50.0]},
-        index=exio_sectors,
+        index=exio_sectors_index,
     )
     x_region = Y_region.sum(axis=1).astype("float64")
     exio_slice = ExioRegionSlice(
@@ -747,8 +760,8 @@ def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
         x_region=x_region,
         source_zip=tmp_path / "IOT_2020_pxp.zip",
     )
-    euro_Z = pd.DataFrame([[0.0]], index=["CPA_C20"], columns=["CPA_C20"])
-    euro_Y = pd.DataFrame({"P3": [100.0]}, index=["CPA_C20"])
+    euro_Z = pd.DataFrame([[0.0]], index=pd.Index(["CPA_C20"]), columns=pd.Index(["CPA_C20"]))
+    euro_Y = pd.DataFrame({"P3": [100.0]}, index=pd.Index(["CPA_C20"]))
 
     res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=euro_Z,
@@ -772,13 +785,14 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["p24.d", "p24.g"]
+    exio_sectors_index = pd.Index(exio_sectors)
     Z_domestic = pd.DataFrame(
         [[4.0, 0.0], [0.0, 8.0]],
-        index=exio_sectors,
-        columns=exio_sectors,
+        index=exio_sectors_index,
+        columns=exio_sectors_index,
     )
     Y_region = pd.DataFrame(
-        {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors
+        {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors_index
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
     exio_slice = ExioRegionSlice(
@@ -791,21 +805,21 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
         x_region=x_region,
         source_zip=tmp_path / "IOT_2020_pxp.zip",
     )
-    euro_Z = pd.DataFrame([[0.0]], index=["CPA_C20"], columns=["CPA_C20"])
-    euro_Y = pd.DataFrame({"P3": [1.0]}, index=["CPA_C20"])
+    euro_Z = pd.DataFrame([[0.0]], index=pd.Index(["CPA_C20"]), columns=pd.Index(["CPA_C20"]))
+    euro_Y = pd.DataFrame({"P3": [1.0]}, index=pd.Index(["CPA_C20"]))
     euro_V = pd.DataFrame(
         [[90.0], [999.0], [888.0]],
-        index=[
+        index=pd.Index([
             "Value added, gross",
             "Total intermediate consumption /final use",
             "Total supply at basic prices",
-        ],
-        columns=["CPA_C20"],
+        ]),
+        columns=pd.Index(["CPA_C20"]),
     )
     euro_M = pd.DataFrame(
         [[7.0], [999.0]],
-        index=["Value added, gross", "Total intermediate consumption /final use"],
-        columns=["P3"],
+        index=pd.Index(["Value added, gross", "Total intermediate consumption /final use"]),
+        columns=pd.Index(["P3"]),
     )
 
     res = split_iot_using_exiobase_split_profiles(
@@ -833,13 +847,13 @@ def test_validate_split_reconstruction_preserves_original_final_demand_columns()
 
     euro_Z = pd.DataFrame(
         [[1.0, 2.0], [3.0, 4.0]],
-        index=["A", "CPA_C19"],
-        columns=["A", "CPA_C19"],
+        index=pd.Index(["A", "CPA_C19"]),
+        columns=pd.Index(["A", "CPA_C19"]),
     )
     euro_Y = pd.DataFrame(
         [[5.0, 1.0, 0.5], [6.0, 2.0, 1.5]],
-        index=["A", "CPA_C19"],
-        columns=["P3", "P5", "P6"],
+        index=pd.Index(["A", "CPA_C19"]),
+        columns=pd.Index(["P3", "P5", "P6"]),
     )
     split_profiles = {
         "CPA_C19": SplitProfiles(
@@ -859,13 +873,13 @@ def test_validate_split_reconstruction_preserves_original_final_demand_columns()
     }
     Z_split = pd.DataFrame(
         [[1.0, 1.4, 0.6], [0.6, 0.24, 0.56], [2.4, 0.96, 2.24]],
-        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
-        columns=["A", "CPA_C19::s1", "CPA_C19::s2"],
+        index=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
+        columns=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
     )
     Y_split = pd.DataFrame(
         [[5.0, 1.0, 0.5], [1.5, 0.5, 0.375], [4.5, 1.5, 1.125]],
-        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
-        columns=["P3", "P5", "P6"],
+        index=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
+        columns=pd.Index(["P3", "P5", "P6"]),
     )
     x_split = (Z_split.sum(axis=1) + Y_split.sum(axis=1)).astype("float64")
 
@@ -884,13 +898,13 @@ def test_validate_split_reconstruction_raises_on_final_demand_drift():
 
     euro_Z = pd.DataFrame(
         [[1.0, 2.0], [3.0, 4.0]],
-        index=["A", "CPA_C19"],
-        columns=["A", "CPA_C19"],
+        index=pd.Index(["A", "CPA_C19"]),
+        columns=pd.Index(["A", "CPA_C19"]),
     )
     euro_Y = pd.DataFrame(
         [[5.0, 1.0, 0.5], [6.0, 2.0, 1.5]],
-        index=["A", "CPA_C19"],
-        columns=["P3", "P5", "P6"],
+        index=pd.Index(["A", "CPA_C19"]),
+        columns=pd.Index(["P3", "P5", "P6"]),
     )
     split_profiles = {
         "CPA_C19": SplitProfiles(
@@ -910,13 +924,13 @@ def test_validate_split_reconstruction_raises_on_final_demand_drift():
     }
     Z_split = pd.DataFrame(
         [[1.0, 1.4, 0.6], [0.6, 0.24, 0.56], [2.4, 0.96, 2.24]],
-        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
-        columns=["A", "CPA_C19::s1", "CPA_C19::s2"],
+        index=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
+        columns=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
     )
     Y_split = pd.DataFrame(
         [[5.0, 1.0, 0.5], [1.5, 0.5, 0.375], [99.0, 1.5, 1.125]],
-        index=["A", "CPA_C19::s1", "CPA_C19::s2"],
-        columns=["P3", "P5", "P6"],
+        index=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
+        columns=pd.Index(["P3", "P5", "P6"]),
     )
     x_split = (Z_split.sum(axis=1) + Y_split.sum(axis=1)).astype("float64")
 
@@ -928,3 +942,77 @@ def test_validate_split_reconstruction_raises_on_final_demand_drift():
             Z_split=Z_split,
             Y_split=Y_split,
         )
+
+
+def test_write_split_core_outputs_removes_stale_optional_sidecars(tmp_path) -> None:
+    from scripts.split_eurostat_energy_by_exiobase import (
+        _clear_managed_split_outputs,
+        write_split_core_outputs,
+    )
+
+    stale_names = [
+        "M_split.csv",
+        "M_split_balanced.csv",
+        "disaggregated_sector_co2_intensity.csv",
+        "exio_final_demand_co2_intensity.csv",
+        "eurostat_sector_co2_intensity.csv",
+        "split_child_edges.csv",
+    ]
+    for name in stale_names:
+        (tmp_path / name).write_text("stale\\n", encoding="utf-8")
+
+    sectors = pd.Index(["A"])
+    result = SimpleNamespace(
+        Z=pd.DataFrame([[1.0]], index=sectors, columns=sectors),
+        Y=pd.DataFrame([[2.0]], index=sectors, columns=pd.Index(["P3"])),
+        use_total=pd.Series([3.0], index=sectors, dtype="float64"),
+        split_profiles={},
+        exio_selected_sectors={"A": ["A"]},
+        balancing_method="DONOR_BLOCK",
+        fallback_count=0,
+        fallback_diagnostics=None,
+        V=None,
+        M=None,
+        supplementary_diagnostics=None,
+    )
+
+    _clear_managed_split_outputs(tmp_path)
+    write_split_core_outputs(result, tmp_path, verbose=False)
+
+    assert (tmp_path / "Z_split.csv").is_file()
+    assert (tmp_path / "Y_split.csv").is_file()
+    assert all(not (tmp_path / name).exists() for name in stale_names)
+
+
+def test_mapped_output_identity_allows_only_published_source_rounding() -> None:
+    from scripts.split_eurostat_energy_by_exiobase import (
+        _build_mapped_output_flow_identity_frame,
+    )
+
+    totals = {
+        "DOM": {
+            "eurostat_output_total": 10.0,
+            "exio_mapped_output_total": 10.0,
+            "eurostat_rounding_bound": 0.04,
+        },
+        "IMP": {
+            "eurostat_output_total": 5.0,
+            "exio_mapped_output_total": 5.0,
+            "eurostat_rounding_bound": 0.03,
+        },
+        "TOTAL": {
+            "eurostat_output_total": 15.1,
+            "exio_mapped_output_total": 15.0,
+            "eurostat_rounding_bound": 0.04,
+        },
+    }
+    result = _build_mapped_output_flow_identity_frame(
+        totals, rtol=0.0, atol=1e-6
+    ).set_index("quantity")
+
+    assert bool(result.loc["eurostat_output_total", "ok"]) is True
+    assert result.loc[
+        "eurostat_output_total", "source_rounding_allowance"
+    ] == pytest.approx(0.11)
+    assert bool(result.loc["exio_mapped_output_total", "ok"]) is True
+    assert result.loc["exio_mapped_output_total", "source_rounding_allowance"] == 0.0

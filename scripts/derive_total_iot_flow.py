@@ -76,13 +76,16 @@ def _max_gap(left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series) ->
             return float("inf")
         if not left.isna().equals(right.isna()):
             return float("inf")
-        values = (left - right).to_numpy(dtype="float64")
     else:
         if not left.index.equals(right.index):
             return float("inf")
         if not left.isna().equals(right.isna()):
             return float("inf")
-        values = (left - right).to_numpy(dtype="float64")
+    left_values = left.to_numpy(dtype="float64")
+    right_values = right.to_numpy(dtype="float64")
+    if np.isinf(left_values).any() or np.isinf(right_values).any():
+        return float("inf")
+    values = left_values - right_values
     finite = values[np.isfinite(values)]
     return float(np.max(np.abs(finite))) if finite.size else 0.0
 

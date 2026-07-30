@@ -67,12 +67,33 @@ def _with_source_rows(parsed, row_codes: list[str]):
     dimensions["prd_ava"].update({code: labels[code] for code in row_codes})
     meta["dimensions"] = dimensions
     meta["identified_supplementary_rows"] = list(row_codes)
+    fd_codes = list(map(str, meta["identified_final_demand_columns"]))
+    source_m = pd.DataFrame(
+        float("nan"),
+        index=row_codes,
+        columns=fd_codes,
+        dtype="float64",
+    )
+    for row_code in {"D21X31", "P2_ADJ"}.intersection(row_codes):
+        source_m.loc[row_code, :] = 0.0
     return replace(
         parsed,
         meta=meta,
         V=pd.DataFrame(0.0, index=row_codes, columns=parsed.Z.columns),
-        M=pd.DataFrame(0.0, index=row_codes, columns=parsed.Y.columns),
+        M=source_m,
     )
+
+
+def _matching_transformed_supplementary(parsed, product_codes):
+    row_codes = list(map(str, parsed.meta.get("identified_supplementary_rows", [])))
+    V = pd.DataFrame(
+        0.0,
+        index=row_codes,
+        columns=pd.Index(product_codes).astype(str),
+        dtype="float64",
+    )
+    M = parsed.M.copy().astype("float64") if parsed.M is not None else None
+    return V, M
 
 
 def _build_lineage_toy_case():
@@ -286,7 +307,7 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
         [
             [9.0, 8.0, 7.0, 27.0, 24.0],
             [999.0, 999.0, 999.0, 999.0, 999.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [float("nan")] * 5,
         ],
         index=["D21X31", "Total intermediate consumption /final use", "Imports of goods and services"],
         columns=["P3", "P5", "P6", "TU", "TFU"],
@@ -373,6 +394,16 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     assert _row_values(ws, 12, 6, 5) == pytest.approx([26.0, 13.0, 6.0, 68.0, 45.0])
     assert _row_values(ws, row_lookup["Taxes less subsidies on products"], 6, 5) == pytest.approx([9.0, 8.0, 7.0, 27.0, 24.0])
     assert _row_values(ws, row_lookup["Total intermediate consumption /final use"], 6, 5) == pytest.approx([999.0] * 5)
+
+    contract = pd.read_csv(out_path.with_name("supplementary_row_contract.csv"))
+    b1g_m = contract[(contract["row_code"] == "B1G") & (contract["block"] == "M")].iloc[0]
+    assert str(b1g_m["source_present"]).lower() == "true"
+    assert str(b1g_m["source_applicable"]).lower() == "false"
+    assert str(b1g_m["output_present"]).lower() == "false"
+    assert b1g_m["non_applicable_cells"] == "source_block_all_blank"
+    p2_m = contract[(contract["row_code"] == "P2_ADJ") & (contract["block"] == "M")].iloc[0]
+    assert str(p2_m["source_applicable"]).lower() == "true"
+    assert str(p2_m["output_present"]).lower() == "true"
 
 
 
@@ -486,6 +517,10 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
         }
     )
 
+    v_after, m_after = _matching_transformed_supplementary(
+        parsed, z_before.columns
+    )
+
     with pytest.raises(ValueError, match="Template reaggregation validation failed"):
         mod._write_sfc_workbook(
             out_path=out_path,
@@ -501,6 +536,8 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
             Y_before=y_before,
             Z_after=z_before,
             Y_after=y_before,
+            V_after=v_after,
+            M_after=m_after,
             mapping_df=mapping_df,
             mapping_from_col="from_sector",
             mapping_to_col="to_sector",
@@ -573,6 +610,10 @@ def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tm
     monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
     monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
 
+    v_after, m_after = _matching_transformed_supplementary(
+        parsed, z_after.columns
+    )
+
     mod._write_sfc_workbook(
         out_path=out_path,
         template_xlsx=template_path,
@@ -587,6 +628,8 @@ def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tm
         Y_before=y_before,
         Z_after=z_after,
         Y_after=y_after,
+        V_after=v_after,
+        M_after=m_after,
         mapping_df=mapping_df,
         mapping_from_col="from_sector",
         mapping_to_col="to_sector",
@@ -620,6 +663,10 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
     monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
     monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
 
+    v_after, m_after = _matching_transformed_supplementary(
+        parsed, z_after.columns
+    )
+
     with pytest.raises(ValueError, match="Template reaggregation validation failed"):
         mod._write_sfc_workbook(
             out_path=out_path,
@@ -635,6 +682,8 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
             Y_before=y_before,
             Z_after=z_after,
             Y_after=y_after,
+            V_after=v_after,
+            M_after=m_after,
             mapping_df=mapping_df,
             mapping_from_col="from_sector",
             mapping_to_col="to_sector",
@@ -754,6 +803,10 @@ def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_p
         }
     )
 
+    v_after, m_after = _matching_transformed_supplementary(
+        parsed, z_after.columns
+    )
+
     mod._write_sfc_workbook(
         out_path=out_path,
         template_xlsx=template_path,
@@ -768,6 +821,8 @@ def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_p
         Y_before=y_before,
         Z_after=z_after,
         Y_after=y_after,
+        V_after=v_after,
+        M_after=m_after,
         mapping_df=mapping_df,
         mapping_from_col="from_sector",
         mapping_to_col="to_sector",
@@ -941,3 +996,45 @@ def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
     assert "domestic-production" in total_prod
     assert "TOTAL flow" in total_use
     assert "for import flow" not in " ".join([imp_prod, imp_use, total_prod, total_use])
+
+
+def test_template_alignment_failure_is_independent_of_verbose() -> None:
+    from scripts.aggregate_iot_by_mapping import _resolve_product_template_alignment
+
+    effective, order, primary, parents = _resolve_product_template_alignment(
+        template_xlsx=Path("template.xlsx"),
+        base_product_codes=["CPA_A"],
+        output_product_codes=["CUSTOM"],
+        mapping_df=pd.DataFrame(
+            {"from_sector": ["unmapped"], "to_sector": ["CUSTOM"]}
+        ),
+        mapping_from_col="from_sector",
+        mapping_to_col="to_sector",
+        verbose=False,
+    )
+
+    assert effective is None
+    assert order == ["CUSTOM"]
+    assert primary == {}
+    assert parents == {}
+
+
+def test_clear_managed_aggregation_outputs_removes_only_stage_files(tmp_path: Path) -> None:
+    from scripts.aggregate_iot_by_mapping import _clear_managed_aggregation_outputs
+
+    stale = [
+        "V_agg.csv",
+        "M_agg.csv",
+        "aggregated_sector_co2_intensity.csv",
+        "exio_final_demand_co2_intensity.csv",
+        "supplementary_row_contract.csv",
+    ]
+    for name in stale:
+        (tmp_path / name).write_text("stale\\n", encoding="utf-8")
+    unrelated = tmp_path / "keep_me.txt"
+    unrelated.write_text("keep\\n", encoding="utf-8")
+
+    _clear_managed_aggregation_outputs(tmp_path)
+
+    assert all(not (tmp_path / name).exists() for name in stale)
+    assert unrelated.read_text(encoding="utf-8") == "keep\\n"

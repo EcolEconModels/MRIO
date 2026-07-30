@@ -29,6 +29,7 @@ from ecolecon_mrio.exiobase3_extensions import (
 )
 from ecolecon_mrio.eurostat_iot import (
     ParsedEurostatIOT,
+    build_eurostat_atomic_final_demand,
     build_eurostat_product_use_reference,
     load_eurostat_iot,
     load_eurostat_iot_variants,
@@ -144,6 +145,45 @@ SPLIT_OUTPUT_NAME_ALIASES: tuple[tuple[str, str], ...] = (
     ("A_split.csv", "A_split_balanced.csv"),
 )
 
+SPLIT_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
+    "Z_split.csv",
+    "Z_split_balanced.csv",
+    "Y_split.csv",
+    "Y_split_balanced.csv",
+    "x_split.csv",
+    "x_split_balanced.csv",
+    "A_split.csv",
+    "A_split_balanced.csv",
+    "V_split.csv",
+    "V_split_balanced.csv",
+    "M_split.csv",
+    "M_split_balanced.csv",
+    "use_total_split.csv",
+    "supplementary_row_split_diagnostics.csv",
+    "split_output_shares.csv",
+    "fallback_diagnostics.csv",
+    "exio_selected_sectors.json",
+    "split_info.json",
+    "balance_info.json",
+    "ras_info.json",
+    "flow_specific_exio_to_eurostat_weights.csv",
+    "mapped_output_consistency.csv",
+    "split_child_edges.csv",
+    "exio_quantity_and_price.csv",
+    "exio_quantity_and_price_proxies.csv",
+    "disaggregated_sector_value_per_physical_input.csv",
+    "exio_co2_intensity.csv",
+    "disaggregated_sector_co2_intensity.csv",
+    "exio_final_demand_co2_intensity.csv",
+    "eurostat_sector_co2_intensity.csv",
+    "energy_split_report.xlsx",
+)
+
+
+def _clear_managed_split_outputs(outdir: Path) -> None:
+    for name in SPLIT_MANAGED_OUTPUT_NAMES:
+        (outdir / name).unlink(missing_ok=True)
+
 
 def _split_info_payload(
     result,
@@ -181,7 +221,20 @@ def write_split_core_outputs(
     res, outdir: Path, *, verbose: bool, extra_info: dict | None = None
 ) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
-    for name in ("x_split.csv", "x_split_balanced.csv", "A_split.csv", "A_split_balanced.csv", "V_split.csv", "V_split_balanced.csv", "supplementary_row_split_diagnostics.csv", "split_output_shares.csv"):
+    for name in (
+        "x_split.csv",
+        "x_split_balanced.csv",
+        "A_split.csv",
+        "A_split_balanced.csv",
+        "V_split.csv",
+        "V_split_balanced.csv",
+        "M_split.csv",
+        "M_split_balanced.csv",
+        "use_total_split.csv",
+        "supplementary_row_split_diagnostics.csv",
+        "split_output_shares.csv",
+        "fallback_diagnostics.csv",
+    ):
         (outdir / name).unlink(missing_ok=True)
     share_rows = []
     for parent, profile in res.split_profiles.items():
@@ -346,7 +399,7 @@ def _mapping_weights_frame(
             )
     return pd.DataFrame(
         rows,
-        columns=[
+        columns=pd.Index([
             "variant_dim",
             "variant_value",
             "exio_flow",
@@ -354,7 +407,7 @@ def _mapping_weights_frame(
             "target_code",
             "weight",
             "reference_basis",
-        ],
+        ]),
     )
 
 
@@ -502,7 +555,7 @@ def _build_split_child_edge_metadata(
         "phase",
         "notes",
     ]
-    return pd.DataFrame(rows, columns=columns)
+    return pd.DataFrame(rows, columns=pd.Index(columns))
 
 
 def _eurostat_output_reference_from_frames(
@@ -529,6 +582,21 @@ def _eurostat_output_reference_from_frames(
     )
     reference.index = reference.index.astype(str)
     return reference
+
+
+def _eurostat_output_rounding_bound(parsed: ParsedEurostatIOT) -> float:
+    quantum_value = parsed.meta.get("source_rounding_quantum")
+    if quantum_value is None:
+        return 0.0
+    quantum = float(quantum_value)
+    if not np.isfinite(quantum) or quantum <= 0.0:
+        raise ValueError(f"Invalid Eurostat source rounding quantum: {quantum_value!r}")
+    atomic_non_export = build_eurostat_atomic_final_demand(
+        parsed,
+        include_exports=False,
+    )
+    component_terms = int(parsed.Z.size + atomic_non_export.size)
+    return 0.5 * quantum * component_terms
 
 
 def _assert_mapping_integrity(
@@ -714,11 +782,12 @@ def _build_mapped_output_flow_identity_frame(
         "dom_plus_imp",
         "total",
         "abs_diff",
+        "source_rounding_allowance",
         "tolerance",
         "ok",
     ]
     if any(flow not in flow_totals for flow in required):
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=pd.Index(columns))
 
     rows: list[dict[str, object]] = []
     for quantity in ("eurostat_output_total", "exio_mapped_output_total"):
@@ -727,18 +796,30 @@ def _build_mapped_output_flow_identity_frame(
         total = float(flow_totals["TOTAL"].get(quantity, 0.0))
         lhs = dom + imp
         diff = abs(lhs - total)
-        tol = max(float(atol), float(rtol) * abs(total))
+        source_rounding_allowance = (
+            sum(
+                float(flow_totals[flow].get("eurostat_rounding_bound", 0.0))
+                for flow in required
+            )
+            if quantity == "eurostat_output_total"
+            else 0.0
+        )
+        tol = (
+            max(float(atol), float(rtol) * abs(total))
+            + source_rounding_allowance
+        )
         rows.append(
             {
                 "quantity": quantity,
                 "dom_plus_imp": lhs,
                 "total": total,
                 "abs_diff": diff,
+                "source_rounding_allowance": source_rounding_allowance,
                 "tolerance": tol,
                 "ok": bool(diff <= tol),
             }
         )
-    return pd.DataFrame(rows, columns=columns)
+    return pd.DataFrame(rows, columns=pd.Index(columns))
 
 
 def _aggregate_exio_emissions_to_eurostat(
@@ -1051,6 +1132,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     outdir = Path(args.outdir) if args.outdir is not None else None
     if outdir is not None:
         outdir.mkdir(parents=True, exist_ok=True)
+        _clear_managed_split_outputs(outdir)
+        for diagnostic_name in (
+            "mapped_output_flow_identity.csv",
+            "mapped_output_consistency_total_reference.csv",
+        ):
+            (outdir / diagnostic_name).unlink(missing_ok=True)
 
     extract_qp = not args.no_exio_quantity_price
     qp_extensions = tuple(json.loads(args.qp_extensions))
@@ -1269,6 +1356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parsed_variant = variants[flow]
                 flow_dir = outdir / f"{args.eurostat_stk_flow_dim}={flow}"
                 flow_dir.mkdir(parents=True, exist_ok=True)
+                _clear_managed_split_outputs(flow_dir)
 
                 _vprint(
                     args.verbose,
@@ -1347,6 +1435,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ),
                             "exio_mapped_output_total": float(
                                 output_consistency["exio_mapped_output"].sum()
+                            ),
+                            "eurostat_rounding_bound": _eurostat_output_rounding_bound(
+                                parsed_variant
                             ),
                         }
                         if args.strict_mapping_consistency_check:
@@ -1563,6 +1654,81 @@ def main(argv: Sequence[str] | None = None) -> int:
                         aggregates=report_aggregates,
                     )
                     _vprint(args.verbose, f"Wrote: {out.resolve()}")
+
+            identity_keys = {_flow_identity_key(flow) for flow in flows}
+            if (
+                full_sector_mapping_csv is not None
+                and not args.no_mapping_consistency_check
+                and args.eurostat_stk_flow_dim == "stk_flow"
+                and {"DOM", "IMP"}.issubset(identity_keys)
+                and "TOTAL" not in identity_keys
+            ):
+                _vprint(
+                    args.verbose,
+                    "Loading diagnostic-only TOTAL references for the mapped-output "
+                    "DOM + IMP = TOTAL identity; no TOTAL split is generated.",
+                )
+                total_filters = dict(base_filters)
+                total_filters[args.eurostat_stk_flow_dim] = "TOTAL"
+                parsed_total = load_eurostat_iot(
+                    dataset=args.eurostat_dataset,
+                    filters=total_filters,
+                    row_dim=args.eurostat_row_dim,
+                    col_dim=args.eurostat_col_dim,
+                    storage_folder=eurostat_storage,
+                    force_download=args.eurostat_force_download,
+                    force_reparse=args.eurostat_force_reparse,
+                )
+                total_mapping, _ = _resolve_exio_to_eurostat_mapping_for_parsed(
+                    full_sector_mapping_csv,
+                    parsed_total,
+                )
+                _assert_mapping_integrity(
+                    sector_mapping=total_mapping,
+                    eurostat_Z=parsed_total.Z,
+                    eurostat_Y=parsed_total.Y,
+                    required_target_codes=report_aggregates,
+                    label=f"{args.eurostat_stk_flow_dim}=TOTAL diagnostic reference",
+                )
+                total_slice = load_exiobase3_region_slice(
+                    year=args.exio_year,
+                    region=args.exio_region,
+                    system="pxp",
+                    flow="total",
+                    cache_root=data_root,
+                    doi=args.exio_doi,
+                    verbose=args.verbose,
+                )
+                total_consistency, _, _ = _build_output_consistency_frame(
+                    sector_mapping=total_mapping,
+                    eurostat_Z=parsed_total.Z,
+                    eurostat_Y=parsed_total.Y,
+                    exio_slice=total_slice,
+                )
+                total_out = outdir / "mapped_output_consistency_total_reference.csv"
+                total_consistency.to_csv(total_out, index=False)
+                _vprint(args.verbose, f"Wrote: {total_out.resolve()}")
+                flow_identity_totals["TOTAL"] = {
+                    "eurostat_output_total": float(
+                        total_consistency["eurostat_output"].sum()
+                    ),
+                    "exio_mapped_output_total": float(
+                        total_consistency["exio_mapped_output"].sum()
+                    ),
+                    "eurostat_rounding_bound": _eurostat_output_rounding_bound(
+                        parsed_total
+                    ),
+                }
+                if args.strict_mapping_consistency_check:
+                    _assert_output_consistency(
+                        sector_mapping=total_mapping,
+                        eurostat_Z=parsed_total.Z,
+                        eurostat_Y=parsed_total.Y,
+                        exio_slice=total_slice,
+                        rtol=float(args.mapping_consistency_rtol),
+                        atol=float(args.mapping_consistency_atol),
+                        label=f"{args.eurostat_stk_flow_dim}=TOTAL diagnostic reference",
+                    )
 
             flow_identity = _build_mapped_output_flow_identity_frame(
                 flow_identity_totals,

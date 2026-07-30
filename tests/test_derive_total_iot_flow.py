@@ -112,16 +112,16 @@ def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> N
     Z.to_csv(directory / "Z_split.csv")
     Y.to_csv(directory / "Y_split.csv")
     (directory / "exio_selected_sectors.json").write_text(json.dumps({"a": ["a"], "b": ["b"]}), encoding="utf-8")
-    pd.DataFrame(columns=["parent", "child", "output_share"]).to_csv(directory / "split_output_shares.csv", index=False)
+    pd.DataFrame(columns=pd.Index(["parent", "child", "output_share"])).to_csv(directory / "split_output_shares.csv", index=False)
 
 
 def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_primitive(tmp_path, "DOM", 1.0, 1.0)
     _write_primitive(tmp_path, "IMP", 2.0, 3.0)
     sources = {
-        "DOM": pd.DataFrame([[1.0, float("nan")]], index=["m"], columns=["P3", "P5"]),
-        "IMP": pd.DataFrame([[0.0, 2.0]], index=["m"], columns=["P3", "P5"]),
-        "TOTAL": pd.DataFrame([[3.0, 4.0]], index=["m"], columns=["P3", "P5"]),
+        "DOM": pd.DataFrame([[1.0, float("nan")]], index=pd.Index(["m"]), columns=pd.Index(["P3", "P5"])),
+        "IMP": pd.DataFrame([[0.0, 2.0]], index=pd.Index(["m"]), columns=pd.Index(["P3", "P5"])),
+        "TOTAL": pd.DataFrame([[3.0, 4.0]], index=pd.Index(["m"]), columns=pd.Index(["P3", "P5"])),
     }
     def fake_source(**kwargs):
         flow = kwargs["filters"]["stk_flow"]
@@ -138,7 +138,7 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
         V = None
         if flow in {"DOM", "TOTAL"}:
             p1 = MODULE.flow_use_total(Z_dom, Y_dom)
-            V = pd.DataFrame([p1], index=["P1"])
+            V = pd.DataFrame([p1], index=pd.Index(["P1"]))
         return SimpleNamespace(Z=Z, Y=Y, M=sources[flow], V=V, meta={"source_rounding_quantum": 1.0})
     monkeypatch.setattr(MODULE, "load_eurostat_iot", fake_source)
     MODULE.derive_total_flow(tmp_path, eurostat_dataset="x", eurostat_filters={}, eurostat_row_dim="r", eurostat_col_dim="c")
@@ -179,7 +179,7 @@ def test_published_m_mask_validation_fails() -> None:
 def test_construct_canonical_v_rejects_signed_unknown_row() -> None:
     parents = pd.Index(["A", "B"])
     reference = SimpleNamespace(
-        V=pd.DataFrame([[1.0, -1.0]], index=["UNKNOWN"], columns=parents),
+        V=pd.DataFrame([[1.0, -1.0]], index=pd.Index(["UNKNOWN"]), columns=parents),
         Z=pd.DataFrame(0.0, index=parents, columns=parents),
     )
     children = pd.Index(["A", "B"])
@@ -196,7 +196,7 @@ def test_construct_canonical_v_rejects_signed_unknown_row() -> None:
 
 def test_v_policy_preflight_marks_unknown_one_child_as_unknown() -> None:
     reference = SimpleNamespace(
-        V=pd.DataFrame([[2.0]], index=["UNKNOWN"], columns=["A"]),
+        V=pd.DataFrame([[2.0]], index=pd.Index(["UNKNOWN"]), columns=pd.Index(["A"])),
     )
     preflight = MODULE._v_policy_preflight(
         references={"DOM": reference}, child_parent={"child": "A"},
@@ -213,7 +213,7 @@ def test_construct_canonical_v_defers_ts_bp_until_p7_is_allocated() -> None:
     children = pd.Index(["a1", "a2"])
     reference = SimpleNamespace(
         V=pd.DataFrame(
-            [[150.0], [50.0], [100.0]], index=["TS_BP", "P7", "P1"], columns=parent,
+            [[150.0], [50.0], [100.0]], index=pd.Index(["TS_BP", "P7", "P1"]), columns=parent,
         ),
         Z=pd.DataFrame(0.0, index=parent, columns=parent),
     )
@@ -246,3 +246,10 @@ def test_v_preflight_materiality_uses_atol_and_ignores_nan() -> None:
     )
     problems = _material_v_policy_problems(preflight, atol=1e-6)
     assert problems.index.tolist() == [2]
+
+
+def test_assert_close_rejects_infinite_values() -> None:
+    left = pd.Series([float("inf")], index=pd.Index(["a"]))
+    right = pd.Series([float("inf")], index=pd.Index(["a"]))
+    with pytest.raises(ValueError, match="max_abs_gap=inf"):
+        MODULE._assert_close("infinite values", left, right, rtol=1e-9, atol=1e-6)

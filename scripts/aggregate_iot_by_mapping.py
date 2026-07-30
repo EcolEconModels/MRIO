@@ -27,6 +27,31 @@ def _vprint(enabled: bool, msg: str) -> None:
         print(msg, flush=True)
 
 
+AGGREGATION_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
+    "Z_agg.csv",
+    "Y_agg.csv",
+    "x_agg.csv",
+    "A_agg.csv",
+    "V_agg.csv",
+    "M_agg.csv",
+    "use_total_agg.csv",
+    "aggregation_block_conservation.csv",
+    "aggregation_info.json",
+    "aggregation_edge_mapping_audit.csv",
+    "aggregated_sector_value_per_physical_input.csv",
+    "aggregated_sector_co2_intensity.csv",
+    "exio_final_demand_co2_intensity.csv",
+    "aggregation_report.xlsx",
+    "supplementary_row_contract.csv",
+    "template_parent_total_audit.csv",
+)
+
+
+def _clear_managed_aggregation_outputs(outdir: Path) -> None:
+    for name in AGGREGATION_MANAGED_OUTPUT_NAMES:
+        (outdir / name).unlink(missing_ok=True)
+
+
 class _Timer:
     def __init__(self) -> None:
         self._t0 = time.perf_counter()
@@ -1275,12 +1300,13 @@ def _resolve_product_template_alignment(
             parents_by_output[output_code] = (inferred,)
 
     primary_parent_by_output = {code: parents[0] for code, parents in parents_by_output.items() if parents}
-    if template_xlsx is not None and len(primary_parent_by_output) != len(product_order) and verbose:
-        print(
-            "Template workbook alignment disabled for custom aggregated sectors. "
-            f"Could not infer parents for output codes: {[code for code in product_order if code not in primary_parent_by_output]}",
-            flush=True,
-        )
+    if template_xlsx is not None and len(primary_parent_by_output) != len(product_order):
+        if verbose:
+            print(
+                "Template workbook alignment disabled for custom aggregated sectors. "
+                f"Could not infer parents for output codes: {[code for code in product_order if code not in primary_parent_by_output]}",
+                flush=True,
+            )
         return None, product_order, primary_parent_by_output, parents_by_output
     return template_xlsx, product_order, primary_parent_by_output, parents_by_output
 
@@ -1740,6 +1766,36 @@ def _write_sfc_workbook(
         source_m_row = _match_row(parsed_m, row_code, row_label)
         output_v_row = _match_row(V_ord, row_code, row_label)
         output_m_row = _match_row(M_ord, row_code, row_label)
+        source_v_applicable = source_v_row is not None
+        source_m_applicable = False
+        if source_m_row is not None and parsed_m is not None:
+            source_m_values = parsed_m.loc[source_m_row].reindex(
+                fd_codes_order_no_total
+            )
+            source_m_applicable = bool(source_m_values.notna().any())
+        if source_v_applicable and output_v_row is None:
+            raise ValueError(
+                f"Transformed V is missing source supplementary row {row_code!r}."
+            )
+        if source_m_applicable and output_m_row is None:
+            raise ValueError(
+                f"Transformed M is missing applicable source supplementary row {row_code!r}."
+            )
+        if (
+            not source_m_applicable
+            and output_m_row is not None
+            and M_ord is not None
+            and bool(
+                M_ord.loc[output_m_row]
+                .reindex(fd_codes_order_no_total)
+                .notna()
+                .any()
+            )
+        ):
+            raise ValueError(
+                "Transformed M contains values for source-blank supplementary row "
+                f"{row_code!r}."
+            )
 
         # Supplementary blocks are already authoritative transformed data.  This
         # writer must serialize them, never reconstruct them from Z, x or labels.
@@ -1755,7 +1811,14 @@ def _write_sfc_workbook(
         )
         product_method = "canonical_V_serializer" if output_v_row is not None else "absent_V_blank"
         fd_method = "canonical_M_serializer" if output_m_row is not None else "absent_M_blank"
-        non_applicable = ""
+        product_non_applicable = "" if source_v_applicable else "source_row_absent"
+        fd_non_applicable = (
+            ""
+            if source_m_applicable
+            else "source_block_all_blank"
+            if source_m_row is not None
+            else "source_row_absent"
+        )
 
         ws.cell(row=target_r, column=1).value = row_label
         for j, output_code in enumerate(product_codes_order):
@@ -1780,8 +1843,9 @@ def _write_sfc_workbook(
                     "method": product_method,
                     "is_identity": kind is not None,
                     "source_present": source_v_row is not None,
-                    "output_present": True,
-                    "non_applicable_cells": "",
+                    "source_applicable": source_v_applicable,
+                    "output_present": output_v_row is not None,
+                    "non_applicable_cells": product_non_applicable,
                     "status": "ok",
                 },
                 {
@@ -1791,8 +1855,9 @@ def _write_sfc_workbook(
                     "method": fd_method,
                     "is_identity": kind is not None,
                     "source_present": source_m_row is not None,
-                    "output_present": True,
-                    "non_applicable_cells": non_applicable,
+                    "source_applicable": source_m_applicable,
+                    "output_present": output_m_row is not None,
+                    "non_applicable_cells": fd_non_applicable,
                     "status": "ok",
                 },
             ]
@@ -1838,8 +1903,7 @@ def _write_sfc_workbook(
             lower_row_vectors=lower_row_vectors,
             lower_fd_vectors=lower_fd_vectors,
             source_parent_by_input=source_parent_by_input,
-            validate_template_parent_totals=validate_template_parent_totals
-            and (variant_value is None or str(variant_value).upper() == "TOTAL"),
+            validate_template_parent_totals=validate_template_parent_totals,
             rtol=1e-9,
             atol=1e-6,
         )
@@ -2219,6 +2283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             compute_sector_emission_intensity=disaggregated_emissions is not None,
             disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
+        _clear_managed_aggregation_outputs(out_base)
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
         # Keep the aggregation audit deliberately small and block-specific.  V
@@ -2395,6 +2460,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             out_name = str(args.sfc_outname).format(variant=(variant or "single"))
             out_path = out_base / out_name
+            out_path.unlink(missing_ok=True)
 
             _vprint(args.verbose, "Calling: write SFC workbook ...")
             t2 = _Timer()
