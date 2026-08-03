@@ -207,6 +207,7 @@ def test_infer_variant_value_uses_source_dir_and_filters() -> None:
 
 
 def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Path, monkeypatch) -> None:
+    """Supplementary controls must serialize their signed industry totals in column B."""
     import ecolecon_mrio.eurostat_iot as eurostat_iot
     from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
     from scripts import aggregate_iot_by_mapping as mod
@@ -286,7 +287,7 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     )
     v_after = pd.DataFrame(
         [
-            [0.25, 0.75, 2.0],
+            [-0.25, 0.75, -2.0],
             [999.0, 999.0, 999.0],
             [888.0, 888.0, 888.0],
             [777.0, 777.0, 777.0],
@@ -375,7 +376,7 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     expected_value_added = [999.0, 999.0, 999.0]
     expected_output = [888.0, 888.0, 888.0]
     expected_intermediate = [777.0, 777.0, 777.0]
-    expected_taxes = [0.25, 0.75, 2.0]
+    expected_taxes = [-0.25, 0.75, -2.0]
     expected_imports = [1.0, 2.0, 3.0]
     expected_supply = [666.0, 666.0, 666.0]
 
@@ -390,6 +391,15 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     assert _row_values(ws, row_lookup["Taxes less subsidies on products"], 3, 3) == pytest.approx(expected_taxes)
     assert _row_values(ws, row_lookup["Imports of goods and services"], 3, 3) == pytest.approx(expected_imports)
     assert _row_values(ws, row_lookup["Total supply at basic prices"], 3, 3) == pytest.approx(expected_supply)
+
+    # Column B must be regenerated from the canonical V rows after stale
+    # template cells are cleared; signed tax-minus-subsidy totals are valid.
+    assert ws.cell(row=row_lookup["Taxes less subsidies on products"], column=2).value == pytest.approx(-1.5)
+    assert ws.cell(row=row_lookup["Value added, gross"], column=2).value == pytest.approx(2997.0)
+    assert ws.cell(row=row_lookup["Output"], column=2).value == pytest.approx(2664.0)
+    assert ws.cell(row=row_lookup["Total intermediate consumption /final use"], column=2).value == pytest.approx(2331.0)
+    assert ws.cell(row=row_lookup["Imports of goods and services"], column=2).value == pytest.approx(6.0)
+    assert ws.cell(row=row_lookup["Total supply at basic prices"], column=2).value == pytest.approx(1998.0)
 
     assert _row_values(ws, 12, 6, 5) == pytest.approx([26.0, 13.0, 6.0, 68.0, 45.0])
     assert _row_values(ws, row_lookup["Taxes less subsidies on products"], 6, 5) == pytest.approx([9.0, 8.0, 7.0, 27.0, 24.0])

@@ -1230,6 +1230,30 @@ def _validate_template_reaggregation(
         expected_total = float(current_fd_totals.get(fd_code, 0.0))
         _assert_close(f"total-row fd={fd_code}", actual_total, expected_total)
 
+    # Column B is the signed sum across industries for each applicable
+    # supplementary account (for example, D29 less D39 may be negative when
+    # production subsidies exceed other production taxes).  Validate this
+    # control separately because it is outside both the V and M blocks.
+    lower_total_col = int(workbook_layout["total_col"])
+    lower_first_row = int(workbook_layout["va_row"])
+    for offset, (row_code, product_vector) in enumerate(lower_row_vectors.items()):
+        expected_total = product_vector.sum(min_count=1)
+        raw_total = workbook_ws.cell(row=lower_first_row + offset, column=lower_total_col).value
+        actual_total = float(raw_total) if isinstance(raw_total, (int, float)) else None
+        if pd.isna(expected_total):
+            if actual_total is not None:
+                raise ValueError(
+                    "Template reaggregation validation failed for blank supplementary "
+                    f"total row={row_code}: actual={actual_total:.10f}"
+                )
+            continue
+        if actual_total is None:
+            raise ValueError(
+                "Template reaggregation validation failed for supplementary "
+                f"total row={row_code}: actual=None, expected={float(expected_total):.10f}"
+            )
+        _assert_close(f"supplementary total row={row_code}", actual_total, float(expected_total))
+
     original_tfu = pd.Series(0.0, index=base_codes, dtype="float64")
     if {"P3", "P5", "P6"}.issubset(set(Y_before_base.columns.astype(str))):
         original_tfu = (Y_before_base["P3"] + Y_before_base["P5"] + Y_before_base["P6"]).astype("float64")
@@ -1821,6 +1845,13 @@ def _write_sfc_workbook(
         )
 
         ws.cell(row=target_r, column=1).value = row_label
+        # The Eurostat-shaped column-B control is the signed total of the
+        # authoritative transformed industry vector.  Leave it blank only when
+        # the entire V row is economically non-applicable (not when its sum is
+        # zero or negative).
+        product_total = product_vector.sum(min_count=1)
+        if not pd.isna(product_total):
+            _write_num(ws, row=target_r, col=c_total, value=float(product_total))
         for j, output_code in enumerate(product_codes_order):
             value = product_vector.loc[output_code]
             if not pd.isna(value):
@@ -1967,6 +1998,18 @@ def _write_sfc_workbook(
         row = row_positions[row_code]
         if ws_reopened.cell(row=row, column=1).value != str(row_labels.get(row_code, row_code)).strip():
             raise ValueError(f"Workbook round-trip validation lost supplementary row {row_code!r}.")
+        expected_total = lower_row_vectors[row_code].sum(min_count=1)
+        actual_total = ws_reopened.cell(row=row, column=c_total).value
+        if pd.isna(expected_total):
+            if isinstance(actual_total, (int, float)):
+                raise ValueError(
+                    "Workbook round-trip validation found numeric value for blank "
+                    f"supplementary total row {row_code!r}: {actual_total!r}"
+                )
+        else:
+            _assert_roundtrip_value(
+                f"supplementary total row {row_code!r}", actual_total, float(expected_total)
+            )
         for j, product_code in enumerate(product_codes_order):
             expected = lower_row_vectors[row_code].loc[product_code]
             actual = ws_reopened.cell(row=row, column=c_prod0 + j).value
