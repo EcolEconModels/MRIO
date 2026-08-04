@@ -116,10 +116,8 @@ def test_output_consistency_check_allows_sector_mix_differences_within_total_tol
     )
 
 
-def test_split_metadata_helpers_include_fallback_count_and_legacy_aliases() -> None:
+def test_split_metadata_includes_fallback_count() -> None:
     from scripts.split_eurostat_energy_by_exiobase import (
-        SPLIT_OUTPUT_NAME_ALIASES,
-        _legacy_split_info_payload,
         _split_info_payload,
     )
 
@@ -138,25 +136,11 @@ def test_split_metadata_helpers_include_fallback_count_and_legacy_aliases() -> N
         fake_result, variant_dim="stk_flow", variant_value="TOTAL"
     )
     assert split_info["method"] == "DONOR_BLOCK_WITH_SHARE_FALLBACK"
-    assert split_info["is_ras_balanced"] is False
     assert split_info["is_reconstruction_validated"] is True
     assert split_info["fallback_count"] == 3
     assert split_info["has_fallback_diagnostics"] is True
     assert split_info["variant_dim"] == "stk_flow"
     assert split_info["variant_value"] == "TOTAL"
-
-    legacy_info = _legacy_split_info_payload(split_info)
-    assert legacy_info["deprecated_name"] is True
-    assert legacy_info["actual_method"] == split_info["method"]
-    assert legacy_info["is_ras_balanced"] is False
-
-    assert SPLIT_OUTPUT_NAME_ALIASES == (
-        ("Z_split.csv", "Z_split_balanced.csv"),
-        ("Y_split.csv", "Y_split_balanced.csv"),
-        ("x_split.csv", "x_split_balanced.csv"),
-        ("A_split.csv", "A_split_balanced.csv"),
-    )
-
 
 def test_assert_mapping_integrity_only_requires_explicit_targets() -> None:
     from scripts.split_eurostat_energy_by_exiobase import _assert_mapping_integrity
@@ -881,8 +865,6 @@ def test_validate_split_reconstruction_preserves_original_final_demand_columns()
         index=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
         columns=pd.Index(["P3", "P5", "P6"]),
     )
-    x_split = (Z_split.sum(axis=1) + Y_split.sum(axis=1)).astype("float64")
-
     _validate_split_reconstruction(
         eurostat_Z=euro_Z,
         eurostat_Y=euro_Y,
@@ -932,8 +914,6 @@ def test_validate_split_reconstruction_raises_on_final_demand_drift():
         index=pd.Index(["A", "CPA_C19::s1", "CPA_C19::s2"]),
         columns=pd.Index(["P3", "P5", "P6"]),
     )
-    x_split = (Z_split.sum(axis=1) + Y_split.sum(axis=1)).astype("float64")
-
     with pytest.raises(ValueError, match="Disaggregation validation failed"):
         _validate_split_reconstruction(
             eurostat_Z=euro_Z,

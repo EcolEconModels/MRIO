@@ -21,7 +21,6 @@ from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
 from ecolecon_mrio.iot_identities import (
     normalise_supplementary_row_label,
-    supplementary_accounting_identity_kind,
 )
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
@@ -39,13 +38,14 @@ AGGREGATION_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
     "V_agg.csv",
     "M_agg.csv",
     "use_total_agg.csv",
-    "aggregation_block_conservation.csv",
     "aggregation_info.json",
     "aggregation_edge_mapping_audit.csv",
     "aggregated_sector_value_per_physical_input.csv",
     "aggregated_sector_co2_intensity.csv",
     "exio_final_demand_co2_intensity.csv",
     "aggregation_report.xlsx",
+    # Removed reports retained here only so reruns clear stale artifacts.
+    "aggregation_block_conservation.csv",
     "supplementary_row_contract.csv",
     "template_parent_total_audit.csv",
 )
@@ -1298,173 +1298,56 @@ _TEMPLATE_PRIMITIVE_ROWS = {
 }
 
 
-def _validate_template_reaggregation(
+def _validate_parent_final_demand_reconstruction(
     *,
     product_codes_order: Sequence[str],
     base_product_codes: Sequence[str],
     parents_by_output: dict[str, tuple[str, ...]],
     fd_codes_order_no_total: Sequence[str],
     Y_before: pd.DataFrame,
-    tpl_ws,
-    tpl_layout: dict[str, int],
-    workbook_ws=None,
-    workbook_layout: dict[str, int] | None = None,
-    Z_ord: pd.DataFrame,
     Y_ord: pd.DataFrame,
-    output_after: pd.Series,
-    lower_row_vectors: dict[str, pd.Series],
-    lower_fd_vectors: dict[str, pd.Series],
-    source_parent_by_input: dict[str, str] | None = None,
-    validate_template_parent_totals: bool = True,
+    source_parent_by_input: dict[str, str],
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> None:
+    """Require every displayed final-use control to reaggregate to its parent."""
     product_codes = [str(code) for code in product_codes_order]
     base_codes = [str(code) for code in base_product_codes]
     fd_codes = [str(code) for code in fd_codes_order_no_total]
-    workbook_ws = tpl_ws if workbook_ws is None else workbook_ws
-    workbook_layout = tpl_layout if workbook_layout is None else workbook_layout
-    workbook_fd_cols = {
-        code: int(workbook_layout["first_fd_col"]) + idx for idx, code in enumerate(fd_codes)
-    }
-    source_parent_by_input = {} if source_parent_by_input is None else dict(source_parent_by_input)
-
     children_by_parent: dict[str, list[str]] = {code: [] for code in base_codes}
-    has_multi_parent_outputs = any(len(tuple(parents)) > 1 for parents in parents_by_output.values())
     for output_code in product_codes:
-        for parent_code in parents_by_output.get(output_code, ()):
-            if parent_code in children_by_parent:
-                children_by_parent[parent_code].append(output_code)
+        parents = parents_by_output.get(output_code, ())
+        if len(parents) != 1 or parents[0] not in children_by_parent:
+            raise ValueError(f"Invalid parent lineage for output {output_code!r}: {parents!r}")
+        children_by_parent[parents[0]].append(output_code)
 
     before_parent_index = [
         source_parent_by_input.get(str(code)) or _base_sector_from_code(str(code), base_codes)
         for code in Y_before.index
     ]
-    valid_before_rows = [parent is not None for parent in before_parent_index]
-    Y_before_valid = Y_before.loc[valid_before_rows, :].copy()
-    Y_before_valid.index = [parent for parent in before_parent_index if parent is not None]
-    Y_before_base = Y_before_valid.groupby(level=0).sum().reindex(index=base_codes).fillna(0.0).astype("float64")
+    if any(parent is None for parent in before_parent_index):
+        missing = [str(code) for code, parent in zip(Y_before.index, before_parent_index, strict=True) if parent is None]
+        raise ValueError(f"Could not resolve source parents for final-demand rows: {missing!r}")
+    source = Y_before.copy()
+    source.index = pd.Index(before_parent_index)
+    source = source.groupby(level=0, sort=False).sum().reindex(base_codes).fillna(0.0)
 
-    row_sum_Z = Z_ord.sum(axis=1).astype("float64")
-    col_sum_Z = Z_ord.sum(axis=0).astype("float64")
-    current_tfu = pd.Series(0.0, index=product_codes, dtype="float64")
-    if {"P3", "P5", "P6"}.issubset(set(Y_ord.columns.astype(str))):
-        current_tfu = (Y_ord["P3"] + Y_ord["P5"] + Y_ord["P6"]).astype("float64")
-    elif "TFU" in Y_ord.columns:
-        current_tfu = Y_ord["TFU"].astype("float64")
-    current_tu = (row_sum_Z + current_tfu).astype("float64")
-    current_fd_totals = pd.Series(
-        {
-            code: (
-                float(current_tu.sum())
-                if code == "TU"
-                else float(current_tfu.sum())
-                if code == "TFU"
-                else float(Y_ord.get(code, pd.Series(0.0, index=product_codes)).sum())
-            )
-            for code in fd_codes
-        },
-        dtype="float64",
-    )
+    def tfu(frame: pd.DataFrame) -> pd.Series:
+        if {"P3", "P5", "P6"}.issubset(frame.columns):
+            return frame["P3"] + frame["P5"] + frame["P6"]
+        return frame["TFU"]
 
-
-    def _assert_close(label: str, actual: float, expected: float) -> None:
-        if not np.isclose(float(actual), float(expected), rtol=rtol, atol=atol):
-            raise ValueError(
-                f"Template reaggregation validation failed for {label}: "
-                f"actual={float(actual):.10f}, expected={float(expected):.10f}"
-            )
-
-    for output_idx, output_code in enumerate(product_codes, start=int(workbook_layout["first_product_row"])):
-        expected_intermediate = float(row_sum_Z.loc[output_code])
-        raw_intermediate = workbook_ws.cell(row=output_idx, column=int(workbook_layout["total_col"])).value
-        actual_intermediate = float(raw_intermediate) if isinstance(raw_intermediate, (int, float)) else None
-        if actual_intermediate is not None:
-            _assert_close(
-                f"product-row intermediate-total output={output_code}",
-                actual_intermediate,
-                expected_intermediate,
-            )
-
-        for fd_code, fd_col in workbook_fd_cols.items():
-            raw_fd = workbook_ws.cell(row=output_idx, column=fd_col).value
-            actual_fd = float(raw_fd) if isinstance(raw_fd, (int, float)) else None
-            if actual_fd is None:
+    for parent, children in children_by_parent.items():
+        for code in fd_codes:
+            if code == "TU" or (code != "TFU" and (code not in source or code not in Y_ord)):
                 continue
-            if fd_code == "TU":
-                expected_fd = float(current_tu.loc[output_code])
-            elif fd_code == "TFU":
-                expected_fd = float(current_tfu.loc[output_code])
-            else:
-                if fd_code not in Y_ord.columns:
-                    continue
-                expected_fd = float(Y_ord.loc[output_code, fd_code])
-            _assert_close(
-                f"product-row workbook fd output={output_code} fd={fd_code}",
-                actual_fd,
-                expected_fd,
-            )
-
-    total_row = int(workbook_layout["total_row"])
-    raw_total_col = workbook_ws.cell(row=total_row, column=int(workbook_layout["total_col"])).value
-    total_col_value = float(raw_total_col) if isinstance(raw_total_col, (int, float)) else None
-    if total_col_value is not None:
-        _assert_close("total-row intermediate-total", total_col_value, float(col_sum_Z.sum()))
-    for fd_code, fd_col in workbook_fd_cols.items():
-        raw_total = workbook_ws.cell(row=total_row, column=fd_col).value
-        actual_total = float(raw_total) if isinstance(raw_total, (int, float)) else None
-        if actual_total is None:
-            continue
-        expected_total = float(current_fd_totals.get(fd_code, 0.0))
-        _assert_close(f"total-row fd={fd_code}", actual_total, expected_total)
-
-    # Column B is the signed sum across industries for each applicable
-    # supplementary account (for example, D29 less D39 may be negative when
-    # production subsidies exceed other production taxes).  Validate this
-    # control separately because it is outside both the V and M blocks.
-    lower_total_col = int(workbook_layout["total_col"])
-    lower_first_row = int(workbook_layout["va_row"])
-    for offset, (row_code, product_vector) in enumerate(lower_row_vectors.items()):
-        expected_total = product_vector.sum(min_count=1)
-        raw_total = workbook_ws.cell(row=lower_first_row + offset, column=lower_total_col).value
-        actual_total = float(raw_total) if isinstance(raw_total, (int, float)) else None
-        if pd.isna(expected_total):
-            if actual_total is not None:
+            expected = float(tfu(source).loc[parent]) if code == "TFU" else float(source.loc[parent, code])
+            actual = float(tfu(Y_ord).reindex(children).sum()) if code == "TFU" else float(Y_ord.loc[children, code].sum())
+            if not np.isclose(actual, expected, rtol=rtol, atol=atol):
                 raise ValueError(
-                    "Template reaggregation validation failed for blank supplementary "
-                    f"total row={row_code}: actual={actual_total:.10f}"
+                    "Parent final-demand reconstruction failed: "
+                    f"parent={parent!r}, column={code!r}, actual={actual}, expected={expected}."
                 )
-            continue
-        if actual_total is None:
-            raise ValueError(
-                "Template reaggregation validation failed for supplementary "
-                f"total row={row_code}: actual=None, expected={float(expected_total):.10f}"
-            )
-        _assert_close(f"supplementary total row={row_code}", actual_total, float(expected_total))
-
-    original_tfu = pd.Series(0.0, index=base_codes, dtype="float64")
-    if {"P3", "P5", "P6"}.issubset(set(Y_before_base.columns.astype(str))):
-        original_tfu = (Y_before_base["P3"] + Y_before_base["P5"] + Y_before_base["P6"]).astype("float64")
-    elif "TFU" in Y_before_base.columns:
-        original_tfu = Y_before_base["TFU"].astype("float64")
-
-    if validate_template_parent_totals and not has_multi_parent_outputs:
-        for parent_code in base_codes:
-            child_codes = children_by_parent.get(parent_code, [])
-            if not child_codes:
-                continue
-            for fd_code in fd_codes:
-                if fd_code == "TU":
-                    continue
-                if fd_code == "TFU":
-                    actual = float(current_tfu.reindex(child_codes).fillna(0.0).sum())
-                    expected = float(original_tfu.loc[parent_code])
-                else:
-                    if fd_code not in Y_ord.columns or fd_code not in Y_before_base.columns:
-                        continue
-                    actual = float(Y_ord.reindex(index=child_codes, columns=[fd_code]).fillna(0.0)[fd_code].sum())
-                    expected = float(Y_before_base.reindex(columns=[fd_code]).fillna(0.0).loc[parent_code, fd_code])
-                _assert_close(f"product-row final-demand parent={parent_code} fd={fd_code}", actual, expected)
 
 
 def _resolve_product_template_alignment(
@@ -1587,70 +1470,6 @@ def _reorder_aggregation_result(
     )
 
 
-def _build_template_parent_total_audit(
-    *,
-    variant_value: str | None,
-    source_parent_by_input: dict[str, str],
-    parents_by_output: dict[str, tuple[str, ...]],
-    base_product_codes: Sequence[str],
-    Y_before: pd.DataFrame,
-    Y_after: pd.DataFrame,
-    fd_codes_order_no_total: Sequence[str],
-) -> pd.DataFrame:
-    base_codes = [str(code) for code in base_product_codes]
-    before_parent_index = [
-        source_parent_by_input.get(str(code)) or _base_sector_from_code(str(code), base_codes)
-        for code in Y_before.index
-    ]
-    valid_before_rows = [parent is not None for parent in before_parent_index]
-    Y_before_valid = Y_before.loc[valid_before_rows, :].copy()
-    Y_before_valid.index = [parent for parent in before_parent_index if parent is not None]
-    Y_before_base = Y_before_valid.groupby(level=0).sum().reindex(index=base_codes).fillna(0.0).astype("float64")
-
-    rows: list[dict[str, object]] = []
-    product_codes = [str(code) for code in Y_after.index]
-    for parent_code in base_codes:
-        child_codes = [code for code in product_codes if parent_code in parents_by_output.get(code, ())]
-        for fd_code in fd_codes_order_no_total:
-            if fd_code == "TU":
-                continue
-            if fd_code == "TFU":
-                if {"P3", "P5", "P6"}.issubset(set(Y_before_base.columns.astype(str))):
-                    before_parent_total = float(Y_before_base.loc[parent_code, ["P3", "P5", "P6"]].sum())
-                elif "TFU" in Y_before_base.columns:
-                    before_parent_total = float(Y_before_base.loc[parent_code, "TFU"])
-                else:
-                    before_parent_total = 0.0
-
-                if {"P3", "P5", "P6"}.issubset(set(Y_after.columns.astype(str))):
-                    after_child_sum = float(
-                        Y_after.reindex(index=child_codes)[["P3", "P5", "P6"]].fillna(0.0).sum().sum()
-                    )
-                elif "TFU" in Y_after.columns:
-                    after_child_sum = float(Y_after.reindex(index=child_codes)["TFU"].fillna(0.0).sum())
-                else:
-                    after_child_sum = 0.0
-            else:
-                before_parent_total = float(Y_before_base.reindex(columns=[fd_code]).fillna(0.0).loc[parent_code, fd_code])
-                after_child_sum = float(
-                    Y_after.reindex(index=child_codes, columns=[fd_code]).fillna(0.0)[fd_code].sum()
-                )
-            rows.append(
-                {
-                    "variant": "" if variant_value is None else str(variant_value),
-                    "parent_code": parent_code,
-                    "fd_code": fd_code,
-                    "before_parent_total": before_parent_total,
-                    "after_child_sum": after_child_sum,
-                    "difference": after_child_sum - before_parent_total,
-                    "n_children": len(child_codes),
-                    "child_codes": "|".join(child_codes),
-                    "status": "ok" if np.isclose(after_child_sum, before_parent_total, rtol=1e-9, atol=1e-6) else "drift",
-                }
-            )
-    return pd.DataFrame(rows)
-
-
 def _write_sfc_workbook(
     *,
     out_path: Path,
@@ -1679,7 +1498,6 @@ def _write_sfc_workbook(
     exio_final_demand_emission_intensity: pd.DataFrame | None = None,
     eurostat_sector_co2_mapping: pd.DataFrame | None = None,
     output_after: pd.Series | None = None,
-    validate_template_parent_totals: bool = True,
 ) -> None:
     """Populate and round-trip validate one official Eurostat workbook layout."""
     import openpyxl
@@ -1708,7 +1526,6 @@ def _write_sfc_workbook(
     )
     dims = parsed.meta.get("dimensions", {})
     row_labels = dims.get(eurostat_row_dim, {})
-    col_labels = dims.get(eurostat_col_dim, {})
     if template_xlsx is None:
         raise ValueError("Official Eurostat template is required for SFC workbook export")
     if not template_xlsx.is_file():
@@ -1725,7 +1542,7 @@ def _write_sfc_workbook(
             if output_code and label and output_code not in target_label_by_output:
                 target_label_by_output[output_code] = label
 
-    template_xlsx, product_codes_order, primary_parent_by_output, parents_by_output = _resolve_product_template_alignment(
+    template_xlsx, product_codes_order, _, parents_by_output = _resolve_product_template_alignment(
         template_xlsx=template_xlsx,
         base_product_codes=base_product_codes,
         output_product_codes=Z_after.index.astype(str).tolist(),
@@ -1832,19 +1649,6 @@ def _write_sfc_workbook(
         _write_num(ws, row=tr, col=c_prod0 + j, value=float(col_sums_Z.loc[code]))
 
     col_sums_Y = Y_ord.sum(axis=0)
-    current_fd_totals = pd.Series(
-        {
-            code: (
-                tu_total
-                if code == "TU"
-                else tfu_total
-                if code == "TFU"
-                else float(col_sums_Y.get(code, 0.0))
-            )
-            for code in fd_codes_order_no_total
-        },
-        dtype="float64",
-    )
     for j, code in enumerate(fd_codes_order_no_total):
         if code == "TU":
             _write_num(ws, row=tr, col=c_fd0 + j, value=tu_total)
@@ -1931,10 +1735,8 @@ def _write_sfc_workbook(
         for col in range(1, int(layout["header_last_col"]) + 1):
             ws.cell(row=row, column=col).value = None
 
-    supplementary_row_codes_written: list[str] = []
     row_positions: dict[str, int] = {}
     row_labels_written: dict[str, str] = {}
-    contract_rows: list[dict[str, object]] = []
     parsed_v = parsed.V.astype("float64") if parsed.V is not None else None
     parsed_m = parsed.M.astype("float64") if parsed.M is not None else None
     if V_ord is not None:
@@ -1952,7 +1754,6 @@ def _write_sfc_workbook(
         if template_row_label is None or not str(template_row_label).strip():
             raise ValueError(f"Official template supplementary label disappeared for {row_code!r}")
         row_label = str(template_row_label).strip()
-        kind = supplementary_accounting_identity_kind(row_code) or supplementary_accounting_identity_kind(row_label)
         source_v_row = _match_row(parsed_v, row_code, row_label)
         source_m_row = _match_row(parsed_m, row_code, row_label)
         output_v_row = _match_row(V_ord, row_code, row_label)
@@ -2049,17 +1850,6 @@ def _write_sfc_workbook(
             if output_m_row is not None and M_ord is not None
             else pd.Series(np.nan, index=fd_codes_order_no_total, dtype="float64")
         )
-        product_method = "canonical_V_serializer" if output_v_row is not None else "absent_V_blank"
-        fd_method = "canonical_M_serializer" if output_m_row is not None else "absent_M_blank"
-        product_non_applicable = "" if source_v_applicable else "source_row_absent"
-        fd_non_applicable = (
-            ""
-            if source_m_applicable
-            else "source_block_all_blank"
-            if source_m_row is not None
-            else "source_row_absent"
-        )
-
         ws.cell(row=target_r, column=1).value = row_label
         # The Eurostat-shaped column-B control is the signed total of the
         # authoritative transformed industry vector.  Leave it blank only when
@@ -2079,80 +1869,17 @@ def _write_sfc_workbook(
 
         lower_row_vectors[row_code] = product_vector
         lower_fd_vectors[row_code] = fd_vector
-        supplementary_row_codes_written.append(row_code)
         row_positions[row_code] = target_r
         row_labels_written[row_code] = row_label
-        contract_rows.extend(
-            [
-                {
-                    "row_code": row_code,
-                    "row_label": row_label,
-                    "block": "V",
-                    "method": product_method,
-                    "is_identity": kind is not None,
-                    "source_present": source_v_row is not None,
-                    "source_applicable": source_v_applicable,
-                    "output_present": output_v_row is not None,
-                    "non_applicable_cells": product_non_applicable,
-                    "status": "ok",
-                },
-                {
-                    "row_code": row_code,
-                    "row_label": row_label,
-                    "block": "M",
-                    "method": fd_method,
-                    "is_identity": kind is not None,
-                    "source_present": source_m_row is not None,
-                    "source_applicable": source_m_applicable,
-                    "output_present": output_m_row is not None,
-                    "non_applicable_cells": fd_non_applicable,
-                    "status": "ok",
-                },
-            ]
-        )
 
-    source_rows_set = set(source_rows)
-    written_rows = set(supplementary_row_codes_written)
-    missing = sorted(source_rows_set - written_rows)
-    if missing:
-        raise ValueError(f"Supplementary rows were not economically reconstructed: {missing}")
-    contract = pd.DataFrame(contract_rows)
-    if not contract.empty and not contract["status"].eq("ok").all():
-        raise ValueError("Supplementary row contract contains unresolved source rows.")
-    contract.to_csv(out_path.with_name("supplementary_row_contract.csv"), index=False)
-
-    audit_df = _build_template_parent_total_audit(
-        variant_value=variant_value,
-        source_parent_by_input=source_parent_by_input,
-        parents_by_output=parents_by_output,
-        base_product_codes=base_product_codes,
-        Y_before=Y_before,
-        Y_after=Y_ord,
-        fd_codes_order_no_total=fd_codes_order_no_total,
-    )
-    audit_path = out_path.with_name("template_parent_total_audit.csv")
-    audit_df.to_csv(audit_path, index=False)
-    _vprint(verbose, f"Wrote: {audit_path.resolve()}")
-
-    _validate_template_reaggregation(
+    _validate_parent_final_demand_reconstruction(
         product_codes_order=product_codes_order,
         base_product_codes=base_product_codes,
         parents_by_output=parents_by_output,
         fd_codes_order_no_total=fd_codes_order_no_total,
         Y_before=Y_before,
-        tpl_ws=tpl_ws,
-        tpl_layout=tpl_layout,
-        workbook_ws=ws,
-        workbook_layout=layout,
-        Z_ord=Z_ord,
         Y_ord=Y_ord,
-        output_after=x_after,
-        lower_row_vectors=lower_row_vectors,
-        lower_fd_vectors=lower_fd_vectors,
         source_parent_by_input=source_parent_by_input,
-        validate_template_parent_totals=validate_template_parent_totals,
-        rtol=1e-9,
-        atol=1e-6,
     )
     tpl_wb.close()
     _write_excel_mapping_sheet(
@@ -2304,8 +2031,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Input directory. If it contains subfolders like 'stk_flow=DOM', all variants are processed.",
     )
     inp.add_argument("--variant-dim", default="stk_flow")
-    inp.add_argument("--z-filename", default="Z_split_balanced.csv")
-    inp.add_argument("--y-filename", default="Y_split_balanced.csv")
+    inp.add_argument("--z-filename", default="Z_split.csv")
+    inp.add_argument("--y-filename", default="Y_split.csv")
     inp.add_argument(
         "--split-selected-sectors-json",
         default=None,
@@ -2332,11 +2059,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--write-sfc-workbook",
         action="store_true",
         help="Write an additional Eurostat-export-shaped workbook for SFC/R scripts (one per variant).",
-    )
-    out.add_argument(
-        "--unsafe-skip-template-parent-totals",
-        action="store_true",
-        help="Unsafe debug-only option: skip template parent-total validation when writing the SFC workbook. Do not use in canonical pipelines.",
     )
     out.add_argument(
         "--sfc-template-xlsx",
@@ -2386,24 +2108,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         Y.index = Y.index.astype(str)
         Y.columns = Y.columns.astype(str)
         z_dir = Z_path.parent
-        V = None
-        M = None
-        for v_name in ("V_split_balanced.csv", "V_split.csv"):
-            v_path = z_dir / v_name
-            if v_path.exists():
-                _vprint(args.verbose, f"Reading: {v_path.resolve()}")
-                V = _read_table(v_path).astype("float64")
-                V.index = V.index.astype(str)
-                V.columns = V.columns.astype(str)
-                break
-        for m_name in ("M_split_balanced.csv", "M_split.csv"):
-            m_path = z_dir / m_name
-            if m_path.exists():
-                _vprint(args.verbose, f"Reading: {m_path.resolve()}")
-                M = _read_table(m_path).astype("float64")
-                M.index = M.index.astype(str)
-                M.columns = M.columns.astype(str)
-                break
+        v_path = z_dir / "V_split.csv"
+        V = _read_table(v_path).astype("float64") if v_path.exists() else None
+        if V is not None:
+            V.index = V.index.astype(str)
+            V.columns = V.columns.astype(str)
+        m_path = z_dir / "M_split.csv"
+        M = _read_table(m_path).astype("float64") if m_path.exists() else None
+        if M is not None:
+            M.index = M.index.astype(str)
+            M.columns = M.columns.astype(str)
 
         mapping_for_run = dict(mapping)
         mapping_df_for_run = mapping_df.copy()
@@ -2529,8 +2243,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         t = _Timer()
         x_input_path = z_dir / "x_split.csv"
         if not x_input_path.is_file():
-            x_input_path = z_dir / "x_split_balanced.csv"
-        if not x_input_path.is_file():
             raise SystemExit(f"Missing authoritative output vector beside {Z_path}: {x_input_path.name}")
         x_input_frame = pd.read_csv(x_input_path, index_col=0)
         if x_input_frame.shape[1] != 1:
@@ -2609,50 +2321,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             export_context = (template, eurostat_filters, variant)
         _clear_managed_aggregation_outputs(out_base)
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
-
-        # Keep the aggregation audit deliberately small and block-specific.  V
-        # is grouped by product column, while M is copied source-specific data
-        # and therefore must survive byte-for-byte in tabular semantics.
-        conservation_rows: list[dict[str, object]] = []
-
-        def _record(block: str, item: str, before: float, after: float) -> None:
-            gap = abs(float(after) - float(before))
-            ok = bool(np.isclose(before, after, rtol=1e-9, atol=1e-6))
-            conservation_rows.append({
-                "block": block, "item": item, "before": before, "after": after,
-                "absolute_gap": gap, "ok": ok,
-            })
-            if not ok:
-                raise SystemExit(
-                    f"Aggregation conservation failed: block={block}, item={item}, "
-                    f"before={before!r}, after={after!r}, absolute_gap={gap!r}"
-                )
-
-        _record("Z", "total", float(Z.to_numpy(dtype="float64").sum()), float(res.Z.to_numpy(dtype="float64").sum()))
-        for column in Y.columns.astype(str):
-            _record("Y", column, float(Y[column].sum()), float(res.Y[column].sum()))
-        _record("x", "total", float(x_input.sum()), float(res.x.sum()))
-        if V is not None and res.V is not None:
-            for row in V.index.astype(str):
-                _record("V", row, float(V.loc[row].sum()), float(res.V.loc[row].sum()))
-        if M is not None:
-            same_shape = res.M is not None and M.index.equals(res.M.index) and M.columns.equals(res.M.columns)
-            same_mask = same_shape and M.isna().equals(res.M.isna())
-            same_values = same_mask and bool(np.array_equal(
-                M.fillna(0.0).to_numpy(dtype="float64"),
-                res.M.fillna(0.0).to_numpy(dtype="float64"),
-            ))
-            conservation_rows.append({
-                "block": "M", "item": "NaN_mask", "before": 1.0, "after": float(bool(same_mask)),
-                "absolute_gap": float(not same_mask), "ok": bool(same_mask),
-            })
-            conservation_rows.append({
-                "block": "M", "item": "values", "before": 1.0, "after": float(bool(same_values)),
-                "absolute_gap": float(not same_values), "ok": bool(same_values),
-            })
-            if not same_values:
-                raise SystemExit("Aggregation conservation failed: M order, NaN mask, finite values, or explicit zeros changed")
-        _write_df_csv(pd.DataFrame(conservation_rows), out_base / "aggregation_block_conservation.csv", verbose=args.verbose)
 
         if args.expect_n_sectors is not None and len(res.Z.index) != int(args.expect_n_sectors):
             raise SystemExit(
@@ -2813,7 +2481,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 exio_final_demand_emission_intensity=exio_final_demand_emissions,
                 eurostat_sector_co2_mapping=mapping_for_sheet,
                 output_after=res.x,
-                validate_template_parent_totals=not bool(args.unsafe_skip_template_parent_totals),
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
 

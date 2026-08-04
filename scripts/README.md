@@ -146,8 +146,8 @@ The wrapper passes through extra CLI arguments as well, so you can still append 
 
 | File | Meaning |
 | --- | --- |
-| `balance_info.json` | Balancing method and convergence diagnostics for the split table. |
-| `energy_split_report.xlsx` | Human-readable workbook summarizing the split profiles and balancing outputs. |
+| `split_info.json` | Donor-block reconstruction method, fallback count, and validation status. No RAS/GRAS balancing is applied. |
+| `energy_split_report.xlsx` | Human-readable workbook summarizing the split profiles and reconstruction diagnostics. |
 | `mapped_output_consistency.csv` | Written for `DOM`, `IMP`, and `TOTAL` flows when the EXIO-to-Eurostat output sanity check is evaluated. Contains the Eurostat `Z + non-export final demand` output reference, mapped EXIO flow output, scalar normalization factor, and scaled differences by CPA sector. |
 | `mapped_output_flow_identity.csv` | Hard internal accounting check that `DOM + IMP` matches `TOTAL` for Eurostat and mapped-EXIO destination-use totals, using strict flow-identity tolerances independent of cross-dataset mapping-consistency diagnostics. |
 | `eurostat_sector_co2_intensity.csv` | EXIO direct-emissions intensities reaggregated to Eurostat sectors using `exio_to_eurostat_cpa.csv`. |

@@ -63,7 +63,7 @@ def test_validate_additive_outputs_detects_and_accepts_identity(
     Z = pd.read_csv(total / "Z_split.csv", index_col=0)
     Z.iloc[0, 0] += 1.0
     Z.to_csv(total / "Z_split.csv")
-    with pytest.raises(ValueError, match="DOM\\+IMP=TOTAL"):
+    with pytest.raises(ValueError, match="split TOTAL use_total"):
         MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
 
 
@@ -129,11 +129,15 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
         "IMP": pd.DataFrame([[0.0, 2.0]], index=pd.Index(["m"]), columns=pd.Index(["P3", "P5"])),
         "TOTAL": pd.DataFrame([[3.0, 4.0]], index=pd.Index(["m"]), columns=pd.Index(["P3", "P5"])),
     }
+
     def fake_source(**kwargs):
         flow = kwargs["filters"]["stk_flow"]
-        dom = tmp_path / "stk_flow=DOM"; imp = tmp_path / "stk_flow=IMP"
-        Z_dom = pd.read_csv(dom / "Z_split.csv", index_col=0); Z_imp = pd.read_csv(imp / "Z_split.csv", index_col=0)
-        Y_dom = pd.read_csv(dom / "Y_split.csv", index_col=0); Y_imp = pd.read_csv(imp / "Y_split.csv", index_col=0)
+        dom = tmp_path / "stk_flow=DOM"
+        imp = tmp_path / "stk_flow=IMP"
+        Z_dom = pd.read_csv(dom / "Z_split.csv", index_col=0)
+        Z_imp = pd.read_csv(imp / "Z_split.csv", index_col=0)
+        Y_dom = pd.read_csv(dom / "Y_split.csv", index_col=0)
+        Y_imp = pd.read_csv(imp / "Y_split.csv", index_col=0)
         if flow == "TOTAL":
             controls = set(MODULE.derived_final_demand_control_columns(Y_dom.columns))
             Z = Z_dom + Z_imp
@@ -146,9 +150,12 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
             p1 = MODULE.flow_use_total(Z_dom, Y_dom)
             V = pd.DataFrame([p1], index=pd.Index(["P1"]))
         return SimpleNamespace(Z=Z, Y=Y, M=sources[flow], V=V, meta={"source_rounding_quantum": 1.0})
+
     monkeypatch.setattr(MODULE, "load_eurostat_iot", fake_source)
     MODULE.derive_total_flow(tmp_path, eurostat_dataset="x", eurostat_filters={}, eurostat_row_dim="r", eurostat_col_dim="c")
-    dom = tmp_path / "stk_flow=DOM"; imp = tmp_path / "stk_flow=IMP"; total = tmp_path / "stk_flow=TOTAL"
+    dom = tmp_path / "stk_flow=DOM"
+    imp = tmp_path / "stk_flow=IMP"
+    total = tmp_path / "stk_flow=TOTAL"
     Z_dom, Z_imp, Z_total = (pd.read_csv(path / "Z_split.csv", index_col=0) for path in (dom, imp, total))
     Y_dom, Y_imp, Y_total = (pd.read_csv(path / "Y_split.csv", index_col=0) for path in (dom, imp, total))
     pd.testing.assert_frame_equal(Z_total, Z_dom + Z_imp)

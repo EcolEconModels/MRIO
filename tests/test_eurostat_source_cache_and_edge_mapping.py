@@ -489,11 +489,11 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     M = pd.DataFrame([[5.0]], index=["B1G"], columns=["P3"])
     x = Z.sum(axis=1) + Y.sum(axis=1)
 
-    Z.to_csv(split_dir / "Z_split_balanced.csv")
-    Y.to_csv(split_dir / "Y_split_balanced.csv")
-    V.to_csv(split_dir / "V_split_balanced.csv")
-    M.to_csv(split_dir / "M_split_balanced.csv")
-    x.to_csv(split_dir / "x_split_balanced.csv")
+    Z.to_csv(split_dir / "Z_split.csv")
+    Y.to_csv(split_dir / "Y_split.csv")
+    V.to_csv(split_dir / "V_split.csv")
+    M.to_csv(split_dir / "M_split.csv")
+    x.to_csv(split_dir / "x_split.csv")
 
     pd.DataFrame(
         [
@@ -694,9 +694,9 @@ def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
     split_dir.mkdir()
     agg_dir.mkdir()
 
-    pd.DataFrame([[1.0]], index=["A"], columns=["A"]).to_csv(split_dir / "Z_split_balanced.csv")
-    pd.DataFrame([[2.0]], index=["A"], columns=["P3"]).to_csv(split_dir / "Y_split_balanced.csv")
-    pd.Series([3.0], index=["A"], name="x").to_csv(split_dir / "x_split_balanced.csv")
+    pd.DataFrame([[1.0]], index=["A"], columns=["A"]).to_csv(split_dir / "Z_split.csv")
+    pd.DataFrame([[2.0]], index=["A"], columns=["P3"]).to_csv(split_dir / "Y_split.csv")
+    pd.Series([3.0], index=["A"], name="x").to_csv(split_dir / "x_split.csv")
 
     pd.DataFrame([{"source_code": "A", "target_code": "A", "enabled": "1"}]).to_csv(
         tmp_path / "mapping.csv",

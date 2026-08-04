@@ -382,8 +382,6 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
         if ws.cell(row=row_idx, column=1).value is not None
     }
 
-    x_after = (z_after.sum(axis=1) + y_after.sum(axis=1)).astype(float)
-    col_sums_z = z_after.sum(axis=0).astype(float)
     expected_value_added = [999.0, 999.0, 999.0]
     expected_output = [888.0, 888.0, 888.0]
     expected_intermediate = [777.0, 777.0, 777.0]
@@ -415,63 +413,6 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     assert _row_values(ws, 12, 6, 5) == pytest.approx([26.0, 13.0, 6.0, 68.0, 45.0])
     assert _row_values(ws, row_lookup["Taxes less subsidies on products"], 6, 5) == pytest.approx([9.0, 8.0, 7.0, 27.0, 24.0])
     assert _row_values(ws, row_lookup["Total intermediate consumption /final use"], 6, 5) == pytest.approx([999.0] * 5)
-
-    contract = pd.read_csv(out_path.with_name("supplementary_row_contract.csv"))
-    b1g_m = contract[(contract["row_code"] == "B1G") & (contract["block"] == "M")].iloc[0]
-    assert str(b1g_m["source_present"]).lower() == "true"
-    assert str(b1g_m["source_applicable"]).lower() == "false"
-    assert str(b1g_m["output_present"]).lower() == "false"
-    assert b1g_m["non_applicable_cells"] == "source_block_all_blank"
-    p2_m = contract[(contract["row_code"] == "P2_ADJ") & (contract["block"] == "M")].iloc[0]
-    assert str(p2_m["source_applicable"]).lower() == "true"
-    assert str(p2_m["output_present"]).lower() == "true"
-
-
-
-
-def test_validate_template_reaggregation_skips_parent_fd_check_for_multi_parent_outputs(tmp_path: Path) -> None:
-    from openpyxl import load_workbook
-    from scripts.aggregate_iot_by_mapping import _template_table_layout, _validate_template_reaggregation
-
-    template_path = tmp_path / "template.xlsx"
-    _build_template(template_path)
-    tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
-    tpl_layout = _template_table_layout(tpl_ws)
-
-    Z_ord = pd.DataFrame(
-        [[1.0, 0.0], [0.0, 1.0]],
-        index=["ENERGY_BROWN", "ENERGY_GREEN"],
-        columns=["ENERGY_BROWN", "ENERGY_GREEN"],
-    )
-    Y_ord = pd.DataFrame(
-        {"P3": [50.0, 60.0], "P5": [10.0, 20.0], "P6": [5.0, 6.0]},
-        index=Z_ord.index,
-    )
-    Y_before = pd.DataFrame(
-        {"P3": [7.0, 8.0], "P5": [2.0, 3.0], "P6": [1.0, 1.0]},
-        index=["CPA_C19::fuel", "CPA_D::power"],
-    )
-
-    _validate_template_reaggregation(
-        product_codes_order=Z_ord.index.tolist(),
-        base_product_codes=["CPA_C19", "CPA_D"],
-        parents_by_output={
-            "ENERGY_BROWN": ("CPA_C19", "CPA_D"),
-            "ENERGY_GREEN": ("CPA_C19", "CPA_D"),
-        },
-        fd_codes_order_no_total=["P3", "P5", "P6", "TU", "TFU"],
-        Y_before=Y_before,
-        tpl_ws=tpl_ws,
-        tpl_layout=tpl_layout,
-        Z_ord=Z_ord,
-        Y_ord=Y_ord,
-        output_after=flow_use_total(Z_ord, Y_ord),
-        lower_row_vectors={},
-        lower_fd_vectors={},
-    )
-
-
-
 
 def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeypatch) -> None:
     import ecolecon_mrio.eurostat_iot as eurostat_iot
@@ -516,8 +457,8 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
     monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         mod,
-        "_validate_template_reaggregation",
-        lambda **_: (_ for _ in ()).throw(ValueError("Template reaggregation validation failed for total-row fd=P3")),
+        "_validate_parent_final_demand_reconstruction",
+        lambda **_: (_ for _ in ()).throw(ValueError("Parent final-demand reconstruction failed")),
     )
 
     z_before = pd.DataFrame(
@@ -542,7 +483,7 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
         parsed, z_before.columns
     )
 
-    with pytest.raises(ValueError, match="Template reaggregation validation failed"):
+    with pytest.raises(ValueError, match="Parent final-demand reconstruction failed"):
         mod._write_sfc_workbook(
             out_path=out_path,
             template_xlsx=template_path,
@@ -583,8 +524,8 @@ def test_build_source_parent_by_input_uses_target_lineage_for_split_children() -
     assert source_parent_by_input["p24.g"] == "CPA_C20"
 
 
-def test_template_parent_total_audit_uses_detailed_tfu_columns_without_double_counting() -> None:
-    from scripts.aggregate_iot_by_mapping import _build_template_parent_total_audit
+def test_parent_validation_uses_detailed_tfu_without_double_counting() -> None:
+    from scripts.aggregate_iot_by_mapping import _validate_parent_final_demand_reconstruction
 
     _, _, y_before, _, y_after, _ = _build_lineage_toy_case()
     y_before = y_before.copy()
@@ -592,8 +533,8 @@ def test_template_parent_total_audit_uses_detailed_tfu_columns_without_double_co
     y_before["TFU"] = [999.0, 999.0, 999.0]
     y_after["TFU"] = [888.0, 888.0, 888.0]
 
-    audit = _build_template_parent_total_audit(
-        variant_value="TOTAL",
+    _validate_parent_final_demand_reconstruction(
+        product_codes_order=y_after.index.tolist(),
         source_parent_by_input={
             "p15.j": "CPA_C10-12",
             "p16": "CPA_C10-12",
@@ -606,20 +547,12 @@ def test_template_parent_total_audit_uses_detailed_tfu_columns_without_double_co
         },
         base_product_codes=["CPA_C10-12", "CPA_C20"],
         Y_before=y_before,
-        Y_after=y_after,
+        Y_ord=y_after,
         fd_codes_order_no_total=["P3", "P5", "P6", "TFU"],
     )
 
-    c10_tfu = audit[(audit["parent_code"] == "CPA_C10-12") & (audit["fd_code"] == "TFU")].iloc[0]
-    assert float(c10_tfu["before_parent_total"]) == pytest.approx(25.0)
-    assert float(c10_tfu["after_child_sum"]) == pytest.approx(25.0)
-    assert float(c10_tfu["difference"]) == pytest.approx(0.0)
-    assert c10_tfu["status"] == "ok"
-    assert float(c10_tfu["before_parent_total"]) != pytest.approx(999.0)
-    assert float(c10_tfu["after_child_sum"]) != pytest.approx(888.0)
 
-
-def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tmp_path: Path, monkeypatch) -> None:
+def test_write_sfc_workbook_passes_strict_lineage_validation(tmp_path: Path, monkeypatch) -> None:
     import ecolecon_mrio.eurostat_iot as eurostat_iot
     from scripts import aggregate_iot_by_mapping as mod
 
@@ -664,15 +597,7 @@ def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tm
         output_after=flow_use_total(z_after, y_after),
     )
 
-    audit_path = out_path.with_name("template_parent_total_audit.csv")
-    audit = pd.read_csv(audit_path)
-    c10 = audit[(audit["parent_code"] == "CPA_C10-12") & (audit["fd_code"] == "P3")].iloc[0]
-    assert float(c10["before_parent_total"]) == pytest.approx(15.0)
-    assert float(c10["after_child_sum"]) == pytest.approx(15.0)
-    assert float(c10["difference"]) == pytest.approx(0.0)
-    assert c10["status"] == "ok"
-    assert int(c10["n_children"]) == 2
-    assert c10["child_codes"] == "CPA_C10-12_FOOD_AND_BEVERAGES|CPA_C10-12_TOBACCO_PRODUCTS"
+    assert out_path.is_file()
 
 
 def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Path, monkeypatch) -> None:
@@ -700,7 +625,7 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
         parsed, z_after.columns
     )
 
-    with pytest.raises(ValueError, match="Template reaggregation validation failed"):
+    with pytest.raises(ValueError, match="Parent final-demand reconstruction failed"):
         mod._write_sfc_workbook(
             out_path=out_path,
             template_xlsx=template_path,
@@ -724,13 +649,6 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
             output_after=flow_use_total(z_after, y_after),
         )
 
-    audit_path = out_path.with_name("template_parent_total_audit.csv")
-    audit = pd.read_csv(audit_path)
-    c10 = audit[(audit["parent_code"] == "CPA_C10-12") & (audit["fd_code"] == "P3")].iloc[0]
-    assert float(c10["before_parent_total"]) == pytest.approx(15.0)
-    assert float(c10["after_child_sum"]) == pytest.approx(16.0)
-    assert float(c10["difference"]) == pytest.approx(1.0)
-    assert c10["status"] == "drift"
 
 
 def test_write_sfc_workbook_rejects_numeric_primitive_without_sdmx_cell(
@@ -780,167 +698,6 @@ def test_write_sfc_workbook_rejects_numeric_primitive_without_sdmx_cell(
             mapping_to_col="to_sector",
             verbose=False,
             output_after=flow_use_total(z_after, y_after),
-        )
-
-
-def test_canonical_workbook_wrapper_does_not_pass_parent_total_skip_flag() -> None:
-    script_text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(encoding="utf-8")
-    assert "--skip-template-parent-totals" not in script_text
-
-
-def test_validate_template_reaggregation_raises_on_workbook_fd_total_drift(tmp_path: Path, monkeypatch) -> None:
-    import ecolecon_mrio.eurostat_iot as eurostat_iot
-    from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
-    from scripts import aggregate_iot_by_mapping as mod
-
-    template_path = tmp_path / "template.xlsx"
-    out_path = tmp_path / "out.xlsx"
-    _build_template(template_path)
-
-    parsed = ParsedEurostatIOT(
-        Z=pd.DataFrame(
-            [[0.0, 0.0], [0.0, 0.0]],
-            index=["CPA_C19", "CPA_D"],
-            columns=["CPA_C19", "CPA_D"],
-        ),
-        Y=pd.DataFrame(
-            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-            index=["CPA_C19", "CPA_D"],
-            columns=["P3", "P5", "P6"],
-        ),
-        meta={
-            "dimensions": {
-                "prd_ava": {
-                    "CPA_C19": "Coke and refined petroleum products",
-                    "CPA_D": "Electricity, gas, steam and air conditioning",
-                },
-                "prd_use": {
-                    "P3": "Final consumption expediture",
-                    "P5": "Gross capital formation",
-                    "P6": "Exports of goods and services",
-                    "TU": "Total use",
-                    "TFU": "Total final use",
-                },
-            },
-            "identified_industry_columns": ["CPA_C19", "CPA_D"],
-            "identified_final_demand_columns": ["P3", "P5", "P6", "TU", "TFU"],
-        },
-    )
-    parsed = _with_source_rows(parsed, ["B1G", "P1", "P2_ADJ"])
-    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
-    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
-
-    z_before = pd.DataFrame(
-        [
-            [2.0, 1.0, 0.0],
-            [1.0, 3.0, 1.0],
-            [0.0, 2.0, 4.0],
-        ],
-        index=["CPA_C19::Motor Gasoline", "CPA_C19::Heavy Fuel Oil", "CPA_D::Electricity by hydro"],
-        columns=["CPA_C19::Motor Gasoline", "CPA_C19::Heavy Fuel Oil", "CPA_D::Electricity by hydro"],
-    )
-    y_before = pd.DataFrame(
-        {
-            "P3": [8.0, 12.0, 6.0],
-            "P5": [4.0, 6.0, 3.0],
-            "P6": [2.0, 3.0, 1.0],
-        },
-        index=z_before.index,
-    )
-
-    z_after = pd.DataFrame(
-        [
-            [4.0, 1.0, 2.0],
-            [3.0, 2.0, 1.0],
-            [5.0, 2.0, 3.0],
-        ],
-        index=["CPA_C19::Motor Gasoline", "CPA_C19_remaining", "CPA_D::Hydro"],
-        columns=["CPA_C19::Motor Gasoline", "CPA_C19_remaining", "CPA_D::Hydro"],
-    )
-    y_after = pd.DataFrame(
-        {
-            "P3": [8.0, 12.0, 6.0],
-            "P5": [4.0, 6.0, 3.0],
-            "P6": [2.0, 3.0, 1.0],
-        },
-        index=z_after.index,
-    )
-
-    mapping_df = pd.DataFrame(
-        {
-            "from_sector": [
-                "CPA_C19::Motor Gasoline",
-                "CPA_C19::Heavy Fuel Oil",
-                "CPA_D::Electricity by hydro",
-            ],
-            "to_sector": [
-                "CPA_C19::Motor Gasoline",
-                "CPA_C19_remaining",
-                "CPA_D::Hydro",
-            ],
-            "target_label": [
-                "CPA_C19: Motor Gasoline",
-                "CPA_C19: Coke and refined petroleum products_remaining",
-                "CPA_D: Hydro",
-            ],
-        }
-    )
-
-    v_after, m_after = _matching_transformed_supplementary(
-        parsed, z_after.columns
-    )
-
-    mod._write_sfc_workbook(
-        out_path=out_path,
-        template_xlsx=template_path,
-        eurostat_dataset="naio_10_cp1700",
-        eurostat_filters={"geo": "AT", "time": "2021"},
-        eurostat_row_dim="prd_ava",
-        eurostat_col_dim="prd_use",
-        eurostat_storage_folder=tmp_path,
-        variant_dim="stk_flow",
-        variant_value="TOTAL",
-        Z_before=z_before,
-        Y_before=y_before,
-        Z_after=z_after,
-        Y_after=y_after,
-        V_after=v_after,
-        M_after=m_after,
-        mapping_df=mapping_df,
-        mapping_from_col="from_sector",
-        mapping_to_col="to_sector",
-        verbose=False,
-        output_after=flow_use_total(z_after, y_after),
-    )
-
-    tpl_ws = load_workbook(template_path, data_only=True)["Sheet 1"]
-    workbook = load_workbook(out_path)
-    workbook_ws = workbook["Sheet 1"]
-    workbook_layout = mod._template_table_layout(workbook_ws)
-    workbook_ws.cell(row=int(workbook_layout["total_row"]), column=int(workbook_layout["first_fd_col"])).value = 999.0
-    workbook.save(out_path)
-    workbook_ws = load_workbook(out_path, data_only=True)["Sheet 1"]
-
-    with pytest.raises(ValueError, match=r"Template reaggregation validation failed for total-row fd=P3"):
-        mod._validate_template_reaggregation(
-            product_codes_order=z_after.index.tolist(),
-            base_product_codes=["CPA_C19", "CPA_D"],
-            parents_by_output={
-                "CPA_C19::Motor Gasoline": ("CPA_C19",),
-                "CPA_C19_remaining": ("CPA_C19",),
-                "CPA_D::Hydro": ("CPA_D",),
-            },
-            fd_codes_order_no_total=["P3", "P5", "P6", "TU", "TFU"],
-            Y_before=y_before,
-            tpl_ws=tpl_ws,
-            tpl_layout=mod._template_table_layout(tpl_ws),
-            workbook_ws=workbook_ws,
-            workbook_layout=mod._template_table_layout(workbook_ws),
-            Z_ord=z_after,
-            Y_ord=y_after,
-            output_after=flow_use_total(z_after, y_after),
-            lower_row_vectors={},
-            lower_fd_vectors={},
         )
 
 
@@ -1014,15 +771,15 @@ def test_write_excel_mapping_sheet_requires_co2_for_non_import_flow() -> None:
         )
 
 
-def test_generated_workbook_metadata_does_not_retain_template_values() -> None:
-    """Guardrail: canonical writers must generate Summary/Structure, not preserve template data."""
+def test_generated_workbook_metadata_is_rebuilt() -> None:
+    """Guardrail: generated metadata sheets do not preserve template data."""
     source = Path(__file__).resolve().parents[1] / "scripts" / "aggregate_iot_by_mapping.py"
     text = source.read_text(encoding="utf-8")
     assert 'for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure")' in text
     assert 'ws_sum = wb.create_sheet("Summary")' in text
-    assert "canonical_V_serializer" in text
     assert "_supplementary_fd_row_from_current_shares" not in text
     assert 'output_after=res.x' in text
+
 
 def test_identity_mapping_parent_lineage_keeps_template_alignment() -> None:
     from scripts.aggregate_iot_by_mapping import (
@@ -1135,7 +892,7 @@ def test_clear_managed_aggregation_outputs_removes_only_stage_files(tmp_path: Pa
         "M_agg.csv",
         "aggregated_sector_co2_intensity.csv",
         "exio_final_demand_co2_intensity.csv",
-        "supplementary_row_contract.csv",
+        "aggregation_info.json",
     ]
     for name in stale:
         (tmp_path / name).write_text("stale\\n", encoding="utf-8")

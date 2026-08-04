@@ -16,8 +16,8 @@ def _write_tables(base_dir: Path, sectors: list[str]) -> None:
         columns=sectors,
     )
     Y = pd.DataFrame({"P3": [1.0, 2.0, 3.0, 4.0]}, index=sectors)
-    Z.to_csv(base_dir / "Z_split_balanced.csv")
-    Y.to_csv(base_dir / "Y_split_balanced.csv")
+    Z.to_csv(base_dir / "Z_split.csv")
+    Y.to_csv(base_dir / "Y_split.csv")
     (Z.sum(axis=1) + Y.sum(axis=1)).rename("x").to_csv(base_dir / "x_split.csv")
 
 

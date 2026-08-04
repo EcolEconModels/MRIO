@@ -138,13 +138,6 @@ def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
     _vprint(verbose, f"Wrote: {path.resolve()}")
 
 
-SPLIT_OUTPUT_NAME_ALIASES: tuple[tuple[str, str], ...] = (
-    ("Z_split.csv", "Z_split_balanced.csv"),
-    ("Y_split.csv", "Y_split_balanced.csv"),
-    ("x_split.csv", "x_split_balanced.csv"),
-    ("A_split.csv", "A_split_balanced.csv"),
-)
-
 SPLIT_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
     "Z_split.csv",
     "Z_split_balanced.csv",
@@ -194,7 +187,6 @@ def _split_info_payload(
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "method": result.balancing_method,
-        "is_ras_balanced": False,
         "is_reconstruction_validated": True,
         "balancing_applied": False,
         "fallback_count": result.fallback_count,
@@ -211,25 +203,15 @@ def _split_info_payload(
     return payload
 
 
-def _legacy_split_info_payload(split_info: dict[str, object]) -> dict[str, object]:
-    legacy_info = dict(split_info)
-    legacy_info.update({"deprecated_name": True, "actual_method": split_info["method"]})
-    return legacy_info
-
-
 def write_split_core_outputs(
     res, outdir: Path, *, verbose: bool, extra_info: dict | None = None
 ) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     for name in (
         "x_split.csv",
-        "x_split_balanced.csv",
         "A_split.csv",
-        "A_split_balanced.csv",
         "V_split.csv",
-        "V_split_balanced.csv",
         "M_split.csv",
-        "M_split_balanced.csv",
         "use_total_split.csv",
         "supplementary_row_split_diagnostics.csv",
         "split_output_shares.csv",
@@ -247,16 +229,8 @@ def write_split_core_outputs(
         share_rows.extend({"parent": str(parent), "child": child, "output_share": float(shares.loc[child])} for child in children)
     if share_rows:
         _write_rows_csv(pd.DataFrame(share_rows), outdir / "split_output_shares.csv", verbose=verbose)
-    for primary_name, legacy_name in SPLIT_OUTPUT_NAME_ALIASES:
-        if primary_name.startswith("Z_"):
-            _write_df_csv(res.Z, outdir / primary_name, verbose=verbose)
-            _write_df_csv(res.Z, outdir / legacy_name, verbose=verbose)
-        elif primary_name.startswith("Y_"):
-            _write_df_csv(res.Y, outdir / primary_name, verbose=verbose)
-            _write_df_csv(res.Y, outdir / legacy_name, verbose=verbose)
-        elif primary_name.startswith(("x_", "A_")):
-            # Primitive splitting has flow use totals, not canonical domestic x/A.
-            continue
+    _write_df_csv(res.Z, outdir / "Z_split.csv", verbose=verbose)
+    _write_df_csv(res.Y, outdir / "Y_split.csv", verbose=verbose)
     if res.use_total is not None:
         _write_series_csv(
             res.use_total, outdir / "use_total_split.csv", verbose=verbose, header=True
@@ -271,13 +245,6 @@ def write_split_core_outputs(
     _write_text(
         outdir / "split_info.json", json.dumps(split_info, indent=2), verbose=verbose
     )
-    legacy_info = _legacy_split_info_payload(split_info)
-    _write_text(
-        outdir / "balance_info.json", json.dumps(legacy_info, indent=2), verbose=verbose
-    )
-    _write_text(
-        outdir / "ras_info.json", json.dumps(legacy_info, indent=2), verbose=verbose
-    )
     if res.fallback_diagnostics is not None and not res.fallback_diagnostics.empty:
         _write_df_csv(
             res.fallback_diagnostics,
@@ -286,10 +253,8 @@ def write_split_core_outputs(
         )
     if getattr(res, "V", None) is not None and not res.V.empty:
         _write_df_csv(res.V, outdir / "V_split.csv", verbose=verbose)
-        _write_df_csv(res.V, outdir / "V_split_balanced.csv", verbose=verbose)
     if getattr(res, "M", None) is not None and not res.M.empty:
         _write_df_csv(res.M, outdir / "M_split.csv", verbose=verbose)
-        _write_df_csv(res.M, outdir / "M_split_balanced.csv", verbose=verbose)
     if (
         getattr(res, "supplementary_diagnostics", None) is not None
         and not res.supplementary_diagnostics.empty

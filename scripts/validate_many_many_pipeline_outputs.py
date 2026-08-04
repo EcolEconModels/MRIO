@@ -37,21 +37,6 @@ def _read_frame(path: Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported table format: {path}")
 
 
-def _find_first(base: Path, names: Sequence[str]) -> Path | None:
-    for name in names:
-        path = base / name
-        if path.exists():
-            return path
-    return None
-
-
-def _load_optional_frame(base: Path, names: Sequence[str]) -> pd.DataFrame | None:
-    path = _find_first(base, names)
-    if path is None:
-        return None
-    return _read_frame(path).astype("float64")
-
-
 def _numeric_frame(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.index = out.index.astype(str)
@@ -152,9 +137,9 @@ def validate_pipeline_outputs(
     if not split_dir.exists():
         raise FileNotFoundError(split_dir)
 
-    z_path = _find_first(split_dir, ("Z_split_balanced.csv", "Z_split.csv"))
-    y_path = _find_first(split_dir, ("Y_split_balanced.csv", "Y_split.csv"))
-    if z_path is None or y_path is None:
+    z_path = split_dir / "Z_split.csv"
+    y_path = split_dir / "Y_split.csv"
+    if not z_path.is_file() or not y_path.is_file():
         raise FileNotFoundError(f"Missing Z/Y split outputs under {split_dir}")
 
     Z = _numeric_frame(_read_frame(z_path))
@@ -173,8 +158,8 @@ def validate_pipeline_outputs(
     add_check("split_Z_square", Z.index.equals(Z.columns), n_rows=int(len(Z.index)))
     add_check("split_Y_index_matches_Z", Y.index.equals(Z.index), n_rows=int(len(Y.index)))
 
-    x_path = _find_first(split_dir, ("x_split_balanced.csv", "x_split.csv"))
-    if x_path is None:
+    x_path = split_dir / "x_split.csv"
+    if not x_path.is_file():
         raise FileNotFoundError(f"Missing authoritative split output vector under {split_dir}")
     x_df = pd.read_csv(x_path, index_col=0)
     if x_df.shape[1] != 1:
@@ -214,8 +199,10 @@ def validate_pipeline_outputs(
         missing = sorted(set(map(str, Z.index)) - set(map(str, mapping.keys())))
         add_check("aggregation_mapping_covers_split_Z_index", len(missing) == 0, n_missing=len(missing), sample=missing[:20])
 
-        V = _load_optional_frame(split_dir, ("V_split_balanced.csv", "V_split.csv"))
-        M = _load_optional_frame(split_dir, ("M_split_balanced.csv", "M_split.csv"))
+        v_path = split_dir / "V_split.csv"
+        m_path = split_dir / "M_split.csv"
+        V = _read_frame(v_path).astype("float64") if v_path.is_file() else None
+        M = _read_frame(m_path).astype("float64") if m_path.is_file() else None
         flow_role = str(split_dir.name).split("=", 1)[-1].upper()
         recomputed = aggregate_iot(
             Z,
