@@ -710,8 +710,9 @@ def validate_eurostat_iot_full_table(
             f"full.c1.cpa_v.{flow.lower()}", flow, "V|Z", cpa_v, parsed.Z.sum(axis=0), len(parsed.Z.index), "CPA_TOTAL in V must equal the Z column sum."
         )
         cpa_m = _safe_row(parsed.M, "CPA_TOTAL", flow=flow, block="M", checks=checks, check_id=f"full.c2.cpa_m.{flow.lower()}")
+        ordinary_y_totals = parsed.Y.drop(columns=[policy.total_control_column], errors="ignore").sum(axis=0)
         compare(
-            f"full.c2.cpa_m.{flow.lower()}", flow, "M|Y", cpa_m, parsed.Y.sum(axis=0), len(parsed.Y.index), "CPA_TOTAL in M must equal every displayed Y column sum."
+            f"full.c2.cpa_m.{flow.lower()}", flow, "M|Y", None if cpa_m is None else cpa_m.reindex(ordinary_y_totals.index), ordinary_y_totals, len(parsed.Y.index), "CPA_TOTAL in M must equal every ordinary displayed Y column sum; TOTAL is reconciled to V separately."
         )
         checks.append(
             _check(
@@ -758,7 +759,8 @@ def validate_eurostat_iot_full_table(
         compare("full.p2_1.total_v", "TOTAL", "V|Z", p2_v, None if d21_v is None else total.Z.sum(axis=0).add(d21_v), len(total.Z.index) + 1, "TOTAL P2_ADJ must equal Z column sums plus D21X31.")
         p2_m = _safe_row(total.M, "P2_ADJ", flow="TOTAL", block="M", checks=checks, check_id="full.p2_2.total_m")
         d21_m = _safe_row(total.M, "D21X31", flow="TOTAL", block="M", checks=checks, check_id="full.p2_2.total_m")
-        compare("full.p2_2.total_m", "TOTAL", "M|Y", p2_m, None if d21_m is None else total.Y.sum(axis=0).add(d21_m), len(total.Y.index) + 1, "TOTAL M P2_ADJ must equal every displayed Y column sum plus D21X31.")
+        ordinary_y_totals = total.Y.drop(columns=[policy.total_control_column], errors="ignore").sum(axis=0)
+        compare("full.p2_2.total_m", "TOTAL", "M|Y", None if p2_m is None else p2_m.reindex(ordinary_y_totals.index), None if d21_m is None else ordinary_y_totals.add(d21_m.reindex(ordinary_y_totals.index)), len(total.Y.index) + 1, "TOTAL M P2_ADJ must equal every ordinary displayed Y column sum plus D21X31; TOTAL is reconciled to V separately.")
     else:
         checks.append(_not_tested("full.p2_1.total_v", flow="TOTAL", block="V|Z", explanation="TOTAL flow is absent."))
         checks.append(_not_tested("full.p2_2.total_m", flow="TOTAL", block="M|Y", explanation="TOTAL flow is absent."))
@@ -838,7 +840,8 @@ def validate_eurostat_iot_full_table(
         dom_imp_v = _safe_row(dom.V, "IMP", flow="DOM", block="V", checks=checks, check_id="full.i2.dom_v_imp")
         compare("full.i2.dom_v_imp", "DOM", "V_DOM|Z_IMP", dom_imp_v, imp.Z.sum(axis=0), len(imp.Z.index), "DOM V IMP must equal imported intermediate-use column sums.")
         dom_imp_m = _safe_row(dom.M, "IMP", flow="DOM", block="M", checks=checks, check_id="full.i3.dom_m_imp")
-        compare("full.i3.dom_m_imp", "DOM", "M_DOM|Y_IMP", dom_imp_m, imp.Y.sum(axis=0), len(imp.Y.index), "DOM M IMP must equal imported uses for every displayed final-use/control column.")
+        ordinary_imp_y = imp.Y.drop(columns=[policy.total_control_column], errors="ignore").sum(axis=0)
+        compare("full.i3.dom_m_imp", "DOM", "M_DOM|Y_IMP", None if dom_imp_m is None else dom_imp_m.reindex(ordinary_imp_y.index), ordinary_imp_y, len(imp.Y.index), "DOM M IMP must equal imported uses for every ordinary displayed final-use/control column; TOTAL is reconciled to V separately.")
     else:
         checks.append(_not_tested("full.i2.dom_v_imp", flow="DOM", block="V_DOM|Z_IMP", explanation="DOM and IMP flows are required."))
         checks.append(_not_tested("full.i3.dom_m_imp", flow="DOM", block="M_DOM|Y_IMP", explanation="DOM and IMP flows are required."))
@@ -848,7 +851,12 @@ def validate_eurostat_iot_full_table(
             for partition in policy.import_partitions:
                 aggregate = _safe_row(frame, partition.aggregate, flow="TOTAL", block=block, checks=checks, check_id=f"{partition.check_id}.{block.lower()}")
                 components = [_safe_row(frame, code, flow="TOTAL", block=block, checks=checks, check_id=f"{partition.check_id}.{block.lower()}") for code in partition.components]
-                compare(f"{partition.check_id}.{block.lower()}", "TOTAL", block, aggregate, None if any(item is None for item in components) else pd.concat(cast(list[pd.Series], components), axis=1).sum(axis=1), len(partition.components), f"{partition.aggregate} must equal its declared geographic imports partition in {block}.")
+                derived = None if any(item is None for item in components) else pd.concat(cast(list[pd.Series], components), axis=1).sum(axis=1, min_count=len(components))
+                if block == "M" and aggregate is not None and derived is not None:
+                    applicable = aggregate.notna() & derived.notna()
+                    aggregate = aggregate.loc[applicable]
+                    derived = derived.loc[applicable]
+                compare(f"{partition.check_id}.{block.lower()}", "TOTAL", block, aggregate, derived, len(partition.components), f"{partition.aggregate} must equal its declared geographic imports partition in every applicable {block} cell.")
         p7_total = _safe_row(total.V, "P7", flow="TOTAL", block="V", checks=checks, check_id="full.i4.imports_scalar")
         if p7_total is not None and imp is not None and "IMP" in atomic:
             observed = pd.Series([float(p7_total.sum())], index=pd.Index(["national_total"]))

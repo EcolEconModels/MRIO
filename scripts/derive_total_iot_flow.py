@@ -16,7 +16,6 @@ from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot
 from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
 from ecolecon_mrio.iot_full_table_validation import validate_eurostat_iot_full_table
 from ecolecon_mrio.iot_flow_semantics import (
-    derived_final_demand_control_columns,
     enforce_final_demand_display_identities,
     flow_use_total,
     rounded_source_control_diagnostic,
@@ -93,7 +92,7 @@ def _assert_close(label: str, left: pd.DataFrame | pd.Series, right: pd.DataFram
     return gap
 
 
-_ROUNDED_Y_CONTROLS = ("P3", "P5M", "P5", "TFU", "TU")
+_ROUNDED_Y_CONTROLS = ("P3", "P5M", "P5", "P6_D0", "P6_U3", "TFU", "TU")
 
 
 def _resolve_source_rounding_quantum(
@@ -146,6 +145,16 @@ def _derived_y_control(
         values = Y.loc[:, detail].sum(axis=1).astype("float64")
         counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
         return values, counts
+    if identity == "P6_D0":
+        values = cast(pd.Series, Y.loc[:, "P6"]).sub(
+            cast(pd.Series, Y.loc[:, "P6_B0"])
+        ).astype("float64")
+        return values, Y.loc[:, ["P6", "P6_B0"]].notna().sum(axis=1).astype("int64")
+    if identity == "P6_U3":
+        values = cast(pd.Series, Y.loc[:, "P6_B0"]).sub(
+            cast(pd.Series, Y.loc[:, "P6_U2"])
+        ).astype("float64")
+        return values, Y.loc[:, ["P6_B0", "P6_U2"]].notna().sum(axis=1).astype("int64")
 
     atomic = source_atomic_final_demand(Y)
     values = atomic.sum(axis=1).astype("float64")
@@ -709,12 +718,15 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         raise ValueError("DOM and IMP child topology/order differs for Z; cannot construct TOTAL.")
     if not Y_dom.index.equals(Y_imp.index) or not Y_dom.columns.equals(Y_imp.columns):
         raise ValueError("DOM and IMP child topology/order differs for Y; cannot construct TOTAL.")
+    Y_dom = enforce_final_demand_display_identities(Y_dom, Z=Z_dom)
+    Y_imp = enforce_final_demand_display_identities(Y_imp, Z=Z_imp)
+    _write_frame(Y_dom, dirs["DOM"], "Y_split.csv")
+    _write_frame(Y_imp, dirs["IMP"], "Y_split.csv")
     if dirs["TOTAL"].exists():
         shutil.rmtree(dirs["TOTAL"])
     dirs["TOTAL"].mkdir(parents=True)
     Z_total = Z_dom + Z_imp
-    controls = set(derived_final_demand_control_columns(Y_dom.columns))
-    Y_total = Y_dom.loc[:, [c for c in Y_dom.columns if c not in controls]] + Y_imp.loc[:, [c for c in Y_imp.columns if c not in controls]]
+    Y_total = Y_dom + Y_imp
     Y_total = enforce_final_demand_display_identities(Y_total, Z=Z_total)
     _write_frame(Z_total, dirs["TOTAL"], "Z_split.csv")
     _write_frame(Y_total, dirs["TOTAL"], "Y_split.csv")
@@ -778,7 +790,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     total_reconstructed_y = _aggregate_rows(Y_total, child_parent, references["TOTAL"].Z.index.astype(str))
     for identity in _ROUNDED_Y_CONTROLS:
         if identity in total_reconstructed_y.columns:
-            expected = _derived_y_control(ParsedEurostatIOT(Z=references["TOTAL"].Z, Y=total_reconstructed_y, V=None, M=None, meta={}), identity)[0]
+            expected = _derived_y_control(ParsedEurostatIOT(Z=total_z, Y=total_reconstructed_y, V=None, M=None, meta={}), identity)[0]
             _assert_close(f"TOTAL generated {identity}", total_reconstructed_y[identity], expected, rtol=rtol, atol=atol)
     canonical_v: dict[str, pd.DataFrame | None] = {}
     canonical_m: dict[str, pd.DataFrame | None] = {}

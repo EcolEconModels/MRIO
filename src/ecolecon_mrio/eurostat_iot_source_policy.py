@@ -182,7 +182,9 @@ NAIO_10_CP1700_ACCOUNTING_POLICY = EurostatIOTAccountingPolicy(
     ),
     vm_total_rows_by_flow={
         "DOM": (
+            "CPA_TOTAL",
             "P1",
+            "P2_ADJ",
             "B1G",
             "D1",
             "D11",
@@ -191,9 +193,13 @@ NAIO_10_CP1700_ACCOUNTING_POLICY = EurostatIOTAccountingPolicy(
             "P51C",
             "B2A3G",
             "B2A3N",
+            "IMP",
         ),
+        "IMP": ("CPA_TOTAL",),
         "TOTAL": (
+            "CPA_TOTAL",
             "P1",
+            "P2_ADJ",
             "B1G",
             "D1",
             "D11",

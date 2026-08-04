@@ -178,10 +178,11 @@ def enforce_final_demand_display_identities(
 ) -> pd.DataFrame:
     """Return Y with aggregate display columns derived from atomic uses.
 
-    Complete P3/P5 detail partitions determine their aggregate display columns; P6
-    remains aggregate-authoritative because its detail codes are not assumed to be
-    exhaustive. TFU is the non-overlapping final-use total. TU additionally includes
-    row-wise intermediate use and therefore requires an aligned Z whenever present.
+    Complete P3/P5 detail partitions determine their aggregate display columns.
+    P6 and P6_B0 remain authoritative, with independently rounded P6_D0 and P6_U3
+    rebuilt as their respective partition residuals. TFU is the non-overlapping
+    final-use total. TU additionally includes row-wise intermediate use and therefore
+    requires an aligned Z whenever present.
     """
     out = Y.copy().astype("float64")
     out.index = out.index.astype(str)
@@ -196,6 +197,10 @@ def enforce_final_demand_display_identities(
         out.loc[:, "P5"] = (
             out.loc[:, "P51G"].add(out.loc[:, "P5M"], fill_value=0.0).astype("float64")
         )
+    if {"P6", "P6_B0", "P6_D0"}.issubset(out.columns):
+        out.loc[:, "P6_D0"] = out.loc[:, "P6"] - out.loc[:, "P6_B0"]
+    if {"P6_B0", "P6_U2", "P6_U3"}.issubset(out.columns):
+        out.loc[:, "P6_U3"] = out.loc[:, "P6_B0"] - out.loc[:, "P6_U2"]
     atomic = atomic_final_demand(out)
     tfu = atomic.sum(axis=1).astype("float64")
     if "TFU" in out.columns:

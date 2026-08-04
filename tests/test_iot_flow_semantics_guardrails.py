@@ -91,6 +91,10 @@ def test_display_aggregates_are_derived_from_atomic_details() -> None:
             "P52": [5.0],
             "P53": [6.0],
             "P6": [7.0],
+            "P6_B0": [5.0],
+            "P6_D0": [999.0],
+            "P6_U2": [3.0],
+            "P6_U3": [999.0],
         },
         index=pd.Index(["a"]),
     )
@@ -98,6 +102,8 @@ def test_display_aggregates_are_derived_from_atomic_details() -> None:
     assert out.loc["a", "P3"] == 6.0
     assert out.loc["a", "P5"] == 15.0
     assert out.loc["a", "P6"] == 7.0
+    assert out.loc["a", "P6_D0"] == 2.0
+    assert out.loc["a", "P6_U3"] == 2.0
 
 
 def test_derived_final_demand_controls_and_tu_are_rebuilt() -> None:

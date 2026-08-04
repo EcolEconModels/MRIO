@@ -139,9 +139,10 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
         Y_dom = pd.read_csv(dom / "Y_split.csv", index_col=0)
         Y_imp = pd.read_csv(imp / "Y_split.csv", index_col=0)
         if flow == "TOTAL":
-            controls = set(MODULE.derived_final_demand_control_columns(Y_dom.columns))
             Z = Z_dom + Z_imp
-            Y = MODULE.enforce_final_demand_display_identities(Y_dom.drop(columns=list(controls)) + Y_imp.drop(columns=list(controls)), Z=Z)
+            # Published TOTAL controls are rounded independently from DOM+IMP.
+            Z.iloc[0, 0] += 0.02
+            Y = MODULE.enforce_final_demand_display_identities(Y_dom + Y_imp, Z=Z)
         else:
             Z = Z_dom if flow == "DOM" else Z_imp
             Y = Y_dom if flow == "DOM" else Y_imp
@@ -159,10 +160,17 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
     Z_dom, Z_imp, Z_total = (pd.read_csv(path / "Z_split.csv", index_col=0) for path in (dom, imp, total))
     Y_dom, Y_imp, Y_total = (pd.read_csv(path / "Y_split.csv", index_col=0) for path in (dom, imp, total))
     pd.testing.assert_frame_equal(Z_total, Z_dom + Z_imp)
+    assert Y_total.columns.equals(Y_dom.columns)
     for col in ("P3_S13", "P51G", "P52", "P53"):
         pd.testing.assert_series_equal(Y_total[col], Y_dom[col] + Y_imp[col], check_names=False)
     pd.testing.assert_series_equal(Y_total["P5M"], Y_total["P52"] + Y_total["P53"], check_names=False)
     pd.testing.assert_series_equal(Y_total["P5"], Y_total["P51G"] + Y_total["P5M"], check_names=False)
+    pd.testing.assert_series_equal(
+        Y_total["TFU"], MODULE.source_atomic_final_demand(Y_total).sum(axis=1), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        Y_total["TU"], Z_total.sum(axis=1) + Y_total["TFU"], check_names=False
+    )
     x = pd.read_csv(dom / "x_split.csv", index_col=0).iloc[:, 0]
     for directory, Z in ((dom, Z_dom), (imp, Z_imp), (total, Z_total)):
         pd.testing.assert_series_equal(pd.read_csv(directory / "x_split.csv", index_col=0).iloc[:, 0], x, check_names=False)
