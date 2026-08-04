@@ -40,6 +40,8 @@ AGGREGATION_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
     "M_agg.csv",
     "use_total_agg.csv",
     "aggregation_info.json",
+    "sector_contract.csv",
+    "source_sector_contract.csv",
     "aggregation_edge_mapping_audit.csv",
     "aggregated_sector_value_per_physical_input.csv",
     "aggregated_sector_co2_intensity.csv",
@@ -1492,6 +1494,78 @@ def _reorder_aggregation_result(
     )
 
 
+def _write_sector_contract(
+    *,
+    out_path: Path,
+    product_order: Sequence[str],
+    parent_by_sector: Mapping[str, str],
+    verbose: bool,
+) -> None:
+    """Write the downstream sector-interface contract for one emitted IO system.
+
+    The contract carries only structural identifiers: the canonical output
+    position, the emitted sector, and its pre-split CPA65 parent.  Monetary P1
+    remains in the exported workbook so a consumer cannot accidentally pair a
+    stale value vector with a newer workbook.
+    """
+    rows: list[dict[str, object]] = []
+    for position, sector_id in enumerate(product_order, start=1):
+        parent_id = parent_by_sector.get(str(sector_id))
+        if parent_id is None:
+            raise ValueError(f"Sector contract is missing a CPA65 parent for {sector_id!r}.")
+        # CPA product codes are structurally aligned to their NACE letter.
+        parts = str(parent_id).split("_", maxsplit=1)
+        if len(parts) != 2 or not parts[1] or not parts[1][0].isalpha():
+            raise ValueError(f"Sector contract cannot derive NACE section from {parent_id!r}.")
+        rows.append(
+            {
+                "position": position,
+                "sector_id": str(sector_id),
+                "parent_sector_id": str(parent_id),
+                "nace_section": parts[1][0],
+            }
+        )
+    _write_df_csv(pd.DataFrame(rows), out_path, verbose=verbose)
+
+
+def _write_source_sector_contract(
+    *, out_path: Path, parent_order: Sequence[str], verbose: bool
+) -> None:
+    """Write source-row CPA65 identities for MPG4ALL auxiliary inputs.
+
+    Capital stock and A64 employment use Eurostat's standard parent order.
+    The legacy energy workbook uses its published source order, retained here
+    as explicit contract data rather than an unlabelled MPG4ALL assumption.
+    """
+    energy_parent_order = (
+        "CPA_A01","CPA_A02","CPA_A03","CPA_B","CPA_C10-12","CPA_C13-15","CPA_C16","CPA_C31_32",
+        "CPA_C17","CPA_C18","CPA_C19","CPA_C20","CPA_C21","CPA_C22","CPA_C23","CPA_C24","CPA_C25",
+        "CPA_C26","CPA_C27","CPA_C28","CPA_C33","CPA_C29","CPA_C30","CPA_D","CPA_E36","CPA_E37-39",
+        "CPA_F","CPA_H49","CPA_H50","CPA_H51","CPA_G45","CPA_G46","CPA_G47","CPA_H52","CPA_H53",
+        "CPA_I","CPA_J58","CPA_J59_60","CPA_J61","CPA_J62_63","CPA_K64","CPA_K65","CPA_K66","CPA_L68A",
+        "CPA_L68B","CPA_M69_70","CPA_M71","CPA_M72","CPA_M73","CPA_M74_75","CPA_N77","CPA_N78","CPA_N79",
+        "CPA_N80-82","CPA_O","CPA_P","CPA_Q86","CPA_Q87_88","CPA_R90-92","CPA_R93","CPA_S94","CPA_S95",
+        "CPA_S96","CPA_T","CPA_U"
+    )
+    if len(parent_order) != 65 or set(parent_order) != set(energy_parent_order):
+        raise ValueError("MPG4ALL source contract requires exactly the CPA65 parent domain.")
+    rows: list[dict[str, object]] = []
+    for source_system, order in (
+        ("capital_stock", parent_order),
+        ("employment_a64", parent_order),
+        ("energy_balance", energy_parent_order),
+    ):
+        for position, parent_sector_id in enumerate(order, start=1):
+            rows.append(
+                {
+                    "source_system": source_system,
+                    "source_position": position,
+                    "parent_sector_id": parent_sector_id,
+                }
+            )
+    _write_df_csv(pd.DataFrame(rows), out_path, verbose=verbose)
+
+
 def _write_sfc_workbook(
     *,
     out_path: Path,
@@ -2303,6 +2377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
         export_context: tuple[Path, dict, str | None] | None = None
+        sector_parent_by_output: dict[str, str] | None = None
         if args.write_sfc_workbook:
             if not (
                 args.sfc_template_xlsx
@@ -2341,7 +2416,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_products, _, _ = _official_template_schema(
                 template, parsed=parsed_schema
             )
-            _, official_order, _, _ = _resolve_product_template_alignment(
+            _, official_order, sector_parent_by_output, _ = _resolve_product_template_alignment(
                 template_xlsx=template,
                 base_product_codes=base_products,
                 output_product_codes=res.Z.index.astype(str).tolist(),
@@ -2388,6 +2463,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
         _write_df_csv(res.Y, out_base / "Y_agg.csv", verbose=args.verbose)
         _write_series_csv(res.x, out_base / "x_agg.csv", verbose=args.verbose)
+        if sector_parent_by_output is not None:
+            _write_sector_contract(
+                out_path=out_base / "sector_contract.csv",
+                product_order=res.Z.index.astype(str).tolist(),
+                parent_by_sector=sector_parent_by_output,
+                verbose=args.verbose,
+            )
+            _write_source_sector_contract(
+                out_path=out_base / "source_sector_contract.csv",
+                parent_order=list(dict.fromkeys(sector_parent_by_output[code] for code in res.Z.index.astype(str))),
+                verbose=args.verbose,
+            )
         _write_series_csv(flow_use_total(res.Z, res.Y), out_base / "use_total_agg.csv", verbose=args.verbose)
         _write_df_csv(res.A, out_base / "A_agg.csv", verbose=args.verbose)
         if res.V is not None:
