@@ -135,6 +135,55 @@ def _normalize_vector(values: pd.Series) -> pd.Series:
     return numeric / total
 
 
+def _cap_inventory_withdrawals(
+    *, parent: str, allocated: pd.Series, other_use: pd.Series, flow: str,
+) -> pd.Series:
+    """Constrain signed child P52 without changing its parent total.
+
+    The parent inventory change and EXIO donor proportions remain authoritative.
+    Withdrawals are capped by each child's other use; the resulting offset is
+    removed proportionally over the remaining absolute donor magnitudes.
+    """
+    lower = -other_use.clip(lower=0.0).astype("float64")
+    constrained = allocated.clip(lower=lower).astype("float64")
+    excess = float(constrained.sum() - allocated.sum())
+    if excess <= 1e-9:
+        return allocated
+    headroom = constrained - lower
+    weights = allocated.abs().where(headroom > 1e-9, 0.0)
+    supported = float(headroom.loc[weights > 0.0].sum())
+    if supported + 1e-9 < excess:
+        raise ValueError(
+            "Parent P52 cannot be conserved without negative child supply: "
+            f"parent={parent!r}, flow={flow!r}, required_offset={excess:.12g}, "
+            f"donor_supported_headroom={supported:.12g}."
+        )
+
+    reductions = pd.Series(0.0, index=allocated.index, dtype="float64")
+    active = weights > 0.0
+    remaining = excess
+    # Preserve relative absolute donor magnitudes until a child's lower supply
+    # bound is reached, then continue over the remaining donor-supported set.
+    while remaining > 1e-9:
+        active_weight = float(weights.loc[active].sum())
+        if active_weight <= 0.0:
+            raise ValueError(
+                f"P52 allocation exhausted donor support: parent={parent!r}, flow={flow!r}."
+            )
+        proposal = remaining * weights.loc[active] / active_weight
+        available = headroom.loc[active] - reductions.loc[active]
+        capped = proposal > available + 1e-9
+        if not bool(capped.any()):
+            reductions.loc[active] += proposal
+            remaining = 0.0
+            break
+        saturated = capped.index[capped]
+        reductions.loc[saturated] += available.loc[saturated]
+        remaining -= float(available.loc[saturated].sum())
+        active.loc[saturated] = False
+    return constrained - reductions
+
+
 def _production_column_share(
     *,
     parent: str,
@@ -925,6 +974,9 @@ def _split_iot_using_donor_blocks(
     export_donor: pd.Series | None = None
     export_donor_method: str | None = None
 
+    atomic_without_p52 = [
+        code for code in source_atomic_final_demand(Y_split).columns if code != "P52"
+    ]
     for row_sector in sectors_old:
         row_labels = (
             list(split_profiles[row_sector].subsectors)
@@ -1143,6 +1195,22 @@ def _split_iot_using_donor_blocks(
             Y_split.loc[row_labels, fd_code] = (
                 donor_share.reindex(row_labels).fillna(0.0).to_numpy(dtype="float64")
                 * fd_total
+            )
+
+        # P52 is a signed stock-flow adjustment, but the complete domestic or
+        # imported row use is output or import supply and cannot be negative.
+        # Reallocate only P52 inside its source parent, retaining exact parent
+        # reconstruction and every other donor-allocated transaction cell.
+        if "P52" in Y_split.columns:
+            other_use = Z_split.loc[row_labels].sum(axis=1).add(
+                Y_split.loc[row_labels, atomic_without_p52].sum(axis=1),
+                fill_value=0.0,
+            )
+            Y_split.loc[row_labels, "P52"] = _cap_inventory_withdrawals(
+                parent=row_sector,
+                allocated=Y_split.loc[row_labels, "P52"],
+                other_use=other_use,
+                flow=exio_slice.flow,
             )
 
     Y_split = enforce_final_demand_display_identities(Y_split, Z=Z_split)

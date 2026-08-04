@@ -11,6 +11,7 @@ import pytest
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exio_share_split import (
     _aggregate_rows_to_original,
+    _cap_inventory_withdrawals,
     _validate_emitted_children,
     _validate_split_reconstruction,
     split_iot_using_exiobase_shares,
@@ -66,6 +67,20 @@ def _core_fixture(
         source_zip=tmp_path / "donors.zip",
     )
     return z, y, slice_, {"CPA_C20": ["p24.d", "p24.g"], "CPA_C21": ["p24.d", "p24.h"]}
+
+
+def test_negative_inventory_allocation_cannot_create_negative_child_supply() -> None:
+    """Signed P52 is conserved while withdrawals remain within each child's other use."""
+    allocated = pd.Series([-9.0, 11.0], index=["tobacco", "food"])
+    other_use = pd.Series([3.0, 20.0], index=allocated.index)
+
+    constrained = _cap_inventory_withdrawals(
+        parent="CPA_C10-12", allocated=allocated, other_use=other_use, flow="imports"
+    )
+
+    assert constrained.sum() == pytest.approx(allocated.sum())
+    assert (constrained + other_use >= 0.0).all()
+    assert constrained.to_dict() == pytest.approx({"tobacco": -3.0, "food": 5.0})
 
 
 def test_wp1_keeps_zero_weight_edge_children_and_reconstructs_cells(

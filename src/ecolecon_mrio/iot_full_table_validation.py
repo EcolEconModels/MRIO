@@ -64,6 +64,38 @@ def _not_tested(check_id: str, *, flow: FlowRole, block: str, explanation: str) 
     )
 
 
+def _nonnegative_check(
+    values: pd.Series | pd.DataFrame,
+    *,
+    check_id: str,
+    flow: FlowRole,
+    block: str,
+    explanation: str,
+) -> InvariantCheck:
+    """Check an economically non-negative generated or published domain."""
+    affected: list[str]
+    if isinstance(values, pd.Series):
+        numeric_series = values.astype("float64")
+        positions = np.flatnonzero(numeric_series.to_numpy(dtype="float64") < -_ATOL)
+        affected = [str(numeric_series.index[int(position)]) for position in positions[:50]]
+    else:
+        numeric_frame = values.astype("float64")
+        positions = np.argwhere(numeric_frame.to_numpy(dtype="float64") < -_ATOL)
+        affected = [
+            f"{numeric_frame.index[int(row)]}|{numeric_frame.columns[int(column)]}"
+            for row, column in positions[:50]
+        ]
+    return _check(
+        check_id,
+        status="fail" if affected else "pass",
+        severity="error",
+        flow=flow,
+        block=block,
+        affected=affected,
+        explanation=explanation,
+    )
+
+
 def _source_series_check(
     *,
     check_id: str,
@@ -469,6 +501,49 @@ def _structural_checks(
         if not missing_atomic:
             atomic[flow] = parsed.Y.loc[:, list(policy.atomic_final_demand_columns)].astype("float64")
 
+        # Intermediate transactions and declared use/supply controls are gross
+        # monetary flows. Signed stock changes, taxes and residual income rows
+        # are deliberately absent from these policy lists.
+        checks.append(
+            _nonnegative_check(
+                parsed.Z,
+                check_id=f"full.domain.z.{flow.lower()}",
+                flow=flow,
+                block="Z",
+                explanation="Intermediate transactions must be non-negative.",
+            )
+        )
+        for column in policy.nonnegative_y_columns_by_flow.get(flow, ()):
+            values = _safe_column(
+                parsed.Y, column, flow=flow, checks=checks,
+                check_id=f"full.domain.y.{flow.lower()}.{column.lower()}",
+            )
+            if values is not None:
+                checks.append(
+                    _nonnegative_check(
+                        values,
+                        check_id=f"full.domain.y.{flow.lower()}.{column.lower()}",
+                        flow=flow,
+                        block="Y",
+                        explanation=f"{column} is a non-negative use control.",
+                    )
+                )
+        for row in policy.nonnegative_v_rows_by_flow.get(flow, ()):
+            values = _safe_row(
+                parsed.V, row, flow=flow, block="V", checks=checks,
+                check_id=f"full.domain.v.{flow.lower()}.{row.lower()}",
+            )
+            if values is not None:
+                checks.append(
+                    _nonnegative_check(
+                        values,
+                        check_id=f"full.domain.v.{flow.lower()}.{row.lower()}",
+                        flow=flow,
+                        block="V",
+                        explanation=f"{row} is a non-negative production or supply control.",
+                    )
+                )
+
     checks.append(
         _not_tested(
             "full.s8.applicability",
@@ -801,7 +876,20 @@ def validate_eurostat_iot_full_table(
         b2n = _safe_row(parsed.V, "B2A3N", flow=flow, block="V", checks=checks, check_id=f"full.v3.b2a3g.{flow.lower()}")
         p51c = _safe_row(parsed.V, "P51C", flow=flow, block="V", checks=checks, check_id=f"full.v3.b2a3g.{flow.lower()}")
         compare(f"full.v3.b2a3g.{flow.lower()}", flow, "V", b2g, None if b2n is None or p51c is None else b2n.add(p51c), 2, "B2A3G must equal B2A3N plus P51C.")
-        checks.append(_not_tested(f"full.v4.d1.{flow.lower()}", flow=flow, block="V", explanation="D12 is absent from the selected table schema, so D1 = D11 + D12 cannot be evaluated."))
+        d1 = _safe_row(parsed.V, "D1", flow=flow, block="V", checks=checks, check_id=f"full.v4.d1.{flow.lower()}")
+        d11 = _safe_row(parsed.V, "D11", flow=flow, block="V", checks=checks, check_id=f"full.v4.d1.{flow.lower()}")
+        if d1 is None or d11 is None:
+            checks.append(_not_tested(f"full.v4.d1.{flow.lower()}", flow=flow, block="V", explanation="D1 or D11 is unavailable."))
+        else:
+            checks.append(
+                _nonnegative_check(
+                    d1 - d11,
+                    check_id=f"full.v4.d1.{flow.lower()}",
+                    flow=flow,
+                    block="V",
+                    explanation="D1 must be at least D11; the unobserved difference is employers' social contributions.",
+                )
+            )
     if total is not None and dom is not None:
         for row in policy.production_account_rows:
             total_row = _safe_row(total.V, row, flow="TOTAL", block="V", checks=checks, check_id=f"full.v6.dom_total.{row.lower()}")

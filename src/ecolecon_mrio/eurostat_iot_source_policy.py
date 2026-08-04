@@ -45,6 +45,8 @@ class EurostatIOTAccountingPolicy:
     import_partitions: tuple[AdditivePartition, ...]
     production_account_rows: tuple[str, ...]
     vm_total_rows_by_flow: Mapping[str, tuple[str, ...]]
+    nonnegative_y_columns_by_flow: Mapping[str, tuple[str, ...]]
+    nonnegative_v_rows_by_flow: Mapping[str, tuple[str, ...]]
     total_control_column: str
     identity_states: Mapping[str, IdentityState]
 
@@ -214,6 +216,20 @@ NAIO_10_CP1700_ACCOUNTING_POLICY = EurostatIOTAccountingPolicy(
             "P7_U2",
             "P7_U3",
             "TS_BP",
+        ),
+    },
+    # Inventory change (P52), valuables (P53), taxes/subsidies and surplus
+    # remain signed. These named transaction/use and supply controls do not.
+    nonnegative_y_columns_by_flow={
+        flow: ("P3_S13", "P3_S14", "P3_S15", "P51G", "P6", "TU")
+        for flow in ("DOM", "IMP", "TOTAL")
+    },
+    nonnegative_v_rows_by_flow={
+        "DOM": ("CPA_TOTAL", "D1", "D11", "P1", "P2_ADJ", "P51C"),
+        "IMP": ("CPA_TOTAL",),
+        "TOTAL": (
+            "CPA_TOTAL", "D1", "D11", "P1", "P2_ADJ", "P51C",
+            "P7", "P7_B0", "P7_D0", "P7_U2", "P7_U3", "TS_BP",
         ),
     },
     total_control_column="TOTAL",

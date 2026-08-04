@@ -195,8 +195,24 @@ def test_mutations_are_localised_to_the_named_accounting_control() -> None:
     )
     assert checks["full.p2_1.total_v"].affected_labels == ("a",)
     assert checks["full.p2_2.total_m"].affected_labels == ("P3_S13",)
-    assert checks["full.v4.d1.total"].status == "not_tested"
+    assert checks["full.v4.d1.total"].status == "pass"
     assert checks["full.p2_dom_not_derived"].status == "not_applicable"
+
+
+def test_negative_transactions_and_supply_controls_fail_domain_checks() -> None:
+    """Balanced equalities cannot legitimise negative intermediate or import supply."""
+    variants = _triplet()
+    variants["IMP"].Z.loc["a", "a"] = -1.0
+    variants["TOTAL"].V.loc["P7", "a"] = -1.0
+
+    checks = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+
+    assert checks["full.domain.z.imp"].status == "fail"
+    assert checks["full.domain.v.total.p7"].status == "fail"
 
 
 def test_total_v_and_m_are_not_blanket_additive_contracts() -> None:
