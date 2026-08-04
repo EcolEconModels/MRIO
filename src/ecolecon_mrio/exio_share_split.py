@@ -11,6 +11,8 @@ import pandas as pd
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exiobase3 import (
     ExioRegionSlice,
+    _code_index,
+    _exio_label_to_code_lookup,
     load_exiobase3_region_slice,
     read_exiobase3_region_export_vector,
 )
@@ -848,6 +850,14 @@ def _project_export_donor_for_split(
     else:
         raise ValueError(
             "Canonical splitting supports only primitive DOM and IMP flows."
+        )
+    raw.index = raw.index.astype(str)
+    # Raw EXIO zip rows carry product names, whereas every projected donor block
+    # uses canonical EXIO codes. Injected/test donors may already use those codes.
+    if not set(map(str, P.columns)).issubset(set(raw.index)):
+        raw.index = _code_index(
+            raw.index,
+            label_to_code=_exio_label_to_code_lookup(exio_slice.system),
         )
     raw = raw.reindex(P.columns).fillna(0.0).astype("float64")
     projected = pd.Series(

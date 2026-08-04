@@ -602,6 +602,37 @@ def test_import_donor_uses_documented_import_use_proxy(tmp_path):
     assert result.Y.loc["a2", "P6"] == pytest.approx(100.0 * 2.0 / 6.0)
 
 
+def test_domestic_export_donor_converts_exio_labels_to_codes(tmp_path):
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    sectors = pd.Index(["p23.20.a", "p23.20.m"])
+    exio_slice = ExioRegionSlice(
+        year=2021,
+        system="pxp",
+        region="AT",
+        sectors=sectors,
+        Z_domestic=pd.DataFrame(np.eye(2), index=sectors, columns=sectors),
+        Y_region=pd.DataFrame({"Households": [1.0, 1.0]}, index=sectors),
+        x_region=pd.Series([2.0, 2.0], index=sectors),
+        source_zip=tmp_path / "IOT_2021_pxp.zip",
+    )
+
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=pd.DataFrame([[0.0]], index=["CPA_C19"], columns=["CPA_C19"]),
+        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["CPA_C19"]),
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"CPA_C19": sectors.tolist()},
+        export_vector_loader=lambda **_: pd.Series(
+            [10.0, 90.0], index=["Motor Gasoline", "White Spirit & SBP"]
+        ),
+        create_io_system=False,
+    )
+
+    assert result.Y.loc["p23.20.a", "P6"] == pytest.approx(10.0)
+    assert result.Y.loc["p23.20.m", "P6"] == pytest.approx(90.0)
+
+
 def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
     from ecolecon_mrio.exiobase3 import ExioRegionSlice
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
