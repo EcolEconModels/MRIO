@@ -18,6 +18,7 @@ from ecolecon_mrio.iot_aggregation import (
     aggregate_iot,
 )
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
+from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
 from ecolecon_mrio.iot_identities import (
     normalise_supplementary_row_label,
@@ -1182,9 +1183,25 @@ def _normalise_template_label(value: object) -> str:
     return " ".join(str(value).strip().casefold().split())
 
 
+_OFFICIAL_TEMPLATE_FD_CODES: dict[str, tuple[str, ...]] = {
+    _normalise_template_label("Gross capital formation"): ("P5", "P51G"),
+    _normalise_template_label("Exports to EU members states"): ("P6_B0",),
+    _normalise_template_label("Exports to non-member of the EU"): ("P6_D0",),
+    _normalise_template_label("Exports to members of the euro area"): ("P6_U2",),
+    _normalise_template_label("Exports to non-members of the euro area"): ("P6_U3",),
+}
+
+_OFFICIAL_TEMPLATE_SUPPLEMENTARY_CODES: dict[str, tuple[str, ...]] = {
+    _normalise_template_label("Imports of goods and services from the EU Member States"): ("P7_B0",),
+    _normalise_template_label("Imports of goods and services from the institutions of the EU"): ("P7_D0",),
+    _normalise_template_label("Imports of goods and services from members of the Monetary Union"): ("P7_U2",),
+    _normalise_template_label("Imports of goods and services from non-members of the Monetary Union"): ("P7_U3",),
+}
+
+
 def _codes_for_template_labels(
     labels: Sequence[object], *, candidate_codes: Sequence[str], label_by_code: Mapping[str, object],
-    block: str,
+    block: str, official_aliases: Mapping[str, Sequence[str]] | None = None,
 ) -> list[str]:
     """Resolve one ordered template block through the official SDMX codelist."""
     candidates: dict[str, list[str]] = {}
@@ -1194,7 +1211,10 @@ def _codes_for_template_labels(
     ordered: list[str] = []
     for raw_label in labels:
         label = _normalise_template_label(raw_label)
-        matches = candidates.get(label, [])
+        aliases = [] if official_aliases is None else list(official_aliases.get(label, ()))
+        matches = [code for code in aliases if code in candidate_codes and code not in ordered][:1]
+        if not matches:
+            matches = [code for code in candidates.get(label, []) if code not in ordered]
         if len(matches) != 1:
             raise ValueError(
                 f"Official template {block} label {raw_label!r} resolves to "
@@ -1262,7 +1282,8 @@ def _official_template_schema(
         for column in range(int(layout["first_fd_col"]), int(layout["last_fd_col"]) + 1)
     ]
     final_demand = _codes_for_template_labels(
-        fd_labels, candidate_codes=fd_candidates, label_by_code=col_labels, block="final-demand columns",
+        fd_labels, candidate_codes=fd_candidates, label_by_code=col_labels,
+        block="final-demand columns", official_aliases=_OFFICIAL_TEMPLATE_FD_CODES,
     )
 
     # The first blank label terminates the supplementary table; footer text such
@@ -1279,6 +1300,7 @@ def _official_template_schema(
         candidate_codes=supplementary_candidates,
         label_by_code=row_labels,
         block="supplementary rows",
+        official_aliases=_OFFICIAL_TEMPLATE_SUPPLEMENTARY_CODES,
     )
     workbook.close()
     return product_rows, final_demand, supplementary
@@ -1739,6 +1761,11 @@ def _write_sfc_workbook(
     row_labels_written: dict[str, str] = {}
     parsed_v = parsed.V.astype("float64") if parsed.V is not None else None
     parsed_m = parsed.M.astype("float64") if parsed.M is not None else None
+    required_rows = (
+        set(NAIO_10_CP1700_ACCOUNTING_POLICY.required_rows_by_flow.get(str(variant_value), ()))
+        if eurostat_dataset == NAIO_10_CP1700_ACCOUNTING_POLICY.dataset
+        else None
+    )
     if V_ord is not None:
         missing_v_columns = sorted(set(product_codes_order) - set(V_ord.columns.astype(str)))
         if missing_v_columns:
@@ -1761,7 +1788,12 @@ def _write_sfc_workbook(
         # A numeric primitive in the official workbook must have cell-level
         # SDMX evidence in the corresponding block. The template is never a
         # silent numerical fallback or an allocation target.
-        if row_code in _TEMPLATE_PRIMITIVE_ROWS and tpl_ws is not None and tpl_layout is not None:
+        if (
+            row_code in _TEMPLATE_PRIMITIVE_ROWS
+            and (required_rows is None or row_code in required_rows)
+            and tpl_ws is not None
+            and tpl_layout is not None
+        ):
             template_row = int(tpl_layout["va_row"]) + offset
             template_v_values = [
                 tpl_ws.cell(
@@ -1824,6 +1856,7 @@ def _write_sfc_workbook(
             )
         if (
             not source_m_applicable
+            and (required_rows is None or row_code not in required_rows)
             and output_m_row is not None
             and M_ord is not None
             and bool(
