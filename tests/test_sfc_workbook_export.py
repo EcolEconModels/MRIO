@@ -11,15 +11,22 @@ from openpyxl import Workbook, load_workbook
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
 
-def _build_template(path: Path) -> None:
+def _build_template(
+    path: Path,
+    *,
+    product_labels: tuple[str, str] = (
+        "Coke and refined petroleum products",
+        "Electricity, gas, steam and air conditioning",
+    ),
+) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet 1"
 
     ws.cell(row=11, column=1).value = "PRD_USE (Labels)"
     ws.cell(row=11, column=2).value = "Total"
-    ws.cell(row=11, column=3).value = "Coke and refined petroleum products"
-    ws.cell(row=11, column=4).value = "Electricity, gas, steam and air conditioning"
+    ws.cell(row=11, column=3).value = product_labels[0]
+    ws.cell(row=11, column=4).value = product_labels[1]
     ws.cell(row=11, column=5).value = "Final consumption expediture"
     ws.cell(row=11, column=6).value = "Gross capital formation"
     ws.cell(row=11, column=7).value = "Exports of goods and services"
@@ -27,8 +34,8 @@ def _build_template(path: Path) -> None:
     ws.cell(row=11, column=9).value = "Total final use"
 
     ws.cell(row=12, column=1).value = "Total"
-    ws.cell(row=13, column=1).value = "Coke and refined petroleum products"
-    ws.cell(row=14, column=1).value = "Electricity, gas, steam and air conditioning"
+    ws.cell(row=13, column=1).value = product_labels[0]
+    ws.cell(row=14, column=1).value = product_labels[1]
 
     lower_rows = {
         15: ("Value added, gross", [10.0, 20.0], [":", ":", ":", ":", ":"]),
@@ -62,24 +69,28 @@ def _with_source_rows(parsed, row_codes: list[str]):
         "TS_BP": "Total supply at basic prices",
         "D21X31": "Taxes less subsidies on products",
     }
+    assert set(row_codes).issubset(labels)
     meta = dict(parsed.meta)
     dimensions = {key: dict(value) for key, value in meta["dimensions"].items()}
-    dimensions["prd_ava"].update({code: labels[code] for code in row_codes})
+    # The real SDMX metadata contains the complete codelist even when a
+    # particular flow has no numeric observations for a supplementary row.
+    dimensions["prd_ava"].update(labels)
     meta["dimensions"] = dimensions
-    meta["identified_supplementary_rows"] = list(row_codes)
+    source_codes = list(labels)
+    meta["identified_supplementary_rows"] = source_codes
     fd_codes = list(map(str, meta["identified_final_demand_columns"]))
     source_m = pd.DataFrame(
         float("nan"),
-        index=row_codes,
+        index=source_codes,
         columns=fd_codes,
         dtype="float64",
     )
-    for row_code in {"D21X31", "P2_ADJ"}.intersection(row_codes):
+    for row_code in {"D21X31", "P2_ADJ"}:
         source_m.loc[row_code, :] = 0.0
     return replace(
         parsed,
         meta=meta,
-        V=pd.DataFrame(0.0, index=row_codes, columns=parsed.Z.columns),
+        V=pd.DataFrame(0.0, index=source_codes, columns=parsed.Z.columns),
         M=source_m,
     )
 
@@ -614,7 +625,13 @@ def test_write_sfc_workbook_writes_lineage_audit_and_passes_strict_validation(tm
 
     template_path = tmp_path / "template.xlsx"
     out_path = tmp_path / "out.xlsx"
-    _build_template(template_path)
+    _build_template(
+        template_path,
+        product_labels=(
+            "Food, beverages and tobacco products",
+            "Chemicals and chemical products",
+        ),
+    )
 
     parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
     monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
@@ -664,7 +681,13 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
 
     template_path = tmp_path / "template.xlsx"
     out_path = tmp_path / "out.xlsx"
-    _build_template(template_path)
+    _build_template(
+        template_path,
+        product_labels=(
+            "Food, beverages and tobacco products",
+            "Chemicals and chemical products",
+        ),
+    )
 
     parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
     y_after = y_after.copy()
@@ -708,6 +731,56 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
     assert float(c10["after_child_sum"]) == pytest.approx(16.0)
     assert float(c10["difference"]) == pytest.approx(1.0)
     assert c10["status"] == "drift"
+
+
+def test_write_sfc_workbook_rejects_numeric_primitive_without_sdmx_cell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template_path = tmp_path / "template.xlsx"
+    _build_template(
+        template_path,
+        product_labels=(
+            "Food, beverages and tobacco products",
+            "Chemicals and chemical products",
+        ),
+    )
+    parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
+    assert parsed.V is not None and parsed.M is not None
+    parsed = replace(
+        parsed,
+        V=parsed.V.drop(index="D21X31"),
+        M=parsed.M.drop(index="D21X31"),
+    )
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+    v_after, m_after = _matching_transformed_supplementary(parsed, z_after.columns)
+
+    with pytest.raises(ValueError, match="numeric primitive cells absent from SDMX"):
+        mod._write_sfc_workbook(
+            out_path=tmp_path / "out.xlsx",
+            template_xlsx=template_path,
+            eurostat_dataset="naio_10_cp1700",
+            eurostat_filters={"geo": "AT", "time": "2021"},
+            eurostat_row_dim="prd_ava",
+            eurostat_col_dim="prd_use",
+            eurostat_storage_folder=tmp_path,
+            variant_dim="stk_flow",
+            variant_value="TOTAL",
+            Z_before=z_before,
+            Y_before=y_before,
+            Z_after=z_after,
+            Y_after=y_after,
+            V_after=v_after,
+            M_after=m_after,
+            mapping_df=mapping_df,
+            mapping_from_col="from_sector",
+            mapping_to_col="to_sector",
+            verbose=False,
+            output_after=flow_use_total(z_after, y_after),
+        )
 
 
 def test_canonical_workbook_wrapper_does_not_pass_parent_total_skip_flag() -> None:
@@ -991,6 +1064,35 @@ def test_identity_mapping_parent_lineage_keeps_template_alignment() -> None:
     }
 
 
+def test_official_order_applies_to_every_sector_axis_and_metadata() -> None:
+    from ecolecon_mrio.iot_aggregation import AggregationResult
+    from scripts.aggregate_iot_by_mapping import _reorder_aggregation_result
+
+    source_order = pd.Index(["child_b", "child_a"])
+    result = AggregationResult(
+        Z=pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=source_order, columns=source_order),
+        Y=pd.DataFrame({"P6": [5.0, 6.0]}, index=source_order),
+        x=pd.Series([7.0, 8.0], index=source_order),
+        A=pd.DataFrame([[0.1, 0.2], [0.3, 0.4]], index=source_order, columns=source_order),
+        V=pd.DataFrame([[9.0, 10.0]], index=["D1"], columns=source_order),
+        M=pd.DataFrame([[11.0]], index=["D1"], columns=["P6"]),
+        aggregated_sector_value_per_physical_input=pd.DataFrame(
+            {"aggregated_sector": ["child_b", "child_a"], "value": [1.0, 2.0]}
+        ),
+    )
+    ordered = _reorder_aggregation_result(result, ["child_a", "child_b"])
+    assert ordered.Z.index.tolist() == ["child_a", "child_b"]
+    assert ordered.Z.columns.tolist() == ["child_a", "child_b"]
+    assert ordered.Y.index.tolist() == ["child_a", "child_b"]
+    assert ordered.x.index.tolist() == ["child_a", "child_b"]
+    assert ordered.A.index.tolist() == ["child_a", "child_b"]
+    assert ordered.A.columns.tolist() == ["child_a", "child_b"]
+    assert ordered.V is not None and ordered.V.columns.tolist() == ["child_a", "child_b"]
+    metadata = ordered.aggregated_sector_value_per_physical_input
+    assert metadata is not None
+    assert metadata["aggregated_sector"].tolist() == ["child_a", "child_b"]
+
+
 def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
     from scripts.aggregate_iot_by_mapping import _missing_sfc_co2_reason
 
@@ -1011,22 +1113,18 @@ def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
 def test_template_alignment_failure_is_independent_of_verbose() -> None:
     from scripts.aggregate_iot_by_mapping import _resolve_product_template_alignment
 
-    effective, order, primary, parents = _resolve_product_template_alignment(
-        template_xlsx=Path("template.xlsx"),
-        base_product_codes=["CPA_A"],
-        output_product_codes=["CUSTOM"],
-        mapping_df=pd.DataFrame(
-            {"from_sector": ["unmapped"], "to_sector": ["CUSTOM"]}
-        ),
-        mapping_from_col="from_sector",
-        mapping_to_col="to_sector",
-        verbose=False,
-    )
-
-    assert effective is None
-    assert order == ["CUSTOM"]
-    assert primary == {}
-    assert parents == {}
+    with pytest.raises(ValueError, match="Could not resolve official template parents"):
+        _resolve_product_template_alignment(
+            template_xlsx=Path("template.xlsx"),
+            base_product_codes=["CPA_A"],
+            output_product_codes=["CUSTOM"],
+            mapping_df=pd.DataFrame(
+                {"from_sector": ["unmapped"], "to_sector": ["CUSTOM"]}
+            ),
+            mapping_from_col="from_sector",
+            mapping_to_col="to_sector",
+            verbose=False,
+        )
 
 
 def test_clear_managed_aggregation_outputs_removes_only_stage_files(tmp_path: Path) -> None:

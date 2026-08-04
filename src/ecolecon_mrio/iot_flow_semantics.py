@@ -1,17 +1,9 @@
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
-
-from ecolecon_mrio.iot_identities import (
-    find_imports_vector,
-    refresh_m_identity_rows,
-    supplementary_accounting_identity_kind,
-)
-
-FlowRole = Literal["DOM", "IMP", "TOTAL"]
 
 _P3_DETAIL = ("P3_S13", "P3_S14", "P3_S15")
 _P5_DETAIL = ("P51G", "P52", "P53")
@@ -257,68 +249,3 @@ def technical_coefficients(Z: pd.DataFrame, output: pd.Series) -> pd.DataFrame:
         )
     safe = denom.replace(0.0, np.nan)
     return Z.astype("float64").divide(safe, axis="columns").fillna(0.0)
-
-
-def refresh_supplementary_rows(
-    V: pd.DataFrame | None,
-    M: pd.DataFrame | None,
-    *,
-    Z: pd.DataFrame,
-    Y: pd.DataFrame,
-    output: pd.Series,
-    flow_role: FlowRole,
-) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
-    """Apply one explicit supplementary-row contract without inventing missing rows."""
-    V_out = None if V is None else V.copy().astype("float64")
-    if V_out is not None:
-        V_out.index = V_out.index.astype(str)
-        V_out.columns = V_out.columns.astype(str)
-        cols = pd.Index(V_out.columns)
-        missing_z = sorted(set(cols.astype(str)) - set(Z.columns.astype(str)))
-        if missing_z:
-            raise ValueError(
-                f"Supplementary V columns are absent from Z: {missing_z[:20]!r}"
-            )
-        z_col = (
-            Z.reindex(index=cols, columns=cols)
-            .fillna(0.0)
-            .sum(axis=0)
-            .astype("float64")
-        )
-        x = output.reindex(cols)
-        if x.isna().any():
-            x_index = cast(pd.Index, x.index)
-            missing = x_index[x.isna()].astype(str).tolist()
-            raise ValueError(
-                f"Output vector is missing supplementary V columns: {missing[:20]!r}"
-            )
-        x = x.astype("float64")
-        for row_code in list(map(str, V_out.index)):
-            kind = supplementary_accounting_identity_kind(row_code)
-            if kind == "output":
-                V_out.loc[row_code, cols] = x
-            elif kind == "intermediate_use":
-                V_out.loc[row_code, cols] = z_col
-            elif flow_role == "TOTAL" and kind == "value_added":
-                V_out.loc[row_code, cols] = x - z_col
-            elif flow_role == "TOTAL" and kind == "total_supply":
-                required_products = pd.Index(Z.columns.astype(str))
-                imports = find_imports_vector(V_out, required_products)
-                if imports is None:
-                    raise ValueError(
-                        f"TOTAL supply row {row_code!r} exists but no imports bridge can be identified."
-                    )
-                required_output = output.reindex(required_products)
-                if required_output.isna().any():
-                    required_index = cast(pd.Index, required_output.index)
-                    missing = (
-                        required_index[required_output.isna()].astype(str).tolist()
-                    )
-                    raise ValueError(
-                        f"TOTAL supply output is missing products: {missing[:20]!r}"
-                    )
-                V_out.loc[row_code, required_products] = (
-                    required_output.astype("float64") + imports
-                )
-    M_out = refresh_m_identity_rows(M, Y=Y, Z=Z)
-    return V_out, M_out

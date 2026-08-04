@@ -56,7 +56,13 @@ def _write_canonical_sidecars(root: Path) -> None:
         technical_coefficients(Z, output).to_csv(directory / "A_agg.csv")
 
 
-def test_output_contract_uses_domestic_output_and_keeps_additive_use(tmp_path: Path) -> None:
+def test_output_contract_uses_domestic_output_and_keeps_additive_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # This fixture contains only Z/Y/coefficient files. Full V/M validation is
+    # covered by the complete Eurostat-table contract tests.
+    monkeypatch.setattr(MODULE, "_validate_generated_full_table", lambda **_: None)
+    monkeypatch.setattr(MODULE, "_read_generated_variants", lambda *_, **__: {})
     idx = pd.Index(["a", "b"])
     Z_dom = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=idx, columns=idx)
     Y_dom = pd.DataFrame([[5.0], [6.0]], index=idx, columns=pd.Index(["P6"]))

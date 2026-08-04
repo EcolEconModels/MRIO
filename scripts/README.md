@@ -156,7 +156,7 @@ The wrapper passes through extra CLI arguments as well, so you can still append 
 
 ### 5. Export canonical fuels IO workbooks
 
-No workbook input is needed to generate the mapping files for the fuels workflows. The identity pass is synthesized from the split-stage artifacts at runtime, and the workbook template is only used for the exported SFC workbook itself.
+No workbook input is needed to generate the mapping files for the fuels workflows. The identity pass is synthesized from the split-stage artifacts at runtime. The official Eurostat workbook is required only as the authoritative order, label, formatting, and layout schema for each exported workbook; its numbers are never allocation targets.
 
 ```bash
 cd /home/agilra/EcolEconModels/MRIO
@@ -171,6 +171,10 @@ This writes three families under `outputs/`:
 - a temporary identity CSV that is generated from the split-stage `exio_selected_sectors.json` files and deleted automatically when the wrapper exits
 
 The fuels pipeline no longer needs a workbook to author mapping CSVs. The split pass is driven by the committed split CSV, and the identity mapping is synthesized from split-stage artifacts at runtime so the workbook export stays reproducible without checking in an extra identity CSV.
+
+The canonical IO accounting pass derives domestic output from domestic transaction row use and imports from imported transaction row use. It constructs `TOTAL = DOM + IMP` for `Z` and the atomic final-demand basis, regenerates displayed final-demand controls, closes the production account through `B2A3N`, and rebuilds the applicable `V`/`M` controls. `A_DOM` is the cleared domestic Leontief matrix; `A_IMP` and `A_TOTAL` are imported and total input requirements per unit of the same domestic output, not standalone Leontief systems. The fuels donor-block path does not invoke RAS/GRAS.
+
+Parent products follow the official template order, while split children follow committed mapping-file row order within each parent. Numeric primitive template cells require matching SDMX observations; blanks and `:` remain missing/non-applicable rather than becoming zero. Canonical split and reaggregated triplets pass the generated full-table accounting validator before export.
 
 ## Notes on Reproducibility
 

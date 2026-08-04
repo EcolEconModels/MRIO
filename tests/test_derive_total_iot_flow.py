@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -47,7 +48,12 @@ def _write_canonical_sidecars(root: Path, *, suffix: str) -> None:
         technical_coefficients(Z, output).to_csv(directory / a_name)
 
 
-def test_validate_additive_outputs_detects_and_accepts_identity(tmp_path: Path) -> None:
+def test_validate_additive_outputs_detects_and_accepts_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # This focused fixture exercises additive file identities only; the complete
+    # naio_10_cp1700 gate has its own real-schema fixtures.
+    monkeypatch.setattr(MODULE, "_validate_generated_full_table", lambda **_: None)
     _write_flow(tmp_path, "DOM", 1.0)
     _write_flow(tmp_path, "IMP", 2.0)
     _write_flow(tmp_path, "TOTAL", 3.0)
@@ -176,7 +182,7 @@ def test_published_m_mask_validation_fails() -> None:
         MODULE._assert_close("published M", pd.DataFrame([[float("nan")]]), pd.DataFrame([[0.0]]), rtol=0.0, atol=0.0)
 
 
-def test_construct_canonical_v_rejects_signed_unknown_row() -> None:
+def test_transaction_v_rejects_signed_unknown_row() -> None:
     parents = pd.Index(["A", "B"])
     reference = SimpleNamespace(
         V=pd.DataFrame([[1.0, -1.0]], index=pd.Index(["UNKNOWN"]), columns=parents),
@@ -185,67 +191,126 @@ def test_construct_canonical_v_rejects_signed_unknown_row() -> None:
     children = pd.Index(["A", "B"])
     zeros = pd.DataFrame(0.0, index=children, columns=children)
     with pytest.raises(ValueError, match="Unknown nonzero V row"):
-        MODULE._construct_canonical_v(
+        MODULE._construct_transaction_v(
             flow="DOM", reference=reference, child_parent={"A": "A", "B": "B"},
-            Z=zeros, x_domestic=pd.Series([1.0, 1.0], index=children),
-            Z_total=zeros, Z_imp=zeros, source_total_Z=zeros,
-            imp_product_proxy=pd.Series([1.0, 1.0], index=children),
-            quantum=1.0, rtol=0.0, atol=1e-9,
+            Z=zeros, Z_total=zeros, Z_imp=zeros,
+            x_domestic=pd.Series([1.0, 1.0], index=children),
+            imported_supply=pd.Series([0.0, 0.0], index=children),
         )
 
 
-def test_v_policy_preflight_marks_unknown_one_child_as_unknown() -> None:
-    reference = SimpleNamespace(
-        V=pd.DataFrame([[2.0]], index=pd.Index(["UNKNOWN"]), columns=pd.Index(["A"])),
-    )
-    preflight = MODULE._v_policy_preflight(
-        references={"DOM": reference}, child_parent={"child": "A"},
-        children=pd.Index(["child"]), x=pd.Series([1.0], index=["child"]),
-        total_inputs=pd.Series([1.0], index=["child"]),
-        imp_inputs=pd.Series([1.0], index=["child"]),
-        imp_products=pd.Series([1.0], index=["child"]),
-    )
-    assert preflight.loc[0, "status"] == "unknown_row"
-
-
-def test_construct_canonical_v_defers_ts_bp_until_p7_is_allocated() -> None:
+def test_transaction_v_closes_rows_columns_and_value_added() -> None:
+    """Transaction-derived output and residual surplus close every child account."""
     parent = pd.Index(["A"])
     children = pd.Index(["a1", "a2"])
+    rows = [
+        "B1G", "B2A3G", "B2A3N", "CPA_TOTAL", "D1", "D11", "D21X31",
+        "D29X39", "P1", "P2_ADJ", "P51C", "P7", "P7_B0", "P7_D0",
+        "P7_U2", "P7_U3", "TS_BP", "B3G",
+    ]
+    source_values = {
+        "B1G": 32.0, "B2A3G": 28.0, "B2A3N": 26.0, "CPA_TOTAL": 20.0,
+        "D1": 10.0, "D11": 8.0, "D21X31": -2.0, "D29X39": -1.0,
+        "P1": 50.0, "P2_ADJ": 18.0, "P51C": 2.0, "P7": 10.0,
+        "P7_B0": 6.0, "P7_D0": 4.0, "P7_U2": 4.0, "P7_U3": 2.0,
+        "TS_BP": 60.0, "B3G": float("nan"),
+    }
     reference = SimpleNamespace(
-        V=pd.DataFrame(
-            [[150.0], [50.0], [100.0]], index=pd.Index(["TS_BP", "P7", "P1"]), columns=parent,
-        ),
-        Z=pd.DataFrame(0.0, index=parent, columns=parent),
+        V=pd.DataFrame([[source_values[row]] for row in rows], index=pd.Index(rows), columns=parent),
     )
-    zeros = pd.DataFrame(0.0, index=children, columns=children)
-    V, _, _ = MODULE._construct_canonical_v(
+    Z_total = pd.DataFrame([[10.0, 5.0], [2.0, 3.0]], index=children, columns=children)
+    Z_imp = pd.DataFrame([[1.0, 2.0], [1.0, 1.0]], index=children, columns=children)
+    x = pd.Series([30.0, 20.0], index=children)
+    imports = pd.Series([4.0, 6.0], index=children)
+    V, _ = MODULE._construct_transaction_v(
         flow="TOTAL", reference=reference, child_parent={"a1": "A", "a2": "A"},
-        Z=zeros, x_domestic=pd.Series([40.0, 60.0], index=children),
-        Z_total=zeros, Z_imp=zeros, source_total_Z=pd.DataFrame(0.0, index=parent, columns=parent),
-        imp_product_proxy=pd.Series([1.0, 3.0], index=children),
-        quantum=1.0, rtol=0.0, atol=1e-9,
+        Z=Z_total, Z_total=Z_total, Z_imp=Z_imp,
+        x_domestic=x, imported_supply=imports,
     )
     assert V is not None
-    pd.testing.assert_series_equal(V.loc["P7"], pd.Series([12.5, 37.5], index=children), check_names=False)
-    pd.testing.assert_series_equal(V.loc["TS_BP"], pd.Series([52.5, 97.5], index=children), check_names=False)
-    assert float(V.loc["TS_BP"].sum()) == 150.0
-
-def test_v_preflight_materiality_uses_atol_and_ignores_nan() -> None:
-    from scripts.derive_total_iot_flow import _material_v_policy_problems
-
-    preflight = pd.DataFrame(
-        {
-            "status": [
-                "unknown_row",
-                "unknown_row",
-                "zero_proxy_nonzero_source",
-                "allocatable",
-            ],
-            "source_value": [1e-12, float("nan"), 2e-6, 10.0],
-        }
+    pd.testing.assert_series_equal(V.loc["P1"], x, check_names=False)
+    pd.testing.assert_series_equal(V.loc["P7"], imports, check_names=False)
+    pd.testing.assert_series_equal(V.loc["TS_BP"], x + imports, check_names=False)
+    pd.testing.assert_series_equal(V.loc["P2_ADJ"], Z_total.sum(axis=0) + V.loc["D21X31"], check_names=False)
+    pd.testing.assert_series_equal(V.loc["B1G"], V.loc["P1"] - V.loc["P2_ADJ"], check_names=False)
+    pd.testing.assert_series_equal(
+        V.loc["B1G"], V.loc["D1"] + V.loc["D29X39"] + V.loc["P51C"] + V.loc["B2A3N"],
+        check_names=False,
     )
-    problems = _material_v_policy_problems(preflight, atol=1e-6)
-    assert problems.index.tolist() == [2]
+    pd.testing.assert_series_equal(V.loc["B2A3G"], V.loc["B2A3N"] + V.loc["P51C"], check_names=False)
+    assert float(V.loc["D1"].sum()) == 10.0
+    assert float(V.loc["D21X31"].sum()) == -2.0
+    assert V.loc["B3G"].isna().all()
+
+
+def test_transaction_m_rebuilds_controls_partitions_and_missingness() -> None:
+    columns = pd.Index(
+        [
+            "P3", "P3_S13", "P3_S14", "P3_S15", "P5", "P51G",
+            "P52", "P53", "P5M", "P6", "TFU", "TOTAL", "TU",
+        ]
+    )
+    products = pd.Index(["a", "b"])
+    y_imp = pd.DataFrame(1.0, index=products, columns=columns)
+    y_imp["P3"] = y_imp[["P3_S13", "P3_S14", "P3_S15"]].sum(axis=1)
+    y_imp["P5M"] = y_imp[["P52", "P53"]].sum(axis=1)
+    y_imp["P5"] = y_imp[["P51G", "P52", "P53"]].sum(axis=1)
+    y_imp["TFU"] = y_imp[["P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53", "P6"]].sum(axis=1)
+    z_imp = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=products, columns=products)
+    y_imp["TU"] = z_imp.sum(axis=1) + y_imp["TFU"]
+    y_total = y_imp * 2.0
+    z_total = z_imp * 2.0
+
+    rows = pd.Index(
+        ["CPA_TOTAL", "D21X31", "P2_ADJ", "P7", "P7_B0", "P7_D0", "P7_U2", "P7_U3", "B3G"]
+    )
+    source_m = pd.DataFrame(np.nan, index=rows, columns=columns)
+    source_m.loc["D21X31"] = 1.0
+    source_m.loc["P2_ADJ"] = 1.0
+    source_m.loc["P7"] = 10.0
+    source_m.loc["P7_B0"] = 6.0
+    source_m.loc["P7_D0"] = 4.0
+    source_m.loc["P7_U2"] = 4.0
+    source_m.loc["P7_U3"] = 2.0
+    reference = SimpleNamespace(M=source_m)
+    V = pd.DataFrame(0.0, index=rows, columns=products)
+    V.loc["B3G"] = np.nan
+    V.loc["CPA_TOTAL"] = z_total.sum(axis=0)
+    V.loc["P7"] = [4.0, 6.0]
+    V.loc["P7_B0"] = [2.4, 3.6]
+    V.loc["P7_D0"] = [1.6, 2.4]
+    V.loc["P7_U2"] = [1.6, 2.4]
+    V.loc["P7_U3"] = [0.8, 1.2]
+
+    M = MODULE._construct_transaction_m(
+        flow="TOTAL", reference=reference, Y=y_total, Z=z_total,
+        Y_imp=y_imp, Z_imp=z_imp, V=V,
+    )
+    assert M is not None
+    ordinary_columns = columns.drop("TOTAL")
+    pd.testing.assert_series_equal(
+        M.loc["CPA_TOTAL", ordinary_columns], y_total[ordinary_columns].sum(axis=0), check_names=False
+    )
+    pd.testing.assert_series_equal(
+        M.loc["P7", ordinary_columns], y_imp[ordinary_columns].sum(axis=0), check_names=False
+    )
+    pd.testing.assert_series_equal(M.loc["P7"], M.loc["P7_B0"] + M.loc["P7_D0"], check_names=False)
+    pd.testing.assert_series_equal(M.loc["P7_B0"], M.loc["P7_U2"] + M.loc["P7_U3"], check_names=False)
+    assert M.loc["P2_ADJ", "P3"] == pytest.approx(y_total["P3"].sum() + M.loc["D21X31", "P3"])
+    assert M.loc["P7", "TOTAL"] == pytest.approx(V.loc["P7"].sum())
+    assert M.loc["B3G"].isna().all()
+
+
+def test_signed_primitive_requires_a_transaction_proxy() -> None:
+    with pytest.raises(ValueError, match="No usable V allocation proxy"):
+        MODULE._allocate_source_parent_vector(
+            published=pd.Series([-2.0], index=pd.Index(["A"])),
+            child_parent={"a1": "A", "a2": "A"},
+            children=pd.Index(["a1", "a2"]),
+            proxy=pd.Series([0.0, 0.0], index=pd.Index(["a1", "a2"])),
+            flow="TOTAL",
+            row_code="D29X39",
+        )
 
 
 def test_assert_close_rejects_infinite_values() -> None:

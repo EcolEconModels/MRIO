@@ -188,9 +188,10 @@ def _comparison_check(
     values_observed = observed_aligned.to_numpy(dtype="float64")
     values_derived = derived_aligned.to_numpy(dtype="float64")
     finite = np.isfinite(values_observed) & np.isfinite(values_derived)
+    jointly_missing = np.isnan(values_observed) & np.isnan(values_derived)
     tolerance = atol + rtol * np.maximum(np.abs(values_observed), np.abs(values_derived))
     gaps = np.abs(values_observed - values_derived)
-    passed = finite & (gaps <= tolerance)
+    passed = jointly_missing | (finite & (gaps <= tolerance))
     failed_index = cast(pd.Index, observed_aligned.index)
     failed_labels = failed_index[~passed].astype(str).tolist()
     finite_gaps = gaps[np.isfinite(gaps)]
@@ -236,9 +237,10 @@ def _frame_comparison_check(
     observed_values = observed.to_numpy(dtype="float64")
     derived_values = derived.to_numpy(dtype="float64")
     finite = np.isfinite(observed_values) & np.isfinite(derived_values)
+    jointly_missing = np.isnan(observed_values) & np.isnan(derived_values)
     tolerance = atol + rtol * np.maximum(np.abs(observed_values), np.abs(derived_values))
     gaps = np.abs(observed_values - derived_values)
-    passed = finite & (gaps <= tolerance)
+    passed = jointly_missing | (finite & (gaps <= tolerance))
     failed_positions = np.argwhere(~passed)
     failed_labels = tuple(
         f"{observed.index[int(row)]}|{observed.columns[int(column)]}"

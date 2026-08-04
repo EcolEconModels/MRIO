@@ -644,6 +644,38 @@ def test_invariant_report_preserves_signed_audit_diagnostics() -> None:
     assert frame.loc[0, "relative_gap"] == pytest.approx(0.2)
 
 
+def test_generated_comparison_preserves_matching_missing_cells() -> None:
+    observed = pd.Series([1.0, np.nan], index=pd.Index(["value", "not_applicable"]))
+    matching = iot_validation_module._comparison_check(
+        check_id="generated.missing",
+        category="full_table",
+        flow_role="TOTAL",
+        block="M",
+        observed=observed,
+        derived=observed.copy(),
+        rtol=0.0,
+        atol=0.0,
+        explanation="test",
+    )
+    assert matching.status == "pass"
+
+    mismatch = observed.copy()
+    mismatch.loc["not_applicable"] = 0.0
+    failed = iot_validation_module._comparison_check(
+        check_id="generated.missing",
+        category="full_table",
+        flow_role="TOTAL",
+        block="M",
+        observed=observed,
+        derived=mismatch,
+        rtol=0.0,
+        atol=0.0,
+        explanation="test",
+    )
+    assert failed.status == "fail"
+    assert failed.affected_labels == ("not_applicable",)
+
+
 def test_not_tested_is_distinct_from_not_applicable() -> None:
     check = iot_validation_module._not_tested_check(
         check_id="gdp.income",

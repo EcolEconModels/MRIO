@@ -310,6 +310,7 @@ def _structural_checks(
     variants: Mapping[str, ParsedEurostatIOT],
     *,
     policy: EurostatIOTAccountingPolicy,
+    mode: ValidationMode,
     checks: list[InvariantCheck],
 ) -> dict[FlowRole, pd.DataFrame]:
     atomic: dict[FlowRole, pd.DataFrame] = {}
@@ -388,7 +389,12 @@ def _structural_checks(
                 continue
             duplicates.extend(f"{name}.row:{item}" for item in frame.index[frame.index.duplicated()].astype(str))
             duplicates.extend(f"{name}.column:{item}" for item in frame.columns[frame.columns.duplicated()].astype(str))
-            non_finite += int((~np.isfinite(frame.to_numpy(dtype="float64"))).sum())
+            values = frame.to_numpy(dtype="float64")
+            non_finite += int(
+                np.isinf(values).sum()
+                if mode == "generated"
+                else (~np.isfinite(values)).sum()
+            )
         checks.append(
             _check(
                 f"full.s6.{flow.lower()}",
@@ -408,7 +414,11 @@ def _structural_checks(
                 flow=flow,
                 block="Z|Y|V|M",
                 affected=(str(non_finite),) if non_finite else (),
-                explanation="All parsed applicable source cells must be finite under the current parser contract.",
+                explanation=(
+                    "Generated blocks may retain NaN for missing/non-applicable cells, but never infinity."
+                    if mode == "generated"
+                    else "All parsed applicable source cells must be finite under the current parser contract."
+                ),
             )
         )
         missing_columns = [code for code in policy.required_final_demand_columns if code not in parsed.Y.columns]
@@ -526,7 +536,7 @@ def validate_eurostat_iot_full_table(
     if mode not in {"source", "generated"}:
         raise ValueError(f"Unsupported validation mode: {mode!r}")
     checks: list[InvariantCheck] = []
-    atomic = _structural_checks(variants, policy=policy, checks=checks)
+    atomic = _structural_checks(variants, policy=policy, mode=mode, checks=checks)
 
     def compare(
         check_id: str,

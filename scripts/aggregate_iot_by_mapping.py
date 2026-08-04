@@ -3,17 +3,21 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.iot_aggregation import (
+    AggregationResult,
     aggregate_iot,
 )
+from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
 from ecolecon_mrio.iot_identities import (
     normalise_supplementary_row_label,
@@ -1098,16 +1102,200 @@ def _template_table_layout(ws) -> dict:
 
 
 def _reshape_template_table(ws, *, target_n_products: int) -> dict:
+    """Resize only the product block while retaining official workbook styling."""
     layout = _template_table_layout(ws)
     current_n_products = int(layout["n_products"])
     delta = int(target_n_products) - current_n_products
     if delta > 0:
-        ws.insert_cols(int(layout["first_fd_col"]), amount=delta)
-        ws.insert_rows(int(layout["va_row"]), amount=delta)
+        first_fd_col = int(layout["first_fd_col"])
+        first_lower_row = int(layout["va_row"])
+        source_product_col = first_fd_col - 1
+        source_product_row = first_lower_row - 1
+        merged_ranges = [copy.copy(cell_range) for cell_range in ws.merged_cells.ranges]
+        for cell_range in list(ws.merged_cells.ranges):
+            ws.unmerge_cells(str(cell_range))
+        ws.insert_cols(first_fd_col, amount=delta)
+        ws.insert_rows(first_lower_row, amount=delta)
+
+        source_letter = ws.cell(row=1, column=source_product_col).column_letter
+        source_width = ws.column_dimensions[source_letter].width
+        for column in range(first_fd_col, first_fd_col + delta):
+            target_letter = ws.cell(row=1, column=column).column_letter
+            ws.column_dimensions[target_letter].width = source_width
+            for row in range(1, ws.max_row + 1):
+                source = ws.cell(row=row, column=source_product_col)
+                target = ws.cell(row=row, column=column)
+                target._style = copy.copy(source._style)
+        source_height = ws.row_dimensions[source_product_row].height
+        for row in range(first_lower_row, first_lower_row + delta):
+            ws.row_dimensions[row].height = source_height
+            for column in range(1, ws.max_column + 1):
+                source = ws.cell(row=source_product_row, column=column)
+                target = ws.cell(row=row, column=column)
+                target._style = copy.copy(source._style)
+
+        # openpyxl deliberately does not translate merged ranges on insertion.
+        for cell_range in merged_ranges:
+            if cell_range.min_col >= first_fd_col:
+                cell_range.shift(col_shift=delta)
+            elif cell_range.max_col >= first_fd_col:
+                cell_range.max_col += delta
+            if cell_range.min_row >= first_lower_row:
+                cell_range.shift(row_shift=delta)
+            elif cell_range.max_row >= first_lower_row:
+                cell_range.max_row += delta
+            ws.merge_cells(str(cell_range))
     elif delta < 0:
-        ws.delete_cols(int(layout["first_product_col"]) + target_n_products, amount=-delta)
-        ws.delete_rows(int(layout["first_product_row"]) + target_n_products, amount=-delta)
+        deleted = -delta
+        first_deleted_col = int(layout["first_product_col"]) + target_n_products
+        first_deleted_row = int(layout["first_product_row"]) + target_n_products
+        merged_ranges = [copy.copy(cell_range) for cell_range in ws.merged_cells.ranges]
+        for cell_range in list(ws.merged_cells.ranges):
+            ws.unmerge_cells(str(cell_range))
+        ws.delete_cols(first_deleted_col, amount=deleted)
+        ws.delete_rows(first_deleted_row, amount=deleted)
+        for cell_range in merged_ranges:
+            removed_with_product_block = (
+                first_deleted_col <= cell_range.min_col
+                and cell_range.max_col < first_deleted_col + deleted
+            ) or (
+                first_deleted_row <= cell_range.min_row
+                and cell_range.max_row < first_deleted_row + deleted
+            )
+            if removed_with_product_block:
+                continue
+            if cell_range.min_col >= first_deleted_col + deleted:
+                cell_range.shift(col_shift=-deleted)
+            elif cell_range.min_col < first_deleted_col <= cell_range.max_col:
+                cell_range.max_col -= deleted
+            if cell_range.min_row >= first_deleted_row + deleted:
+                cell_range.shift(row_shift=-deleted)
+            elif cell_range.min_row < first_deleted_row <= cell_range.max_row:
+                cell_range.max_row -= deleted
+            if cell_range.min_col <= cell_range.max_col and cell_range.min_row <= cell_range.max_row:
+                ws.merge_cells(str(cell_range))
     return _template_table_layout(ws)
+
+
+def _normalise_template_label(value: object) -> str:
+    """Normalise an official workbook label without weakening code uniqueness."""
+    return " ".join(str(value).strip().casefold().split())
+
+
+def _codes_for_template_labels(
+    labels: Sequence[object], *, candidate_codes: Sequence[str], label_by_code: Mapping[str, object],
+    block: str,
+) -> list[str]:
+    """Resolve one ordered template block through the official SDMX codelist."""
+    candidates: dict[str, list[str]] = {}
+    for code in map(str, candidate_codes):
+        label = _normalise_template_label(label_by_code.get(code, code))
+        candidates.setdefault(label, []).append(code)
+    ordered: list[str] = []
+    for raw_label in labels:
+        label = _normalise_template_label(raw_label)
+        matches = candidates.get(label, [])
+        if len(matches) != 1:
+            raise ValueError(
+                f"Official template {block} label {raw_label!r} resolves to "
+                f"{matches!r}; expected exactly one SDMX code."
+            )
+        ordered.append(matches[0])
+    if len(ordered) != len(set(ordered)):
+        duplicates = sorted({code for code in ordered if ordered.count(code) > 1})
+        raise ValueError(f"Official template {block} contains duplicate codes: {duplicates!r}")
+    return ordered
+
+
+def _official_template_schema(
+    template_xlsx: Path,
+    *,
+    parsed: ParsedEurostatIOT,
+) -> tuple[list[str], list[str], list[str]]:
+    """Read authoritative parent, final-demand, and supplementary order.
+
+    Values in the workbook are not used as numerical targets. The template only
+    supplies the official ordered schema and labels; SDMX codelists resolve those
+    labels to stable codes, including rows with no observations in the API slice.
+    """
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(template_xlsx, data_only=False, read_only=True)
+    if "Sheet 1" not in workbook.sheetnames:
+        workbook.close()
+        raise ValueError(f"Official template lacks 'Sheet 1': {template_xlsx}")
+    worksheet = workbook["Sheet 1"]
+    layout = _template_table_layout(worksheet)
+    row_labels = parsed.meta.get("dimensions", {}).get(parsed.meta.get("row_dim", "prd_ava"), {})
+    col_labels = parsed.meta.get("dimensions", {}).get(parsed.meta.get("col_dim", "prd_use"), {})
+    base_products = list(map(str, parsed.meta.get("identified_industry_columns", [])))
+    if not base_products:
+        workbook.close()
+        raise ValueError("SDMX parse did not expose the product domain needed by the template")
+
+    # Product row and column labels must independently resolve to the same
+    # official parent order before any split children are inserted.
+    product_row_labels = [
+        worksheet.cell(row=row, column=1).value
+        for row in range(int(layout["first_product_row"]), int(layout["last_product_row"]) + 1)
+    ]
+    product_col_labels = [
+        worksheet.cell(row=int(layout["header_row"]), column=column).value
+        for column in range(int(layout["first_product_col"]), int(layout["last_product_col"]) + 1)
+    ]
+    product_rows = _codes_for_template_labels(
+        product_row_labels, candidate_codes=base_products, label_by_code=row_labels, block="product rows",
+    )
+    product_columns = _codes_for_template_labels(
+        product_col_labels, candidate_codes=base_products, label_by_code=row_labels, block="product columns",
+    )
+    if product_rows != product_columns:
+        workbook.close()
+        raise ValueError("Official template product row and column order differs")
+
+    fd_candidates = [
+        str(code) for code in parsed.meta.get("identified_final_demand_columns", [])
+        if str(code) != "TOTAL"
+    ]
+    fd_labels = [
+        worksheet.cell(row=int(layout["header_row"]), column=column).value
+        for column in range(int(layout["first_fd_col"]), int(layout["last_fd_col"]) + 1)
+    ]
+    final_demand = _codes_for_template_labels(
+        fd_labels, candidate_codes=fd_candidates, label_by_code=col_labels, block="final-demand columns",
+    )
+
+    # The first blank label terminates the supplementary table; footer text such
+    # as “Special value” is metadata rather than an economic row.
+    supplementary_labels: list[object] = []
+    for row in range(int(layout["va_row"]), worksheet.max_row + 1):
+        value = worksheet.cell(row=row, column=1).value
+        if value is None or not str(value).strip():
+            break
+        supplementary_labels.append(value)
+    supplementary_candidates = [str(code) for code in row_labels if str(code) not in set(base_products)]
+    supplementary = _codes_for_template_labels(
+        supplementary_labels,
+        candidate_codes=supplementary_candidates,
+        label_by_code=row_labels,
+        block="supplementary rows",
+    )
+    workbook.close()
+    return product_rows, final_demand, supplementary
+
+
+_TEMPLATE_PRIMITIVE_ROWS = {
+    "B3G",
+    "D1",
+    "D11",
+    "D21X31",
+    "D29X39",
+    "P51C",
+    "P7_B0",
+    "P7_D0",
+    "P7_U2",
+    "P7_U3",
+}
 
 
 def _validate_template_reaggregation(
@@ -1289,11 +1477,9 @@ def _resolve_product_template_alignment(
     mapping_to_col: str = "to_sector",
     verbose: bool,
 ) -> tuple[Path | None, list[str], dict[str, str], dict[str, tuple[str, ...]]]:
-    """Choose template alignment strategy for workbook export.
-
-    Returns an effective template path, the ordered product codes, and parent mappings.
-    """
-    product_order = list(map(str, output_product_codes))
+    """Order output products by template parent and mapping-row child order."""
+    input_product_order = list(map(str, output_product_codes))
+    output_set = set(input_product_order)
     base_codes = [str(code) for code in base_product_codes]
     parents_by_output: dict[str, tuple[str, ...]] = {}
     source_parent_by_input = _build_source_parent_by_input(
@@ -1314,7 +1500,7 @@ def _resolve_product_template_alignment(
             if parent_code not in mapped_parents[output_code]:
                 mapped_parents[output_code].append(parent_code)
 
-    for output_code in product_order:
+    for output_code in input_product_order:
         parent_candidates = mapped_parents.get(output_code)
         if parent_candidates:
             parents_by_output[output_code] = tuple(parent_candidates)
@@ -1323,16 +1509,82 @@ def _resolve_product_template_alignment(
         if inferred is not None:
             parents_by_output[output_code] = (inferred,)
 
-    primary_parent_by_output = {code: parents[0] for code, parents in parents_by_output.items() if parents}
-    if template_xlsx is not None and len(primary_parent_by_output) != len(product_order):
-        if verbose:
-            print(
-                "Template workbook alignment disabled for custom aggregated sectors. "
-                f"Could not infer parents for output codes: {[code for code in product_order if code not in primary_parent_by_output]}",
-                flush=True,
-            )
-        return None, product_order, primary_parent_by_output, parents_by_output
+    missing = [code for code in input_product_order if code not in parents_by_output]
+    if missing:
+        raise ValueError(f"Could not resolve official template parents for output products: {missing!r}")
+    ambiguous = {code: parents for code, parents in parents_by_output.items() if len(parents) != 1}
+    if ambiguous:
+        raise ValueError(f"Output products span multiple official template parents: {ambiguous!r}")
+    primary_parent_by_output = {code: parents[0] for code, parents in parents_by_output.items()}
+
+    # Mapping rows are the authoritative child sequence inside each official
+    # template parent. Unsplit products follow in their original source order.
+    mapped_child_order: dict[str, list[str]] = {parent: [] for parent in base_codes}
+    if mapping_df is not None and mapping_from_col in mapping_df.columns and mapping_to_col in mapping_df.columns:
+        for _, row in mapping_df.iterrows():
+            output_code = str(row[mapping_to_col])
+            if output_code not in output_set:
+                continue
+            parent = source_parent_by_input.get(str(row[mapping_from_col])) or primary_parent_by_output.get(output_code)
+            if parent in mapped_child_order and output_code not in mapped_child_order[parent]:
+                mapped_child_order[parent].append(output_code)
+    product_order: list[str] = []
+    for parent in base_codes:
+        for output_code in mapped_child_order[parent]:
+            if output_code not in product_order:
+                product_order.append(output_code)
+        for output_code in input_product_order:
+            if primary_parent_by_output[output_code] == parent and output_code not in product_order:
+                product_order.append(output_code)
+    if set(product_order) != output_set or len(product_order) != len(input_product_order):
+        raise ValueError("Template/mapping product ordering lost or duplicated output products")
     return template_xlsx, product_order, primary_parent_by_output, parents_by_output
+
+
+def _reorder_sector_metadata(
+    frame: pd.DataFrame | None,
+    product_order: Sequence[str],
+    *,
+    drop_unemitted: bool = False,
+) -> pd.DataFrame | None:
+    """Stably order long-form sector metadata by the canonical product domain."""
+    if frame is None or "aggregated_sector" not in frame.columns:
+        return frame
+    order = list(map(str, product_order))
+    ranks = {code: position for position, code in enumerate(order)}
+    out = frame.copy()
+    out["__official_order"] = out["aggregated_sector"].astype(str).map(ranks)
+    if drop_unemitted:
+        out = out.loc[out["__official_order"].notna()].copy()
+    if out["__official_order"].isna().any():
+        missing = sorted(
+            out.loc[out["__official_order"].isna(), "aggregated_sector"]
+            .astype(str)
+            .unique()
+        )
+        raise ValueError(f"Sector metadata contains products outside official order: {missing!r}")
+    return out.sort_values("__official_order", kind="stable").drop(columns="__official_order").reset_index(drop=True)
+
+
+def _reorder_aggregation_result(
+    result: AggregationResult, product_order: Sequence[str]
+) -> AggregationResult:
+    """Apply one canonical product order to every sector-indexed result block."""
+    order = list(map(str, product_order))
+    return replace(
+        result,
+        Z=result.Z.loc[order, order],
+        Y=result.Y.loc[order, :],
+        x=result.x.reindex(order),
+        A=result.A.loc[order, order],
+        V=None if result.V is None else result.V.loc[:, order],
+        aggregated_sector_value_per_physical_input=_reorder_sector_metadata(
+            result.aggregated_sector_value_per_physical_input, order
+        ),
+        aggregated_sector_emission_intensity=_reorder_sector_metadata(
+            result.aggregated_sector_emission_intensity, order
+        ),
+    )
 
 
 def _build_template_parent_total_audit(
@@ -1429,13 +1681,7 @@ def _write_sfc_workbook(
     output_after: pd.Series | None = None,
     validate_template_parent_totals: bool = True,
 ) -> None:
-    """
-    Write an Eurostat-export-shaped workbook for downstream R/SFC scripts.
-
-    - If template_xlsx is provided: load it, overwrite 'Sheet 1' table, blank out the
-      energy-balance mapping sheets, and add a sheet with our aggregation mapping.
-    - Otherwise: create a minimal workbook with the same 'Sheet 1' table structure.
-    """
+    """Populate and round-trip validate one official Eurostat workbook layout."""
     import openpyxl
 
     from ecolecon_mrio.eurostat_iot import load_eurostat_iot
@@ -1463,11 +1709,13 @@ def _write_sfc_workbook(
     dims = parsed.meta.get("dimensions", {})
     row_labels = dims.get(eurostat_row_dim, {})
     col_labels = dims.get(eurostat_col_dim, {})
-    base_product_codes: list[str] = list(map(str, parsed.meta.get("identified_industry_columns", [])))
-    base_fd_codes: list[str] = list(map(str, parsed.meta.get("identified_final_demand_columns", [])))
-
-    if not base_product_codes:
-        raise ValueError("Eurostat meta did not provide an industry/product code order.")
+    if template_xlsx is None:
+        raise ValueError("Official Eurostat template is required for SFC workbook export")
+    if not template_xlsx.is_file():
+        raise FileNotFoundError(f"Official Eurostat template not found: {template_xlsx}")
+    base_product_codes, fd_codes_order_no_total, source_rows = _official_template_schema(
+        template_xlsx, parsed=parsed
+    )
 
     target_label_by_output: dict[str, str] = {}
     if "target_label" in mapping_df.columns and mapping_to_col in mapping_df.columns:
@@ -1493,61 +1741,13 @@ def _write_sfc_workbook(
         base_product_codes=base_product_codes,
     )
 
-    # TOTAL column is moved to the left in the Eurostat XLSX export; the remaining final-demand columns
-    # appear after the product columns.
-    fd_codes_order = list(base_fd_codes)
-    if "TOTAL" in fd_codes_order:
-        fd_codes_order_no_total = [c for c in fd_codes_order if c != "TOTAL"]
-    else:
-        fd_codes_order_no_total = fd_codes_order
-        _vprint(verbose, "Note: Eurostat meta did not include a 'TOTAL' column; template alignment may be off.")
-
-    # Eurostat IOT exports use a fixed ordering in the final-demand block that does not always match
-    # the SDMX category index order (notably for the P5 aggregates and TU/TFU).
-    eurostat_fd_canonical = [
-        "P3",
-        "P3_S13",
-        "P3_S14",
-        "P3_S15",
-        "P5",
-        "P5M",
-        "P6",
-        "P6_B0",
-        "P6_D0",
-        "P6_U2",
-        "P6_U3",
-        "P51G",
-        "P52",
-        "P53",
-        "TU",
-        "TFU",
+    missing_fd = [
+        code
+        for code in fd_codes_order_no_total
+        if code not in Y_after.columns and code not in {"TU", "TFU"}
     ]
-    eurostat_xlsx_template_fd_display = [
-        # Eurostat XLSX export layout (as in tmp/IOT_Austria_2021_Eurostat.xlsx):
-        # includes P5 total, then P5M as a subcomponent, then exports, then P51G/P52/P53 breakdown,
-        # and finally TU/TFU summary columns.
-        "P3",
-        "P3_S13",
-        "P3_S14",
-        "P3_S15",
-        "P5",
-        "P5M",
-        "P6",
-        "P6_B0",
-        "P6_D0",
-        "P6_U2",
-        "P6_U3",
-        "P51G",
-        "P52",
-        "P53",
-        "TU",
-        "TFU",
-    ]
-    y_cols = set(map(str, Y_after.columns))
-    if template_xlsx is not None and set(eurostat_xlsx_template_fd_display).issubset(y_cols):
-        fd_codes_order_no_total = eurostat_xlsx_template_fd_display
-    elif set(eurostat_fd_canonical).issubset(y_cols):
-        fd_codes_order_no_total = eurostat_fd_canonical
+    if missing_fd:
+        raise ValueError(f"Transformed Y is missing official template columns: {missing_fd!r}")
 
     Z_ord = Z_after.loc[product_codes_order, product_codes_order].astype("float64")
     Y_ord = Y_after.loc[product_codes_order, :].astype("float64")
@@ -1565,41 +1765,15 @@ def _write_sfc_workbook(
         raise ValueError("Workbook export requires the authoritative output vector.")
     x_after = output_after.reindex(Z_after.index).fillna(0.0).astype("float64")
 
-    # Workbook creation/load
-    if template_xlsx is not None:
-        wb = openpyxl.load_workbook(template_xlsx, data_only=False)
-        if "Sheet 1" not in wb.sheetnames:
-            raise ValueError(f"Template workbook missing required sheet 'Sheet 1': {template_xlsx}")
-        ws = wb["Sheet 1"]
-        layout = _template_table_layout(ws)
-        if int(layout["n_products"]) != len(product_codes_order):
-            layout = _reshape_template_table(ws, target_n_products=len(product_codes_order))
-    else:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Sheet 1"
-        # Emulate the template's start position for the main table.
-        layout = {
-            "header_row": 11,
-            "total_row": 12,
-            "first_product_row": 13,
-            "n_products": len(product_codes_order),
-            "total_col": 2,
-            "first_product_col": 3,
-            "first_fd_col": 3 + len(product_codes_order),
-        }
-        layout["last_product_col"] = layout["first_product_col"] + layout["n_products"] - 1
-        layout["header_last_col"] = layout["first_fd_col"] + len(fd_codes_order_no_total) - 1
-        layout["last_fd_col"] = layout["header_last_col"]
-        layout["n_fd"] = len(fd_codes_order_no_total)
-        layout["last_product_row"] = layout["first_product_row"] + layout["n_products"] - 1
-        layout["va_row"] = layout["last_product_row"] + 1
-
-        # Minimal metadata + additional sheets
-        wb.create_sheet("Summary")
-        wb.create_sheet("Structure")
-        wb.create_sheet("Mapping")
-        wb.create_sheet("Aggregation")
+    # The official workbook is always the layout authority. Reshaping inserts or
+    # removes only product rows/columns, leaving final-demand and lower-row order intact.
+    wb = openpyxl.load_workbook(template_xlsx, data_only=False)
+    if "Sheet 1" not in wb.sheetnames:
+        raise ValueError(f"Template workbook missing required sheet 'Sheet 1': {template_xlsx}")
+    ws = wb["Sheet 1"]
+    layout = _template_table_layout(ws)
+    if int(layout["n_products"]) != len(product_codes_order):
+        layout = _reshape_template_table(ws, target_n_products=len(product_codes_order))
 
     hr = int(layout["header_row"])
     tr = int(layout["total_row"])
@@ -1616,9 +1790,12 @@ def _write_sfc_workbook(
         label = target_label_by_output.get(code) or _pretty_sector_label(row_labels.get(code, str(code)))
         ws.cell(row=hr, column=c_prod0 + j).value = label
 
+    # Reshaping moves the official final-demand headers as one intact block.
+    # Validate that no template label was lost; do not replace official wording.
     for j, code in enumerate(fd_codes_order_no_total):
-        label = str(col_labels.get(code, code))
-        ws.cell(row=hr, column=c_fd0 + j).value = label
+        if ws.cell(row=hr, column=c_fd0 + j).value is None:
+            raise ValueError(f"Official template header disappeared for final-demand code {code!r}")
+    official_fd_labels = [ws.cell(row=hr, column=c_fd0 + j).value for j in range(len(fd_codes_order_no_total))]
 
     sector_label_map = {
         str(code): target_label_by_output.get(str(code), _pretty_sector_label(row_labels.get(str(code), str(code))))
@@ -1699,9 +1876,8 @@ def _write_sfc_workbook(
 
     lower_row_vectors: dict[str, pd.Series] = {}
     lower_fd_vectors: dict[str, pd.Series] = {}
-    source_rows = [str(code) for code in parsed.meta["identified_supplementary_rows"]]
     if len(source_rows) != len(set(source_rows)):
-        raise ValueError(f"Parsed Eurostat supplementary rows are not unique: {source_rows!r}")
+        raise ValueError(f"Official template supplementary rows are not unique: {source_rows!r}")
 
     def _match_row(frame: pd.DataFrame | None, row_code: str, row_label: str) -> str | None:
         if frame is None:
@@ -1724,52 +1900,40 @@ def _write_sfc_workbook(
     if flow_role not in {"DOM", "IMP", "TOTAL"}:
         raise ValueError(f"Unknown workbook flow role {variant_value!r}")
 
-    tpl_wb = None
-    tpl_ws = None
-    tpl_layout = None
-    if template_xlsx is not None:
-        # Remove every stale template metadata/data sheet. Recreate only generated metadata.
-        for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure"):
-            if sheet_name in wb.sheetnames:
-                wb.remove(wb[sheet_name])
+    # Remove every stale template metadata/data sheet. Recreate only generated metadata.
+    for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure"):
+        if sheet_name in wb.sheetnames:
+            wb.remove(wb[sheet_name])
 
-        ws_sum = wb.create_sheet("Summary")
-        ws_sum.append(["Field", "Value"])
-        ws_sum.append(["Table", "Generated disaggregated/reaggregated Eurostat-shaped IOT"])
-        ws_sum.append(["Stock or flow", str(variant_value or "")])
-        ws_sum.append(["Output semantics", "Domestic product output; shared activity denominator"])
-        ws_sum.append(["Final-demand basis", "Atomic/non-overlapping P3, P5 and P6 categories"])
-        ws_struct = wb.create_sheet("Structure")
-        ws_struct.append(["Dimension", "Count"])
-        ws_struct.append(["Products", len(product_codes_order)])
-        ws_struct.append(["Final-demand display columns", len(fd_codes_order_no_total)])
-        ws_struct.append(["Supplementary rows", len(source_rows)])
+    ws_sum = wb.create_sheet("Summary")
+    ws_sum.append(["Field", "Value"])
+    ws_sum.append(["Table", "Generated disaggregated/reaggregated Eurostat-shaped IOT"])
+    ws_sum.append(["Stock or flow", str(variant_value or "")])
+    ws_sum.append(["Output semantics", "Domestic product output; shared activity denominator"])
+    ws_sum.append(["Final-demand basis", "Atomic/non-overlapping P3, P5 and P6 categories"])
+    ws_struct = wb.create_sheet("Structure")
+    ws_struct.append(["Dimension", "Count"])
+    ws_struct.append(["Products", len(product_codes_order)])
+    ws_struct.append(["Final-demand display columns", len(fd_codes_order_no_total)])
+    ws_struct.append(["Supplementary rows", len(source_rows)])
 
-        tpl_wb = openpyxl.load_workbook(template_xlsx, data_only=False)
-        tpl_ws = tpl_wb["Sheet 1"]
-        tpl_layout = _template_table_layout(tpl_ws)
-
-    if template_xlsx is None:
-        ws_sum = wb["Summary"]
-        ws_sum.append(["Field", "Value"])
-        ws_sum.append(["Table", "Generated disaggregated/reaggregated Eurostat-shaped IOT"])
-        ws_sum.append(["Stock or flow", str(variant_value or "")])
-        ws_sum.append(["Output semantics", "Domestic product output; shared activity denominator"])
-        ws_sum.append(["Final-demand basis", "Atomic/non-overlapping P3, P5 and P6 categories"])
-        ws_struct = wb["Structure"]
-        ws_struct.append(["Dimension", "Count"])
-        ws_struct.append(["Products", len(product_codes_order)])
-        ws_struct.append(["Final-demand display columns", len(fd_codes_order_no_total)])
-        ws_struct.append(["Supplementary rows", len(source_rows)])
+    tpl_wb = openpyxl.load_workbook(template_xlsx, data_only=False)
+    tpl_ws = tpl_wb["Sheet 1"]
+    tpl_layout = _template_table_layout(tpl_ws)
 
     lower_start = int(layout["va_row"])
     lower_end = max(ws.max_row, lower_start + len(source_rows) - 1)
+    official_supplementary_labels = [
+        ws.cell(row=lower_start + offset, column=1).value
+        for offset in range(len(source_rows))
+    ]
     for row in range(lower_start, lower_end + 1):
         for col in range(1, int(layout["header_last_col"]) + 1):
             ws.cell(row=row, column=col).value = None
 
     supplementary_row_codes_written: list[str] = []
     row_positions: dict[str, int] = {}
+    row_labels_written: dict[str, str] = {}
     contract_rows: list[dict[str, object]] = []
     parsed_v = parsed.V.astype("float64") if parsed.V is not None else None
     parsed_m = parsed.M.astype("float64") if parsed.M is not None else None
@@ -1784,12 +1948,64 @@ def _write_sfc_workbook(
 
     for offset, row_code in enumerate(source_rows):
         target_r = lower_start + offset
-        row_label = str(row_labels.get(row_code, row_code)).strip() or row_code
+        template_row_label = official_supplementary_labels[offset]
+        if template_row_label is None or not str(template_row_label).strip():
+            raise ValueError(f"Official template supplementary label disappeared for {row_code!r}")
+        row_label = str(template_row_label).strip()
         kind = supplementary_accounting_identity_kind(row_code) or supplementary_accounting_identity_kind(row_label)
         source_v_row = _match_row(parsed_v, row_code, row_label)
         source_m_row = _match_row(parsed_m, row_code, row_label)
         output_v_row = _match_row(V_ord, row_code, row_label)
         output_m_row = _match_row(M_ord, row_code, row_label)
+        # A numeric primitive in the official workbook must have cell-level
+        # SDMX evidence in the corresponding block. The template is never a
+        # silent numerical fallback or an allocation target.
+        if row_code in _TEMPLATE_PRIMITIVE_ROWS and tpl_ws is not None and tpl_layout is not None:
+            template_row = int(tpl_layout["va_row"]) + offset
+            template_v_values = [
+                tpl_ws.cell(
+                    row=template_row,
+                    column=int(tpl_layout["first_product_col"]) + position,
+                ).value
+                for position in range(len(base_product_codes))
+            ]
+            missing_v_evidence = [
+                parent
+                for parent, value in zip(base_product_codes, template_v_values, strict=True)
+                if isinstance(value, (int, float))
+                and (
+                    source_v_row is None
+                    or parsed_v is None
+                    or parent not in parsed_v.columns
+                    or pd.isna(parsed_v.loc[source_v_row, parent])
+                )
+            ]
+            template_m_values = [
+                tpl_ws.cell(
+                    row=template_row,
+                    column=int(tpl_layout["first_fd_col"]) + position,
+                ).value
+                for position in range(len(fd_codes_order_no_total))
+            ]
+            missing_m_evidence = [
+                fd_code
+                for fd_code, value in zip(
+                    fd_codes_order_no_total, template_m_values, strict=True
+                )
+                if isinstance(value, (int, float))
+                and (
+                    source_m_row is None
+                    or parsed_m is None
+                    or fd_code not in parsed_m.columns
+                    or pd.isna(parsed_m.loc[source_m_row, fd_code])
+                )
+            ]
+            if missing_v_evidence or missing_m_evidence:
+                raise ValueError(
+                    "Official template has numeric primitive cells absent from SDMX: "
+                    f"row={row_code!r}, V={missing_v_evidence!r}, "
+                    f"M={missing_m_evidence!r}."
+                )
         source_v_applicable = source_v_row is not None
         source_m_applicable = False
         if source_m_row is not None and parsed_m is not None:
@@ -1865,6 +2081,7 @@ def _write_sfc_workbook(
         lower_fd_vectors[row_code] = fd_vector
         supplementary_row_codes_written.append(row_code)
         row_positions[row_code] = target_r
+        row_labels_written[row_code] = row_label
         contract_rows.extend(
             [
                 {
@@ -1894,7 +2111,7 @@ def _write_sfc_workbook(
             ]
         )
 
-    source_rows_set = set(map(str, parsed.meta["identified_supplementary_rows"]))
+    source_rows_set = set(source_rows)
     written_rows = set(supplementary_row_codes_written)
     missing = sorted(source_rows_set - written_rows)
     if missing:
@@ -1904,41 +2121,40 @@ def _write_sfc_workbook(
         raise ValueError("Supplementary row contract contains unresolved source rows.")
     contract.to_csv(out_path.with_name("supplementary_row_contract.csv"), index=False)
 
-    if template_xlsx is not None:
-        audit_df = _build_template_parent_total_audit(
-            variant_value=variant_value,
-            source_parent_by_input=source_parent_by_input,
-            parents_by_output=parents_by_output,
-            base_product_codes=base_product_codes,
-            Y_before=Y_before,
-            Y_after=Y_ord,
-            fd_codes_order_no_total=fd_codes_order_no_total,
-        )
-        audit_path = out_path.with_name("template_parent_total_audit.csv")
-        audit_df.to_csv(audit_path, index=False)
-        _vprint(verbose, f"Wrote: {audit_path.resolve()}")
+    audit_df = _build_template_parent_total_audit(
+        variant_value=variant_value,
+        source_parent_by_input=source_parent_by_input,
+        parents_by_output=parents_by_output,
+        base_product_codes=base_product_codes,
+        Y_before=Y_before,
+        Y_after=Y_ord,
+        fd_codes_order_no_total=fd_codes_order_no_total,
+    )
+    audit_path = out_path.with_name("template_parent_total_audit.csv")
+    audit_df.to_csv(audit_path, index=False)
+    _vprint(verbose, f"Wrote: {audit_path.resolve()}")
 
-        _validate_template_reaggregation(
-            product_codes_order=product_codes_order,
-            base_product_codes=base_product_codes,
-            parents_by_output=parents_by_output,
-            fd_codes_order_no_total=fd_codes_order_no_total,
-            Y_before=Y_before,
-            tpl_ws=tpl_ws,
-            tpl_layout=tpl_layout,
-            workbook_ws=ws,
-            workbook_layout=layout,
-            Z_ord=Z_ord,
-            Y_ord=Y_ord,
-            output_after=x_after,
-            lower_row_vectors=lower_row_vectors,
-            lower_fd_vectors=lower_fd_vectors,
-            source_parent_by_input=source_parent_by_input,
-            validate_template_parent_totals=validate_template_parent_totals,
-            rtol=1e-9,
-            atol=1e-6,
-        )
-        tpl_wb.close()
+    _validate_template_reaggregation(
+        product_codes_order=product_codes_order,
+        base_product_codes=base_product_codes,
+        parents_by_output=parents_by_output,
+        fd_codes_order_no_total=fd_codes_order_no_total,
+        Y_before=Y_before,
+        tpl_ws=tpl_ws,
+        tpl_layout=tpl_layout,
+        workbook_ws=ws,
+        workbook_layout=layout,
+        Z_ord=Z_ord,
+        Y_ord=Y_ord,
+        output_after=x_after,
+        lower_row_vectors=lower_row_vectors,
+        lower_fd_vectors=lower_fd_vectors,
+        source_parent_by_input=source_parent_by_input,
+        validate_template_parent_totals=validate_template_parent_totals,
+        rtol=1e-9,
+        atol=1e-6,
+    )
+    tpl_wb.close()
     _write_excel_mapping_sheet(
         wb,
         sheet_name="IO Aggregation Mapping",
@@ -1974,6 +2190,21 @@ def _write_sfc_workbook(
         raise ValueError(f"Saved workbook is missing required generated sheets: {out_path}")
     ws_reopened = reopened["Sheet 1"]
 
+    # Codes are validated before serialization; labels prove that the saved
+    # workbook retained the same canonical order on every visible axis.
+    for j, product_code in enumerate(product_codes_order):
+        expected_label = sector_label_map[product_code]
+        if ws_reopened.cell(row=hr, column=c_prod0 + j).value != expected_label:
+            raise ValueError(f"Workbook round-trip lost product-column order at {product_code!r}")
+        if ws_reopened.cell(row=r0 + j, column=1).value != expected_label:
+            raise ValueError(f"Workbook round-trip lost product-row order at {product_code!r}")
+    for j, expected_label in enumerate(official_fd_labels):
+        if ws_reopened.cell(row=hr, column=c_fd0 + j).value != expected_label:
+            raise ValueError(
+                f"Workbook round-trip lost official final-demand order at "
+                f"{fd_codes_order_no_total[j]!r}"
+            )
+
     def _assert_roundtrip_value(label: str, actual: object, expected: float) -> None:
         if not isinstance(actual, (int, float)) or not np.isclose(float(actual), expected, rtol=1e-9, atol=1e-6):
             raise ValueError(f"Workbook round-trip validation failed for {label}: actual={actual!r}, expected={expected!r}")
@@ -1996,7 +2227,7 @@ def _write_sfc_workbook(
 
     for row_code in source_rows:
         row = row_positions[row_code]
-        if ws_reopened.cell(row=row, column=1).value != str(row_labels.get(row_code, row_code)).strip():
+        if ws_reopened.cell(row=row, column=1).value != row_labels_written[row_code]:
             raise ValueError(f"Workbook round-trip validation lost supplementary row {row_code!r}.")
         expected_total = lower_row_vectors[row_code].sum(min_count=1)
         actual_total = ws_reopened.cell(row=row, column=c_total).value
@@ -2110,7 +2341,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.add_argument(
         "--sfc-template-xlsx",
         default=None,
-        help="Optional Eurostat XLSX export to use as a template (recommended for full fidelity).",
+        help="Official Eurostat XLSX export whose order, labels, formatting, and layout are authoritative.",
     )
     out.add_argument(
         "--sfc-outname",
@@ -2326,6 +2557,56 @@ def main(argv: Sequence[str] | None = None) -> int:
             compute_sector_emission_intensity=disaggregated_emissions is not None,
             disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
+        export_context: tuple[Path, dict, str | None] | None = None
+        if args.write_sfc_workbook:
+            if not (
+                args.sfc_template_xlsx
+                and args.eurostat_dataset
+                and args.eurostat_filters
+                and args.eurostat_row_dim
+                and args.eurostat_col_dim
+            ):
+                raise SystemExit(
+                    "--write-sfc-workbook requires --sfc-template-xlsx, "
+                    "--eurostat-dataset, --eurostat-filters, --eurostat-row-dim, "
+                    "and --eurostat-col-dim."
+                )
+            from ecolecon_mrio.eurostat_iot import load_eurostat_iot
+
+            template = Path(args.sfc_template_xlsx)
+            eurostat_filters = _parse_json_arg(str(args.eurostat_filters))
+            variant = _infer_variant_value(
+                out_base=out_base,
+                source_dir=z_dir,
+                variant_dim=str(args.variant_dim),
+                eurostat_filters=eurostat_filters,
+            )
+            source_filters = dict(eurostat_filters)
+            if variant is not None:
+                source_filters[str(args.variant_dim)] = variant
+            parsed_schema = load_eurostat_iot(
+                dataset=str(args.eurostat_dataset),
+                filters=source_filters,
+                row_dim=str(args.eurostat_row_dim),
+                col_dim=str(args.eurostat_col_dim),
+                storage_folder=Path(args.eurostat_storage_folder),
+                force_download=False,
+                force_reparse=False,
+            )
+            base_products, _, _ = _official_template_schema(
+                template, parsed=parsed_schema
+            )
+            _, official_order, _, _ = _resolve_product_template_alignment(
+                template_xlsx=template,
+                base_product_codes=base_products,
+                output_product_codes=res.Z.index.astype(str).tolist(),
+                mapping_df=mapping_df_for_run,
+                mapping_from_col="from_sector",
+                mapping_to_col="to_sector",
+                verbose=args.verbose,
+            )
+            res = _reorder_aggregation_result(res, official_order)
+            export_context = (template, eurostat_filters, variant)
         _clear_managed_aggregation_outputs(out_base)
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
@@ -2397,6 +2678,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     combined_emissions = pd.concat([primary, fallback], ignore_index=True)
                 else:
                     combined_emissions = fallback
+        combined_emissions = _reorder_sector_metadata(
+            combined_emissions,
+            res.Z.index.astype(str).tolist(),
+            drop_unemitted=True,
+        )
 
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
         _write_df_csv(res.Y, out_base / "Y_agg.csv", verbose=args.verbose)
@@ -2473,6 +2759,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         if "n_exio_sectors" not in extra.columns:
                             extra["n_exio_sectors"] = 0
                         mapping_for_sheet = pd.concat([mapping_for_sheet, extra], ignore_index=True)
+            mapping_for_sheet = _reorder_sector_metadata(
+                mapping_for_sheet,
+                res.Z.index.astype(str).tolist(),
+                drop_unemitted=True,
+            )
 
         if exio_final_demand_emissions is not None:
             _write_df_csv(
@@ -2487,20 +2778,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _vprint(args.verbose, f"Wrote: {out_xlsx.resolve()}")
 
         if args.write_sfc_workbook:
-            if not (args.eurostat_dataset and args.eurostat_filters and args.eurostat_row_dim and args.eurostat_col_dim):
-                raise SystemExit(
-                    "--write-sfc-workbook requires --eurostat-dataset, --eurostat-filters, "
-                    "--eurostat-row-dim, and --eurostat-col-dim."
-                )
-            template = Path(args.sfc_template_xlsx) if args.sfc_template_xlsx else None
-
-            eurostat_filters = _parse_json_arg(str(args.eurostat_filters))
-            variant = _infer_variant_value(
-                out_base=out_base,
-                source_dir=z_dir,
-                variant_dim=str(args.variant_dim),
-                eurostat_filters=eurostat_filters,
-            )
+            assert export_context is not None
+            template, eurostat_filters, variant = export_context
             out_name = str(args.sfc_outname).format(variant=(variant or "single"))
             out_path = out_base / out_name
             out_path.unlink(missing_ok=True)
