@@ -8,7 +8,6 @@ import pandas as pd
 _P3_DETAIL = ("P3_S13", "P3_S14", "P3_S15")
 _P5_DETAIL = ("P51G", "P52", "P53")
 _P5M_DETAIL = ("P52", "P53")
-_P6_DETAIL = ("P6_B0", "P6_D0", "P6_U2", "P6_U3")
 _ACCOUNTING_RTOL = 1e-9
 _ACCOUNTING_ATOL = 1e-6
 
@@ -90,7 +89,14 @@ def _choose_p6_family(columns: set[str]) -> list[str]:
     """Choose exports without treating P6 detail columns as additive to P6."""
     if "P6" in columns:
         return ["P6"]
-    return _choose_family(columns, aggregate="P6", detail=_P6_DETAIL)
+    if {"P6_B0", "P6_D0"}.issubset(columns):
+        return ["P6_B0", "P6_D0"]
+    if {"P6_U2", "P6_U3", "P6_D0"}.issubset(columns):
+        return ["P6_U2", "P6_U3", "P6_D0"]
+    present = sorted(columns.intersection({"P6_B0", "P6_D0", "P6_U2", "P6_U3"}))
+    if present:
+        raise ValueError(f"Incomplete P6 detail partition without aggregate: {present!r}")
+    return []
 
 
 def atomic_final_demand_columns(columns: pd.Index | list[str]) -> list[str]:
@@ -167,6 +173,10 @@ def derived_final_demand_control_columns(columns: pd.Index | list[str]) -> list[
         derived.append("P5M")
     if "P5" in cols and set(_P5_DETAIL).issubset(cols):
         derived.append("P5")
+    if {"P6", "P6_B0", "P6_D0"}.issubset(cols):
+        derived.append("P6_D0")
+    if {"P6_B0", "P6_U2", "P6_U3"}.issubset(cols):
+        derived.append("P6_U3")
     derived.extend(code for code in ("TFU", "TU") if code in cols)
     return derived
 
@@ -198,8 +208,12 @@ def enforce_final_demand_display_identities(
             out.loc[:, "P51G"].add(out.loc[:, "P5M"], fill_value=0.0).astype("float64")
         )
     if {"P6", "P6_B0", "P6_D0"}.issubset(out.columns):
+        if bool((out["P6"] < 0.0).any()) or bool((out["P6_B0"] < 0.0).any()) or bool((out["P6_B0"] > out["P6"]).any()):
+            raise ValueError("P6_B0 must be a non-negative partition of P6.")
         out.loc[:, "P6_D0"] = out.loc[:, "P6"] - out.loc[:, "P6_B0"]
     if {"P6_B0", "P6_U2", "P6_U3"}.issubset(out.columns):
+        if bool((out["P6_U2"] < 0.0).any()) or bool((out["P6_U2"] > out["P6_B0"]).any()):
+            raise ValueError("P6_U2 must be a non-negative partition of P6_B0.")
         out.loc[:, "P6_U3"] = out.loc[:, "P6_B0"] - out.loc[:, "P6_U2"]
     atomic = atomic_final_demand(out)
     tfu = atomic.sum(axis=1).astype("float64")

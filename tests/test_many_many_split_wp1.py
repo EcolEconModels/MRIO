@@ -83,6 +83,19 @@ def test_negative_inventory_allocation_cannot_create_negative_child_supply() -> 
     assert constrained.to_dict() == pytest.approx({"tobacco": -3.0, "food": 5.0})
 
 
+def test_inventory_constraint_covers_negative_signed_other_use() -> None:
+    """P52 must offset an already-negative signed final-demand component."""
+    allocated = pd.Series([-1.0, 3.0], index=["a", "b"])
+    other_use = pd.Series([-2.0, 10.0], index=allocated.index)
+
+    constrained = _cap_inventory_withdrawals(
+        parent="CPA_TEST", allocated=allocated, other_use=other_use, flow="total"
+    )
+
+    assert constrained.sum() == pytest.approx(allocated.sum())
+    assert (constrained + other_use >= -1e-12).all()
+
+
 def test_wp1_keeps_zero_weight_edge_children_and_reconstructs_cells(
     tmp_path: Path,
 ) -> None:

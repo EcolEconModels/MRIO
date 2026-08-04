@@ -19,7 +19,7 @@ from ecolecon_mrio.iot_aggregation import (
 )
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
-from ecolecon_mrio.iot_flow_semantics import flow_use_total
+from ecolecon_mrio.iot_flow_semantics import atomic_final_demand, flow_use_total
 from ecolecon_mrio.iot_identities import (
     normalise_supplementary_row_label,
 )
@@ -297,8 +297,10 @@ def write_aggregation_report_xlsx(
                 "n_sectors_after": [len(result.Z.index)],
                 "Z_total_before": [float(Z_before.to_numpy().sum())],
                 "Z_total_after": [float(result.Z.to_numpy().sum())],
-                "Y_total_before": [float(Y_before.to_numpy().sum())],
-                "Y_total_after": [float(result.Y.to_numpy().sum())],
+                "atomic_final_demand_before": [float(atomic_final_demand(Y_before).to_numpy().sum())],
+                "atomic_final_demand_after": [float(atomic_final_demand(result.Y).to_numpy().sum())],
+                "total_use_before": [float(flow_use_total(Z_before, Y_before).sum())],
+                "total_use_after": [float(flow_use_total(result.Z, result.Y).sum())],
             }
         )
         summary.to_excel(xw, sheet_name="summary", index=False)

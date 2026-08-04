@@ -129,6 +129,8 @@ def _normalize_vector(values: pd.Series) -> pd.Series:
             "Expected normalized donor vector input to remain a pandas Series."
         )
     numeric = numeric_obj.fillna(0.0).astype("float64")
+    if not np.isfinite(numeric.to_numpy(dtype="float64")).all() or bool((numeric < 0.0).any()):
+        raise ValueError("Allocation donor vector must be finite and non-negative.")
     total = float(numeric.sum())
     if not np.isfinite(total) or total <= 0:
         raise ValueError("Cannot normalize non-positive donor vector.")
@@ -144,7 +146,10 @@ def _cap_inventory_withdrawals(
     Withdrawals are capped by each child's other use; the resulting offset is
     removed proportionally over the remaining absolute donor magnitudes.
     """
-    lower = -other_use.clip(lower=0.0).astype("float64")
+    # P52 is the final balancing component: child supply must satisfy
+    # P52 + other_use >= 0 even when another signed component (for example P53)
+    # has already made other_use negative.
+    lower = -other_use.astype("float64")
     constrained = allocated.clip(lower=lower).astype("float64")
     excess = float(constrained.sum() - allocated.sum())
     if excess <= 1e-9:
@@ -453,7 +458,7 @@ def project_exio_donor_blocks_for_split_profiles(
         emitted_labels=emitted_labels,
     )
     P_column = build_projection_matrix_for_split_profiles(
-        split_profiles=column_split_profiles or split_profiles,
+        split_profiles=split_profiles if column_split_profiles is None else column_split_profiles,
         eurostat_sector_mapping=(
             column_eurostat_sector_mapping
             if column_eurostat_sector_mapping is not None
@@ -942,7 +947,7 @@ def _split_iot_using_donor_blocks(
     Y.columns = Y.columns.astype(str)
 
     sectors_old = list(map(str, Z.index))
-    column_profiles = column_split_profiles or split_profiles
+    column_profiles = split_profiles if column_split_profiles is None else column_split_profiles
     sectors_new = _expanded_sector_order(
         sectors_old=sectors_old, split_profiles=split_profiles
     )

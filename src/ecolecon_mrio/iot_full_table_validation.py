@@ -416,6 +416,7 @@ def _structural_checks(
         )
         duplicates: list[str] = []
         non_finite = 0
+        core_non_finite = 0
         for name, frame in blocks:
             if frame is None:
                 continue
@@ -427,6 +428,8 @@ def _structural_checks(
                 if mode == "generated"
                 else (~np.isfinite(values)).sum()
             )
+            if mode == "generated" and name in {"Z", "Y"}:
+                core_non_finite += int((~np.isfinite(values)).sum())
         checks.append(
             _check(
                 f"full.s6.{flow.lower()}",
@@ -441,13 +444,13 @@ def _structural_checks(
         checks.append(
             _check(
                 f"full.s7.{flow.lower()}",
-                status="pass" if non_finite == 0 else "fail",
+                status="pass" if non_finite == 0 and core_non_finite == 0 else "fail",
                 severity="error",
                 flow=flow,
                 block="Z|Y|V|M",
-                affected=(str(non_finite),) if non_finite else (),
+                affected=(str(non_finite + core_non_finite),) if non_finite or core_non_finite else (),
                 explanation=(
-                    "Generated blocks may retain NaN for missing/non-applicable cells, but never infinity."
+                    "Generated Z and Y must be finite; V and M may retain NaN only for missing/non-applicable cells, but no generated block may contain infinity."
                     if mode == "generated"
                     else "All parsed applicable source cells must be finite under the current parser contract."
                 ),

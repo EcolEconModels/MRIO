@@ -10,6 +10,11 @@ def test_atomic_final_demand_accepts_only_p6() -> None:
     assert list(atomic_final_demand(pd.DataFrame({"P6": [1.0]})).columns) == ["P6"]
 
 
+def test_atomic_final_demand_uses_non_overlapping_p6_details() -> None:
+    Y = pd.DataFrame({"P6_B0": [5.0], "P6_D0": [2.0], "P6_U2": [3.0], "P6_U3": [2.0]})
+    assert list(atomic_final_demand(Y).columns) == ["P6_B0", "P6_D0"]
+
+
 def test_atomic_final_demand_accepts_only_p3() -> None:
     assert list(atomic_final_demand(pd.DataFrame({"P3": [1.0]})).columns) == ["P3"]
 
@@ -104,6 +109,14 @@ def test_display_aggregates_are_derived_from_atomic_details() -> None:
     assert out.loc["a", "P6"] == 7.0
     assert out.loc["a", "P6_D0"] == 2.0
     assert out.loc["a", "P6_U3"] == 2.0
+
+
+def test_display_aggregates_reject_invalid_export_partition() -> None:
+    from ecolecon_mrio.iot_flow_semantics import enforce_final_demand_display_identities
+
+    Y = pd.DataFrame({"P6": [3.0], "P6_B0": [4.0], "P6_D0": [0.0]})
+    with pytest.raises(ValueError, match="P6_B0 must be"):
+        enforce_final_demand_display_identities(Y)
 
 
 def test_derived_final_demand_controls_and_tu_are_rebuilt() -> None:

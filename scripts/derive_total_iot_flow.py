@@ -396,6 +396,11 @@ def _allocate_import_partition(
         child_list = [str(c) for c in children if child_parent.get(str(c), str(c)) == parent]
         total = float(published_total.loc[parent])
         part = float(published_part.loc[parent])
+        if not np.isfinite(total) or not np.isfinite(part) or part < 0.0 or part > total:
+            raise ValueError(
+                f"{row_code} must be a non-negative partition of P7 for {parent}: "
+                f"part={part!r}, total={total!r}."
+            )
         derived = aggregate.reindex(child_list).astype("float64")
         if total == 0.0:
             if abs(part) > 0.0:

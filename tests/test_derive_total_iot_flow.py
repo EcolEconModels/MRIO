@@ -214,6 +214,20 @@ def test_transaction_v_rejects_signed_unknown_row() -> None:
         )
 
 
+def test_import_partition_rejects_negative_or_excess_source_component() -> None:
+    kwargs = {
+        "aggregate": pd.Series([5.0], index=["a"]),
+        "published_total": pd.Series([4.0], index=["A"]),
+        "child_parent": {"a": "A"},
+        "children": pd.Index(["a"]),
+        "row_code": "P7_B0",
+    }
+    with pytest.raises(ValueError, match="non-negative partition"):
+        MODULE._allocate_import_partition(
+            published_part=pd.Series([5.0], index=["A"]), **kwargs
+        )
+
+
 def test_transaction_v_closes_rows_columns_and_value_added() -> None:
     """Transaction-derived output and residual surplus close every child account."""
     parent = pd.Index(["A"])
