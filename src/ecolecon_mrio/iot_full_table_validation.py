@@ -423,13 +423,14 @@ def _structural_checks(
             duplicates.extend(f"{name}.row:{item}" for item in frame.index[frame.index.duplicated()].astype(str))
             duplicates.extend(f"{name}.column:{item}" for item in frame.columns[frame.columns.duplicated()].astype(str))
             values = frame.to_numpy(dtype="float64")
-            non_finite += int(
-                np.isinf(values).sum()
-                if mode == "generated"
-                else (~np.isfinite(values)).sum()
-            )
             if mode == "generated" and name in {"Z", "Y"}:
                 core_non_finite += int((~np.isfinite(values)).sum())
+            else:
+                non_finite += int(
+                    np.isinf(values).sum()
+                    if mode == "generated"
+                    else (~np.isfinite(values)).sum()
+                )
         checks.append(
             _check(
                 f"full.s6.{flow.lower()}",

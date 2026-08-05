@@ -333,6 +333,9 @@ def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], sou
 
 
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
+# Inventories/valuables and every display aggregate that contains them can be
+# signed; ordinary final-use categories are non-negative import partitions.
+_SIGNED_FINAL_USE_COLUMNS = frozenset({"P5", "P5M", "P52", "P53", "TFU", "TU"})
 
 
 def _allocate_source_parent_vector(
@@ -408,6 +411,17 @@ def _allocate_import_partition(
             continue
         out.loc[child_list] = derived.to_numpy() * (part / total)
     return out
+
+
+def _validate_import_partition_proxy(*, total: float, part: float, column: str) -> None:
+    """Validate a geographic-import proxy on its declared final-use domain."""
+    if not np.isfinite(total) or not np.isfinite(part):
+        raise ValueError(f"Incomplete import-partition proxy in M: column={column!r}")
+    if column not in _SIGNED_FINAL_USE_COLUMNS and (total < 0.0 or part < 0.0 or part > total):
+        raise ValueError(
+            f"Import-partition proxy must be a non-negative partition in M: "
+            f"column={column!r}, part={part!r}, total={total!r}"
+        )
 
 
 def _construct_transaction_v(
@@ -586,11 +600,9 @@ def _construct_transaction_m(
                 source_part = float(source_m.loc[first_row, column])
                 if np.isnan(source_total) and np.isnan(source_part):
                     continue
-                if not np.isfinite(source_total) or not np.isfinite(source_part):
-                    raise ValueError(
-                        f"Incomplete import-partition proxy in M: {aggregate_row}/{first_row}, "
-                        f"column={column!r}"
-                    )
+                _validate_import_partition_proxy(
+                    total=source_total, part=source_part, column=str(column),
+                )
                 if source_total == 0.0:
                     if aggregate_value != 0.0 or source_part != 0.0:
                         raise ValueError(

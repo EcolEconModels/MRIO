@@ -123,12 +123,12 @@ def _expanded_sector_order(
 
 
 def _normalize_vector(values: pd.Series) -> pd.Series:
-    numeric_obj = pd.to_numeric(values, errors="coerce")
+    numeric_obj = pd.to_numeric(values, errors="raise")
     if not isinstance(numeric_obj, pd.Series):
         raise TypeError(
             "Expected normalized donor vector input to remain a pandas Series."
         )
-    numeric = numeric_obj.fillna(0.0).astype("float64")
+    numeric = numeric_obj.astype("float64")
     if not np.isfinite(numeric.to_numpy(dtype="float64")).all() or bool((numeric < 0.0).any()):
         raise ValueError("Allocation donor vector must be finite and non-negative.")
     total = float(numeric.sum())

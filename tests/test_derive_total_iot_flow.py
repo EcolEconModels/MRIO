@@ -228,6 +228,12 @@ def test_import_partition_rejects_negative_or_excess_source_component() -> None:
         )
 
 
+def test_m_import_partition_proxy_respects_signed_final_use_domain() -> None:
+    with pytest.raises(ValueError, match="non-negative partition"):
+        MODULE._validate_import_partition_proxy(total=4.0, part=5.0, column="P3")
+    MODULE._validate_import_partition_proxy(total=-4.0, part=-6.0, column="P52")
+
+
 def test_transaction_v_closes_rows_columns_and_value_added() -> None:
     """Transaction-derived output and residual surplus close every child account."""
     parent = pd.Index(["A"])

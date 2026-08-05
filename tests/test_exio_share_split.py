@@ -3,8 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 import importlib.util
 
+import numpy as np
 import pandas as pd
 import pytest
+
+
+@pytest.mark.parametrize("values", [pd.Series([1.0, np.nan]), pd.Series([1.0, "bad"])])
+def test_normalize_vector_rejects_missing_or_malformed_donor(values: pd.Series) -> None:
+    from ecolecon_mrio.exio_share_split import _normalize_vector
+
+    with pytest.raises(ValueError):
+        _normalize_vector(values)
 
 
 def test_output_share_uses_weighted_producer_output_for_canonical_p1(tmp_path: Path) -> None:
