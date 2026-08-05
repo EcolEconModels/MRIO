@@ -335,7 +335,7 @@ def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], sou
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
 # Inventories/valuables and every display aggregate that contains them can be
 # signed; ordinary final-use categories are non-negative import partitions.
-_SIGNED_FINAL_USE_COLUMNS = frozenset({"P5", "P5M", "P52", "P53", "TFU", "TU"})
+_SIGNED_FINAL_USE_COLUMNS = frozenset({"P5", "P5M", "P52", "P53", "TFU"})
 
 
 def _allocate_source_parent_vector(
