@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix, diags
 
 from ecolecon_mrio.transition_support import (
     baseline_productivity_certificate,
@@ -129,3 +130,28 @@ def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None
     assert float(margin.min()) >= -1.0e-12
     worst_case = A + upper.toarray()
     assert bool((worst_case @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
+
+
+def test_productivity_certificate_iterative_sparse_residual() -> None:
+    A = diags(np.full(2000, 0.4, dtype=float), format="csr")
+    vector, epsilon, slack = baseline_productivity_certificate(A)
+    residual = vector - A.dot(vector) - np.ones(2000, dtype=float)
+    assert float(np.max(np.abs(residual))) <= 1.0e-9
+    assert np.isclose(epsilon, 0.3)
+    assert float(slack.min()) >= -1.0e-12
+
+
+def test_support_validation_does_not_mutate_sparse_input() -> None:
+    A = csr_matrix(
+        (
+            np.array([0.2, 0.0, 0.1], dtype=float),
+            np.array([0, 1, 1], dtype=np.int32),
+            np.array([0, 2, 3], dtype=np.int32),
+        ),
+        shape=(2, 2),
+    )
+    before = (A.data.copy(), A.indices.copy(), A.indptr.copy())
+    coefficient_edge_counts(A, [0.0])
+    np.testing.assert_array_equal(A.data, before[0])
+    np.testing.assert_array_equal(A.indices, before[1])
+    np.testing.assert_array_equal(A.indptr, before[2])

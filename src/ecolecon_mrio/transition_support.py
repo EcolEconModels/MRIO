@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from typing import Any, Iterable, cast
-import warnings
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix, eye as sparse_eye, issparse
-from scipy.sparse.linalg import MatrixRankWarning, spsolve
+from scipy.sparse import csr_matrix, issparse
+from scipy.sparse.linalg import LinearOperator, lgmres
 
 
 def normalize_productive_certificate_vector(
@@ -250,13 +249,19 @@ def max_demand_nonnegative_emissions_cut(
     return max(0.0, float(emissions_cut_from_step(step_abs, baseline_emissions=baseline_emissions, emissions_slope=emissions_slope)))
 
 def _nonnegative_support_matrix(A: Any) -> csr_matrix:
-    """Return a finite non-negative square CSR matrix for support diagnostics."""
+    """Return a canonical finite non-negative CSR matrix without mutating callers."""
 
-    matrix = cast(csr_matrix, csr_matrix(A, dtype=np.float64).copy())
-    matrix.sum_duplicates()
-    matrix.eliminate_zeros()
-    matrix_shape = cast(tuple[int, int], matrix.shape)
+    matrix = cast(csr_matrix, csr_matrix(A, dtype=np.float64, copy=False))
     matrix_data = cast(np.ndarray, matrix.data)
+    needs_cleanup = (not matrix.has_canonical_format) or bool(
+        matrix_data.size and (matrix_data == 0.0).any()
+    )
+    if needs_cleanup:
+        matrix = matrix.copy()
+        matrix.sum_duplicates()
+        matrix.eliminate_zeros()
+        matrix_data = cast(np.ndarray, matrix.data)
+    matrix_shape = cast(tuple[int, int], matrix.shape)
     if matrix_shape[0] == 0 or matrix_shape[0] != matrix_shape[1]:
         raise ValueError(f"A must be non-empty and square, got {matrix_shape}")
     if matrix_data.size and not np.isfinite(matrix_data).all():
@@ -264,7 +269,6 @@ def _nonnegative_support_matrix(A: Any) -> csr_matrix:
     if matrix_data.size and bool((matrix_data < 0.0).any()):
         raise ValueError("A must be non-negative")
     return matrix
-
 
 def baseline_productivity_certificate(
     A: Any,
@@ -275,9 +279,10 @@ def baseline_productivity_certificate(
     r"""Derive the fixed sufficient certificate ``A'v <= (1-epsilon)v``.
 
     For productive non-negative ``A``, ``v=(I-A)^{-1}1`` is positive and obeys
-    ``Av=v-1``. Retaining a fraction of ``min(1/v)`` keeps the observed matrix
-    inside the later coefficient-support domain. The fixed vector is sufficient,
-    not necessary, for productivity of a counterfactual matrix.
+    ``Av=v-1``. A restarted LGMRES solve avoids the fill-in and retained factors
+    of sparse direct LU. Retaining a fraction of ``min(1/v)`` keeps the observed
+    matrix inside the later coefficient-support domain. The fixed vector is
+    sufficient, not necessary, for productivity of a counterfactual matrix.
     """
 
     fraction = float(margin_fraction)
@@ -286,18 +291,42 @@ def baseline_productivity_certificate(
         raise ValueError("margin_fraction must be in (0, 1] and tolerance positive")
     matrix = _nonnegative_support_matrix(A)
     matrix_shape = cast(tuple[int, int], matrix.shape)
-    system = sparse_eye(matrix_shape[0], format="csr", dtype=np.float64) - matrix
+    rhs = np.ones(matrix_shape[0], dtype=np.float64)
+    linear_operator = cast(Any, LinearOperator)
+    operator = linear_operator(
+        matrix_shape,
+        matvec=lambda values: np.asarray(values, dtype=np.float64) - matrix.dot(values),
+        dtype=np.float64,
+    )
+    iterative_solve = cast(Any, lgmres)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", MatrixRankWarning)
-            vector = np.asarray(
-                spsolve(system, np.ones(matrix_shape[0], dtype=np.float64)),
-                dtype=np.float64,
-            ).reshape(-1)
-    except Exception as exc:  # pragma: no cover - SciPy failure varies by factorization
-        raise RuntimeError("baseline productivity-certificate solve failed") from exc
-    if vector.shape != (matrix_shape[0],) or not np.isfinite(vector).all():
+        vector_raw, info = iterative_solve(
+            operator,
+            rhs,
+            x0=rhs,
+            rtol=1.0e-11,
+            atol=0.0,
+            maxiter=500,
+            inner_m=30,
+            outer_k=3,
+        )
+    except Exception as exc:  # pragma: no cover - SciPy failure varies by backend
+        raise RuntimeError("baseline productivity-certificate iterative solve failed") from exc
+    vector = np.asarray(vector_raw, dtype=np.float64).reshape(-1)
+    if info != 0:
+        raise RuntimeError(
+            f"baseline productivity-certificate iterative solve did not converge: info={info}"
+        )
+    isfinite = cast(Any, np.isfinite)
+    if vector.shape != (matrix_shape[0],) or not isfinite(vector).all():
         raise RuntimeError("baseline productivity-certificate solve returned invalid values")
+    residual = np.asarray(operator.matvec(vector) - rhs, dtype=np.float64)
+    residual_linf = float(np.max(np.abs(residual)))
+    if residual_linf > 1.0e-9:
+        raise RuntimeError(
+            "baseline productivity-certificate solve residual exceeds 1e-9: "
+            f"{residual_linf:.6g}"
+        )
     if bool((vector <= tol).any()):
         raise ValueError("baseline matrix has no strictly positive certificate")
     epsilon = fraction * float(np.min(1.0 / vector))
@@ -305,7 +334,6 @@ def baseline_productivity_certificate(
     if float(slack.min()) < -tol:
         raise RuntimeError("constructed productivity certificate has negative slack")
     return vector, epsilon, slack
-
 
 def coefficient_edge_counts(A: Any, thresholds: Iterable[float]) -> dict[float, int]:
     """Count stored coefficients strictly above each declared dimensionless threshold."""
@@ -389,18 +417,21 @@ def certificate_safe_coefficient_delta_bounds(
     ):
         raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
 
-    raw_mask = cast(csr_matrix, csr_matrix(panel_mask, dtype=np.float64).copy())
-    raw_mask.sum_duplicates()
-    raw_mask.eliminate_zeros()
+    raw_mask = cast(csr_matrix, csr_matrix(panel_mask, dtype=np.int8, copy=False))
+    mask_data = cast(np.ndarray, raw_mask.data)
+    if (not raw_mask.has_canonical_format) or bool(
+        mask_data.size and (mask_data == 0).any()
+    ):
+        raw_mask = raw_mask.copy()
+        raw_mask.sum_duplicates()
+        raw_mask.eliminate_zeros()
+        mask_data = cast(np.ndarray, raw_mask.data)
     raw_mask_shape = cast(tuple[int, int], raw_mask.shape)
     if raw_mask_shape != matrix_shape:
         raise ValueError(f"panel mask shape {raw_mask_shape} differs from A shape {matrix_shape}")
-    mask_data = cast(np.ndarray, raw_mask.data)
-    if mask_data.size and (
-        not np.isfinite(mask_data).all() or bool((mask_data < 0.0).any())
-    ):
-        raise ValueError("panel mask must contain finite non-negative values")
-    mask = cast(Any, (raw_mask > 0.0).tocoo())
+    if mask_data.size and bool((mask_data < 0).any()):
+        raise ValueError("panel mask must contain non-negative values")
+    mask = cast(Any, raw_mask.tocoo(copy=False))
     mask_rows = np.asarray(mask.row, dtype=np.int64)
     mask_columns = np.asarray(mask.col, dtype=np.int64)
 
