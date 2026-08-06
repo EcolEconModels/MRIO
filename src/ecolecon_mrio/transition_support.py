@@ -252,7 +252,7 @@ def max_demand_nonnegative_emissions_cut(
 def _nonnegative_support_matrix(A: Any) -> csr_matrix:
     """Return a finite non-negative square CSR matrix for support diagnostics."""
 
-    matrix = cast(csr_matrix, csr_matrix(A, dtype=np.float64))
+    matrix = cast(csr_matrix, csr_matrix(A, dtype=np.float64).copy())
     matrix.sum_duplicates()
     matrix.eliminate_zeros()
     matrix_shape = cast(tuple[int, int], matrix.shape)
@@ -346,3 +346,92 @@ def adjacent_coefficient_relative_changes(
     appearing = int(np.count_nonzero((start_values <= epsilon) & (end_values > epsilon)))
     disappearing = int(np.count_nonzero((start_values > epsilon) & (end_values <= epsilon)))
     return np.asarray(relative, dtype=np.float64), appearing, disappearing
+
+
+def certificate_safe_coefficient_delta_bounds(
+    A: Any,
+    panel_mask: Any,
+    *,
+    certificate_vector: np.ndarray,
+    productivity_epsilon: float,
+    relative_change_cap: float,
+    coefficient_floor: float,
+    tolerance: float = 1.0e-12,
+) -> tuple[csr_matrix, csr_matrix, np.ndarray, np.ndarray]:
+    r"""Return exact sparse delta-A bounds that guarantee the fixed certificate.
+
+    The raw local cap is ``kappa * max(A_ij, floor)`` on panel-observed links.
+    Negative changes retain the full non-negativity-limited cap. Positive caps
+    are multiplied by one row factor so their worst-case certificate use fits
+    inside the baseline slack. Hence every delta within the returned interval
+    satisfies ``(A + delta) v <= (1-epsilon) v`` without relying on offsetting
+    coefficient decreases elsewhere in the row.
+    """
+
+    matrix = _nonnegative_support_matrix(A)
+    matrix_shape = cast(tuple[int, int], matrix.shape)
+    cap = float(relative_change_cap)
+    floor = float(coefficient_floor)
+    epsilon = float(productivity_epsilon)
+    tol = float(tolerance)
+    if not np.isfinite(cap) or cap < 0.0:
+        raise ValueError("relative_change_cap must be finite and non-negative")
+    if not np.isfinite(floor) or floor <= 0.0:
+        raise ValueError("coefficient_floor must be finite and positive")
+    if not 0.0 < epsilon < 1.0 or tol <= 0.0:
+        raise ValueError("productivity_epsilon must lie in (0, 1) and tolerance be positive")
+
+    vector = np.asarray(certificate_vector, dtype=np.float64).reshape(-1)
+    if (
+        vector.shape != (matrix_shape[0],)
+        or not np.isfinite(vector).all()
+        or bool((vector <= 0.0).any())
+    ):
+        raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
+
+    raw_mask = cast(csr_matrix, csr_matrix(panel_mask, dtype=np.float64).copy())
+    raw_mask.sum_duplicates()
+    raw_mask.eliminate_zeros()
+    raw_mask_shape = cast(tuple[int, int], raw_mask.shape)
+    if raw_mask_shape != matrix_shape:
+        raise ValueError(f"panel mask shape {raw_mask_shape} differs from A shape {matrix_shape}")
+    mask_data = cast(np.ndarray, raw_mask.data)
+    if mask_data.size and (
+        not np.isfinite(mask_data).all() or bool((mask_data < 0.0).any())
+    ):
+        raise ValueError("panel mask must contain finite non-negative values")
+    mask = cast(Any, (raw_mask > 0.0).tocoo())
+    mask_rows = np.asarray(mask.row, dtype=np.int64)
+    mask_columns = np.asarray(mask.col, dtype=np.int64)
+
+    baseline_values = np.asarray(matrix[mask_rows, mask_columns]).reshape(-1)
+    raw_cap = cap * np.maximum(baseline_values, floor)
+    lower_data = -np.minimum(baseline_values, raw_cap)
+    lower = cast(
+        csr_matrix,
+        csr_matrix((lower_data, (mask_rows, mask_columns)), shape=matrix_shape),
+    )
+    upper_raw = cast(
+        csr_matrix,
+        csr_matrix((raw_cap, (mask_rows, mask_columns)), shape=matrix_shape),
+    )
+
+    baseline_slack = np.asarray(
+        (1.0 - epsilon) * vector - matrix.dot(vector), dtype=np.float64
+    )
+    if float(baseline_slack.min()) < -tol:
+        raise ValueError("baseline matrix violates the supplied productivity certificate")
+    positive_use = np.asarray(upper_raw.dot(vector), dtype=np.float64)
+    row_scale = np.ones(matrix_shape[0], dtype=np.float64)
+    active = positive_use > tol
+    row_scale[active] = np.minimum(
+        1.0,
+        np.maximum(baseline_slack[active], 0.0) / positive_use[active],
+    )
+    upper = cast(csr_matrix, upper_raw.multiply(row_scale[:, None]).tocsr())
+    guaranteed_margin = baseline_slack - np.asarray(upper.dot(vector), dtype=np.float64)
+    if float(guaranteed_margin.min()) < -tol:
+        raise RuntimeError("certificate-safe coefficient bounds have negative guaranteed margin")
+    lower.eliminate_zeros()
+    upper.eliminate_zeros()
+    return lower, upper, row_scale, guaranteed_margin

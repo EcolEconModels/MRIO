@@ -7,6 +7,7 @@ from ecolecon_mrio.transition_support import (
     baseline_productivity_certificate,
     adjacent_coefficient_relative_changes,
     benchmark_step_for_emissions_cut,
+    certificate_safe_coefficient_delta_bounds,
     coefficient_change_bounds,
     coefficient_edge_counts,
     emissions_cut_from_step,
@@ -97,12 +98,34 @@ def test_baseline_productivity_certificate_rejects_nonproductive_matrix() -> Non
 
 
 def test_sparse_edge_counts_and_adjacent_change_distribution() -> None:
-    start = np.array([[0.2, 0.0], [0.01, 0.0]])
-    end = np.array([[0.1, 0.3], [0.01, 0.0]])
+    start = np.array([[0.2, 0.0], [0.1, 0.0]])
+    end = np.array([[0.1, 0.3], [0.1, 0.0]])
     assert coefficient_edge_counts(end, [0.0, 0.15]) == {0.0: 3, 0.15: 1}
     relative, appearing, disappearing = adjacent_coefficient_relative_changes(
         start, end, floor=0.05
     )
-    np.testing.assert_allclose(np.sort(relative), np.array([0.5, 6.0]))
+    np.testing.assert_allclose(np.sort(relative), np.array([0.0, 0.5, 6.0]))
     assert appearing == 1
     assert disappearing == 0
+
+
+def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None:
+    A = np.array([[0.9, 0.0], [0.0, 0.2]], dtype=float)
+    vector, epsilon, _ = baseline_productivity_certificate(A)
+    mask = np.array([[True, True], [False, True]], dtype=bool)
+    lower, upper, scale, margin = certificate_safe_coefficient_delta_bounds(
+        A,
+        mask,
+        certificate_vector=vector,
+        productivity_epsilon=epsilon,
+        relative_change_cap=1.0,
+        coefficient_floor=0.1,
+    )
+    assert float(scale[0]) < 1.0
+    assert bool((lower.toarray() <= 0.0).all())
+    assert bool((upper.toarray() >= 0.0).all())
+    np.testing.assert_allclose(lower.toarray()[A == 0.0], 0.0)
+    assert float(upper.toarray()[1, 0]) == 0.0
+    assert float(margin.min()) >= -1.0e-12
+    worst_case = A + upper.toarray()
+    assert bool((worst_case @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
