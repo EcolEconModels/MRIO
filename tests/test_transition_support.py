@@ -4,8 +4,11 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.transition_support import (
+    baseline_productivity_certificate,
+    adjacent_coefficient_relative_changes,
     benchmark_step_for_emissions_cut,
     coefficient_change_bounds,
+    coefficient_edge_counts,
     emissions_cut_from_step,
     emissions_direction_slope,
     max_demand_nonnegative_emissions_cut,
@@ -78,3 +81,28 @@ def test_emissions_direction_slope_aligns_series_by_index() -> None:
     slope = emissions_direction_slope(e, d)
     # aligned order gives 3*(-4) + 1*2 = -10
     assert slope == -10.0
+
+def test_baseline_productivity_certificate_matches_leontief_identity() -> None:
+    A = np.diag([0.2, 0.5])
+    vector, epsilon, slack = baseline_productivity_certificate(A)
+    np.testing.assert_allclose((np.eye(2) - A) @ vector, np.ones(2))
+    assert np.isclose(epsilon, 0.25)
+    assert bool((slack >= 0.0).all())
+    assert np.max((A @ vector) / vector) <= 1.0 - epsilon
+
+
+def test_baseline_productivity_certificate_rejects_nonproductive_matrix() -> None:
+    with np.testing.assert_raises(ValueError):
+        baseline_productivity_certificate(np.diag([0.2, 1.1]))
+
+
+def test_sparse_edge_counts_and_adjacent_change_distribution() -> None:
+    start = np.array([[0.2, 0.0], [0.01, 0.0]])
+    end = np.array([[0.1, 0.3], [0.01, 0.0]])
+    assert coefficient_edge_counts(end, [0.0, 0.15]) == {0.0: 3, 0.15: 1}
+    relative, appearing, disappearing = adjacent_coefficient_relative_changes(
+        start, end, floor=0.05
+    )
+    np.testing.assert_allclose(np.sort(relative), np.array([0.5, 6.0]))
+    assert appearing == 1
+    assert disappearing == 0

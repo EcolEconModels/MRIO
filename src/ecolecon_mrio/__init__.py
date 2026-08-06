@@ -98,8 +98,11 @@ from .runtime import (
 )
 from .transition import classify_transition_years, principal_direction_index
 from .transition_support import (
+    baseline_productivity_certificate,
+    adjacent_coefficient_relative_changes,
     benchmark_step_for_emissions_cut,
     coefficient_change_bounds,
+    coefficient_edge_counts,
     emissions_cut_from_step,
     emissions_direction_slope,
     max_demand_nonnegative_emissions_cut,
@@ -203,7 +206,10 @@ __all__ = [
     "principal_growth_panel",
     "principal_direction_index",
     "classify_transition_years",
+    "adjacent_coefficient_relative_changes",
+    "baseline_productivity_certificate",
     "benchmark_step_for_emissions_cut",
+    "coefficient_edge_counts",
     "coefficient_change_bounds",
     "emissions_cut_from_step",
     "emissions_direction_slope",
