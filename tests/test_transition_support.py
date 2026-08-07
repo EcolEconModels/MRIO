@@ -6,9 +6,9 @@ from scipy.sparse import csr_matrix, diags
 
 from ecolecon_mrio.transition_support import (
     baseline_productivity_certificate,
-    adjacent_coefficient_relative_changes,
+    adjacent_coefficient_change_quantiles,
     benchmark_step_for_emissions_cut,
-    certificate_safe_coefficient_delta_bounds,
+    certificate_safe_coefficient_capacity_products,
     coefficient_change_bounds,
     coefficient_edge_counts,
     emissions_cut_from_step,
@@ -99,37 +99,63 @@ def test_baseline_productivity_certificate_rejects_nonproductive_matrix() -> Non
 
 
 def test_sparse_edge_counts_and_adjacent_change_distribution() -> None:
+    """Protect exact pair-active quantiles, turnover counts, and unchanged active links."""
+
     start = np.array([[0.2, 0.0], [0.1, 0.0]])
     end = np.array([[0.1, 0.3], [0.1, 0.0]])
     assert coefficient_edge_counts(end, [0.0, 0.15]) == {0.0: 3, 0.15: 1}
-    relative, appearing, disappearing = adjacent_coefficient_relative_changes(
-        start, end, floor=0.05
+    count, appearing, disappearing, quantiles = adjacent_coefficient_change_quantiles(
+        start,
+        end,
+        floor=0.05,
+        quantiles=(0.5, 0.9),
     )
-    np.testing.assert_allclose(np.sort(relative), np.array([0.0, 0.5, 6.0]))
+    assert count == 3
     assert appearing == 1
     assert disappearing == 0
+    assert np.isclose(quantiles[0.5], 0.5)
+    assert np.isclose(quantiles[0.9], 4.9)
+
 
 
 def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None:
+    """Capacity products must equal explicit certificate-safe bound-matrix products."""
+
     A = np.array([[0.9, 0.0], [0.0, 0.2]], dtype=float)
     vector, epsilon, _ = baseline_productivity_certificate(A)
     mask = np.array([[True, True], [False, True]], dtype=bool)
-    lower, upper, scale, margin = certificate_safe_coefficient_delta_bounds(
-        A,
-        mask,
-        certificate_vector=vector,
-        productivity_epsilon=epsilon,
-        relative_change_cap=1.0,
-        coefficient_floor=0.1,
+    rhs = np.array([[10.0, 1.0], [4.0, -2.0]], dtype=float)
+    lower_products, upper_products, scale, margin = (
+        certificate_safe_coefficient_capacity_products(
+            A,
+            mask,
+            rhs,
+            certificate_vector=vector,
+            productivity_epsilon=epsilon,
+            relative_change_cap=1.0,
+            coefficient_floor=0.1,
+        )
     )
-    assert float(scale[0]) < 1.0
-    assert bool((lower.toarray() <= 0.0).all())
-    assert bool((upper.toarray() >= 0.0).all())
-    np.testing.assert_allclose(lower.toarray()[A == 0.0], 0.0)
-    assert float(upper.toarray()[1, 0]) == 0.0
+
+    baseline_values = np.array([[0.9, 0.0], [0.0, 0.2]], dtype=float)
+    raw_cap = np.array([[0.9, 0.1], [0.0, 0.2]], dtype=float)
+    lower = -np.minimum(baseline_values, raw_cap)
+    lower[1, 0] = 0.0
+    baseline_slack = (1.0 - epsilon) * vector - A @ vector
+    positive_use = raw_cap @ vector
+    expected_scale = np.ones(2, dtype=float)
+    active = positive_use > 1.0e-12
+    expected_scale[active] = np.minimum(
+        1.0, np.maximum(baseline_slack[active], 0.0) / positive_use[active]
+    )
+    upper = raw_cap * expected_scale[:, None]
+
+    np.testing.assert_allclose(scale, expected_scale)
+    np.testing.assert_allclose(lower_products, lower @ rhs)
+    np.testing.assert_allclose(upper_products, upper @ rhs)
     assert float(margin.min()) >= -1.0e-12
-    worst_case = A + upper.toarray()
-    assert bool((worst_case @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
+    assert bool(((A + upper) @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
+
 
 
 def test_productivity_certificate_iterative_sparse_residual() -> None:
