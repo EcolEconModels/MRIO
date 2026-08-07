@@ -834,6 +834,7 @@ def load_mrio_extension_year_state(
         data_root=data_root,
         exact_priority=exact_priority,
         keywords=keywords,
+        basis_index=mrio_state.index,
         force_download=bool(force_download),
         allow_download_missing=bool(allow_download_missing),
         doi=doi_value,

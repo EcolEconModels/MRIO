@@ -128,7 +128,7 @@ def _read_extension_matrix(
                     sep="\t",
                     header=None,
                     index_col=0,
-                    usecols=usecols,
+                    usecols=usecols,  # pyright: ignore[reportCallIssue, reportArgumentType]
                     skiprows=3,
                     engine="c",
                 )
@@ -143,7 +143,7 @@ def _read_extension_matrix(
             sep="\t",
             header=None,
             index_col=0,
-            usecols=usecols,
+            usecols=usecols,  # pyright: ignore[reportCallIssue, reportArgumentType]
             skiprows=3,
             engine="c",
         )
@@ -214,6 +214,77 @@ def _select_extension_row_label(
     )
 
 
+
+def _align_production_extension_row_to_basis(
+    row: pd.Series,
+    basis_index: pd.MultiIndex,
+    *,
+    system: str,
+) -> pd.Series:
+    """Align one authoritative EXIO F row to the monetary x/Z/Y basis.
+
+    Raw EXIO extension headers can use internal sector codes while x.txt exposes
+    sector names.  Translate only official EXIO codes, then require a bijective
+    label match before reordering.  This source-loader alignment is deliberately
+    stricter than a generic ``reindex``: unknown, missing, extra, or duplicate
+    labels remain scientific errors.
+    """
+
+    if not isinstance(basis_index, pd.MultiIndex) or list(basis_index.names) != [
+        "region",
+        "sector",
+    ]:
+        raise ValueError("basis_index must be the canonical MultiIndex(region, sector)")
+    if not basis_index.is_unique:
+        raise ValueError("basis_index must contain unique region-sector labels")
+    if not isinstance(row.index, pd.MultiIndex) or list(row.index.names) != [
+        "region",
+        "sector",
+    ]:
+        raise ValueError("production extension row must use MultiIndex(region, sector)")
+    if not row.index.is_unique:
+        raise ValueError("production extension row contains duplicate region-sector labels")
+    if row.index.equals(basis_index):
+        return row
+    if len(row.index) != len(basis_index):
+        raise ValueError(
+            "production extension row length differs from canonical MRIO basis: "
+            f"{len(row.index)} != {len(basis_index)}"
+        )
+
+    code_to_name = _exio_code_to_name_lookup(system=system)
+    raw_regions = row.index.get_level_values("region").astype(str)
+    raw_sectors = row.index.get_level_values("sector").astype(str)
+    canonical_sectors = [code_to_name.get(str(label), str(label)) for label in raw_sectors]
+    translated_index = pd.MultiIndex.from_arrays(
+        [raw_regions, canonical_sectors], names=["region", "sector"]
+    )
+    if not translated_index.is_unique:
+        raise ValueError("EXIO sector-code translation created duplicate extension labels")
+
+    missing = basis_index.difference(translated_index)
+    extra = translated_index.difference(basis_index)
+    if len(missing) or len(extra):
+        first_raw = row.index[0] if len(row.index) else None
+        first_translated = translated_index[0] if len(translated_index) else None
+        first_expected = basis_index[0] if len(basis_index) else None
+        raise ValueError(
+            "production extension labels do not match the canonical MRIO basis after "
+            "official EXIO code-to-name translation; "
+            f"missing={len(missing)}, extra={len(extra)}, first raw={first_raw!r}, "
+            f"translated={first_translated!r}, expected={first_expected!r}"
+        )
+
+    aligned = pd.Series(
+        row.to_numpy(dtype="float64", copy=False),
+        index=translated_index,
+        dtype="float64",
+        name=row.name,
+    ).reindex(basis_index)
+    if aligned.isna().any():
+        raise RuntimeError("canonical EXIO extension alignment introduced missing values")
+    return aligned
+
 def load_exiobase3_extension_row(
     container: str | Path,
     *,
@@ -222,6 +293,8 @@ def load_exiobase3_extension_row(
     exact_priority: Sequence[str] = (),
     keywords: Sequence[str] = (),
     region: str | None = None,
+    system: str = "pxp",
+    basis_index: pd.MultiIndex | None = None,
 ) -> pd.Series:
     """Stream one row from an EXIOBASE extension matrix.
 
@@ -285,6 +358,12 @@ def load_exiobase3_extension_row(
         index = pd.MultiIndex.from_arrays([region_codes, sector_labels], names=["region", label_level_name])
         out = pd.Series(values, index=index, dtype="float64")
         out.name = chosen
+        if basis_index is not None:
+            if str(kind) != "F":
+                raise ValueError("basis_index alignment is valid only for production-side kind='F'")
+            out = _align_production_extension_row_to_basis(
+                out, basis_index, system=str(system)
+            )
         return out
 
 
@@ -298,6 +377,7 @@ def load_exiobase3_extension_row_for_year(
     exact_priority: Sequence[str] = (),
     keywords: Sequence[str] = (),
     region: str | None = None,
+    basis_index: pd.MultiIndex | None = None,
     force_download: bool = False,
     allow_download_missing: bool = True,
     resume_downloads: bool = True,
@@ -339,6 +419,8 @@ def load_exiobase3_extension_row_for_year(
         exact_priority=exact_priority,
         keywords=keywords,
         region=region,
+        system=str(system),
+        basis_index=basis_index,
     )
 
 
@@ -350,6 +432,8 @@ def load_exiobase3_extension_row_with_unit(
     exact_priority: Sequence[str] = (),
     keywords: Sequence[str] = (),
     region: str | None = None,
+    system: str = "pxp",
+    basis_index: pd.MultiIndex | None = None,
     unit_override: str | None = None,
     require_unit: bool = True,
 ) -> ExtensionRowResult:
@@ -369,6 +453,8 @@ def load_exiobase3_extension_row_with_unit(
         exact_priority=exact_priority,
         keywords=keywords,
         region=region,
+        system=str(system),
+        basis_index=basis_index,
     )
     stressor = str(row.name)
     if unit_override is not None and str(unit_override).strip():
@@ -421,6 +507,7 @@ def load_exiobase3_extension_row_with_unit_for_year(
     exact_priority: Sequence[str] = (),
     keywords: Sequence[str] = (),
     region: str | None = None,
+    basis_index: pd.MultiIndex | None = None,
     force_download: bool = False,
     allow_download_missing: bool = True,
     resume_downloads: bool = True,
@@ -460,6 +547,8 @@ def load_exiobase3_extension_row_with_unit_for_year(
         exact_priority=exact_priority,
         keywords=keywords,
         region=region,
+        system=str(system),
+        basis_index=basis_index,
         unit_override=unit_override,
         require_unit=require_unit,
     )

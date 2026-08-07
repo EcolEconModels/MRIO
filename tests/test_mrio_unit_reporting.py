@@ -62,6 +62,39 @@ def test_extension_row_with_unit_reads_unit_txt(tmp_path: Path) -> None:
 
 
 
+def test_extension_row_with_unit_aligns_official_codes_to_canonical_basis(tmp_path: Path) -> None:
+    """Raw F sector codes must map exactly onto the x/Z/Y name-based basis."""
+
+    archive = tmp_path / "extension_codes.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(
+            "emissions/F.txt",
+            "\tAT\tAT\n"
+            "\tp01.a\tp01.b\n"
+            "\t\t\n"
+            "CO2 - combustion - air\t1.5\t2.5\n",
+        )
+        zf.writestr(
+            "emissions/unit.txt",
+            "stressor\tunit\nCO2 - combustion - air\tkg\n",
+        )
+    canonical = pd.MultiIndex.from_tuples(
+        [("AT", "Wheat"), ("AT", "Paddy rice")],
+        names=["region", "sector"],
+    )
+    result = load_exiobase3_extension_row_with_unit(
+        archive,
+        extension="emissions",
+        kind="F",
+        exact_priority=("CO2 - combustion - air",),
+        system="pxp",
+        basis_index=canonical,
+    )
+    assert result.values.index.equals(canonical)
+    assert result.values.loc[("AT", "Wheat")] == pytest.approx(2.5)
+    assert result.values.loc[("AT", "Paddy rice")] == pytest.approx(1.5)
+
+
 def test_extension_row_with_unit_f_y_uses_final_demand_category_index(tmp_path: Path) -> None:
     archive = tmp_path / "extension_f_y.zip"
     _write_extension_zip(archive)
