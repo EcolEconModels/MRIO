@@ -97,7 +97,7 @@ def _read_header_lines(stream: TextIOWrapper) -> tuple[list[str], list[str], str
     line3 = stream.readline()
     if not line1 or not line2:
         raise ValueError("Extension file is missing header lines.")
-    return line1.rstrip("\n").split("\t"), line2.rstrip("\n").split("\t"), line3.rstrip("\n")
+    return line1.rstrip("\r\n").split("\t"), line2.rstrip("\r\n").split("\t"), line3.rstrip("\r\n")
 
 
 def _read_extension_matrix(

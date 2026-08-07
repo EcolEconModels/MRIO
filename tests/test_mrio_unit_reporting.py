@@ -69,10 +69,10 @@ def test_extension_row_with_unit_aligns_official_codes_to_canonical_basis(tmp_pa
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr(
             "emissions/F.txt",
-            "\tAT\tAT\n"
-            "\tp01.a\tp01.b\n"
-            "\t\t\n"
-            "CO2 - combustion - air\t1.5\t2.5\n",
+            "\tAT\tAT\r\n"
+            "\tp01.a\tp01.b\r\n"
+            "\t\t\r\n"
+            "CO2 - combustion - air\t1.5\t2.5\r\n",
         )
         zf.writestr(
             "emissions/unit.txt",
