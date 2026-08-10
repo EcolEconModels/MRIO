@@ -89,7 +89,7 @@ class MatrixResult:
 
 Request options should include:
 
-- `matrices=("A",)`, `("Z",)`, or `("A", "Z")`.
+- matrix selection may request `"A"`, `"Z"`, `"both"`, or `"none"`; `"none"` reads no Z/A matrix.
 - `final_demand="summed"`, `"matrix"`, or `"none"`.
 
 `load_mrio_matrices()` should become a wrapper around this object only when doing so does not break memory behavior or return semantics.
@@ -135,6 +135,6 @@ Derived region-slice pickle caches are optional and disabled by default. When en
 
 ## Phase 3 EXIOBASE matrix-result contract
 
-`load_mrio_matrix_result(...)` is the Phase 3 structured result API for EXIOBASE zip-stream reads. It accepts `matrix="A"`, `"Z"`, or `"both"` and `final_demand="summed"`, `"matrix"`, or `"none"`. The existing `load_mrio_matrices(...)` API remains stable and delegates to this object with `matrix="A"` and `final_demand="summed"`.
+`load_mrio_matrix_result(...)` is the Phase 3 structured result API for EXIOBASE zip-stream reads. It accepts `matrix="A"`, `"Z"`, `"both"`, or `"none"` and `final_demand="summed"`, `"matrix"`, or `"none"`. `matrix="none"` is the Y-only path: it reads `x.txt` and the requested final-demand representation without parsing `Z.txt` or deriving `A`. The existing `load_mrio_matrices(...)` API remains stable and delegates to this object with `matrix="A"` and `final_demand="summed"`.
 
 The Phase 3 implementation is intentionally not yet a full provider registry. It keeps EXIOBASE DOI/system handling in the EXIOBASE source boundary while making matrix-result requests explicit and testable.

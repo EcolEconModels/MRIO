@@ -17,6 +17,7 @@ from ecolecon_mrio.transition_support import (
     max_demand_nonnegative_step,
     max_output_nonnegative_emissions_cut,
     max_output_nonnegative_step,
+    merge_panel_observed_coefficient_mask,
     normalize_productive_certificate_vector,
     productive_certificate_row_rhs,
     productive_certificate_slack,
@@ -96,6 +97,18 @@ def test_baseline_productivity_certificate_matches_leontief_identity() -> None:
 def test_baseline_productivity_certificate_rejects_nonproductive_matrix() -> None:
     with np.testing.assert_raises(ValueError):
         baseline_productivity_certificate(np.diag([0.2, 1.1]))
+
+
+def test_panel_observed_coefficient_mask_is_strict_union() -> None:
+    """Panel support is the strict-threshold sparse union across annual A matrices."""
+
+    first = csr_matrix(np.array([[0.0, 0.2], [0.1, 0.0]], dtype=float))
+    second = csr_matrix(np.array([[0.3, 0.0], [0.05, 0.4]], dtype=float))
+    panel = merge_panel_observed_coefficient_mask(None, first, threshold=0.1)
+    panel = merge_panel_observed_coefficient_mask(panel, second, threshold=0.1)
+    np.testing.assert_array_equal(
+        panel.toarray(), np.array([[1, 1], [0, 1]], dtype=np.int8)
+    )
 
 
 def test_sparse_edge_counts_and_adjacent_change_distribution() -> None:

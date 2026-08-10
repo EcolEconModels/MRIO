@@ -130,6 +130,33 @@ def test_legacy_load_mrio_matrices_wraps_matrix_result(tmp_path: Path) -> None:
     assert metadata["has_Z"] is False
 
 
+def test_matrix_result_can_read_final_demand_without_z(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Y-only matrix requests must not parse the EXIO transaction matrix."""
+
+    cache_root = _prepare_cache_root(tmp_path)
+
+    def _unexpected_z_read(*_args: object, **_kwargs: object) -> csr_matrix:
+        raise AssertionError("matrix='none' must not read Z.txt")
+
+    monkeypatch.setattr(data, "_read_exio_Z_sparse_from_zip", _unexpected_z_read)
+    result = data.load_mrio_matrix_result(
+        2020,
+        matrix="none",
+        final_demand="matrix",
+        data_root=cache_root,
+        allow_download_missing=False,
+        doi=DEFAULT_EXIOBASE3_DOI,
+    )
+    assert result.A is None
+    assert result.Z is None
+    assert isinstance(result.y, pd.DataFrame)
+    assert result.metadata["matrix_request"] == "none"
+    assert result.metadata["z_nnz"] is None
+    assert result.metadata["z_density"] is None
+
+
 def test_matrix_result_rejects_unsupported_requests(tmp_path: Path) -> None:
     cache_root = _prepare_cache_root(tmp_path)
 

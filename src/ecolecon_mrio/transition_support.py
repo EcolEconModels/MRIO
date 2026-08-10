@@ -270,6 +270,49 @@ def _nonnegative_support_matrix(A: Any) -> csr_matrix:
         raise ValueError("A must be non-negative")
     return matrix
 
+def merge_panel_observed_coefficient_mask(
+    current: Any | None,
+    A: Any,
+    *,
+    threshold: float,
+) -> csr_matrix:
+    """Merge one annual ``A`` into the panel-observed coefficient mask.
+
+    A link is present iff its observed coefficient is strictly greater than the
+    declared threshold in at least one processed year.  The helper keeps the
+    union sparse and canonical so audit and support builders cannot drift on
+    threshold strictness, zero elimination, or CSR normalization.
+    """
+
+    cutoff = float(threshold)
+    if not np.isfinite(cutoff) or cutoff < 0.0:
+        raise ValueError("coefficient-mask threshold must be finite and non-negative")
+    matrix = _nonnegative_support_matrix(A)
+    annual = cast(csr_matrix, (matrix > cutoff).astype(np.int8).tocsr())
+    annual.eliminate_zeros()
+    annual.sort_indices()
+    if current is None:
+        return annual
+
+    panel = cast(csr_matrix, csr_matrix(current, dtype=np.int8, copy=False))
+    if panel.shape != matrix.shape:
+        raise ValueError(
+            f"panel mask shape {panel.shape} differs from annual A shape {matrix.shape}"
+        )
+    panel_data = cast(np.ndarray, panel.data)
+    if panel_data.size and bool((panel_data < 0).any()):
+        raise ValueError("panel mask must contain non-negative values")
+    if (not panel.has_canonical_format) or bool(panel_data.size and (panel_data == 0).any()):
+        panel = panel.copy()
+        panel.sum_duplicates()
+        panel.eliminate_zeros()
+        panel.sort_indices()
+    merged = cast(csr_matrix, panel.maximum(annual).tocsr())
+    merged.eliminate_zeros()
+    merged.sort_indices()
+    return merged
+
+
 def baseline_productivity_certificate(
     A: Any,
     *,

@@ -1035,7 +1035,9 @@ def _normalize_exio_matrix_request(matrix: str) -> str:
         return "Z"
     if matrix_norm in {"both", "a+z", "z+a"}:
         return "both"
-    raise ValueError("matrix must be one of: 'A', 'Z', or 'both'.")
+    if matrix_norm == "none":
+        return "none"
+    raise ValueError("matrix must be one of: 'A', 'Z', 'both', or 'none'.")
 
 
 def _normalize_final_demand_request(final_demand: str) -> str:
@@ -1062,18 +1064,25 @@ def _load_exio_matrix_result_direct_from_zip(
     final_demand_request = _normalize_final_demand_request(final_demand)
 
     x, basis_index = _read_exio_x_from_zip(zip_path)
-    Z_work = _read_exio_Z_sparse_from_zip(zip_path, basis_index=basis_index)
-    z_nnz = int(Z_work.nnz)
+    Z_work: csr_matrix | None = None
+    z_nnz: int | None = None
+    if matrix_request != "none":
+        Z_work = _read_exio_Z_sparse_from_zip(zip_path, basis_index=basis_index)
+        z_nnz = int(Z_work.nnz)
 
     A_result: csr_matrix | None = None
     Z_result: csr_matrix | None = None
     if matrix_request in {"A", "both"}:
+        if Z_work is None:
+            raise RuntimeError("internal EXIO matrix request lost required Z storage")
         # ``_derive_A_from_Z_and_x`` scales sparse storage in-place to avoid a
         # duplicate Z peak for the legacy A-only path.  When the caller explicitly
         # asks for both matrices, copy once so Z remains the transaction matrix.
         z_for_a = Z_work.copy() if matrix_request == "both" else Z_work
         A_result = _derive_A_from_Z_and_x(z_for_a, x, basis_index=basis_index)
     if matrix_request in {"Z", "both"}:
+        if Z_work is None:
+            raise RuntimeError("internal EXIO matrix request lost required Z storage")
         Z_result = Z_work
 
     if final_demand_request == "summed":
@@ -1103,7 +1112,11 @@ def _load_exio_matrix_result_direct_from_zip(
         "matrix_shape": [int(len(basis_index)), int(len(basis_index))],
         "z_nnz": z_nnz,
         "a_nnz": int(A_result.nnz) if A_result is not None else None,
-        "z_density": (float(z_nnz) / density_denominator) if density_denominator else 0.0,
+        "z_density": (
+            float(z_nnz) / density_denominator
+            if z_nnz is not None and density_denominator
+            else None
+        ),
         "index_columns": ["region", "sector"],
         "stored_objects": [],
         "not_stored_objects": ["full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "matrix_npz_cache"],
@@ -1147,8 +1160,9 @@ def load_mrio_matrix_result(
     """Load an explicit EXIOBASE matrix-result object from the DOI-checked source zip.
 
     Phase 3 intentionally keeps this provider-specific and backward-compatible:
-    callers can request ``matrix='A'``, ``'Z'``, or ``'both'`` and
-    ``final_demand='summed'``, ``'matrix'``, or ``'none'``.  The legacy
+    callers can request ``matrix='A'``, ``'Z'``, ``'both'``, or ``'none'`` and
+    ``final_demand='summed'``, ``'matrix'``, or ``'none'``.  ``matrix='none'`` is
+    the low-memory path for callers that need only ``x`` and final demand. The legacy
     ``load_mrio_matrices`` tuple API delegates here with ``A`` plus summed
     final demand.
     """
