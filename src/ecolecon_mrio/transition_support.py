@@ -394,8 +394,8 @@ def _pair_active_relative_row(
     *,
     row: int,
     floor: float,
-) -> tuple[np.ndarray, int, int]:
-    """Return pair-active relative changes for one CSR row only."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return pair-active changes and observed magnitudes for threshold crossings."""
 
     start_left = int(start.indptr[row])
     start_right = int(start.indptr[row + 1])
@@ -403,9 +403,12 @@ def _pair_active_relative_row(
     end_right = int(end.indptr[row + 1])
     start_columns = np.asarray(start.indices[start_left:start_right], dtype=np.intp)
     end_columns = np.asarray(end.indices[end_left:end_right], dtype=np.intp)
+    empty = np.empty(0, dtype=np.float64)
     if start_columns.size == 0 and end_columns.size == 0:
-        return np.empty(0, dtype=np.float64), 0, 0
+        return empty, empty, empty
 
+    # Merge one CSR row only: EXIO-scale pair diagnostics must not materialize a
+    # full pair-active COO union or retain a floating panel-wide reference matrix.
     columns = np.union1d(start_columns, end_columns)
     start_values = np.zeros(columns.size, dtype=np.float64)
     end_values = np.zeros(columns.size, dtype=np.float64)
@@ -416,30 +419,35 @@ def _pair_active_relative_row(
 
     active = np.maximum(start_values, end_values) > floor
     if not bool(active.any()):
-        return np.empty(0, dtype=np.float64), 0, 0
+        return empty, empty, empty
     start_active = start_values[active]
     end_active = end_values[active]
-    appearing = int(np.count_nonzero((start_active <= floor) & (end_active > floor)))
-    disappearing = int(np.count_nonzero((start_active > floor) & (end_active <= floor)))
+    appearing = (start_active <= floor) & (end_active > floor)
+    disappearing = (start_active > floor) & (end_active <= floor)
     relative = np.abs(end_active - start_active) / np.maximum(start_active, floor)
-    return np.asarray(relative, dtype=np.float64), appearing, disappearing
+    return relative, end_active[appearing], start_active[disappearing]
 
 
-def adjacent_coefficient_change_quantiles(
+def adjacent_coefficient_change_diagnostics(
     A_start: Any,
     A_end: Any,
     *,
     floor: float,
     quantiles: Iterable[float],
-) -> tuple[int, int, int, dict[float, float]]:
-    r"""Return exact pair-active coefficient-change quantiles with bounded scratch.
+) -> tuple[
+    int,
+    int,
+    int,
+    dict[float, float],
+    dict[float, float],
+    dict[float, float],
+]:
+    r"""Return relative-change and threshold-crossing coefficient quantiles.
 
-    The statistic remains ``|A1-A0|/max(A0,floor)`` on links exceeding ``floor``
-    in at least one endpoint.  CSR rows are merged independently, so no full
-    pair-active COO union or endpoint-value arrays are materialised.  After an
-    initial counting pass, exactly one float64 vector is allocated for the full
-    relative-change distribution; NumPy linear quantiles are then selected in
-    place.  Callers should release both annual matrices after the pair result.
+    Besides ``|A1-A0|/max(A0,floor)``, this reports the actual positive end
+    coefficient for appearing links and positive start coefficient for disappearing
+    links. Those dimensionless magnitudes, rather than ``floor`` itself, are the
+    empirical evidence relevant to a later dormant-link cap decision.
     """
 
     epsilon = float(floor)
@@ -458,46 +466,70 @@ def adjacent_coefficient_change_quantiles(
             f"adjacent coefficient matrices differ in shape: {start.shape}, {end.shape}"
         )
     shape = cast(tuple[int, int], start.shape)
-    active_count = 0
-    appearing = 0
-    disappearing = 0
+
+    # Count first so the only pair-wide scratch is three exactly sized float vectors.
+    active_count = appearing_count = disappearing_count = 0
     for row in range(shape[0]):
-        values, row_appearing, row_disappearing = _pair_active_relative_row(
+        relative, appearing, disappearing = _pair_active_relative_row(
             start, end, row=row, floor=epsilon
         )
-        active_count += int(values.size)
-        appearing += row_appearing
-        disappearing += row_disappearing
+        active_count += int(relative.size)
+        appearing_count += int(appearing.size)
+        disappearing_count += int(disappearing.size)
 
+    missing = {value: np.nan for value in requested}
     if active_count == 0:
-        return 0, 0, 0, {value: np.nan for value in requested}
+        return 0, 0, 0, missing, missing.copy(), missing.copy()
 
     changes = np.empty(active_count, dtype=np.float64)
-    offset = 0
+    appearing_values = np.empty(appearing_count, dtype=np.float64)
+    disappearing_values = np.empty(disappearing_count, dtype=np.float64)
+    offsets = [0, 0, 0]
     for row in range(shape[0]):
-        values, _, _ = _pair_active_relative_row(start, end, row=row, floor=epsilon)
-        next_offset = offset + int(values.size)
-        changes[offset:next_offset] = values
-        offset = next_offset
-    if offset != active_count or not np.isfinite(changes).all():
-        raise RuntimeError("adjacent coefficient-change streaming count mismatch")
+        values = _pair_active_relative_row(start, end, row=row, floor=epsilon)
+        for slot, array in enumerate(values):
+            next_offset = offsets[slot] + int(array.size)
+            (changes, appearing_values, disappearing_values)[slot][offsets[slot]:next_offset] = array
+            offsets[slot] = next_offset
+    if offsets != [active_count, appearing_count, disappearing_count]:
+        raise RuntimeError("adjacent coefficient diagnostic streaming count mismatch")
+    if not all(np.isfinite(values).all() for values in (changes, appearing_values, disappearing_values)):
+        raise RuntimeError("adjacent coefficient diagnostics contain non-finite values")
 
-    selected = np.asarray(
-        np.quantile(
-            changes,
-            np.asarray(requested, dtype=np.float64),
-            method="linear",
-            overwrite_input=True,
-        ),
-        dtype=np.float64,
-    ).reshape(-1)
+    def select(values: np.ndarray) -> dict[float, float]:
+        if values.size == 0:
+            return {value: np.nan for value in requested}
+        selected = np.asarray(
+            np.quantile(
+                values, np.asarray(requested), method="linear", overwrite_input=True
+            ),
+            dtype=np.float64,
+        ).reshape(-1)
+        return dict(zip(requested, map(float, selected), strict=True))
+
     return (
         active_count,
-        appearing,
-        disappearing,
-        {quantile: float(value) for quantile, value in zip(requested, selected, strict=True)},
+        appearing_count,
+        disappearing_count,
+        select(changes),
+        select(appearing_values),
+        select(disappearing_values),
     )
 
+
+def adjacent_coefficient_change_quantiles(
+    A_start: Any,
+    A_end: Any,
+    *,
+    floor: float,
+    quantiles: Iterable[float],
+) -> tuple[int, int, int, dict[float, float]]:
+    """Return the established four-value pair-active relative-change API."""
+
+    count, appearing, disappearing, selected, _, _ = adjacent_coefficient_change_diagnostics(
+        A_start, A_end, floor=floor, quantiles=quantiles
+    )
+    return count, appearing, disappearing, selected
 
 
 def certificate_safe_coefficient_capacity_products(

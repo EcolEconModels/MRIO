@@ -6,6 +6,7 @@ from scipy.sparse import csr_matrix, diags
 
 from ecolecon_mrio.transition_support import (
     baseline_productivity_certificate,
+    adjacent_coefficient_change_diagnostics,
     adjacent_coefficient_change_quantiles,
     benchmark_step_for_emissions_cut,
     certificate_safe_coefficient_capacity_products,
@@ -129,6 +130,27 @@ def test_sparse_edge_counts_and_adjacent_change_distribution() -> None:
     assert np.isclose(quantiles[0.5], 0.5)
     assert np.isclose(quantiles[0.9], 4.9)
 
+
+
+
+def test_adjacent_coefficient_diagnostics_report_transition_magnitudes() -> None:
+    """Appearing/disappearing links retain their observed positive coefficient scale."""
+
+    start = np.array([[0.2, 0.0], [0.1, 0.4]], dtype=float)
+    end = np.array([[0.1, 0.3], [0.1, 0.0]], dtype=float)
+    count, appearing, disappearing, _, appearing_q, disappearing_q = (
+        adjacent_coefficient_change_diagnostics(
+            start,
+            end,
+            floor=0.05,
+            quantiles=(0.25, 0.5, 0.9),
+        )
+    )
+    assert count == 4
+    assert appearing == 1
+    assert disappearing == 1
+    assert all(np.isclose(value, 0.3) for value in appearing_q.values())
+    assert all(np.isclose(value, 0.4) for value in disappearing_q.values())
 
 
 def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None:
