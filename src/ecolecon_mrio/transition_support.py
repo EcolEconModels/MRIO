@@ -336,14 +336,10 @@ def merge_panel_coefficient_envelope(
         raise ValueError("coefficient-envelope threshold must be finite and non-negative")
 
     matrix = _nonnegative_support_matrix(A)
-    annual = matrix.copy()
-    if annual.data.size:
-        annual.data[annual.data <= cutoff] = 0.0
-        annual.eliminate_zeros()
-        annual.sort_indices()
-    annual_counts = cast(csr_matrix, annual.astype(np.uint8, copy=True))
-    if annual_counts.data.size:
-        annual_counts.data.fill(1)
+    matrix_shape = cast(tuple[int, int], matrix.shape)
+    matrix_indptr = cast(np.ndarray, matrix.indptr)
+    matrix_indices = cast(np.ndarray, matrix.indices)
+    matrix_data = cast(np.ndarray, matrix.data)
 
     missing = (
         active_year_counts is None,
@@ -351,7 +347,28 @@ def merge_panel_coefficient_envelope(
         thresholded_maximum is None,
     )
     if all(missing):
-        return annual_counts, annual.copy(), annual.copy()
+        # Build the first annual summaries row by row.  A whole-matrix boolean
+        # selection would duplicate EXIO-scale index and coefficient arrays.
+        row_counts = np.empty(matrix_shape[0], dtype=np.int64)
+        for row in range(matrix_shape[0]):
+            start, stop = matrix_indptr[row], matrix_indptr[row + 1]
+            row_counts[row] = int(np.count_nonzero(matrix_data[start:stop] > cutoff))
+        indptr = np.empty(matrix_shape[0] + 1, dtype=matrix_indptr.dtype)
+        indptr[0] = 0
+        np.cumsum(row_counts, out=indptr[1:])
+        nnz = int(indptr[-1])
+        indices = np.empty(nnz, dtype=matrix_indices.dtype)
+        levels = np.empty(nnz, dtype=np.float64)
+        for row in range(matrix_shape[0]):
+            source_start, source_stop = matrix_indptr[row], matrix_indptr[row + 1]
+            target_start, target_stop = indptr[row], indptr[row + 1]
+            active = matrix_data[source_start:source_stop] > cutoff
+            indices[target_start:target_stop] = matrix_indices[source_start:source_stop][active]
+            levels[target_start:target_stop] = matrix_data[source_start:source_stop][active]
+        counts = csr_matrix((np.ones(nnz, dtype=np.uint8), indices.copy(), indptr.copy()), shape=matrix_shape)
+        minimum = csr_matrix((levels.copy(), indices.copy(), indptr.copy()), shape=matrix_shape)
+        maximum = csr_matrix((levels, indices, indptr), shape=matrix_shape)
+        return counts, minimum, maximum
     if any(missing):
         raise ValueError("panel coefficient envelope state must be all None or all populated")
 
@@ -368,16 +385,88 @@ def merge_panel_coefficient_envelope(
     counts = cast(csr_matrix, raw_counts.astype(np.uint8, copy=False))
     minimum = _nonnegative_support_matrix(thresholded_minimum)
     maximum = _nonnegative_support_matrix(thresholded_maximum)
-    if any(item.shape != matrix.shape for item in (counts, minimum, maximum)):
+    if any(item.shape != matrix_shape for item in (counts, minimum, maximum)):
         raise ValueError("panel coefficient-envelope matrices must share A's shape")
 
-    merged_counts = cast(csr_matrix, (counts + annual_counts).tocsr())
-    merged_minimum = cast(csr_matrix, minimum.minimum(annual).tocsr())
-    merged_maximum = cast(csr_matrix, maximum.maximum(annual).tocsr())
-    for item in (merged_counts, merged_minimum, merged_maximum):
-        item.eliminate_zeros()
-        item.sort_indices()
-    return merged_counts, merged_minimum, merged_maximum
+    # First pass sizes the exact union support for counts/maxima and the exact
+    # intersection support for minima.  It retains no EXIO-scale temporary COO or
+    # sparse binary-operation result while one annual matrix is live.
+    union_counts = np.empty(matrix_shape[0], dtype=np.int64)
+    intersection_counts = np.empty(matrix_shape[0], dtype=np.int64)
+    for row in range(matrix_shape[0]):
+        start, stop = matrix_indptr[row], matrix_indptr[row + 1]
+        annual_columns = matrix_indices[start:stop][matrix_data[start:stop] > cutoff]
+        count_columns = counts.indices[counts.indptr[row]:counts.indptr[row + 1]]
+        minimum_columns = minimum.indices[minimum.indptr[row]:minimum.indptr[row + 1]]
+        union_counts[row] = np.union1d(count_columns, annual_columns).size
+        intersection_counts[row] = np.intersect1d(minimum_columns, annual_columns, assume_unique=True).size
+
+    union_indptr = np.empty(matrix_shape[0] + 1, dtype=matrix_indptr.dtype)
+    minimum_indptr = np.empty(matrix_shape[0] + 1, dtype=matrix_indptr.dtype)
+    union_indptr[0] = minimum_indptr[0] = 0
+    np.cumsum(union_counts, out=union_indptr[1:])
+    np.cumsum(intersection_counts, out=minimum_indptr[1:])
+    union_nnz = int(union_indptr[-1])
+    minimum_nnz = int(minimum_indptr[-1])
+    merged_indices = np.empty(union_nnz, dtype=matrix_indices.dtype)
+    merged_counts_data = np.empty(union_nnz, dtype=np.uint8)
+    merged_maximum_data = np.empty(union_nnz, dtype=np.float64)
+    merged_minimum_indices = np.empty(minimum_nnz, dtype=matrix.indices.dtype)
+    merged_minimum_data = np.empty(minimum_nnz, dtype=np.float64)
+
+    # Second pass fills the preallocated CSR arrays.  A missing annual link drops
+    # from the minimum support, thereby encoding its thresholded zero permanently.
+    for row in range(matrix_shape[0]):
+        annual_start, annual_stop = matrix_indptr[row], matrix_indptr[row + 1]
+        annual_active = matrix_data[annual_start:annual_stop] > cutoff
+        annual_columns = matrix_indices[annual_start:annual_stop][annual_active]
+        annual_values = matrix_data[annual_start:annual_stop][annual_active]
+        count_start, count_stop = counts.indptr[row], counts.indptr[row + 1]
+        count_columns = counts.indices[count_start:count_stop]
+        count_values = counts.data[count_start:count_stop]
+        maximum_start, maximum_stop = maximum.indptr[row], maximum.indptr[row + 1]
+        maximum_columns = maximum.indices[maximum_start:maximum_stop]
+        maximum_values = maximum.data[maximum_start:maximum_stop]
+        minimum_start, minimum_stop = minimum.indptr[row], minimum.indptr[row + 1]
+        minimum_columns = minimum.indices[minimum_start:minimum_stop]
+        minimum_values = minimum.data[minimum_start:minimum_stop]
+
+        output_start, output_stop = union_indptr[row], union_indptr[row + 1]
+        columns = np.union1d(count_columns, annual_columns)
+        merged_indices[output_start:output_stop] = columns
+        annual_pos = np.searchsorted(annual_columns, columns)
+        annual_present = (annual_pos < annual_columns.size) & (annual_columns[np.minimum(annual_pos, max(annual_columns.size - 1, 0))] == columns) if annual_columns.size else np.zeros(columns.size, dtype=bool)
+        count_pos = np.searchsorted(count_columns, columns)
+        count_present = (count_pos < count_columns.size) & (count_columns[np.minimum(count_pos, max(count_columns.size - 1, 0))] == columns) if count_columns.size else np.zeros(columns.size, dtype=bool)
+        maximum_pos = np.searchsorted(maximum_columns, columns)
+        maximum_present = (maximum_pos < maximum_columns.size) & (maximum_columns[np.minimum(maximum_pos, max(maximum_columns.size - 1, 0))] == columns) if maximum_columns.size else np.zeros(columns.size, dtype=bool)
+        annual_output = np.zeros(columns.size, dtype=np.float64)
+        if annual_columns.size:
+            annual_output[annual_present] = annual_values[annual_pos[annual_present]]
+        count_output = np.zeros(columns.size, dtype=np.uint8)
+        if count_columns.size:
+            count_output[count_present] = count_values[count_pos[count_present]]
+        maximum_output = np.zeros(columns.size, dtype=np.float64)
+        if maximum_columns.size:
+            maximum_output[maximum_present] = maximum_values[maximum_pos[maximum_present]]
+        merged_counts_data[output_start:output_stop] = annual_present.astype(np.uint8) + count_output
+        merged_maximum_data[output_start:output_stop] = np.maximum(
+            annual_output,
+            maximum_output,
+        )
+
+        minimum_columns_out = np.intersect1d(minimum_columns, annual_columns, assume_unique=True)
+        minimum_output_start, minimum_output_stop = minimum_indptr[row], minimum_indptr[row + 1]
+        merged_minimum_indices[minimum_output_start:minimum_output_stop] = minimum_columns_out
+        old_pos = np.searchsorted(minimum_columns, minimum_columns_out)
+        new_pos = np.searchsorted(annual_columns, minimum_columns_out)
+        merged_minimum_data[minimum_output_start:minimum_output_stop] = np.minimum(minimum_values[old_pos], annual_values[new_pos])
+
+    return (
+        csr_matrix((merged_counts_data, merged_indices.copy(), union_indptr.copy()), shape=matrix_shape),
+        csr_matrix((merged_minimum_data, merged_minimum_indices, minimum_indptr), shape=matrix_shape),
+        csr_matrix((merged_maximum_data, merged_indices, union_indptr), shape=matrix_shape),
+    )
 
 
 def complete_directions_with_fixed_final_demand(

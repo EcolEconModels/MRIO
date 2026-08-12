@@ -250,6 +250,33 @@ def test_panel_coefficient_envelope_tracks_thresholded_counts_minimum_and_maximu
     )
 
 
+def test_panel_coefficient_envelope_matches_dense_thresholded_history() -> None:
+    """CSR streaming must preserve zero-inclusive minima and union count/max semantics."""
+
+    threshold = 0.1
+    annual = (
+        np.array([[0.2, 0.1, 0.0], [0.5, 0.0, 0.0], [0.0, 0.3, 0.0]]),
+        np.array([[0.4, 0.0, 0.2], [0.0, 0.0, 0.0], [0.0, 0.6, 0.0]]),
+        np.array([[0.3, 0.2, 0.0], [0.7, 0.0, 0.0], [0.0, 0.4, 0.9]]),
+    )
+    thresholded = np.stack([np.where(matrix > threshold, matrix, 0.0) for matrix in annual])
+    counts = minimum = maximum = None
+    for matrix in annual:
+        counts, minimum, maximum = merge_panel_coefficient_envelope(
+            counts, minimum, maximum, csr_matrix(matrix), threshold=threshold
+        )
+
+    assert counts is not None and minimum is not None and maximum is not None
+    np.testing.assert_array_equal(counts.toarray(), (thresholded > 0.0).sum(axis=0).astype(np.uint8))
+    np.testing.assert_allclose(minimum.toarray(), thresholded.min(axis=0))
+    np.testing.assert_allclose(maximum.toarray(), thresholded.max(axis=0))
+    for summary, dtype in ((counts, np.uint8), (minimum, np.float64), (maximum, np.float64)):
+        assert isinstance(summary, csr_matrix)
+        assert summary.has_canonical_format
+        assert summary.dtype == dtype
+        assert not bool((summary.data == 0).any())
+
+
 def test_fixed_final_demand_completion_preserves_prescribed_rows() -> None:
     """The generic completion must enforce [(I-A)D]_N=0 without altering D_S."""
 
