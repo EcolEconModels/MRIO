@@ -313,6 +313,160 @@ def merge_panel_observed_coefficient_mask(
     return merged
 
 
+def merge_panel_coefficient_envelope(
+    active_year_counts: Any | None,
+    thresholded_minimum: Any | None,
+    thresholded_maximum: Any | None,
+    A: Any,
+    *,
+    threshold: float,
+) -> tuple[csr_matrix, csr_matrix, csr_matrix]:
+    """Merge one annual ``A`` into sparse thresholded count/min/max summaries.
+
+    Coefficients at or below ``threshold`` are treated as zero for this panel
+    calibration. ``active_year_counts`` therefore records strict-threshold
+    persistence, ``thresholded_minimum`` is zero whenever a link is absent in any
+    processed year, and ``thresholded_maximum`` stores the largest observed
+    above-threshold level. The routine retains only the three sparse summaries,
+    never annual matrices.
+    """
+
+    cutoff = float(threshold)
+    if not np.isfinite(cutoff) or cutoff < 0.0:
+        raise ValueError("coefficient-envelope threshold must be finite and non-negative")
+
+    matrix = _nonnegative_support_matrix(A)
+    annual = matrix.copy()
+    if annual.data.size:
+        annual.data[annual.data <= cutoff] = 0.0
+        annual.eliminate_zeros()
+        annual.sort_indices()
+    annual_counts = cast(csr_matrix, annual.astype(np.uint8, copy=True))
+    if annual_counts.data.size:
+        annual_counts.data.fill(1)
+
+    missing = (
+        active_year_counts is None,
+        thresholded_minimum is None,
+        thresholded_maximum is None,
+    )
+    if all(missing):
+        return annual_counts, annual.copy(), annual.copy()
+    if any(missing):
+        raise ValueError("panel coefficient envelope state must be all None or all populated")
+
+    raw_counts = cast(csr_matrix, csr_matrix(active_year_counts, copy=False))
+    raw_count_data = np.asarray(raw_counts.data)
+    if raw_count_data.size and (
+        not np.isfinite(raw_count_data).all()
+        or bool((raw_count_data < 0).any())
+        or not np.array_equal(raw_count_data, np.rint(raw_count_data))
+    ):
+        raise ValueError("panel active-year counts must be finite non-negative integers")
+    if raw_count_data.size and int(raw_count_data.max()) >= np.iinfo(np.uint8).max:
+        raise OverflowError("panel active-year count exceeds uint8 capacity")
+    counts = cast(csr_matrix, raw_counts.astype(np.uint8, copy=False))
+    minimum = _nonnegative_support_matrix(thresholded_minimum)
+    maximum = _nonnegative_support_matrix(thresholded_maximum)
+    if any(item.shape != matrix.shape for item in (counts, minimum, maximum)):
+        raise ValueError("panel coefficient-envelope matrices must share A's shape")
+
+    merged_counts = cast(csr_matrix, (counts + annual_counts).tocsr())
+    merged_minimum = cast(csr_matrix, minimum.minimum(annual).tocsr())
+    merged_maximum = cast(csr_matrix, maximum.maximum(annual).tocsr())
+    for item in (merged_counts, merged_minimum, merged_maximum):
+        item.eliminate_zeros()
+        item.sort_indices()
+    return merged_counts, merged_minimum, merged_maximum
+
+
+def complete_directions_with_fixed_final_demand(
+    A: Any,
+    prescribed_rows: np.ndarray,
+    prescribed_directions: np.ndarray,
+    *,
+    tolerance: float = 1.0e-9,
+) -> np.ndarray:
+    r"""Complete prescribed rows so ``[(I-A)D]_N = 0`` on complementary rows.
+
+    The supplied rows ``S`` are preserved exactly. For ``N`` equal to their
+    complement, each direction column solves
+    ``(I-A_NN)D_N = A_NS D_S`` with the same restarted sparse LGMRES convention
+    used by the productivity certificate. The returned full ``N_total x K``
+    direction matrix is dense only in its small direction dimension; no Leontief
+    inverse or dense coefficient matrix is formed.
+    """
+
+    matrix = _nonnegative_support_matrix(A)
+    mask = np.asarray(prescribed_rows, dtype=bool).reshape(-1)
+    directions = np.asarray(prescribed_directions, dtype=np.float64)
+    matrix_shape = cast(tuple[int, int], matrix.shape)
+    n = matrix_shape[0]
+    if mask.shape != (n,) or not bool(mask.any()):
+        raise ValueError("prescribed_rows must be a non-empty boolean mask aligned to A")
+    if (
+        directions.ndim != 2
+        or directions.shape[0] != int(mask.sum())
+        or directions.shape[1] == 0
+        or not np.isfinite(directions).all()
+    ):
+        raise ValueError("prescribed_directions must be a finite |S| x K matrix")
+    tol = float(tolerance)
+    if not np.isfinite(tol) or tol <= 0.0:
+        raise ValueError("completion tolerance must be finite and positive")
+
+    full = np.zeros((n, directions.shape[1]), dtype=np.float64)
+    full[mask, :] = directions
+    free = ~mask
+    if not bool(free.any()):
+        return full
+
+    matrix_view = cast(Any, matrix)
+    A_nn = cast(csr_matrix, csr_matrix(matrix_view[free][:, free], dtype=np.float64))
+    A_ns = cast(csr_matrix, csr_matrix(matrix_view[free][:, mask], dtype=np.float64))
+    rhs = np.asarray(A_ns.dot(directions), dtype=np.float64)
+    linear_operator = cast(Any, LinearOperator)
+    operator = linear_operator(
+        A_nn.shape,
+        matvec=lambda values: np.asarray(values, dtype=np.float64) - A_nn.dot(values),
+        dtype=np.float64,
+    )
+    iterative_solve = cast(Any, lgmres)
+    for column in range(directions.shape[1]):
+        target = rhs[:, column]
+        if not bool(np.any(target)):
+            solution = np.zeros(target.shape, dtype=np.float64)
+        else:
+            solution_raw, info = iterative_solve(
+                operator,
+                target,
+                x0=np.zeros_like(target),
+                rtol=1.0e-11,
+                atol=0.0,
+                maxiter=500,
+                inner_m=30,
+                outer_k=3,
+            )
+            solution = np.asarray(solution_raw, dtype=np.float64).reshape(-1)
+            if int(info) != 0:
+                raise RuntimeError(
+                    f"fixed-final-demand direction completion failed to converge; info={info}"
+                )
+        if solution.shape != target.shape or not np.isfinite(solution).all():
+            raise RuntimeError("fixed-final-demand direction completion returned invalid values")
+        full[free, column] = solution
+
+    residual = np.asarray(full - matrix.dot(full), dtype=np.float64)[free, :]
+    scale = max(1.0, float(np.max(np.abs(rhs))), float(np.max(np.abs(full))))
+    relative_residual = float(np.max(np.abs(residual)) / scale) if residual.size else 0.0
+    if relative_residual > tol:
+        raise RuntimeError(
+            "fixed-final-demand direction completion residual exceeds tolerance: "
+            f"{relative_residual:.6g} > {tol:.6g}"
+        )
+    return full
+
+
 def baseline_productivity_certificate(
     A: Any,
     *,
@@ -534,62 +688,54 @@ def adjacent_coefficient_change_quantiles(
 
 def certificate_safe_coefficient_capacity_products(
     A: Any,
-    panel_mask: Any,
+    allowed_mask: Any,
+    lower_levels: Any,
+    upper_levels: Any,
     right_hand_sides: np.ndarray,
     *,
     certificate_vector: np.ndarray,
     productivity_epsilon: float,
-    relative_change_cap: float,
-    coefficient_floor: float,
     tolerance: float = 1.0e-12,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    r"""Apply certificate-safe coefficient bounds directly to selected RHS vectors.
+    r"""Apply a coefficient-level box and certificate to compact RHS vectors.
 
-    Figure 6 needs ``lower_delta_A @ R`` and ``upper_delta_A @ R`` for baseline
-    output plus six primitive axes, not the sparse bound matrices themselves.
-    This routine traverses the panel-observed mask by CSR row, reconstructs only
-    the current row's baseline coefficients, applies the same local cap and fixed
-    productivity certificate as the declared inner domain, and returns the exact
-    capacity products without a full-panel COO conversion or delta-A matrices.
+    ``allowed_mask`` declares which coefficient links may change. On those links
+    the raw change interval is ``lower_levels-A <= Delta A <= upper_levels-A``.
+    Negative headroom is limited only by the supplied lower level; positive
+    headroom is scaled row-wise so the simultaneous upper corner satisfies the
+    fixed sufficient certificate ``A'v <= (1-epsilon)v``. Only products of these
+    bounds with the supplied small RHS matrix are returned, avoiding EXIO-scale
+    stored ``Delta A`` bound matrices.
     """
 
     matrix = _nonnegative_support_matrix(A)
     matrix_shape = cast(tuple[int, int], matrix.shape)
-    cap = float(relative_change_cap)
-    floor = float(coefficient_floor)
+    n = matrix_shape[0]
     epsilon = float(productivity_epsilon)
     tol = float(tolerance)
-    if not np.isfinite(cap) or cap < 0.0:
-        raise ValueError("relative_change_cap must be finite and non-negative")
-    if not np.isfinite(floor) or floor <= 0.0:
-        raise ValueError("coefficient_floor must be finite and positive")
     if not 0.0 < epsilon < 1.0 or tol <= 0.0:
         raise ValueError("productivity_epsilon must lie in (0, 1) and tolerance be positive")
 
-    vector = np.asarray(certificate_vector, dtype=np.float64).reshape(-1)
-    rhs = np.asarray(right_hand_sides, dtype=np.float64)
-    if (
-        vector.shape != (matrix_shape[0],)
-        or not np.isfinite(vector).all()
-        or bool((vector <= 0.0).any())
-    ):
-        raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
-    if rhs.ndim != 2 or rhs.shape[0] != matrix_shape[0] or not np.isfinite(rhs).all():
-        raise ValueError("right_hand_sides must be a finite N x K matrix aligned to A")
-
-    mask = cast(csr_matrix, csr_matrix(panel_mask, dtype=np.int8, copy=False))
-    mask_data = cast(np.ndarray, mask.data)
+    mask = cast(csr_matrix, csr_matrix(allowed_mask, dtype=np.int8, copy=False))
+    minimum = _nonnegative_support_matrix(lower_levels)
+    maximum = _nonnegative_support_matrix(upper_levels)
+    if any(item.shape != matrix.shape for item in (mask, minimum, maximum)):
+        raise ValueError("coefficient mask and level bounds must share A's shape")
+    mask_data = np.asarray(mask.data)
+    if mask_data.size and bool((mask_data < 0).any()):
+        raise ValueError("allowed coefficient mask must be non-negative")
     if (not mask.has_canonical_format) or bool(mask_data.size and (mask_data == 0).any()):
         mask = mask.copy()
         mask.sum_duplicates()
         mask.eliminate_zeros()
         mask.sort_indices()
-        mask_data = cast(np.ndarray, mask.data)
-    mask_shape = cast(tuple[int, int], mask.shape)
-    if mask_shape != matrix_shape:
-        raise ValueError(f"panel mask shape {mask_shape} differs from A shape {matrix_shape}")
-    if mask_data.size and bool((mask_data < 0).any()):
-        raise ValueError("panel mask must contain non-negative values")
+
+    vector = np.asarray(certificate_vector, dtype=np.float64).reshape(-1)
+    rhs = np.asarray(right_hand_sides, dtype=np.float64)
+    if vector.shape != (n,) or not np.isfinite(vector).all() or bool((vector <= 0.0).any()):
+        raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
+    if rhs.ndim != 2 or rhs.shape[0] != n or not np.isfinite(rhs).all():
+        raise ValueError("right_hand_sides must be a finite N x K matrix aligned to A")
 
     baseline_slack = np.asarray(
         (1.0 - epsilon) * vector - matrix.dot(vector), dtype=np.float64
@@ -597,43 +743,54 @@ def certificate_safe_coefficient_capacity_products(
     if float(baseline_slack.min()) < -tol:
         raise ValueError("baseline matrix violates the supplied productivity certificate")
 
-    lower_products = np.zeros((matrix_shape[0], rhs.shape[1]), dtype=np.float64)
+    lower_products = np.zeros((n, rhs.shape[1]), dtype=np.float64)
     upper_products = np.zeros_like(lower_products)
-    row_scale = np.ones(matrix_shape[0], dtype=np.float64)
+    row_scale = np.ones(n, dtype=np.float64)
     guaranteed_margin = baseline_slack.copy()
 
-    for row in range(matrix_shape[0]):
-        mask_left = int(mask.indptr[row])
-        mask_right = int(mask.indptr[row + 1])
-        columns = np.asarray(mask.indices[mask_left:mask_right], dtype=np.intp)
+    def values_on(columns: np.ndarray, source: csr_matrix, row: int) -> np.ndarray:
+        """Read one sparse row on a sorted column subset without densifying."""
+
+        left = int(source.indptr[row])
+        right = int(source.indptr[row + 1])
+        source_columns = np.asarray(source.indices[left:right], dtype=np.intp)
+        result = np.zeros(columns.size, dtype=np.float64)
+        if source_columns.size and columns.size:
+            positions = np.searchsorted(source_columns, columns)
+            in_bounds = positions < source_columns.size
+            matches = np.zeros(columns.size, dtype=bool)
+            if bool(in_bounds.any()):
+                matches[in_bounds] = source_columns[positions[in_bounds]] == columns[in_bounds]
+            if bool(matches.any()):
+                row_values = np.asarray(source.data[left:right], dtype=np.float64)
+                result[matches] = row_values[positions[matches]]
+        return result
+
+    for row in range(n):
+        left = int(mask.indptr[row])
+        right = int(mask.indptr[row + 1])
+        columns = np.asarray(mask.indices[left:right], dtype=np.intp)
         if columns.size == 0:
             continue
 
-        a_left = int(matrix.indptr[row])
-        a_right = int(matrix.indptr[row + 1])
-        a_columns = np.asarray(matrix.indices[a_left:a_right], dtype=np.intp)
-        a_values = np.asarray(matrix.data[a_left:a_right], dtype=np.float64)
-        baseline_values = np.zeros(columns.size, dtype=np.float64)
-        if a_columns.size:
-            positions = np.searchsorted(a_columns, columns)
-            in_bounds = positions < a_columns.size
-            matches = np.zeros(columns.size, dtype=bool)
-            if bool(in_bounds.any()):
-                bounded_positions = positions[in_bounds]
-                matches[in_bounds] = a_columns[bounded_positions] == columns[in_bounds]
-            if bool(matches.any()):
-                baseline_values[matches] = a_values[positions[matches]]
+        baseline = values_on(columns, matrix, row)
+        lower_level = values_on(columns, minimum, row)
+        upper_level = values_on(columns, maximum, row)
+        raw_lower = lower_level - baseline
+        raw_upper = upper_level - baseline
+        if float(raw_lower.max(initial=0.0)) > tol or float(raw_upper.min(initial=0.0)) < -tol:
+            raise ValueError("baseline coefficient lies outside supplied historical level bounds")
+        raw_lower = np.minimum(raw_lower, 0.0)
+        raw_upper = np.maximum(raw_upper, 0.0)
+        selected_rhs = rhs[columns, :]
+        lower_products[row, :] = raw_lower @ selected_rhs
 
-        raw_cap = cap * np.maximum(baseline_values, floor)
-        lower_data = -np.minimum(baseline_values, raw_cap)
-        positive_use = float(np.dot(raw_cap, vector[columns]))
+        positive_use = float(np.dot(raw_upper, vector[columns]))
         scale = 1.0
         if positive_use > tol:
             scale = min(1.0, max(float(baseline_slack[row]), 0.0) / positive_use)
         row_scale[row] = scale
-        selected_rhs = rhs[columns, :]
-        lower_products[row, :] = lower_data @ selected_rhs
-        upper_products[row, :] = (scale * raw_cap) @ selected_rhs
+        upper_products[row, :] = (scale * raw_upper) @ selected_rhs
         guaranteed_margin[row] = float(baseline_slack[row]) - scale * positive_use
 
     if float(guaranteed_margin.min()) < -tol:

@@ -10,6 +10,8 @@ from ecolecon_mrio.transition_support import (
     adjacent_coefficient_change_quantiles,
     benchmark_step_for_emissions_cut,
     certificate_safe_coefficient_capacity_products,
+    complete_directions_with_fixed_final_demand,
+    merge_panel_coefficient_envelope,
     coefficient_change_bounds,
     coefficient_edge_counts,
     emissions_cut_from_step,
@@ -154,44 +156,46 @@ def test_adjacent_coefficient_diagnostics_report_transition_magnitudes() -> None
 
 
 def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None:
-    """Capacity products must equal explicit certificate-safe bound-matrix products."""
+    """Historical level bounds must produce exact compact products and a productive upper box."""
 
-    A = np.array([[0.9, 0.0], [0.0, 0.2]], dtype=float)
+    A = np.array([[0.2, 0.0], [0.0, 0.1]], dtype=float)
     vector, epsilon, _ = baseline_productivity_certificate(A)
-    mask = np.array([[True, True], [False, True]], dtype=bool)
+    allowed = np.array([[True, True], [False, True]], dtype=bool)
+    historical_minimum = np.array([[0.1, 0.0], [0.0, 0.05]], dtype=float)
+    historical_maximum = np.array([[0.3, 0.05], [0.0, 0.15]], dtype=float)
     rhs = np.array([[10.0, 1.0], [4.0, -2.0]], dtype=float)
     lower_products, upper_products, scale, margin = (
         certificate_safe_coefficient_capacity_products(
             A,
-            mask,
+            allowed,
+            historical_minimum,
+            historical_maximum,
             rhs,
             certificate_vector=vector,
             productivity_epsilon=epsilon,
-            relative_change_cap=1.0,
-            coefficient_floor=0.1,
         )
     )
 
-    baseline_values = np.array([[0.9, 0.0], [0.0, 0.2]], dtype=float)
-    raw_cap = np.array([[0.9, 0.1], [0.0, 0.2]], dtype=float)
-    lower = -np.minimum(baseline_values, raw_cap)
-    lower[1, 0] = 0.0
+    raw_lower = np.array([[-0.1, 0.0], [0.0, -0.05]], dtype=float)
+    raw_upper = np.array([[0.1, 0.05], [0.0, 0.05]], dtype=float)
     baseline_slack = (1.0 - epsilon) * vector - A @ vector
-    positive_use = raw_cap @ vector
+    positive_use = raw_upper @ vector
     expected_scale = np.ones(2, dtype=float)
     active = positive_use > 1.0e-12
     expected_scale[active] = np.minimum(
         1.0, np.maximum(baseline_slack[active], 0.0) / positive_use[active]
     )
-    upper = raw_cap * expected_scale[:, None]
+    safe_upper = raw_upper * expected_scale[:, None]
 
     np.testing.assert_allclose(scale, expected_scale)
-    np.testing.assert_allclose(lower_products, lower @ rhs)
-    np.testing.assert_allclose(upper_products, upper @ rhs)
+    np.testing.assert_allclose(
+        lower_products, raw_lower @ rhs, rtol=1.0e-12, atol=1.0e-14
+    )
+    np.testing.assert_allclose(
+        upper_products, safe_upper @ rhs, rtol=1.0e-12, atol=1.0e-14
+    )
     assert float(margin.min()) >= -1.0e-12
-    assert bool(((A + upper) @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
-
-
+    assert bool(((A + safe_upper) @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
 
 def test_productivity_certificate_iterative_sparse_residual() -> None:
     A = diags(np.full(2000, 0.4, dtype=float), format="csr")
@@ -216,3 +220,47 @@ def test_support_validation_does_not_mutate_sparse_input() -> None:
     np.testing.assert_array_equal(A.data, before[0])
     np.testing.assert_array_equal(A.indices, before[1])
     np.testing.assert_array_equal(A.indptr, before[2])
+
+
+def test_panel_coefficient_envelope_tracks_thresholded_counts_minimum_and_maximum() -> None:
+    """Panel history must retain persistence and the exact link-specific observed range."""
+
+    annual = (
+        np.array([[0.20, 0.00, 0.40], [0.00, 0.30, 0.00], [0.00, 0.00, 0.10]]),
+        np.array([[0.10, 0.25, 0.00], [0.00, 0.40, 0.00], [0.00, 0.00, 0.10]]),
+        np.array([[0.15, 0.20, 0.00], [0.00, 0.35, 0.00], [0.00, 0.00, 0.10]]),
+    )
+    counts = minimum = maximum = None
+    for A in annual:
+        counts, minimum, maximum = merge_panel_coefficient_envelope(
+            counts, minimum, maximum, A, threshold=0.05
+        )
+
+    assert counts is not None
+    assert minimum is not None
+    assert maximum is not None
+    np.testing.assert_array_equal(
+        counts.toarray(), np.array([[3, 2, 1], [0, 3, 0], [0, 0, 3]], dtype=np.uint8)
+    )
+    np.testing.assert_allclose(
+        minimum.toarray(), np.array([[0.10, 0.0, 0.0], [0.0, 0.30, 0.0], [0.0, 0.0, 0.10]])
+    )
+    np.testing.assert_allclose(
+        maximum.toarray(), np.array([[0.20, 0.25, 0.40], [0.0, 0.40, 0.0], [0.0, 0.0, 0.10]])
+    )
+
+
+def test_fixed_final_demand_completion_preserves_prescribed_rows() -> None:
+    """The generic completion must enforce [(I-A)D]_N=0 without altering D_S."""
+
+    A = csr_matrix(
+        np.array([[0.10, 0.00, 0.00], [0.20, 0.10, 0.00], [0.00, 0.30, 0.10]])
+    )
+    prescribed = np.array([True, False, False])
+    D_S = np.array([[1.0, 2.0]])
+    completed = complete_directions_with_fixed_final_demand(
+        A, prescribed, D_S, tolerance=1.0e-10
+    )
+    np.testing.assert_allclose(completed[prescribed, :], D_S)
+    residual = completed - A.dot(completed)
+    assert float(np.max(np.abs(residual[~prescribed, :]))) <= 1.0e-10
