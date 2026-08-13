@@ -102,6 +102,7 @@ from .transition_support import (
     adjacent_coefficient_change_quantiles,
     benchmark_step_for_emissions_cut,
     certificate_safe_coefficient_capacity_products,
+    certificate_safe_coefficient_headroom,
     complete_directions_with_fixed_final_demand,
     merge_panel_coefficient_envelope,
     coefficient_change_bounds,

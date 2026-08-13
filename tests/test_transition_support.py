@@ -10,6 +10,7 @@ from ecolecon_mrio.transition_support import (
     adjacent_coefficient_change_quantiles,
     benchmark_step_for_emissions_cut,
     certificate_safe_coefficient_capacity_products,
+    certificate_safe_coefficient_headroom,
     complete_directions_with_fixed_final_demand,
     merge_panel_coefficient_envelope,
     coefficient_change_bounds,
@@ -196,6 +197,28 @@ def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None
     )
     assert float(margin.min()) >= -1.0e-12
     assert bool(((A + safe_upper) @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
+
+
+def test_sparse_certificate_headroom_matches_compact_products() -> None:
+    """LP-facing sparse headroom has the exact compact certificate-safe products."""
+
+    A = csr_matrix(np.array([[0.2, 0.0], [0.0, 0.1]], dtype=float))
+    vector, epsilon, _ = baseline_productivity_certificate(A)
+    allowed = csr_matrix(np.array([[1, 1], [0, 1]], dtype=np.int8))
+    minimum = csr_matrix(np.array([[0.1, 0.0], [0.0, 0.05]], dtype=float))
+    maximum = csr_matrix(np.array([[0.3, 0.05], [0.0, 0.15]], dtype=float))
+    rhs = np.array([[10.0, 1.0, -2.0], [4.0, -2.0, 3.0]], dtype=float)
+    lower_products, upper_products, scale, margin = certificate_safe_coefficient_capacity_products(
+        A, allowed, minimum, maximum, rhs, certificate_vector=vector, productivity_epsilon=epsilon
+    )
+    lower, upper, returned_scale, returned_margin = certificate_safe_coefficient_headroom(
+        A, allowed, minimum, maximum, certificate_vector=vector, productivity_epsilon=epsilon
+    )
+    assert lower.has_canonical_format and upper.has_canonical_format
+    np.testing.assert_allclose(lower @ rhs, lower_products, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(upper @ rhs, upper_products, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(returned_scale, scale)
+    np.testing.assert_allclose(returned_margin, margin)
 
 def test_productivity_certificate_iterative_sparse_residual() -> None:
     A = diags(np.full(2000, 0.4, dtype=float), format="csr")
