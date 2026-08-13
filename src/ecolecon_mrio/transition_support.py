@@ -775,6 +775,120 @@ def adjacent_coefficient_change_quantiles(
     return count, appearing, disappearing, selected
 
 
+def _canonical_coefficient_allowed_mask(allowed_mask: Any, shape: tuple[int, int]) -> csr_matrix:
+    """Return the canonical non-negative sparse support used by coefficient-bound APIs.
+
+    Stored zeros are not allowed to turn into adjustable links merely because a
+    caller supplied an already-canonical CSR matrix.  Keeping this normalization
+    in one private helper ensures the compact fixed-RHS and LP-facing APIs use
+    exactly the same eligible edge set.
+    """
+
+    mask = cast(csr_matrix, csr_matrix(allowed_mask, dtype=np.int8, copy=False))
+    if mask.shape != shape:
+        raise ValueError("coefficient allowed mask must share A's shape")
+    mask_data = np.asarray(mask.data)
+    if mask_data.size and bool((mask_data < 0).any()):
+        raise ValueError("allowed coefficient mask must be non-negative")
+    if (not mask.has_canonical_format) or bool(mask_data.size and (mask_data == 0).any()):
+        mask = mask.copy()
+        mask.sum_duplicates()
+        mask.eliminate_zeros()
+        mask.sort_indices()
+    return mask
+
+
+def _sparse_row_values(source: csr_matrix, *, row: int, columns: np.ndarray) -> np.ndarray:
+    """Read one sorted CSR row on ``columns`` without a dense row allocation."""
+
+    left = int(source.indptr[row])
+    right = int(source.indptr[row + 1])
+    source_columns = np.asarray(source.indices[left:right], dtype=np.intp)
+    result = np.zeros(columns.size, dtype=np.float64)
+    if source_columns.size == 0 or columns.size == 0:
+        return result
+    positions = np.searchsorted(source_columns, columns)
+    in_bounds = positions < source_columns.size
+    matches = np.zeros(columns.size, dtype=bool)
+    if bool(in_bounds.any()):
+        matches[in_bounds] = source_columns[positions[in_bounds]] == columns[in_bounds]
+    if bool(matches.any()):
+        row_values = np.asarray(source.data[left:right], dtype=np.float64)
+        result[matches] = row_values[positions[matches]]
+    return result
+
+
+def _certificate_safe_row_headroom(
+    *,
+    matrix: csr_matrix,
+    minimum: csr_matrix,
+    maximum: csr_matrix,
+    row: int,
+    columns: np.ndarray,
+    certificate_vector: np.ndarray,
+    baseline_slack: np.ndarray,
+    tolerance: float,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Return one row's lower/upper change interval after certificate scaling.
+
+    Historical lower levels bound coefficient reductions.  Positive historical
+    headroom is scaled by one row factor so the simultaneous positive corner obeys
+    the fixed sufficient productivity certificate.  Both public coefficient-bound
+    APIs call this helper so they cannot drift on level lookup or certificate use.
+    """
+
+    baseline = _sparse_row_values(matrix, row=row, columns=columns)
+    lower_level = _sparse_row_values(minimum, row=row, columns=columns)
+    upper_level = _sparse_row_values(maximum, row=row, columns=columns)
+    raw_lower = lower_level - baseline
+    raw_upper = upper_level - baseline
+    tol = float(tolerance)
+    if float(raw_lower.max(initial=0.0)) > tol or float(raw_upper.min(initial=0.0)) < -tol:
+        raise ValueError("baseline coefficient lies outside supplied historical level bounds")
+    raw_lower = np.minimum(raw_lower, 0.0)
+    raw_upper = np.maximum(raw_upper, 0.0)
+    positive_use = float(np.dot(raw_upper, certificate_vector[columns]))
+    scale = 1.0
+    if positive_use > tol:
+        scale = min(1.0, max(float(baseline_slack[row]), 0.0) / positive_use)
+    safe_upper = scale * raw_upper
+    margin = float(baseline_slack[row]) - scale * positive_use
+    return raw_lower, safe_upper, scale, margin
+
+
+def _coefficient_headroom_inputs(
+    A: Any,
+    allowed_mask: Any,
+    lower_levels: Any,
+    upper_levels: Any,
+    *,
+    certificate_vector: np.ndarray,
+    productivity_epsilon: float,
+    tolerance: float,
+) -> tuple[csr_matrix, csr_matrix, csr_matrix, csr_matrix, np.ndarray, np.ndarray]:
+    """Validate and align the shared sparse inputs for certificate-safe headroom."""
+
+    matrix = _nonnegative_support_matrix(A)
+    matrix_shape = cast(tuple[int, int], matrix.shape)
+    n = matrix_shape[0]
+    epsilon = float(productivity_epsilon)
+    tol = float(tolerance)
+    if not 0.0 < epsilon < 1.0 or tol <= 0.0:
+        raise ValueError("productivity_epsilon must lie in (0, 1) and tolerance be positive")
+    mask = _canonical_coefficient_allowed_mask(allowed_mask, matrix_shape)
+    minimum = _nonnegative_support_matrix(lower_levels)
+    maximum = _nonnegative_support_matrix(upper_levels)
+    if minimum.shape != matrix_shape or maximum.shape != matrix_shape:
+        raise ValueError("coefficient level bounds must share A's shape")
+    vector = np.asarray(certificate_vector, dtype=np.float64).reshape(-1)
+    if vector.shape != (n,) or not np.isfinite(vector).all() or bool((vector <= 0.0).any()):
+        raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
+    baseline_slack = np.asarray((1.0 - epsilon) * vector - matrix.dot(vector), dtype=np.float64)
+    if float(baseline_slack.min()) < -tol:
+        raise ValueError("baseline matrix violates the supplied productivity certificate")
+    return matrix, mask, minimum, maximum, vector, baseline_slack
+
+
 def certificate_safe_coefficient_capacity_products(
     A: Any,
     allowed_mask: Any,
@@ -797,90 +911,46 @@ def certificate_safe_coefficient_capacity_products(
     stored ``Delta A`` bound matrices.
     """
 
-    matrix = _nonnegative_support_matrix(A)
-    matrix_shape = cast(tuple[int, int], matrix.shape)
-    n = matrix_shape[0]
-    epsilon = float(productivity_epsilon)
     tol = float(tolerance)
-    if not 0.0 < epsilon < 1.0 or tol <= 0.0:
-        raise ValueError("productivity_epsilon must lie in (0, 1) and tolerance be positive")
-
-    mask = cast(csr_matrix, csr_matrix(allowed_mask, dtype=np.int8, copy=False))
-    minimum = _nonnegative_support_matrix(lower_levels)
-    maximum = _nonnegative_support_matrix(upper_levels)
-    if any(item.shape != matrix.shape for item in (mask, minimum, maximum)):
-        raise ValueError("coefficient mask and level bounds must share A's shape")
-    mask_data = np.asarray(mask.data)
-    if mask_data.size and bool((mask_data < 0).any()):
-        raise ValueError("allowed coefficient mask must be non-negative")
-    if (not mask.has_canonical_format) or bool(mask_data.size and (mask_data == 0).any()):
-        mask = mask.copy()
-        mask.sum_duplicates()
-        mask.eliminate_zeros()
-        mask.sort_indices()
-
-    vector = np.asarray(certificate_vector, dtype=np.float64).reshape(-1)
+    matrix, mask, minimum, maximum, vector, baseline_slack = _coefficient_headroom_inputs(
+        A,
+        allowed_mask,
+        lower_levels,
+        upper_levels,
+        certificate_vector=certificate_vector,
+        productivity_epsilon=productivity_epsilon,
+        tolerance=tol,
+    )
+    n = cast(tuple[int, int], matrix.shape)[0]
     rhs = np.asarray(right_hand_sides, dtype=np.float64)
-    if vector.shape != (n,) or not np.isfinite(vector).all() or bool((vector <= 0.0).any()):
-        raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
     if rhs.ndim != 2 or rhs.shape[0] != n or not np.isfinite(rhs).all():
         raise ValueError("right_hand_sides must be a finite N x K matrix aligned to A")
-
-    baseline_slack = np.asarray(
-        (1.0 - epsilon) * vector - matrix.dot(vector), dtype=np.float64
-    )
-    if float(baseline_slack.min()) < -tol:
-        raise ValueError("baseline matrix violates the supplied productivity certificate")
 
     lower_products = np.zeros((n, rhs.shape[1]), dtype=np.float64)
     upper_products = np.zeros_like(lower_products)
     row_scale = np.ones(n, dtype=np.float64)
     guaranteed_margin = baseline_slack.copy()
-
-    def values_on(columns: np.ndarray, source: csr_matrix, row: int) -> np.ndarray:
-        """Read one sparse row on a sorted column subset without densifying."""
-
-        left = int(source.indptr[row])
-        right = int(source.indptr[row + 1])
-        source_columns = np.asarray(source.indices[left:right], dtype=np.intp)
-        result = np.zeros(columns.size, dtype=np.float64)
-        if source_columns.size and columns.size:
-            positions = np.searchsorted(source_columns, columns)
-            in_bounds = positions < source_columns.size
-            matches = np.zeros(columns.size, dtype=bool)
-            if bool(in_bounds.any()):
-                matches[in_bounds] = source_columns[positions[in_bounds]] == columns[in_bounds]
-            if bool(matches.any()):
-                row_values = np.asarray(source.data[left:right], dtype=np.float64)
-                result[matches] = row_values[positions[matches]]
-        return result
-
     for row in range(n):
         left = int(mask.indptr[row])
         right = int(mask.indptr[row + 1])
         columns = np.asarray(mask.indices[left:right], dtype=np.intp)
         if columns.size == 0:
             continue
-
-        baseline = values_on(columns, matrix, row)
-        lower_level = values_on(columns, minimum, row)
-        upper_level = values_on(columns, maximum, row)
-        raw_lower = lower_level - baseline
-        raw_upper = upper_level - baseline
-        if float(raw_lower.max(initial=0.0)) > tol or float(raw_upper.min(initial=0.0)) < -tol:
-            raise ValueError("baseline coefficient lies outside supplied historical level bounds")
-        raw_lower = np.minimum(raw_lower, 0.0)
-        raw_upper = np.maximum(raw_upper, 0.0)
+        raw_lower, safe_upper, scale, margin = _certificate_safe_row_headroom(
+            matrix=matrix,
+            minimum=minimum,
+            maximum=maximum,
+            row=row,
+            columns=columns,
+            certificate_vector=vector,
+            baseline_slack=baseline_slack,
+            tolerance=tol,
+        )
         selected_rhs = rhs[columns, :]
         lower_products[row, :] = raw_lower @ selected_rhs
-
-        positive_use = float(np.dot(raw_upper, vector[columns]))
-        scale = 1.0
-        if positive_use > tol:
-            scale = min(1.0, max(float(baseline_slack[row]), 0.0) / positive_use)
+        upper_products[row, :] = safe_upper @ selected_rhs
         row_scale[row] = scale
-        upper_products[row, :] = (scale * raw_upper) @ selected_rhs
-        guaranteed_margin[row] = float(baseline_slack[row]) - scale * positive_use
+        guaranteed_margin[row] = margin
 
     if float(guaranteed_margin.min()) < -tol:
         raise RuntimeError("certificate-safe coefficient capacities have negative guaranteed margin")
@@ -899,70 +969,92 @@ def certificate_safe_coefficient_headroom(
 ) -> tuple[csr_matrix, csr_matrix, np.ndarray, np.ndarray]:
     r"""Return sparse certificate-safe coefficient-change headroom matrices.
 
-    This public LP-facing form has exactly the same historical-level and fixed
-    productivity-certificate semantics as the compact capacity-product API, but
-    exposes the sparse lower ``L`` and upper ``U`` operators when the right-hand
-    side is endogenous. Fixed-RHS callers should retain the compact API so they
-    never materialize EXIO-scale headroom matrices.
+    This LP-facing form has exactly the same allowed-edge, historical-level, and
+    productivity-certificate semantics as
+    ``certificate_safe_coefficient_capacity_products``.  It is used only when the
+    output vector is itself an LP variable.  A count-and-fill two-pass CSR construction allocates exactly the retained union
+    support, so EXIO-scale Python object lists, overallocated slice backing arrays,
+    and conversion copies are never created.
     """
 
-    matrix = _nonnegative_support_matrix(A)
-    n = matrix.shape[0]
-    epsilon = float(productivity_epsilon)
     tol = float(tolerance)
-    if not 0.0 < epsilon < 1.0 or tol <= 0.0:
-        raise ValueError("productivity_epsilon must lie in (0, 1) and tolerance be positive")
-    mask = cast(csr_matrix, csr_matrix(allowed_mask, dtype=np.int8, copy=False))
-    minimum = _nonnegative_support_matrix(lower_levels)
-    maximum = _nonnegative_support_matrix(upper_levels)
-    if any(item.shape != matrix.shape for item in (mask, minimum, maximum)):
-        raise ValueError("coefficient mask and level bounds must share A's shape")
-    if not mask.has_canonical_format:
-        mask = mask.copy(); mask.sum_duplicates(); mask.eliminate_zeros(); mask.sort_indices()
-    vector = np.asarray(certificate_vector, dtype=np.float64).reshape(-1)
-    if vector.shape != (n,) or not np.isfinite(vector).all() or bool((vector <= 0.0).any()):
-        raise ValueError("certificate_vector must be finite, strictly positive, and aligned")
-    slack = np.asarray((1.0 - epsilon) * vector - matrix.dot(vector), dtype=np.float64)
-    if float(slack.min()) < -tol:
-        raise ValueError("baseline matrix violates the supplied productivity certificate")
-
-    lower_data: list[float] = []
-    upper_data: list[float] = []
-    indices: list[int] = []
-    indptr = [0]
+    matrix, mask, minimum, maximum, vector, baseline_slack = _coefficient_headroom_inputs(
+        A,
+        allowed_mask,
+        lower_levels,
+        upper_levels,
+        certificate_vector=certificate_vector,
+        productivity_epsilon=productivity_epsilon,
+        tolerance=tol,
+    )
+    n = cast(tuple[int, int], matrix.shape)[0]
+    row_counts = np.zeros(n, dtype=np.int64)
     row_scale = np.ones(n, dtype=np.float64)
-    margin = slack.copy()
+    guaranteed_margin = baseline_slack.copy()
+
+    # First pass determines the exact union support needed by lower/upper
+    # headroom.  This avoids both Python object lists and an overallocated
+    # ``mask.nnz`` buffer being retained through NumPy slice views.
     for row in range(n):
-        left, right = int(mask.indptr[row]), int(mask.indptr[row + 1])
+        left = int(mask.indptr[row])
+        right = int(mask.indptr[row + 1])
         columns = np.asarray(mask.indices[left:right], dtype=np.intp)
         if columns.size:
-            def row_values(source: csr_matrix) -> np.ndarray:
-                source_columns = np.asarray(source.indices[source.indptr[row]:source.indptr[row + 1]], dtype=np.intp)
-                values = np.zeros(columns.size, dtype=np.float64)
-                positions = np.searchsorted(source_columns, columns)
-                present = positions < source_columns.size
-                if bool(present.any()):
-                    present[present] = source_columns[positions[present]] == columns[present]
-                if bool(present.any()):
-                    values[present] = source.data[source.indptr[row]:source.indptr[row + 1]][positions[present]]
-                return values
-            raw_lower = np.minimum(row_values(minimum) - row_values(matrix), 0.0)
-            raw_upper = np.maximum(row_values(maximum) - row_values(matrix), 0.0)
-            if float((row_values(minimum) - row_values(matrix)).max(initial=0.0)) > tol or float((row_values(maximum) - row_values(matrix)).min(initial=0.0)) < -tol:
-                raise ValueError("baseline coefficient lies outside supplied historical level bounds")
-            positive_use = float(np.dot(raw_upper, vector[columns]))
-            scale = min(1.0, max(float(slack[row]), 0.0) / positive_use) if positive_use > tol else 1.0
+            raw_lower, safe_upper, scale, margin = _certificate_safe_row_headroom(
+                matrix=matrix,
+                minimum=minimum,
+                maximum=maximum,
+                row=row,
+                columns=columns,
+                certificate_vector=vector,
+                baseline_slack=baseline_slack,
+                tolerance=tol,
+            )
+            row_counts[row] = int(np.count_nonzero((raw_lower != 0.0) | (safe_upper != 0.0)))
             row_scale[row] = scale
-            safe_upper = scale * raw_upper
-            margin[row] = float(slack[row]) - scale * positive_use
-            keep = (raw_lower != 0.0) | (safe_upper != 0.0)
-            indices.extend(columns[keep].tolist())
-            lower_data.extend(raw_lower[keep].tolist())
-            upper_data.extend(safe_upper[keep].tolist())
-        indptr.append(len(indices))
-    if float(margin.min()) < -tol:
-        raise RuntimeError("certificate-safe coefficient capacities have negative guaranteed margin")
-    lower = csr_matrix((np.asarray(lower_data), np.asarray(indices), np.asarray(indptr)), shape=matrix.shape)
-    upper = csr_matrix((np.asarray(upper_data), np.asarray(indices), np.asarray(indptr)), shape=matrix.shape)
-    lower.eliminate_zeros(); lower.sort_indices(); upper.eliminate_zeros(); upper.sort_indices()
-    return lower, upper, row_scale, margin
+            guaranteed_margin[row] = margin
+
+    indptr = np.empty(n + 1, dtype=mask.indptr.dtype)
+    indptr[0] = 0
+    np.cumsum(row_counts, out=indptr[1:])
+    nnz = int(indptr[-1])
+    lower_data = np.empty(nnz, dtype=np.float64)
+    upper_data = np.empty(nnz, dtype=np.float64)
+    indices = np.empty(nnz, dtype=mask.indices.dtype)
+
+    # Second pass fills exactly sized CSR arrays.  Recomputing one sparse row is
+    # cheaper than retaining EXIO-scale temporary headroom arrays between passes.
+    for row in range(n):
+        output_left = int(indptr[row])
+        output_right = int(indptr[row + 1])
+        if output_left == output_right:
+            continue
+        left = int(mask.indptr[row])
+        right = int(mask.indptr[row + 1])
+        columns = np.asarray(mask.indices[left:right], dtype=np.intp)
+        raw_lower, safe_upper, _scale, _margin = _certificate_safe_row_headroom(
+            matrix=matrix,
+            minimum=minimum,
+            maximum=maximum,
+            row=row,
+            columns=columns,
+            certificate_vector=vector,
+            baseline_slack=baseline_slack,
+            tolerance=tol,
+        )
+        keep = (raw_lower != 0.0) | (safe_upper != 0.0)
+        if int(np.count_nonzero(keep)) != output_right - output_left:
+            raise RuntimeError("certificate-safe headroom two-pass support count changed")
+        indices[output_left:output_right] = columns[keep]
+        lower_data[output_left:output_right] = raw_lower[keep]
+        upper_data[output_left:output_right] = safe_upper[keep]
+
+    if float(guaranteed_margin.min()) < -tol:
+        raise RuntimeError("certificate-safe coefficient headroom has negative guaranteed margin")
+    lower = csr_matrix((lower_data, indices.copy(), indptr.copy()), shape=matrix.shape)
+    upper = csr_matrix((upper_data, indices, indptr), shape=matrix.shape)
+    lower.eliminate_zeros()
+    lower.sort_indices()
+    upper.eliminate_zeros()
+    upper.sort_indices()
+    return lower, upper, row_scale, guaranteed_margin

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.sparse import csr_matrix, diags
 
 from ecolecon_mrio.transition_support import (
@@ -199,26 +200,72 @@ def test_certificate_safe_coefficient_bounds_are_masked_and_productive() -> None
     assert bool(((A + safe_upper) @ vector <= (1.0 - epsilon) * vector + 1.0e-12).all())
 
 
-def test_sparse_certificate_headroom_matches_compact_products() -> None:
-    """LP-facing sparse headroom has the exact compact certificate-safe products."""
+def test_sparse_certificate_headroom_matches_compact_products_and_mask_semantics() -> None:
+    """LP headroom must exactly match compact products and reject/ignore invalid mask storage."""
 
     A = csr_matrix(np.array([[0.2, 0.0], [0.0, 0.1]], dtype=float))
     vector, epsilon, _ = baseline_productivity_certificate(A)
-    allowed = csr_matrix(np.array([[1, 1], [0, 1]], dtype=np.int8))
+    # Keep an explicit stored zero in an otherwise canonical CSR row.  That entry
+    # is not an allowed edge and must be removed before either API sees columns.
+    allowed = csr_matrix(
+        (
+            np.array([1, 0, 1], dtype=np.int8),
+            np.array([0, 1, 1], dtype=np.int32),
+            np.array([0, 2, 3], dtype=np.int32),
+        ),
+        shape=(2, 2),
+    )
+    assert allowed.has_canonical_format and allowed.nnz == 3
     minimum = csr_matrix(np.array([[0.1, 0.0], [0.0, 0.05]], dtype=float))
-    maximum = csr_matrix(np.array([[0.3, 0.05], [0.0, 0.15]], dtype=float))
+    maximum = csr_matrix(np.array([[0.3, 9.0], [0.0, 0.15]], dtype=float))
     rhs = np.array([[10.0, 1.0, -2.0], [4.0, -2.0, 3.0]], dtype=float)
     lower_products, upper_products, scale, margin = certificate_safe_coefficient_capacity_products(
-        A, allowed, minimum, maximum, rhs, certificate_vector=vector, productivity_epsilon=epsilon
+        A,
+        allowed,
+        minimum,
+        maximum,
+        rhs,
+        certificate_vector=vector,
+        productivity_epsilon=epsilon,
     )
     lower, upper, returned_scale, returned_margin = certificate_safe_coefficient_headroom(
-        A, allowed, minimum, maximum, certificate_vector=vector, productivity_epsilon=epsilon
+        A,
+        allowed,
+        minimum,
+        maximum,
+        certificate_vector=vector,
+        productivity_epsilon=epsilon,
     )
     assert lower.has_canonical_format and upper.has_canonical_format
+    assert float(lower[0, 1]) == 0.0 and float(upper[0, 1]) == 0.0
+    np.testing.assert_allclose(lower_products[0], -0.1 * rhs[0], rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(upper_products[0], 0.1 * rhs[0], rtol=1e-12, atol=1e-14)
     np.testing.assert_allclose(lower @ rhs, lower_products, rtol=1e-12, atol=1e-14)
     np.testing.assert_allclose(upper @ rhs, upper_products, rtol=1e-12, atol=1e-14)
     np.testing.assert_allclose(returned_scale, scale)
     np.testing.assert_allclose(returned_margin, margin)
+
+    negative_mask = csr_matrix(np.array([[1, -1], [0, 1]], dtype=np.int8))
+    with pytest.raises(ValueError, match="mask must be non-negative"):
+        certificate_safe_coefficient_capacity_products(
+            A,
+            negative_mask,
+            minimum,
+            maximum,
+            rhs,
+            certificate_vector=vector,
+            productivity_epsilon=epsilon,
+        )
+    with pytest.raises(ValueError, match="mask must be non-negative"):
+        certificate_safe_coefficient_headroom(
+            A,
+            negative_mask,
+            minimum,
+            maximum,
+            certificate_vector=vector,
+            productivity_epsilon=epsilon,
+        )
+
 
 def test_productivity_certificate_iterative_sparse_residual() -> None:
     A = diags(np.full(2000, 0.4, dtype=float), format="csr")
