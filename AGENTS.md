@@ -10,6 +10,19 @@ Before producing or editing any `.sh` patch script, agents must read fully and f
 Do not duplicate the patch-script rules in this `AGENTS.md` or in repo-local
 patch-delivery docs; update the template in `ecolecon-agent-memory` instead.
 
+<!-- ecolecon-scientific-method-reasoning -->
+## Scientific-method reasoning
+
+For any scientific or methodological MRIO question, plan, review, or change whose
+answer depends on economics, mathematics, accounting, environmental boundaries,
+optimisation, modelling, or source-table semantics, read and follow
+`../ecolecon-agent-memory/prompt-templates/scientific-method-reasoning.md` before
+settling the answer. Inspect the actual MRIO loader/API and source-table semantics,
+not only downstream variable names. When a downstream paper or analysis supplies
+the scientific question, reconcile the MRIO boundary with that repository's
+scientific authority rather than reasoning about the library in isolation.
+<!-- /ecolecon-scientific-method-reasoning -->
+
 ## EXIO sparse loading and strict MultiIndex contract
 
 > [!IMPORTANT]
