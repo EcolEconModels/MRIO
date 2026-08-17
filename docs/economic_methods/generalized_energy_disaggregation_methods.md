@@ -460,6 +460,59 @@ A donor table is a structural prior, not an authority for target-country totals.
 The target aggregate cell totals \(Z_{ij}\) and \(Y_{if}\) remain authoritative
 unless a separate override policy is explicitly declared.
 
+## Donor environmental extension transport
+
+Production-side donor environmental extensions are optional evidence, not
+authoritative target-country totals. For one donor stressor let
+\(f^D \in \mathbb{R}^{K}\) be the donor physical extension vector and let
+\(x^D \in \mathbb{R}^{K}\) be donor monetary output. The same donor-to-emitted
+projection \(P\) used by the donor-block route defines
+
+\[
+\bar f_a = \sum_k P_{ak} f^D_k,
+\qquad
+\bar x_a = \sum_k P_{ak} x^D_k.
+\]
+
+Where \(\bar x_a>0\), the transferable donor evidence is the ratio
+
+\[
+e^D_a = \frac{\bar f_a}{\bar x_a}.
+\]
+
+The environmental satellite total attached to the transformed target table is
+then
+
+\[
+f'_a = e^D_a x'_a,
+\]
+
+where \(x'_a\) is the authoritative transformed target output. This step prevents
+a donor economy's physical total from being mistaken for the target country's
+total. If an authoritative target-country environmental parent total exists, it
+supersedes this donor-derived total and donor evidence may only be used for the
+declared within-parent allocation.
+
+After \(f'\) has been constructed, it is an extensive satellite quantity.
+Reaggregation therefore sums physical totals and monetary output separately:
+
+\[
+f^{agg}=Gf',
+\qquad
+x^{agg}=Gx',
+\qquad
+e^{agg}_i=\frac{f^{agg}_i}{x^{agg}_i}.
+\]
+
+Child intensities must never be arithmetically averaged or independently summed.
+Direct final-demand extensions \(F_Y\) are a separate accounting boundary and are
+not sector-disaggregated through \(P\).
+
+A destination country's domestic production extension must not be reused as an
+import-production proxy. Production-side environmental extensions for imported
+products, and therefore combined TOTAL-flow extensions, remain unavailable until
+an origin-weighted import extension is explicitly implemented and validated.
+
 ## Balancing and reconciliation
 
 The split construction above preserves each original cell when weights are

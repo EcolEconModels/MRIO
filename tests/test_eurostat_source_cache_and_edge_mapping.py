@@ -5,7 +5,7 @@ import pandas as pd
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exio_share_split import (
     emitted_sector_to_exio_members_from_split_profiles,
-    map_exio_emission_intensity,
+    project_environmental_extensions_to_split_sectors,
     raw_exio_members_from_split_profiles,
 )
 from ecolecon_mrio.iot_flow_semantics import flow_use_total
@@ -96,26 +96,29 @@ def test_emitted_edge_mapping_and_raw_member_helper():
     }
 
 
-def test_edge_child_co2_intensity_uses_raw_exio_member_and_edge_weight():
+def test_edge_child_environmental_extension_uses_edge_weight_then_eurostat_output():
     profiles = _one_child_profile()
-    emitted_mapping = emitted_sector_to_exio_members_from_split_profiles(profiles)
-    exio_co2 = pd.DataFrame(
+    exio = pd.DataFrame(
         [
             {
-                "exio_sector": "p24.d",
+                "source_label": "p24.d",
                 "extension": "air_emissions",
+                "kind": "F",
                 "stressor": "CO2 - combustion - air",
                 "unit": "kg",
-                "emission": 100.0,
-                "monetary_output": 200.0,
+                "value": 100.0,
+                "monetary_denominator": 200.0,
+                "intensity": 0.5,
             }
         ]
     )
 
-    out = map_exio_emission_intensity(
-        exio_emissions_and_intensity=exio_co2,
+    out = project_environmental_extensions_to_split_sectors(
+        exio_extensions=exio,
         split_profiles=profiles,
-        sector_to_exio_sectors=emitted_mapping,
+        eurostat_output=pd.Series(
+            {"p24.d@CPA_C20": 80.0}, dtype="float64"
+        ),
         eurostat_sector_mapping={
             "CPA_C20": {"p24.d": 0.25},
             "CPA_C21": {"p24.d": 0.75},
@@ -125,11 +128,12 @@ def test_edge_child_co2_intensity_uses_raw_exio_member_and_edge_weight():
     assert out is not None
     assert len(out) == 1
     row = out.iloc[0]
-    assert row["disaggregated_sector"] == "p24.d@CPA_C20"
-    assert row["emission"] == 25.0
-    assert row["monetary_output"] == 50.0
-    assert row["emission_intensity"] == 0.5
-
+    assert row["sector"] == "p24.d@CPA_C20"
+    # P first yields 25 kg / 50 monetary units = 0.5 donor intensity;
+    # the Eurostat satellite total is then 0.5 * 80, not the EXIO 25 kg total.
+    assert float(row["value"]) == 40.0
+    assert float(row["monetary_output"]) == 80.0
+    assert float(row["intensity"]) == 0.5
 
 def test_split_child_edges_metadata_parses_materialized_edge_child():
     from scripts.split_eurostat_energy_by_exiobase import _build_split_child_edge_metadata
@@ -469,7 +473,10 @@ def test_aggregation_cli_augments_mapping_from_split_child_edges_metadata():
 
 
 def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
-    from ecolecon_mrio.iot_aggregation import aggregate_iot
+    from ecolecon_mrio.iot_aggregation import (
+        aggregate_environmental_extensions,
+        aggregate_iot,
+    )
     from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
     from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
 
@@ -505,19 +512,21 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
             }
         ]
     ).to_csv(split_dir / "split_child_edges.csv", index=False)
-    pd.DataFrame(
+
+    environmental = pd.DataFrame(
         [
             {
-                "disaggregated_sector": "S@CPA_C20",
+                "sector": "S@CPA_C20",
                 "extension": "air_emissions",
                 "stressor": "CO2",
                 "unit": "kg",
-                "emission": 2.0,
-                "monetary_output": 4.0,
-                "emission_intensity": 0.5,
+                "value": 8.0,
+                "monetary_output": float(x.loc["S@CPA_C20"]),
+                "intensity": 0.5,
             }
         ]
-    ).to_csv(split_dir / "disaggregated_sector_co2_intensity.csv", index=False)
+    )
+    environmental.to_csv(split_dir / "environmental_extensions.csv", index=False)
     pd.DataFrame(
         [
             {
@@ -544,7 +553,10 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     edge_meta = pd.read_csv(split_dir / "split_child_edges.csv")
     augmented_mapping, _, audit = _augment_mapping_from_split_child_edges(
         mapping=mapping,
-        mapping_df=mapping_df.assign(from_sector=mapping_df["source_code"], to_sector=mapping_df["target_code"]),
+        mapping_df=mapping_df.assign(
+            from_sector=mapping_df["source_code"],
+            to_sector=mapping_df["target_code"],
+        ),
         edge_metadata=edge_meta,
     )
     assert not audit.empty
@@ -568,6 +580,17 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     expected.M.to_csv(agg_dir / "M_agg.csv")
     audit.to_csv(agg_dir / "aggregation_edge_mapping_audit.csv", index=False)
 
+    expected_environmental = aggregate_environmental_extensions(
+        environmental,
+        augmented_mapping,
+        output=x,
+        keep_unmapped=True,
+    )
+    assert expected_environmental is not None
+    expected_environmental.to_csv(
+        agg_dir / "environmental_extensions.csv", index=False
+    )
+
     report = validate_pipeline_outputs(
         split_dir=split_dir,
         agg_dir=agg_dir,
@@ -578,7 +601,9 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     names = {check["name"] for check in report["checks"]}
     assert "Z_agg_matches_recomputed_reaggregation" in names
     assert "V_agg_matches_recomputed_reaggregation" in names
-    assert "ratio_file::disaggregated_sector_co2_intensity.csv" in names
+    assert "ratio_file::environmental_extensions.csv" in names
+    assert "environmental_totals_match_reaggregation" in names
+    assert "environmental_reaggregation_intensity_ratio" in names
 
 
 def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary():

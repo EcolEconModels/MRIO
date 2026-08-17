@@ -132,3 +132,40 @@ def test_expect_n_sectors_only_checks_final_sector_count(tmp_path: Path) -> None
     Z_agg = pd.read_csv(outdir / "Z_agg.csv", index_col=0)
     assert len(Z_agg.index) == 3
     assert set(Z_agg.index) == {"CPA_A", "CPA_B", "ENERGY_GREEN"}
+
+
+
+def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path) -> None:
+    indir = tmp_path / "indir"
+    outdir = tmp_path / "out"
+    sectors = ["CPA_A", "CPA_B", "p24.g", "p24.h"]
+    _write_tables(indir, sectors)
+
+    mapping_csv = tmp_path / "mapping.csv"
+    _write_mapping_csv(
+        mapping_csv,
+        [
+            {"source_code": "p24.g", "target_code": "ENERGY_GREEN", "enabled": True, "notes": "ok"},
+            {"source_code": "p24.h", "target_code": "ENERGY_GREEN", "enabled": True, "notes": "ok"},
+        ],
+    )
+    pd.DataFrame(
+        {
+            "sector": ["p24.g", "p24.h"],
+            "extension": ["air_emissions", "air_emissions"],
+            "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
+            "unit": ["kg", "kg"],
+            "value": [114.0, 50.0],
+            "monetary_output": [57.0, 50.0],
+            "intensity": [2.0, 1.0],
+        }
+    ).to_csv(indir / "environmental_extensions.csv", index=False)
+
+    assert _run_aggregate(indir, outdir, mapping_csv) == 0
+    satellite = pd.read_csv(outdir / "environmental_extensions.csv")
+    assert len(satellite) == 1
+    row = satellite.iloc[0]
+    assert row["sector"] == "ENERGY_GREEN"
+    assert float(row["value"]) == pytest.approx(164.0)
+    assert float(row["monetary_output"]) == pytest.approx(107.0)
+    assert float(row["intensity"]) == pytest.approx(164.0 / 107.0)

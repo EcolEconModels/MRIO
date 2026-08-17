@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Iterable, Literal, Sequence
+from typing import Iterable, Literal, Mapping, Sequence, cast
 import csv
 import zipfile
 
@@ -682,14 +682,168 @@ def load_exiobase3_extension(
 
 
 def _select_rows_by_keywords(index: Iterable[str], keywords: Sequence[str]) -> list[str]:
-    keys = [k.lower() for k in keywords]
-    out: list[str] = []
-    for r in index:
-        rl = str(r).lower()
-        if any(k in rl for k in keys):
-            out.append(str(r))
-    return out
+    """Select stressor rows; an empty keyword list explicitly means all rows."""
+    keys = [str(keyword).lower() for keyword in keywords if str(keyword).strip()]
+    available = [str(row) for row in index]
+    if not keys:
+        return available
+    return [row for row in available if any(key in row.lower() for key in keys)]
 
+def extract_extension_values(
+    *,
+    container: str | Path,
+    region: str,
+    source_labels: Sequence[str],
+    monetary_denominator: pd.Series,
+    extension_requests: Mapping[str, Sequence[str]],
+    kind: MatrixKind = "F",
+    required: bool = True,
+    cache_dir: str | Path | None = None,
+) -> pd.DataFrame | None:
+    """Extract arbitrary EXIOBASE extension values in one long-form schema.
+
+    ``F`` rows are production-side environmental totals by EXIO sector and
+    ``F_Y`` rows are direct final-demand totals by EXIO final-demand category.
+    The raw physical value and its monetary denominator are retained separately;
+    intensity is derived only as ``value / monetary_denominator``.  Empty
+    stressor keyword lists request every row in the named extension.
+
+    ``required=False`` is intended for optional ``F_Y`` sidecars: an extension
+    may have production ``F`` without a direct-final-demand matrix.  Production
+    extraction should normally remain fail-closed with ``required=True``.
+    """
+    kind_clean = str(kind)
+    if kind_clean not in {"F", "F_Y"}:
+        raise ValueError(f"Unsupported extension matrix kind: {kind!r}")
+    if not extension_requests:
+        return None
+
+    labels = list(dict.fromkeys(str(label) for label in source_labels))
+    if not labels:
+        return None
+    denominator = monetary_denominator.copy()
+    denominator.index = denominator.index.astype(str)
+    if not denominator.index.is_unique:
+        raise ValueError("monetary_denominator index must be unique")
+    denominator = denominator.reindex(labels).astype("float64")
+    if denominator.isna().any() or not np.isfinite(denominator.to_numpy()).all():
+        missing_index = pd.Index(denominator.index[denominator.isna().to_numpy(dtype="bool")])
+        missing = list(map(str, missing_index))
+        raise ValueError(
+            "Extension monetary denominator must be finite and complete; "
+            f"missing={missing[:10]!r}."
+        )
+    if kind_clean == "F" and bool((denominator < 0.0).any()):
+        raise ValueError("Production-side extension monetary output must be non-negative.")
+
+    rows: list[pd.DataFrame] = []
+    for extension, requested_keywords in extension_requests.items():
+        extension_name = str(extension).strip()
+        if not extension_name:
+            raise ValueError("Extension name must not be blank.")
+        keywords = tuple(str(value) for value in requested_keywords)
+        ext_obj = load_exiobase3_extension(
+            container,
+            extension=extension_name,
+            region=str(region),
+            cache_dir=cache_dir,
+        )
+        matrix = ext_obj.F if kind_clean == "F" else ext_obj.F_Y
+        if matrix is None:
+            if required:
+                raise ValueError(
+                    f"Requested EXIO extension matrix is unavailable: "
+                    f"extension={extension_name!r}, kind={kind_clean!r}."
+                )
+            continue
+        if not isinstance(matrix.columns, pd.MultiIndex) or matrix.columns.nlevels != 2:
+            raise ValueError(
+                f"Unexpected EXIO extension columns for {extension_name}/{kind_clean}."
+            )
+        try:
+            region_matrix = matrix.xs(str(region), level=0, axis=1)
+        except KeyError as exc:
+            if required:
+                raise ValueError(
+                    f"EXIO extension {extension_name}/{kind_clean} has no region {region!r}."
+                ) from exc
+            continue
+        if not isinstance(region_matrix, pd.DataFrame):
+            raise TypeError(
+                f"Expected two-dimensional region slice for {extension_name}/{kind_clean}."
+            )
+        region_matrix.columns = pd.Index(map(str, region_matrix.columns))
+        available = set(map(str, region_matrix.columns))
+
+        matrix_labels = labels
+        if kind_clean == "F" and not set(labels).issubset(available):
+            code_to_name = _exio_code_to_name_lookup()
+            matrix_labels = [code_to_name.get(label, label) for label in labels]
+        missing = [
+            source_label
+            for source_label, matrix_label in zip(labels, matrix_labels, strict=True)
+            if matrix_label not in available
+        ]
+        if missing:
+            if required:
+                raise ValueError(
+                    f"EXIO extension {extension_name}/{kind_clean} is missing requested labels: "
+                    f"{missing[:10]!r}."
+                )
+            continue
+
+        stressors = _select_rows_by_keywords(region_matrix.index, keywords)
+        if not stressors:
+            if required:
+                raise ValueError(
+                    f"No stressors matched extension={extension_name!r}, "
+                    f"keywords={list(keywords)!r}."
+                )
+            continue
+
+        for stressor in stressors:
+            raw_values = region_matrix.loc[stressor, matrix_labels]
+            if not isinstance(raw_values, pd.Series):
+                raise TypeError(
+                    f"Expected one-dimensional EXIO extension row for {stressor!r}."
+                )
+            values = pd.to_numeric(raw_values, errors="coerce")
+            if not isinstance(values, pd.Series):
+                raise TypeError("Extension numeric conversion did not return a Series.")
+            value_series = pd.Series(
+                values.to_numpy(dtype="float64"),
+                index=pd.Index(labels),
+                dtype="float64",
+            ).fillna(0.0)
+            if not np.isfinite(value_series.to_numpy()).all():
+                raise ValueError(
+                    f"Non-finite values in EXIO extension {extension_name!r}, "
+                    f"stressor={stressor!r}."
+                )
+            unit_value = ext_obj.unit.get(stressor, None)
+            if unit_value is None or not str(unit_value).strip():
+                raise ValueError(
+                    f"Missing unit for EXIO extension={extension_name!r}, stressor={stressor!r}."
+                )
+            intensity = value_series / denominator.replace(0.0, np.nan)
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "source_label": labels,
+                        "extension": extension_name,
+                        "kind": kind_clean,
+                        "stressor": str(stressor),
+                        "unit": str(unit_value).strip(),
+                        "value": value_series.to_numpy(dtype="float64"),
+                        "monetary_denominator": denominator.to_numpy(dtype="float64"),
+                        "intensity": intensity.to_numpy(dtype="float64"),
+                    }
+                )
+            )
+
+    if not rows:
+        return None
+    return pd.concat(rows, ignore_index=True)
 
 def extract_quantity_and_price(
     *,
@@ -788,77 +942,39 @@ def extract_emissions_and_intensity(
     stressor_keywords: Sequence[str] = ("CO2 - combustion - air",),
     cache_dir: str | Path | None = None,
 ) -> pd.DataFrame | None:
-    """Extract emissions from one EXIOBASE extension and compute emissions intensity.
-
-    This is the direct (production-based) environmental extension intensity:
-        emission_intensity = emissions / monetary_output
-
-    Notes
-    - `monetary_output` must be aligned to EXIO sector labels and be in the same
-      monetary basis as the IO system you will apply it to.
-    - Units come from the extension's `unit.txt` (e.g. kg for CO2 stressors).
-    """
-    if not sectors:
-        return None
-
-    sectors = list(map(str, sectors))
-    monetary_output = monetary_output.reindex(sectors).astype("float64")
-
-    code_to_name = _exio_code_to_name_lookup()
-
-    ext_obj = load_exiobase3_extension(
-        container, extension=str(extension), region=str(region), cache_dir=cache_dir
+    """Compatibility view over :func:`extract_extension_values` for diagnostics."""
+    generic = extract_extension_values(
+        container=container,
+        region=region,
+        source_labels=sectors,
+        monetary_denominator=monetary_output,
+        extension_requests={str(extension): tuple(stressor_keywords)},
+        kind="F",
+        required=False,
+        cache_dir=cache_dir,
     )
-    if ext_obj.F is None:
+    if generic is None:
         return None
-
-    F = ext_obj.F
-    if not isinstance(F.columns, pd.MultiIndex) or F.columns.nlevels != 2:
-        return None
-
-    try:
-        F_r = F.xs(region, level=0, axis=1)
-    except Exception:
-        return None
-
-    if not isinstance(F_r.columns, pd.Index):
-        F_r.columns = pd.Index(map(str, F_r.columns))
-    F_r = F_r.loc[:, F_r.columns.astype(str)]
-
-    available = set(map(str, F_r.columns))
-    sector_columns = sectors
-    if not all(sector in available for sector in sectors):
-        sector_columns = [code_to_name.get(sector, sector) for sector in sectors]
-    missing = [sector for sector, column in zip(sectors, sector_columns, strict=False) if column not in available]
-    if missing:
-        return None
-
-    stressors = _select_rows_by_keywords(F_r.index, stressor_keywords)
-    if not stressors:
-        return None
-
-    rows: list[pd.DataFrame] = []
-    for stressor in stressors:
-        emis = pd.Series(F_r.loc[stressor, sector_columns].to_numpy(dtype="float64"), index=sectors)
-        unit = ext_obj.unit.get(stressor, None)
-        emission_intensity = emis / monetary_output.replace(0.0, np.nan)
-        out = pd.DataFrame(
-            {
-                "exio_sector": sectors,
-                "extension": str(extension),
-                "stressor": stressor,
-                "unit": unit,
-                "emission": emis,
-                "monetary_output": monetary_output,
-                "emission_intensity": emission_intensity,
-            }
-        )
-        rows.append(out)
-
-    if not rows:
-        return None
-    return pd.concat(rows, ignore_index=True)
-
+    legacy = generic.rename(
+        columns={
+            "source_label": "exio_sector",
+            "value": "emission",
+            "monetary_denominator": "monetary_output",
+            "intensity": "emission_intensity",
+        }
+    )
+    return cast(pd.DataFrame, legacy.loc[
+        :,
+        [
+            "exio_sector",
+            "extension",
+            "stressor",
+            "unit",
+            "emission",
+            "monetary_output",
+            "emission_intensity",
+        ],
+    ])
 
 def extract_final_demand_emissions_and_intensity(
     *,
@@ -869,74 +985,36 @@ def extract_final_demand_emissions_and_intensity(
     stressor_keywords: Sequence[str] = ("CO2 - combustion - air",),
     cache_dir: str | Path | None = None,
 ) -> pd.DataFrame | None:
-    """Extract direct emissions tied to final demand categories (EXIO F_Y).
-
-    This captures *direct* emissions that occur in final demand (e.g. households'
-    combustion), represented in EXIOBASE as an extension matrix F_Y.
-
-    Computes:
-        final_demand_emission_intensity = emission / monetary_final_demand
-
-    Args:
-        monetary_final_demand: Series indexed by EXIO final demand category labels
-            (matching the second column header line in Y.txt / F_Y.txt), values in EUR.
-
-    Returns:
-        DataFrame with columns: extension, stressor, unit, category, emission,
-        monetary_final_demand, final_demand_emission_intensity
-    """
-    monetary_final_demand = monetary_final_demand.copy()
-    monetary_final_demand.index = monetary_final_demand.index.astype(str)
-    numeric_final_demand = pd.to_numeric(monetary_final_demand, errors="coerce")
-    monetary_final_demand = pd.Series(
-        numeric_final_demand,
-        index=monetary_final_demand.index,
-        name=monetary_final_demand.name,
-        dtype="float64",
+    """Compatibility view over generic ``F_Y`` extension extraction."""
+    generic = extract_extension_values(
+        container=container,
+        region=region,
+        source_labels=list(map(str, monetary_final_demand.index)),
+        monetary_denominator=monetary_final_demand,
+        extension_requests={str(extension): tuple(stressor_keywords)},
+        kind="F_Y",
+        required=False,
+        cache_dir=cache_dir,
     )
-
-    ext_obj = load_exiobase3_extension(
-        container, extension=str(extension), region=str(region), cache_dir=cache_dir
+    if generic is None:
+        return None
+    legacy = generic.rename(
+        columns={
+            "source_label": "category",
+            "value": "emission",
+            "monetary_denominator": "monetary_final_demand",
+            "intensity": "final_demand_emission_intensity",
+        }
     )
-    if ext_obj.F_Y is None:
-        return None
-
-    F_Y = ext_obj.F_Y
-    if not isinstance(F_Y.columns, pd.MultiIndex) or F_Y.columns.nlevels != 2:
-        return None
-
-    try:
-        F_Y_r = F_Y.xs(region, level=0, axis=1)
-    except Exception:
-        return None
-
-    if not isinstance(F_Y_r.columns, pd.Index):
-        F_Y_r.columns = pd.Index(map(str, F_Y_r.columns))
-    categories = pd.Index(map(str, F_Y_r.columns))
-
-    stressors = _select_rows_by_keywords(F_Y_r.index, stressor_keywords)
-    if not stressors:
-        return None
-
-    rows: list[pd.DataFrame] = []
-    for stressor in stressors:
-        emis = F_Y_r.loc[stressor, categories].astype("float64")
-        unit = ext_obj.unit.get(stressor, None)
-        denom = monetary_final_demand.reindex(categories).astype("float64")
-        intensity = emis / denom.replace(0.0, np.nan)
-        out = pd.DataFrame(
-            {
-                "extension": str(extension),
-                "stressor": stressor,
-                "unit": unit,
-                "category": categories,
-                "emission": emis.to_numpy(),
-                "monetary_final_demand": denom.to_numpy(),
-                "final_demand_emission_intensity": intensity.to_numpy(),
-            }
-        )
-        rows.append(out)
-
-    if not rows:
-        return None
-    return pd.concat(rows, ignore_index=True)
+    return cast(pd.DataFrame, legacy.loc[
+        :,
+        [
+            "extension",
+            "stressor",
+            "unit",
+            "category",
+            "emission",
+            "monetary_final_demand",
+            "final_demand_emission_intensity",
+        ],
+    ])

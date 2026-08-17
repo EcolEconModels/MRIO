@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, cast
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,6 @@ class AggregationResult:
     V: pd.DataFrame | None = None
     M: pd.DataFrame | None = None
     aggregated_sector_value_per_physical_input: pd.DataFrame | None = None
-    aggregated_sector_emission_intensity: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
 def _map_index_values(
@@ -220,49 +219,127 @@ def compute_aggregated_sector_value_per_physical_input(
         out_ratio_col="value_per_physical_input",
     )
 
-def compute_aggregated_sector_emission_intensity(
-    disaggregated_sector_emission_intensity: pd.DataFrame | None,
-    aggregation_mapping: Mapping[str, str],
+def aggregate_environmental_extensions(
+    environmental_extensions: pd.DataFrame | None,
+    mapping: Mapping[str, str],
+    *,
+    output: pd.Series,
+    keep_unmapped: bool = True,
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
 ) -> pd.DataFrame | None:
-    """Compute emissions intensity for aggregated sectors from disaggregated data.
+    """Reaggregate physical totals against the canonical monetary output vector.
 
-    For each aggregated sector, computes direct emissions intensity as:
-        emission_intensity = sum(emission) / sum(monetary_output)
-
-    Args:
-        disaggregated_sector_emission_intensity: DataFrame with columns:
-            disaggregated_sector, extension, stressor, unit, emission, monetary_output, emission_intensity
-        aggregation_mapping: Mapping of disaggregated_sector -> aggregated_sector
-
-    Returns:
-        DataFrame with columns: aggregated_sector, extension, stressor, unit,
-        emission_intensity, n_components; or None if inputs are insufficient
+    ``value`` is extensive and additive. ``monetary_output`` in the input
+    sidecar is an integrity copy of the current IOT output, not an independent
+    denominator: it must match ``output`` sector by sector. Reaggregation sums
+    physical values, independently aggregates canonical ``output``, and derives
+    intensity only afterwards.
     """
-    if (
-        disaggregated_sector_emission_intensity is None
-        or disaggregated_sector_emission_intensity.empty
-        or not aggregation_mapping
-    ):
+    if environmental_extensions is None or environmental_extensions.empty:
         return None
-
-    required_cols = {"disaggregated_sector", "extension", "stressor", "unit", "emission", "monetary_output"}
-    missing_cols = required_cols - set(disaggregated_sector_emission_intensity.columns)
-    if missing_cols:
+    required = {
+        "sector",
+        "extension",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_output",
+    }
+    missing = required - set(environmental_extensions.columns)
+    if missing:
         raise ValueError(
-            "disaggregated_sector_emission_intensity missing required columns: "
-            f"{sorted(missing_cols)!r}"
+            "environmental_extensions missing required columns: "
+            f"{sorted(missing)!r}"
+        )
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("Environmental extension tolerances must be non-negative.")
+
+    frame = environmental_extensions.copy()
+    key_cols = ["sector", "extension", "stressor", "unit"]
+    if frame.duplicated(key_cols).any():
+        duplicate_rows = frame.loc[frame.duplicated(key_cols, keep=False), key_cols]
+        raise ValueError(
+            "environmental_extensions must contain one row per sector/stressor; "
+            f"duplicates={duplicate_rows.head(10).to_dict(orient='records')!r}"
+        )
+    frame["sector"] = frame["sector"].astype(str)
+    value = cast(pd.Series, pd.to_numeric(frame["value"], errors="raise"))
+    monetary_output = cast(
+        pd.Series, pd.to_numeric(frame["monetary_output"], errors="raise")
+    )
+    frame["value"] = value.astype("float64")
+    frame["monetary_output"] = monetary_output.astype("float64")
+    if not np.isfinite(frame["value"].to_numpy()).all():
+        raise ValueError("Environmental extension values must be finite.")
+
+    source_output = output.copy().astype("float64")
+    source_output.index = source_output.index.astype(str)
+    if not source_output.index.is_unique:
+        raise ValueError("Environmental extension output vector index must be unique.")
+    if (
+        source_output.isna().any()
+        or not np.isfinite(source_output.to_numpy()).all()
+        or bool((source_output < 0.0).any())
+    ):
+        raise ValueError("Environmental extension output vector must be finite and non-negative.")
+    sidecar_output = frame["sector"].map(source_output)
+    if sidecar_output.isna().any():
+        missing_sectors = sorted(
+            frame.loc[sidecar_output.isna(), "sector"].astype(str).unique().tolist()
+        )
+        raise ValueError(
+            "Environmental extension sectors are absent from canonical output: "
+            f"{missing_sectors!r}."
+        )
+    observed_output = frame["monetary_output"].to_numpy(dtype="float64")
+    expected_output = sidecar_output.to_numpy(dtype="float64")
+    if not np.allclose(
+        observed_output,
+        expected_output,
+        rtol=float(rtol),
+        atol=float(atol),
+        equal_nan=False,
+    ):
+        max_gap = float(np.max(np.abs(observed_output - expected_output)))
+        raise ValueError(
+            "Environmental extension monetary_output disagrees with canonical IOT output: "
+            f"max_abs_gap={max_gap:.12g}."
         )
 
-    return _compute_aggregated_sector_ratio_of_sums(
-        disaggregated_sector_emission_intensity,
-        aggregation_mapping,
-        numerator_col="emission",
-        denominator_col="monetary_output",
-        out_ratio_col="emission_intensity",
-        out_total_numerator_col="emission",
-        out_total_denominator_col="monetary_output",
-    )
+    if keep_unmapped:
+        frame["sector"] = frame["sector"].map(
+            lambda sector: str(mapping.get(str(sector), str(sector)))
+        )
+    else:
+        frame["sector"] = frame["sector"].map(mapping)
+        frame = frame[frame["sector"].notna()].copy()
+        frame["sector"] = frame["sector"].astype(str)
+    if frame.empty:
+        return None
 
+    grouped = (
+        frame.groupby(
+            ["sector", "extension", "stressor", "unit"],
+            dropna=False,
+            sort=False,
+        )[["value"]]
+        .sum()
+        .reset_index()
+    )
+    output_frame = aggregate_Y(
+        source_output.to_frame("monetary_output"),
+        mapping,
+        keep_unmapped=keep_unmapped,
+    )
+    aggregated_output = output_frame["monetary_output"].astype("float64")
+    grouped["monetary_output"] = grouped["sector"].map(aggregated_output)
+    if grouped["monetary_output"].isna().any():
+        raise RuntimeError("Environmental reaggregation lost canonical output coverage.")
+    grouped["intensity"] = grouped["value"] / grouped["monetary_output"].replace(
+        0.0, np.nan
+    )
+    return grouped
 
 def aggregate_iot(
     Z: pd.DataFrame,
@@ -278,8 +355,6 @@ def aggregate_iot(
     create_io_system: bool = True,
     compute_sector_value_per_physical_input: bool = False,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
-    compute_sector_emission_intensity: bool = False,
-    disaggregated_sector_emission_intensity: pd.DataFrame | None = None,
 ) -> AggregationResult:
     """Aggregate one flow using an explicit, already validated output vector."""
     if not Z.index.equals(Z.columns):
@@ -333,14 +408,8 @@ def aggregate_iot(
             disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
             aggregation_mapping=mapping,
         )
-    agg_sector_emission_intensity = None
-    if compute_sector_emission_intensity:
-        agg_sector_emission_intensity = compute_aggregated_sector_emission_intensity(
-            disaggregated_sector_emission_intensity, mapping
-        )
     return AggregationResult(
         Z=Z_agg, Y=Y_agg, x=x, A=A, V=V_agg, M=M_agg,
         aggregated_sector_value_per_physical_input=agg_sector_values,
-        aggregated_sector_emission_intensity=agg_sector_emission_intensity,
         io_system=io_system,
     )

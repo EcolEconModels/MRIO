@@ -65,9 +65,11 @@ def test_compute_aggregated_sector_value_per_physical_input_uses_ratio_of_sums()
     assert row["n_components"] == 2
 
 
-def test_map_exio_emission_intensity_uses_ratio_of_sums():
+def test_project_environmental_extensions_applies_donor_intensity_to_eurostat_output():
     from ecolecon_mrio.disaggregation import SplitProfiles
-    from ecolecon_mrio.exio_share_split import map_exio_emission_intensity
+    from ecolecon_mrio.exio_share_split import (
+        project_environmental_extensions_to_split_sectors,
+    )
 
     split_profiles = {
         "D35": SplitProfiles(
@@ -80,48 +82,60 @@ def test_map_exio_emission_intensity_uses_ratio_of_sums():
             subsector_to_exio_sectors={"D35::Coal": ["Coal"], "D35::Solar": ["Solar"]},
         )
     }
-
-    exio_co2 = pd.DataFrame(
+    exio = pd.DataFrame(
         {
-            "exio_sector": ["Coal", "Solar"],
+            "source_label": ["Coal", "Solar"],
+            "extension": ["air_emissions", "air_emissions"],
+            "kind": ["F", "F"],
+            "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
+            "unit": ["kg", "kg"],
+            "value": [200.0, 10.0],
+            "monetary_denominator": [100.0, 50.0],
+            "intensity": [2.0, 0.2],
+        }
+    )
+    eurostat_output = pd.Series(
+        {"D35::Coal": 40.0, "D35::Solar": 100.0}, dtype="float64"
+    )
+
+    result = project_environmental_extensions_to_split_sectors(
+        exio_extensions=exio,
+        split_profiles=split_profiles,
+        eurostat_output=eurostat_output,
+    )
+    assert result is not None
+    by_sector = result.set_index("sector")
+    assert float(by_sector.loc["D35::Coal", "value"]) == 80.0
+    assert float(by_sector.loc["D35::Coal", "monetary_output"]) == 40.0
+    assert float(by_sector.loc["D35::Coal", "intensity"]) == 2.0
+    assert float(by_sector.loc["D35::Solar", "value"]) == 20.0
+    assert float(by_sector.loc["D35::Solar", "monetary_output"]) == 100.0
+    assert float(by_sector.loc["D35::Solar", "intensity"]) == 0.2
+
+def test_aggregate_environmental_extensions_sums_totals_then_derives_intensity():
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    disaggregated = pd.DataFrame(
+        {
+            "sector": ["A", "B"],
             "extension": ["air_emissions", "air_emissions"],
             "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
             "unit": ["kg", "kg"],
-            "emission": [200.0, 10.0],
+            "value": [200.0, 100.0],
             "monetary_output": [100.0, 50.0],
-            "emission_intensity": [2.0, 0.2],
+            "intensity": [2.0, 2.0],
         }
     )
 
-    res = map_exio_emission_intensity(exio_co2, split_profiles)
-    assert res is not None
-    vals = dict(zip(res["disaggregated_sector"], res["emission_intensity"]))
-    assert abs(float(vals["D35::Coal"]) - (200.0 / 100.0)) < 1e-12
-    assert abs(float(vals["D35::Solar"]) - (10.0 / 50.0)) < 1e-12
-
-
-def test_compute_aggregated_sector_emission_intensity_uses_ratio_of_sums():
-    from ecolecon_mrio.iot_aggregation import compute_aggregated_sector_emission_intensity
-
-    disagg = pd.DataFrame(
-        {
-            "disaggregated_sector": ["A", "B"],
-            "extension": ["air_emissions", "air_emissions"],
-            "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
-            "unit": ["kg", "kg"],
-            "emission": [200.0, 100.0],
-            "monetary_output": [100.0, 50.0],
-            "emission_intensity": [2.0, 2.0],
-        }
+    result = aggregate_environmental_extensions(
+        disaggregated,
+        {"A": "X", "B": "X"},
+        output=pd.Series({"A": 100.0, "B": 50.0}, dtype="float64"),
     )
-    mapping = {"A": "X", "B": "X"}
-
-    res = compute_aggregated_sector_emission_intensity(disagg, mapping)
-    assert res is not None
-    assert len(res) == 1
-    row = res.iloc[0]
-    assert row["aggregated_sector"] == "X"
-    assert abs(float(row["emission_intensity"]) - (300.0 / 150.0)) < 1e-12
-    assert abs(float(row["emission"]) - 300.0) < 1e-12
-    assert abs(float(row["monetary_output"]) - 150.0) < 1e-12
-    assert row["n_components"] == 2
+    assert result is not None
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert row["sector"] == "X"
+    assert float(row["value"]) == 300.0
+    assert float(row["monetary_output"]) == 150.0
+    assert float(row["intensity"]) == 2.0

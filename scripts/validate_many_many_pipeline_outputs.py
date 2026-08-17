@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -17,7 +17,7 @@ for _extra_path in (_REPO_ROOT, _REPO_ROOT / "src"):
     if _extra_text not in sys.path:
         sys.path.insert(0, _extra_text)
 
-from ecolecon_mrio.iot_aggregation import aggregate_iot
+from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions, aggregate_iot
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
 
@@ -73,6 +73,26 @@ def _max_abs_series_gap(actual: pd.Series, expected: pd.Series) -> float:
     values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
     return float(np.max(values))
 
+
+def _max_abs_environmental_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
+    key_cols = ["sector", "extension", "stressor", "unit"]
+    value_cols = ["value", "monetary_output"]
+    required = set(key_cols + value_cols)
+    if not required.issubset(actual.columns) or not required.issubset(expected.columns):
+        return float("inf")
+    sort_keys = list(map(str, key_cols))
+    actual_keyed = cast(
+        pd.DataFrame, actual.loc[:, key_cols + value_cols].copy()
+    ).sort_values(sort_keys).reset_index(drop=True)
+    expected_keyed = cast(
+        pd.DataFrame, expected.loc[:, key_cols + value_cols].copy()
+    ).sort_values(sort_keys).reset_index(drop=True)
+    if not actual_keyed[key_cols].equals(expected_keyed[key_cols]):
+        return float("inf")
+    if actual_keyed.empty:
+        return 0.0
+    delta = actual_keyed[value_cols].astype("float64") - expected_keyed[value_cols].astype("float64")
+    return float(np.nanmax(np.abs(delta.to_numpy(dtype="float64"))))
 
 def _check_ratio_file(
     path: Path,
@@ -170,10 +190,10 @@ def validate_pipeline_outputs(
 
     for ratio in (
         _check_ratio_file(
-            split_dir / "disaggregated_sector_co2_intensity.csv",
-            numerator_col="emission",
+            split_dir / "environmental_extensions.csv",
+            numerator_col="value",
             denominator_col="monetary_output",
-            ratio_col="emission_intensity",
+            ratio_col="intensity",
             rtol=rtol,
             atol=atol,
         ),
@@ -236,6 +256,56 @@ def validate_pipeline_outputs(
             else:
                 gap = _max_abs_frame_gap(_numeric_frame(observed_df), expected.astype("float64"))
             add_check(f"{name}_matches_recomputed_reaggregation", np.isclose(gap, 0.0, rtol=rtol, atol=atol), max_abs_gap=gap)
+
+        split_environmental_path = split_dir / "environmental_extensions.csv"
+        if split_environmental_path.exists():
+            split_environmental = pd.read_csv(split_environmental_path)
+            expected_environmental = aggregate_environmental_extensions(
+                split_environmental,
+                mapping,
+                output=x_observed,
+                keep_unmapped=True,
+                rtol=rtol,
+                atol=atol,
+            )
+            observed_environmental_path = agg_dir / "environmental_extensions.csv"
+            if expected_environmental is None:
+                add_check(
+                    "environmental_reaggregation_empty",
+                    not observed_environmental_path.exists(),
+                    path=str(observed_environmental_path),
+                )
+            elif not observed_environmental_path.exists():
+                add_check(
+                    "environmental_reaggregation_exists",
+                    False,
+                    path=str(observed_environmental_path),
+                )
+            else:
+                observed_environmental = pd.read_csv(observed_environmental_path)
+                gap = _max_abs_environmental_gap(
+                    observed_environmental, expected_environmental
+                )
+                add_check(
+                    "environmental_totals_match_reaggregation",
+                    np.isclose(gap, 0.0, rtol=rtol, atol=atol),
+                    max_abs_gap=gap,
+                )
+                ratio = _check_ratio_file(
+                    observed_environmental_path,
+                    numerator_col="value",
+                    denominator_col="monetary_output",
+                    ratio_col="intensity",
+                    rtol=rtol,
+                    atol=atol,
+                )
+                ratio_extra = dict(ratio)
+                ratio_ok = bool(ratio_extra.pop("ok", False))
+                add_check(
+                    "environmental_reaggregation_intensity_ratio",
+                    ratio_ok,
+                    **ratio_extra,
+                )
 
         if not edge_audit.empty:
             audit_path = agg_dir / "aggregation_edge_mapping_audit.csv"

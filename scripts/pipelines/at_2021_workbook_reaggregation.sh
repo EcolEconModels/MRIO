@@ -31,6 +31,7 @@ FLOW_IDENTITY_ATOL="${FLOW_IDENTITY_ATOL:-1e-6}"
 EXPECTED_REAGG_SECTORS="${EXPECTED_REAGG_SECTORS:-}"
 MPG4ALL_DIR="${MPG4ALL_DIR:-$(cd "$ROOT_DIR/.." && pwd)/MPG4ALL}"
 CAPITAL_STOCK_SOURCE_CSV="${CAPITAL_STOCK_SOURCE_CSV:-}"
+ENVIRONMENTAL_EXTENSIONS_JSON="${ENVIRONMENTAL_EXTENSIONS_JSON:-{\"air_emissions\":[\"CO2 - combustion - air\"]}}"
 
 GENERATED_MAPPINGS_OUT="${GENERATED_MAPPINGS_OUT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_generated_mappings}"
 OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_split_flows}"
@@ -97,6 +98,7 @@ set -x
   --eurostat-stk-flows "$STK_FLOWS_JSON" \
   --exio-year "$EXIO_YEAR" --exio-region "$EXIO_REGION" \
   --exio-doi "$EXIO_DOI" \
+  --environmental-extensions "$ENVIRONMENTAL_EXTENSIONS_JSON" \
   --exio-mapping-csv "$SPLIT_MAPPING_CSV" \
   --require-mapping-coverage --coverage-tol 0 \
   "${CONSISTENCY_ARGS[@]}" \

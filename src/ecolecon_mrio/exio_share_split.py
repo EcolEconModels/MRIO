@@ -17,6 +17,7 @@ from ecolecon_mrio.exiobase3 import (
     read_exiobase3_region_export_vector,
 )
 from ecolecon_mrio.exiobase3_extensions import (
+    extract_extension_values,
     extract_quantity_and_price as extract_exio_quantity_and_price,
 )
 from ecolecon_mrio.iot_flow_semantics import (
@@ -46,6 +47,8 @@ class SplitResult:
     supplementary_diagnostics: pd.DataFrame | None = None
     fallback_diagnostics: pd.DataFrame | None = None
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None
+    exio_environmental_extensions: pd.DataFrame | None = None
+    environmental_extensions: pd.DataFrame | None = None
     io_system: object | None = None  # pymrio.IOSystem when available
 
     @property
@@ -438,6 +441,170 @@ def build_projection_matrix_for_split_profiles(
 
     return P
 
+
+def project_environmental_extensions_to_split_sectors(
+    *,
+    exio_extensions: pd.DataFrame | None,
+    split_profiles: Mapping[str, SplitProfiles],
+    eurostat_output: pd.Series,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
+) -> pd.DataFrame | None:
+    """Transfer EXIO production-extension intensities onto Eurostat output.
+
+    EXIO physical extension totals are donor evidence, not target-country totals.
+    For each stressor this function projects the EXIO numerator and EXIO monetary
+    output through the same edge-aware matrix ``P``, forms the donor intensity as
+    a ratio of projected sums, then multiplies that intensity by the already
+    transformed Eurostat output.  The returned physical ``value`` is therefore a
+    Eurostat-side satellite total.  Subsequent reaggregation must sum ``value``
+    and ``monetary_output`` and derive intensity afterwards.
+    """
+    if exio_extensions is None or exio_extensions.empty:
+        return None
+    required = {
+        "source_label",
+        "extension",
+        "kind",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_denominator",
+    }
+    missing = required - set(exio_extensions.columns)
+    if missing:
+        raise ValueError(
+            f"exio_extensions missing required columns: {sorted(missing)!r}"
+        )
+    kind_values = cast(pd.Series, exio_extensions["kind"]).astype(str)
+    production = exio_extensions.loc[kind_values == "F"].copy()
+    if production.empty:
+        return None
+
+    output = eurostat_output.copy()
+    output.index = output.index.astype(str)
+    if not output.index.is_unique:
+        raise ValueError("eurostat_output index must be unique")
+    output = output.astype("float64")
+    if (
+        output.isna().any()
+        or not np.isfinite(output.to_numpy()).all()
+        or bool((output < 0.0).any())
+    ):
+        raise ValueError("Eurostat output must be finite and non-negative.")
+
+    source_values = cast(pd.Series, production["source_label"]).astype(str)
+    raw_labels = list(dict.fromkeys(source_values.tolist()))
+    P = build_projection_matrix_for_split_profiles(
+        split_profiles=split_profiles,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+        raw_exio_sectors=raw_labels,
+        emitted_labels=list(map(str, output.index)),
+    )
+    split_children = {
+        str(child)
+        for profile in split_profiles.values()
+        for child in profile.subsectors
+    }
+    projection_support = cast(pd.Series, P.abs().sum(axis=1)).gt(0.0)
+
+    rows: list[pd.DataFrame] = []
+    group_cols = ["extension", "stressor", "unit"]
+    for keys, grouped_frame in production.groupby(group_cols, dropna=False, sort=False):
+        key_tuple = keys if isinstance(keys, tuple) else (keys,)
+        if len(key_tuple) != len(group_cols):
+            raise RuntimeError("Unexpected environmental-extension grouping key.")
+        extension_label, stressor_label, unit_label = map(str, key_tuple)
+        group = cast(pd.DataFrame, grouped_frame.copy())
+        group_source = cast(pd.Series, group["source_label"]).astype(str)
+        group["source_label"] = group_source
+        duplicate_mask = group_source.duplicated()
+        if bool(duplicate_mask.any()):
+            duplicate_values = cast(
+                pd.Series, group.loc[duplicate_mask, "source_label"]
+            ).astype(str)
+            duplicates = sorted(duplicate_values.unique().tolist())
+            raise ValueError(
+                f"Duplicate EXIO extension source labels for one stressor: {duplicates!r}"
+            )
+        raw = group.set_index("source_label").reindex(P.columns)
+        missing_values = cast(
+            pd.DataFrame, raw[["value", "monetary_denominator"]].isna()
+        )
+        if bool(missing_values.to_numpy().any()):
+            missing_rows = cast(pd.Series, missing_values.any(axis=1))
+            missing_index = pd.Index(raw.index[missing_rows.to_numpy(dtype="bool")])
+            missing_raw = list(map(str, missing_index))
+            raise ValueError(
+                "Environmental extension does not cover the projection donor domain: "
+                f"{missing_raw[:10]!r}."
+            )
+        raw_value = cast(pd.Series, raw["value"]).astype("float64").to_numpy()
+        raw_output = cast(pd.Series, raw["monetary_denominator"]).astype(
+            "float64"
+        ).to_numpy()
+        p_values = P.to_numpy(dtype="float64")
+        donor_value = pd.Series(
+            p_values @ raw_value, index=P.index, dtype="float64"
+        )
+        donor_output = pd.Series(
+            p_values @ raw_output, index=P.index, dtype="float64"
+        )
+        target_output = output.reindex(P.index).astype("float64")
+
+        required_index = target_output.index.intersection(
+            pd.Index(sorted(split_children))
+        )
+        required_target = target_output.reindex(required_index).astype("float64")
+        required_support = projection_support.reindex(required_index).fillna(False)
+        required_donor = donor_output.reindex(required_index).astype("float64")
+        donor_finite = pd.Series(
+            np.isfinite(required_donor.to_numpy(dtype="float64")),
+            index=required_index,
+            dtype="bool",
+        )
+        required_missing_mask = required_target.gt(0.0) & (
+            ~required_support.astype("bool")
+            | ~donor_finite
+            | required_donor.le(0.0)
+        )
+        required_missing_index = pd.Index(
+            required_index[required_missing_mask.to_numpy(dtype="bool")]
+        )
+        required_missing = list(map(str, required_missing_index))
+        if required_missing:
+            raise ValueError(
+                "Positive-output split children lack a usable EXIO extension denominator: "
+                f"extension={extension_label!r}, stressor={stressor_label!r}, "
+                f"children={sorted(required_missing)!r}."
+            )
+
+        eligible = projection_support & donor_output.gt(0.0)
+        if not bool(eligible.any()):
+            continue
+        eligible_index = eligible.index[eligible.to_numpy(dtype="bool")]
+        donor_intensity = donor_value.reindex(eligible_index) / donor_output.reindex(
+            eligible_index
+        )
+        target = target_output.reindex(eligible_index)
+        target_value = donor_intensity * target
+        target_intensity = donor_intensity.where(target > 0.0, np.nan)
+        rows.append(
+            pd.DataFrame(
+                {
+                    "sector": donor_intensity.index.astype(str),
+                    "extension": extension_label,
+                    "stressor": stressor_label,
+                    "unit": unit_label,
+                    "value": target_value.to_numpy(dtype="float64"),
+                    "monetary_output": target.to_numpy(dtype="float64"),
+                    "intensity": target_intensity.to_numpy(dtype="float64"),
+                }
+            )
+        )
+
+    if not rows:
+        return None
+    return pd.concat(rows, ignore_index=True)
 
 def project_exio_donor_blocks_for_split_profiles(
     *,
@@ -1819,25 +1986,63 @@ def map_exio_value_per_physical_input(
     )
 
 
-def map_exio_emission_intensity(
-    exio_emissions_and_intensity: pd.DataFrame | None,
-    split_profiles: dict[str, SplitProfiles],
-    sector_to_exio_sectors: Mapping[str, Sequence[str]]
-    | Mapping[str, Mapping[str, Sequence[str]]]
-    | None = None,
-    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
-) -> pd.DataFrame | None:
-    """Map EXIOBASE emissions intensity to emitted disaggregated sectors."""
-    return _map_exio_ratio_to_disaggregated_sectors(
-        exio_df=exio_emissions_and_intensity,
-        split_profiles=split_profiles,
-        sector_to_exio_sectors=sector_to_exio_sectors,
-        eurostat_sector_mapping=eurostat_sector_mapping,
-        numerator_col="emission",
-        denominator_col="monetary_output",
-        out_ratio_col="emission_intensity",
-    )
+def _environmental_extension_tables_for_split(
+    *,
+    exio_slice: ExioRegionSlice,
+    split_profiles: Mapping[str, SplitProfiles],
+    eurostat_output: pd.Series,
+    extension_requests: Mapping[str, Sequence[str]] | None,
+    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """Build raw EXIO evidence and Eurostat-side production satellite totals."""
+    if not extension_requests:
+        return None, None
+    if str(exio_slice.flow) != "domestic":
+        raise ValueError(
+            "Production environmental extensions are currently supported only for "
+            "DOM flow; origin-weighted import extensions are not implemented."
+        )
 
+    raw_production = extract_extension_values(
+        container=exio_slice.source_zip,
+        region=exio_slice.region,
+        source_labels=list(map(str, exio_slice.sectors)),
+        monetary_denominator=exio_slice.x_region.astype("float64"),
+        extension_requests=extension_requests,
+        kind="F",
+        required=True,
+        cache_dir=None,
+    )
+    if raw_production is None or raw_production.empty:
+        raise ValueError("Requested environmental extensions produced no EXIO F rows.")
+
+    final_demand_denominator = exio_slice.Y_region.sum(axis=0).astype("float64")
+    raw_final_demand = extract_extension_values(
+        container=exio_slice.source_zip,
+        region=exio_slice.region,
+        source_labels=list(map(str, final_demand_denominator.index)),
+        monetary_denominator=final_demand_denominator,
+        extension_requests=extension_requests,
+        kind="F_Y",
+        required=False,
+        cache_dir=None,
+    )
+    raw = (
+        raw_production
+        if raw_final_demand is None or raw_final_demand.empty
+        else pd.concat([raw_production, raw_final_demand], ignore_index=True)
+    )
+    projected = project_environmental_extensions_to_split_sectors(
+        exio_extensions=raw_production,
+        split_profiles=split_profiles,
+        eurostat_output=eurostat_output,
+        eurostat_sector_mapping=eurostat_sector_mapping,
+    )
+    if projected is None or projected.empty:
+        raise ValueError(
+            "No requested environmental extension could be projected to emitted Eurostat sectors."
+        )
+    return raw, projected
 
 def split_iot_using_exiobase_split_profiles(
     *,
@@ -1860,6 +2065,7 @@ def split_iot_using_exiobase_split_profiles(
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
     quantity_price_cache_dir: str | Path | None = None,
+    environmental_extension_requests: Mapping[str, Sequence[str]] | None = None,
     export_vector_loader: Callable[
         ..., pd.Series
     ] = read_exiobase3_region_export_vector,
@@ -2014,6 +2220,16 @@ def split_iot_using_exiobase_split_profiles(
             cache_dir=quantity_price_cache_dir,
         )
 
+    exio_environmental_extensions, environmental_extensions = (
+        _environmental_extension_tables_for_split(
+            exio_slice=exio_slice,
+            split_profiles=res.split_profiles,
+            eurostat_output=res.use_total,
+            extension_requests=environmental_extension_requests,
+            eurostat_sector_mapping=eurostat_sector_mapping,
+        )
+    )
+
     return SplitResult(
         Z=res.Z,
         Y=res.Y,
@@ -2029,6 +2245,8 @@ def split_iot_using_exiobase_split_profiles(
         supplementary_diagnostics=res.supplementary_diagnostics,
         fallback_diagnostics=res.fallback_diagnostics,
         disaggregated_sector_value_per_physical_input=res.disaggregated_sector_value_per_physical_input,
+        exio_environmental_extensions=exio_environmental_extensions,
+        environmental_extensions=environmental_extensions,
         io_system=res.io_system,
     )
 
@@ -2058,6 +2276,7 @@ def split_iot_using_exiobase_shares(
     quantity_price_extensions: Sequence[str] | None = None,
     quantity_price_stressor_keywords: Sequence[str] | None = None,
     quantity_price_cache_dir: str | Path | None = None,
+    environmental_extension_requests: Mapping[str, Sequence[str]] | None = None,
     create_io_system: bool = True,
 ) -> SplitResult:
     """Convenience wrapper: load an EXIOBASE region slice if needed, then split+balance."""
@@ -2086,6 +2305,7 @@ def split_iot_using_exiobase_shares(
         quantity_price_extensions=quantity_price_extensions,
         quantity_price_stressor_keywords=quantity_price_stressor_keywords,
         quantity_price_cache_dir=quantity_price_cache_dir,
+        environmental_extension_requests=environmental_extension_requests,
         create_io_system=create_io_system,
     )
 

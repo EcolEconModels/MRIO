@@ -964,6 +964,8 @@ def test_write_split_core_outputs_removes_stale_optional_sidecars(tmp_path) -> N
     stale_names = [
         "M_split.csv",
         "M_split_balanced.csv",
+        "environmental_extensions.csv",
+        "exio_environmental_extensions.csv",
         "disaggregated_sector_co2_intensity.csv",
         "exio_final_demand_co2_intensity.csv",
         "eurostat_sector_co2_intensity.csv",
@@ -1027,3 +1029,104 @@ def test_mapped_output_identity_allows_only_published_source_rounding() -> None:
     ] == pytest.approx(0.11)
     assert bool(result.loc["exio_mapped_output_total", "ok"]) is True
     assert result.loc["exio_mapped_output_total", "source_rounding_allowance"] == 0.0
+
+
+
+def test_environmental_extension_request_parser_accepts_list_and_mapping() -> None:
+    from scripts.split_eurostat_energy_by_exiobase import (
+        _parse_environmental_extension_requests,
+    )
+
+    assert _parse_environmental_extension_requests(
+        '["air_emissions", "material"]'
+    ) == {"air_emissions": (), "material": ()}
+    assert _parse_environmental_extension_requests(
+        '{"air_emissions":["CO2"],"material":[]}'
+    ) == {"air_emissions": ("CO2",), "material": ()}
+
+
+def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
+    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
+
+    source = tmp_path / "IOT_2021_pxp.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        _write_member(
+            zf,
+            "air_emissions/unit.txt",
+            "stressor\tunit\nCO2 - combustion - air\tkg\n",
+        )
+        _write_member(
+            zf,
+            "air_emissions/F.txt",
+            "\n".join(
+                [
+                    "region\tAT",
+                    "sector\tS1",
+                    "stressor\t",
+                    "CO2 - combustion - air\t10",
+                    "",
+                ]
+            ),
+        )
+        _write_member(
+            zf,
+            "material/unit.txt",
+            "stressor\tunit\nMaterial input\tkg\n",
+        )
+        _write_member(
+            zf,
+            "material/F.txt",
+            "\n".join(
+                [
+                    "region\tAT",
+                    "sector\tS1",
+                    "stressor\t",
+                    "Material input\t30",
+                    "",
+                ]
+            ),
+        )
+
+    exio_Z = pd.DataFrame(
+        [[1.0]], index=pd.Index(["S1"]), columns=pd.Index(["S1"])
+    )
+    exio_Y = pd.DataFrame({"P3": [4.0]}, index=pd.Index(["S1"]))
+    exio_slice = ExioRegionSlice(
+        year=2021,
+        system="pxp",
+        region="AT",
+        sectors=pd.Index(["S1"]),
+        Z_domestic=exio_Z,
+        Y_region=exio_Y,
+        x_region=pd.Series({"S1": 5.0}, dtype="float64"),
+        source_zip=source,
+        flow="domestic",
+    )
+    euro_Z = pd.DataFrame(
+        [[2.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])
+    )
+    euro_Y = pd.DataFrame({"P3": [8.0]}, index=pd.Index(["A"]))
+
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=euro_Z,
+        eurostat_Y=euro_Y,
+        exio_slice=exio_slice,
+        sector_to_exio_sectors={"A": ["S1"]},
+        environmental_extension_requests={
+            "air_emissions": ("CO2",),
+            "material": (),
+        },
+        create_io_system=False,
+    )
+
+    assert result.exio_environmental_extensions is not None
+    assert set(result.exio_environmental_extensions["extension"]) == {
+        "air_emissions",
+        "material",
+    }
+    assert result.environmental_extensions is not None
+    satellite = result.environmental_extensions.set_index("extension")
+    assert float(satellite.loc["air_emissions", "monetary_output"]) == 10.0
+    assert float(satellite.loc["air_emissions", "value"]) == 20.0
+    assert float(satellite.loc["material", "value"]) == 60.0

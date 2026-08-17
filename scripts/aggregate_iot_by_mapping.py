@@ -8,13 +8,14 @@ import json
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.iot_aggregation import (
     AggregationResult,
+    aggregate_environmental_extensions,
     aggregate_iot,
 )
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
@@ -44,6 +45,9 @@ AGGREGATION_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
     "source_sector_contract.csv",
     "aggregation_edge_mapping_audit.csv",
     "aggregated_sector_value_per_physical_input.csv",
+    "environmental_extensions.csv",
+    "exio_environmental_extensions.csv",
+    # Removed CO2-only sidecars remain managed only so reruns clear stale files.
     "aggregated_sector_co2_intensity.csv",
     "exio_final_demand_co2_intensity.csv",
     "aggregation_report.xlsx",
@@ -1454,26 +1458,28 @@ def _reorder_sector_metadata(
     frame: pd.DataFrame | None,
     product_order: Sequence[str],
     *,
+    sector_col: str = "aggregated_sector",
     drop_unemitted: bool = False,
 ) -> pd.DataFrame | None:
     """Stably order long-form sector metadata by the canonical product domain."""
-    if frame is None or "aggregated_sector" not in frame.columns:
+    if frame is None or sector_col not in frame.columns:
         return frame
     order = list(map(str, product_order))
     ranks = {code: position for position, code in enumerate(order)}
     out = frame.copy()
-    out["__official_order"] = out["aggregated_sector"].astype(str).map(ranks)
+    out["__official_order"] = out[sector_col].astype(str).map(ranks)
     if drop_unemitted:
         out = out.loc[out["__official_order"].notna()].copy()
     if out["__official_order"].isna().any():
         missing = sorted(
-            out.loc[out["__official_order"].isna(), "aggregated_sector"]
-            .astype(str)
-            .unique()
+            out.loc[out["__official_order"].isna(), sector_col].astype(str).unique()
         )
         raise ValueError(f"Sector metadata contains products outside official order: {missing!r}")
-    return out.sort_values("__official_order", kind="stable").drop(columns="__official_order").reset_index(drop=True)
-
+    return (
+        out.sort_values("__official_order", kind="stable")
+        .drop(columns="__official_order")
+        .reset_index(drop=True)
+    )
 
 def _reorder_aggregation_result(
     result: AggregationResult, product_order: Sequence[str]
@@ -1490,11 +1496,7 @@ def _reorder_aggregation_result(
         aggregated_sector_value_per_physical_input=_reorder_sector_metadata(
             result.aggregated_sector_value_per_physical_input, order
         ),
-        aggregated_sector_emission_intensity=_reorder_sector_metadata(
-            result.aggregated_sector_emission_intensity, order
-        ),
     )
-
 
 def _write_sector_contract(
     *,
@@ -1567,6 +1569,95 @@ def _write_source_sector_contract(
             )
     _write_df_csv(pd.DataFrame(rows), out_path, verbose=verbose)
 
+
+def _legacy_co2_production_view(
+    environmental_extensions: pd.DataFrame | None,
+    *,
+    sector_col: str,
+) -> pd.DataFrame | None:
+    """Adapt the generic satellite table to the existing SFC CO2 presentation."""
+    if environmental_extensions is None or environmental_extensions.empty:
+        return None
+    required = {"sector", "extension", "stressor", "unit", "value", "monetary_output", "intensity"}
+    if not required.issubset(environmental_extensions.columns):
+        return None
+    selection = (
+        (environmental_extensions["extension"].astype(str) == "air_emissions")
+        & (
+            environmental_extensions["stressor"].astype(str).str.casefold()
+            == "CO2 - combustion - air".casefold()
+        )
+    )
+    selected = cast(pd.DataFrame, environmental_extensions.loc[selection].copy())
+    if selected.empty:
+        return None
+    selected = selected.rename(
+        columns={
+            "sector": sector_col,
+            "value": "emission",
+            "intensity": "emission_intensity",
+        }
+    )
+    return selected[
+        [
+            sector_col,
+            "extension",
+            "stressor",
+            "unit",
+            "emission",
+            "monetary_output",
+            "emission_intensity",
+        ]
+    ]
+
+def _legacy_co2_final_demand_view(
+    exio_environmental_extensions: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    """Adapt generic EXIO ``F_Y`` rows to the existing SFC CO2 presentation."""
+    if exio_environmental_extensions is None or exio_environmental_extensions.empty:
+        return None
+    required = {
+        "source_label",
+        "extension",
+        "kind",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_denominator",
+        "intensity",
+    }
+    if not required.issubset(exio_environmental_extensions.columns):
+        return None
+    selection = (
+        (exio_environmental_extensions["kind"].astype(str) == "F_Y")
+        & (exio_environmental_extensions["extension"].astype(str) == "air_emissions")
+        & (
+            exio_environmental_extensions["stressor"].astype(str).str.casefold()
+            == "CO2 - combustion - air".casefold()
+        )
+    )
+    selected = cast(pd.DataFrame, exio_environmental_extensions.loc[selection].copy())
+    if selected.empty:
+        return None
+    selected = selected.rename(
+        columns={
+            "source_label": "category",
+            "value": "emission",
+            "monetary_denominator": "monetary_final_demand",
+            "intensity": "final_demand_emission_intensity",
+        }
+    )
+    return selected[
+        [
+            "extension",
+            "stressor",
+            "unit",
+            "category",
+            "emission",
+            "monetary_final_demand",
+            "final_demand_emission_intensity",
+        ]
+    ]
 
 def _write_sfc_workbook(
     *,
@@ -2011,8 +2102,13 @@ def _write_sfc_workbook(
         mapping_to_col=mapping_to_col,
         variant_value=variant_value,
         allow_missing_sfc_co2=(
-            str(variant_dim).strip() == "stk_flow"
-            and str(variant_value or "").strip().upper() in {"IMP", "IMPORT", "IMPORTS", "TOTAL"}
+            disaggregated_sector_emission_intensity is None
+            or exio_final_demand_emission_intensity is None
+            or (
+                str(variant_dim).strip() == "stk_flow"
+                and str(variant_value or "").strip().upper()
+                in {"IMP", "IMPORT", "IMPORTS", "TOTAL"}
+            )
         ),
         verbose=verbose,
     )
@@ -2294,59 +2390,48 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 disaggregated_values = None
 
-        # Try to load disaggregated sector CO2/emissions intensity if they exist
-        disaggregated_emissions = None
-        emissions_path = z_dir / "disaggregated_sector_co2_intensity.csv"
-        if emissions_path.exists():
-            _vprint(args.verbose, f"Reading: {emissions_path.resolve()}")
-            disaggregated_emissions = pd.read_csv(emissions_path)
+        environmental_extensions = None
+        environmental_path = z_dir / "environmental_extensions.csv"
+        if environmental_path.exists():
+            _vprint(args.verbose, f"Reading: {environmental_path.resolve()}")
+            environmental_extensions = pd.read_csv(environmental_path)
             required_cols = {
-                "disaggregated_sector",
+                "sector",
                 "extension",
                 "stressor",
                 "unit",
-                "emission",
+                "value",
                 "monetary_output",
+                "intensity",
             }
-            missing_cols = required_cols - set(disaggregated_emissions.columns)
+            missing_cols = required_cols - set(environmental_extensions.columns)
             if missing_cols:
-                _vprint(
-                    args.verbose,
-                    "Skipping sector emissions-intensity aggregation; missing columns in "
-                    f"{emissions_path.name}: {sorted(missing_cols)!r}",
+                raise ValueError(
+                    f"{environmental_path.name} missing required columns: "
+                    f"{sorted(missing_cols)!r}"
                 )
-                disaggregated_emissions = None
 
-        # Try to load full Eurostat-sector CO2 intensities (from EXIO concordance)
-        full_sector_emissions = None
-        eurostat_emissions_path = z_dir / "eurostat_sector_co2_intensity.csv"
-        if eurostat_emissions_path.exists():
-            _vprint(args.verbose, f"Reading: {eurostat_emissions_path.resolve()}")
-            full_sector_emissions = pd.read_csv(eurostat_emissions_path)
-
-        # Try to load EXIO final-demand direct CO2 intensity (F_Y) if it exists
-        exio_final_demand_emissions = None
-        fd_path = z_dir / "exio_final_demand_co2_intensity.csv"
-        if fd_path.exists():
-            _vprint(args.verbose, f"Reading: {fd_path.resolve()}")
-            exio_final_demand_emissions = pd.read_csv(fd_path)
+        exio_environmental_extensions = None
+        exio_environmental_path = z_dir / "exio_environmental_extensions.csv"
+        if exio_environmental_path.exists():
+            _vprint(args.verbose, f"Reading: {exio_environmental_path.resolve()}")
+            exio_environmental_extensions = pd.read_csv(exio_environmental_path)
             required_cols = {
+                "source_label",
                 "extension",
+                "kind",
                 "stressor",
                 "unit",
-                "category",
-                "emission",
-                "monetary_final_demand",
-                "final_demand_emission_intensity",
+                "value",
+                "monetary_denominator",
+                "intensity",
             }
-            missing_cols = required_cols - set(exio_final_demand_emissions.columns)
+            missing_cols = required_cols - set(exio_environmental_extensions.columns)
             if missing_cols:
-                _vprint(
-                    args.verbose,
-                    "Skipping EXIO final-demand emissions-intensity; missing columns in "
-                    f"{fd_path.name}: {sorted(missing_cols)!r}",
+                raise ValueError(
+                    f"{exio_environmental_path.name} missing required columns: "
+                    f"{sorted(missing_cols)!r}"
                 )
-                exio_final_demand_emissions = None
 
         _vprint(args.verbose, "Calling: aggregate_iot(...)")
         t = _Timer()
@@ -2375,8 +2460,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             create_io_system=args.create_io_system,
             compute_sector_value_per_physical_input=disaggregated_values is not None,
             disaggregated_sector_value_per_physical_input=disaggregated_values,
-            compute_sector_emission_intensity=disaggregated_emissions is not None,
-            disaggregated_sector_emission_intensity=disaggregated_emissions,
         )
         export_context: tuple[Path, dict, str | None] | None = None
         sector_parent_by_output: dict[str, str] | None = None
@@ -2437,28 +2520,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"Aggregated output has {len(res.Z.index)} sectors, expected {int(args.expect_n_sectors)}."
             )
 
-        combined_emissions = res.aggregated_sector_emission_intensity
-        if full_sector_emissions is not None and not full_sector_emissions.empty:
-            if {"aggregated_sector", "extension", "stressor", "unit"}.issubset(full_sector_emissions.columns):
-                primary = combined_emissions.copy() if combined_emissions is not None else pd.DataFrame()
-                fallback = full_sector_emissions.copy()
-                if not primary.empty:
-                    for col in ("aggregated_sector", "extension", "stressor", "unit"):
-                        primary[col] = primary[col].astype(str)
-                for col in ("aggregated_sector", "extension", "stressor", "unit"):
-                    fallback[col] = fallback[col].astype(str)
-
-                if not primary.empty:
-                    key_cols = ["aggregated_sector", "extension", "stressor", "unit"]
-                    primary_keys = set(map(tuple, primary[key_cols].to_numpy()))
-                    keep_mask = [tuple(row) not in primary_keys for row in fallback[key_cols].to_numpy()]
-                    fallback = fallback.loc[keep_mask]
-                    combined_emissions = pd.concat([primary, fallback], ignore_index=True)
-                else:
-                    combined_emissions = fallback
-        combined_emissions = _reorder_sector_metadata(
-            combined_emissions,
+        aggregated_environmental_extensions = aggregate_environmental_extensions(
+            environmental_extensions,
+            mapping_for_run,
+            output=x_input,
+            keep_unmapped=keep_unmapped,
+        )
+        aggregated_environmental_extensions = _reorder_sector_metadata(
+            aggregated_environmental_extensions,
             res.Z.index.astype(str).tolist(),
+            sector_col="sector",
             drop_unemitted=True,
         )
 
@@ -2507,60 +2578,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verbose=args.verbose,
             )
 
-        # Output aggregated sector emissions intensity if available
-        if combined_emissions is not None:
+        if aggregated_environmental_extensions is not None:
             _write_df_csv(
-                combined_emissions,
-                out_base / "aggregated_sector_co2_intensity.csv",
+                aggregated_environmental_extensions,
+                out_base / "environmental_extensions.csv",
+                verbose=args.verbose,
+            )
+        if exio_environmental_extensions is not None:
+            _write_df_csv(
+                exio_environmental_extensions,
+                out_base / "exio_environmental_extensions.csv",
                 verbose=args.verbose,
             )
 
-        mapping_for_sheet = None
-        if full_sector_emissions is not None and not full_sector_emissions.empty:
-            mapping_for_sheet = full_sector_emissions.copy()
-            if combined_emissions is not None and not combined_emissions.empty:
-                key_cols = ["aggregated_sector", "extension", "stressor", "unit"]
-                if set(key_cols).issubset(mapping_for_sheet.columns) and set(key_cols).issubset(
-                    combined_emissions.columns
-                ):
-                    note_cols = ["method", "emission_intensity"]
-                    cols = [c for c in note_cols if c in combined_emissions.columns]
-                    merged = mapping_for_sheet.merge(
-                        combined_emissions[key_cols + cols],
-                        on=key_cols,
-                        how="left",
-                        suffixes=("", "_combined"),
-                    )
-                    for c in cols:
-                        if c not in mapping_for_sheet.columns and c in merged.columns:
-                            merged[c] = merged[c]
-                    mapping_for_sheet = merged
-
-                    mapping_keys = set(map(tuple, mapping_for_sheet[key_cols].to_numpy()))
-                    extra = combined_emissions.copy()
-                    extra_keys = set(map(tuple, extra[key_cols].to_numpy()))
-                    missing_keys = [k for k in extra_keys if k not in mapping_keys]
-                    if missing_keys:
-                        extra = extra[[*key_cols, *[c for c in extra.columns if c not in key_cols]]]
-                        keep_mask = [tuple(row) in missing_keys for row in extra[key_cols].to_numpy()]
-                        extra = extra.loc[keep_mask].copy()
-                        if "exio_sectors" not in extra.columns:
-                            extra["exio_sectors"] = ""
-                        if "n_exio_sectors" not in extra.columns:
-                            extra["n_exio_sectors"] = 0
-                        mapping_for_sheet = pd.concat([mapping_for_sheet, extra], ignore_index=True)
-            mapping_for_sheet = _reorder_sector_metadata(
-                mapping_for_sheet,
-                res.Z.index.astype(str).tolist(),
-                drop_unemitted=True,
-            )
-
-        if exio_final_demand_emissions is not None:
-            _write_df_csv(
-                exio_final_demand_emissions,
-                out_base / "exio_final_demand_co2_intensity.csv",
-                verbose=args.verbose,
-            )
+        disaggregated_co2 = _legacy_co2_production_view(
+            environmental_extensions,
+            sector_col="disaggregated_sector",
+        )
+        aggregated_co2 = _legacy_co2_production_view(
+            aggregated_environmental_extensions,
+            sector_col="aggregated_sector",
+        )
+        final_demand_co2 = _legacy_co2_final_demand_view(
+            exio_environmental_extensions
+        )
 
         if not args.no_xlsx:
             out_xlsx = out_base / "aggregation_report.xlsx"
@@ -2598,10 +2639,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verbose=args.verbose,
                 disaggregated_sector_value_per_physical_input=disaggregated_values,
                 aggregated_sector_value_per_physical_input=res.aggregated_sector_value_per_physical_input,
-                disaggregated_sector_emission_intensity=disaggregated_emissions,
-                aggregated_sector_emission_intensity=combined_emissions,
-                exio_final_demand_emission_intensity=exio_final_demand_emissions,
-                eurostat_sector_co2_mapping=mapping_for_sheet,
+                disaggregated_sector_emission_intensity=disaggregated_co2,
+                aggregated_sector_emission_intensity=aggregated_co2,
+                exio_final_demand_emission_intensity=final_demand_co2,
+                eurostat_sector_co2_mapping=None,
                 output_after=res.x,
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")

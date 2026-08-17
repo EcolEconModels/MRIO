@@ -36,6 +36,7 @@ EXIO_REGION="${EXIO_REGION:-AT}"
 EXIO_DOI="${EXIO_DOI:-10.5281/zenodo.20051562}"
 EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
+ENVIRONMENTAL_EXTENSIONS_JSON="${ENVIRONMENTAL_EXTENSIONS_JSON:-{\"air_emissions\":[\"CO2 - combustion - air\"]}}"
 
 MAP_EXIO_TO_EUROSTAT="$ROOT_DIR/scripts/pipelines/energy_green_brown_split.csv"
 MAP_GREEN_BROWN="$ROOT_DIR/scripts/pipelines/energy_green_brown_reaggregation.csv"
@@ -79,6 +80,7 @@ CONSISTENCY_ARGS=(
   --eurostat-stk-flows "$STK_FLOWS_JSON" \
   --exio-year "$EXIO_YEAR" --exio-region "$EXIO_REGION" \
   --exio-doi "$EXIO_DOI" \
+  --environmental-extensions "$ENVIRONMENTAL_EXTENSIONS_JSON" \
   --exio-mapping-csv "$MAP_EXIO_TO_EUROSTAT" \
   --require-mapping-coverage --coverage-tol 0 \
   "${CONSISTENCY_ARGS[@]}" \

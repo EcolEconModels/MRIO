@@ -369,6 +369,38 @@ SUT/IOT, or any donor that can provide a complete block structure. EXIOBASE
 extension-derived unit values or emission intensities are optional evidence
 outputs, not primary country totals.
 
+### Environmental extension sidecar contract
+
+The scientific equations are owned by
+`docs/economic_methods/generalized_energy_disaggregation_methods.md`. The EXIO
+full-donor route exposes their result as two long-form tables through one generic
+pair of `SplitResult` fields rather than adding environment-specific fields.
+Reaggregation stays outside the monetary `AggregationResult` and is handled by one
+total-first satellite operator.
+
+Raw donor evidence uses:
+
+```text
+source_label,extension,kind,stressor,unit,value,monetary_denominator,intensity
+```
+
+Transformed and reaggregated production-side satellite accounts use the stable
+schema:
+
+```text
+sector,extension,stressor,unit,value,monetary_output,intensity
+```
+
+`value` is always the extensive physical total on the table's current sector
+basis. Reaggregation sums `value` and `monetary_output` and derives `intensity`
+afterward. `F_Y` rows remain raw final-demand sidecars because they are not a
+sector axis. Extension selection is configuration: a list requests all stressors
+from each named EXIO extension; a mapping from extension to stressor-keyword list
+selects subsets without adding extension-specific code paths.
+
+The current production-side environmental sidecar is valid only for DOM flow.
+IMP and TOTAL must omit it until origin-weighted import extensions are available.
+
 ## Route 2: row/column-specific evidence disaggregation
 
 Use this route when evidence is richer by row, column, product family, or

@@ -18,15 +18,9 @@ from ecolecon_mrio.exio_share_split import (
     split_iot_using_exiobase_shares,
     write_split_report_xlsx,
     map_exio_value_per_physical_input,
-    map_exio_emission_intensity,
-    raw_exio_members_from_split_profiles,
     emitted_sector_to_exio_members_from_split_profiles,
 )
 from ecolecon_mrio.exiobase3 import ExioRegionSlice, load_exiobase3_region_slice
-from ecolecon_mrio.exiobase3_extensions import (
-    extract_emissions_and_intensity as extract_exio_emissions_and_intensity,
-    extract_final_demand_emissions_and_intensity as extract_exio_final_demand_emissions_and_intensity,
-)
 from ecolecon_mrio.eurostat_iot import (
     ParsedEurostatIOT,
     build_eurostat_atomic_final_demand,
@@ -36,7 +30,6 @@ from ecolecon_mrio.eurostat_iot import (
 )
 from ecolecon_mrio.canonical_mapping_csv import read_canonical_split_mapping
 from ecolecon_mrio.mapping_csv import (
-    flatten_exio_sectors_from_mapping,
     load_weighted_mapping_frame,
     read_split_mapping,
     read_weighted_mapping,
@@ -165,6 +158,9 @@ SPLIT_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
     "exio_quantity_and_price.csv",
     "exio_quantity_and_price_proxies.csv",
     "disaggregated_sector_value_per_physical_input.csv",
+    "exio_environmental_extensions.csv",
+    "environmental_extensions.csv",
+    # Removed CO2-only sidecars remain managed only so reruns clear stale files.
     "exio_co2_intensity.csv",
     "disaggregated_sector_co2_intensity.csv",
     "exio_final_demand_co2_intensity.csv",
@@ -262,6 +258,24 @@ def write_split_core_outputs(
         _write_rows_csv(
             res.supplementary_diagnostics,
             outdir / "supplementary_row_split_diagnostics.csv",
+            verbose=verbose,
+        )
+    if (
+        getattr(res, "exio_environmental_extensions", None) is not None
+        and not res.exio_environmental_extensions.empty
+    ):
+        _write_rows_csv(
+            res.exio_environmental_extensions,
+            outdir / "exio_environmental_extensions.csv",
+            verbose=verbose,
+        )
+    if (
+        getattr(res, "environmental_extensions", None) is not None
+        and not res.environmental_extensions.empty
+    ):
+        _write_rows_csv(
+            res.environmental_extensions,
+            outdir / "environmental_extensions.csv",
             verbose=verbose,
         )
 
@@ -787,25 +801,38 @@ def _build_mapped_output_flow_identity_frame(
     return pd.DataFrame(rows, columns=pd.Index(columns))
 
 
-def _aggregate_exio_emissions_to_eurostat(
-    exio_emissions: pd.DataFrame,
-    sector_to_exio_sectors: dict[str, list[str]]
-    | dict[str, dict[str, list[str]]]
-    | dict[str, dict[str, float]],
-) -> pd.DataFrame:
-    from ecolecon_mrio.sector_intensity import aggregate_intensity_by_mapping
-
-    return aggregate_intensity_by_mapping(
-        exio_emissions,
-        sector_to_exio_sectors,
-        group_cols=("extension", "stressor", "unit"),
-        value_col="emission",
-        output_col="monetary_output",
-        intensity_col="emission_intensity",
-        method_label="ratio-of-sums (EXIO)",
-        include_exio_list=True,
-    )
-
+def _parse_environmental_extension_requests(
+    raw: str,
+) -> dict[str, tuple[str, ...]]:
+    """Parse JSON list shorthand or extension->stressor-keyword mapping."""
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid --environmental-extensions JSON: {exc}") from exc
+    requests: dict[str, tuple[str, ...]] = {}
+    if isinstance(value, list):
+        for item in value:
+            name = str(item).strip()
+            if not name:
+                raise SystemExit("Environmental extension names must not be blank.")
+            requests[name] = ()
+        return requests
+    if not isinstance(value, dict):
+        raise SystemExit(
+            "--environmental-extensions must be a JSON list of extension names or "
+            "an object mapping extension names to stressor keyword lists."
+        )
+    for extension, keywords in value.items():
+        name = str(extension).strip()
+        if not name:
+            raise SystemExit("Environmental extension names must not be blank.")
+        if not isinstance(keywords, list):
+            raise SystemExit(
+                f"Environmental extension {name!r} must map to a JSON list of "
+                "stressor keywords; use [] to select all stressors."
+            )
+        requests[name] = tuple(str(keyword) for keyword in keywords)
+    return requests
 
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
@@ -1025,26 +1052,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     p.add_argument(
-        "--no-exio-co2-intensity",
+        "--no-environmental-extensions",
         action="store_true",
-        help="Skip extracting direct CO2 intensity (emissions per monetary output) from EXIO air_emissions extension.",
+        help="Skip EXIO environmental extension extraction and projection.",
     )
     p.add_argument(
-        "--co2-extension",
-        default="air_emissions",
-        help="EXIO extension to read for CO2 (default: air_emissions).",
-    )
-    p.add_argument(
-        "--co2-stressor-keywords",
-        default='["CO2 - combustion - air"]',
-        help='JSON list of stressor substring keywords to select CO2 rows (default: ["CO2 - combustion - air"]).',
+        "--environmental-extensions",
+        default='{"air_emissions":["CO2 - combustion - air"]}',
+        help=(
+            "JSON list of EXIO extension names (all stressors), or JSON object "
+            "mapping extension names to stressor substring lists. Empty lists "
+            "select all stressors."
+        ),
     )
     p.add_argument(
         "--exio-to-eurostat-mapping-csv",
         default=None,
         help=(
-            "Optional canonical annotated weighted mapping CSV to map EXIO CO2 intensities to Eurostat sectors. "
-            "If provided, writes eurostat_sector_co2_intensity.csv."
+            "Optional canonical annotated weighted EXIO-to-Eurostat mapping CSV. "
+            "It is also used to project environmental donor intensities to retained unsplit sectors."
         ),
     )
 
@@ -1107,11 +1133,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     extract_qp = not args.no_exio_quantity_price
     qp_extensions = tuple(json.loads(args.qp_extensions))
     qp_keywords = tuple(json.loads(args.qp_stressor_keywords))
-    extract_co2 = not args.no_exio_co2_intensity
-    co2_extension = str(args.co2_extension)
-    co2_keywords = tuple(json.loads(args.co2_stressor_keywords))
+    environmental_requests = (
+        {}
+        if args.no_environmental_extensions
+        else _parse_environmental_extension_requests(args.environmental_extensions)
+    )
     full_sector_mapping: dict[str, dict[str, float]] | None = None
-    full_sector_notes: dict[str, str] | None = None
     full_sector_mapping_csv: str | None = args.exio_to_eurostat_mapping_csv
     qp_cache_dir = (
         data_root
@@ -1330,13 +1357,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 t = _Timer()
                 exio_flow = _exio_flow_for_eurostat_flow_value(flow)
                 exio_slice = exio_slices[exio_flow]
-                flow_has_origin_weighted_extension_proxies = exio_flow != "imports"
-                if exio_flow == "imports" and (extract_qp or extract_co2):
+                flow_has_quantity_price_proxies = exio_flow != "imports"
+                flow_has_environmental_extensions = exio_flow == "domestic"
+                if exio_flow == "imports" and extract_qp:
                     _vprint(
                         args.verbose,
-                        "Skipping EXIO extension CO2/value proxy outputs for IMP flow: "
-                        "origin-weighted import intensities are not implemented; AT-region extension "
-                        "proxies would be misleading.",
+                        "Skipping EXIO quantity/value proxy outputs for IMP flow: "
+                        "origin-weighted import proxies are not implemented.",
+                    )
+                if environmental_requests and not flow_has_environmental_extensions:
+                    _vprint(
+                        args.verbose,
+                        "Skipping production environmental extensions for non-DOM flow: "
+                        "origin-weighted import extensions are not implemented, so IMP/TOTAL "
+                        "must not inherit Austrian domestic intensities.",
                     )
                 if exio_flow == "imports" and dom_column_profiles is None:
                     raise SystemExit(
@@ -1344,14 +1378,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "so production-column profiles are domestic."
                     )
                 flow_sector_mapping: dict[str, dict[str, float]] | None = None
-                flow_sector_notes: dict[str, str] | None = None
                 if full_sector_mapping_csv is not None:
                     _vprint(
                         args.verbose,
                         f"Calling: resolve flow-specific EXIO-to-Eurostat mapping [{flow}]",
                     )
                     t_map = _Timer()
-                    flow_sector_mapping, flow_sector_notes = (
+                    flow_sector_mapping, _ = (
                         _resolve_exio_to_eurostat_mapping_for_parsed(
                             full_sector_mapping_csv,
                             parsed_variant,
@@ -1447,16 +1480,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if args.source_rounding_quantum is not None
                     else parsed_variant.meta.get("source_rounding_quantum"),
                     extract_quantity_and_price=extract_qp
-                    and flow_has_origin_weighted_extension_proxies,
+                    and flow_has_quantity_price_proxies,
                     quantity_price_extensions=qp_extensions
-                    if extract_qp and flow_has_origin_weighted_extension_proxies
+                    if extract_qp and flow_has_quantity_price_proxies
                     else None,
                     quantity_price_stressor_keywords=qp_keywords
-                    if extract_qp and flow_has_origin_weighted_extension_proxies
+                    if extract_qp and flow_has_quantity_price_proxies
                     else None,
                     quantity_price_cache_dir=qp_cache_dir
-                    if extract_qp and flow_has_origin_weighted_extension_proxies
+                    if extract_qp and flow_has_quantity_price_proxies
                     else None,
+                    environmental_extension_requests=(
+                        environmental_requests if flow_has_environmental_extensions else None
+                    ),
                 )
                 _vprint(
                     args.verbose,
@@ -1516,101 +1552,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         disagg_values.to_csv(out, index=False)
                         _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-                # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
-                if extract_co2 and flow_has_origin_weighted_extension_proxies:
-                    exio_sectors = raw_exio_members_from_split_profiles(
-                        res.split_profiles
-                    )
-                    available = set(map(str, exio_slice.sectors))
-                    exio_sectors = [s for s in exio_sectors if s in available]
-
-                    exio_out = exio_slice.x_region.astype("float64")
-
-                    # Final-demand monetary totals by EXIO category (EUR)
-                    y_by_category = exio_slice.Y_region.sum(axis=0).astype("float64")
-
-                    exio_co2 = extract_exio_emissions_and_intensity(
-                        container=exio_slice.source_zip,
-                        region=exio_slice.region,
-                        sectors=exio_sectors,
-                        monetary_output=exio_out,
-                        extension=co2_extension,
-                        stressor_keywords=co2_keywords,
-                        cache_dir=qp_cache_dir,
-                    )
-                    if exio_co2 is not None:
-                        out = flow_dir / "exio_co2_intensity.csv"
-                        exio_co2.to_csv(out, index=False)
-                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
-
-                        mapping_for_values = (
-                            emitted_sector_to_exio_members_from_split_profiles(
-                                res.split_profiles
-                            )
-                        )
-                        disagg_co2 = map_exio_emission_intensity(
-                            exio_emissions_and_intensity=exio_co2,
-                            sector_to_exio_sectors=mapping_for_values,
-                            split_profiles=res.split_profiles,
-                            eurostat_sector_mapping=flow_sector_mapping,
-                        )
-                        if disagg_co2 is not None:
-                            out = flow_dir / "disaggregated_sector_co2_intensity.csv"
-                            disagg_co2.to_csv(out, index=False)
-                            _vprint(args.verbose, f"Wrote: {out.resolve()}")
-
-                    # Also extract direct final-demand CO2 (F_Y), so users can report F_Y (or intensity * y)
-                    exio_fd_co2 = extract_exio_final_demand_emissions_and_intensity(
-                        container=exio_slice.source_zip,
-                        region=exio_slice.region,
-                        monetary_final_demand=y_by_category,
-                        extension=co2_extension,
-                        stressor_keywords=co2_keywords,
-                        cache_dir=qp_cache_dir,
-                    )
-                    if exio_fd_co2 is not None:
-                        out = flow_dir / "exio_final_demand_co2_intensity.csv"
-                        exio_fd_co2.to_csv(out, index=False)
-                        _vprint(args.verbose, f"Wrote: {out.resolve()}")
-
-                if (
-                    extract_co2
-                    and flow_has_origin_weighted_extension_proxies
-                    and flow_sector_mapping is not None
-                ):
-                    exio_sectors_full = flatten_exio_sectors_from_mapping(
-                        flow_sector_mapping
-                    )
-
-                    available = set(map(str, exio_slice.sectors))
-                    exio_sectors_full = [s for s in exio_sectors_full if s in available]
-
-                    exio_out_full = exio_slice.x_region.astype("float64")
-                    exio_co2_full = extract_exio_emissions_and_intensity(
-                        container=exio_slice.source_zip,
-                        region=exio_slice.region,
-                        sectors=exio_sectors_full,
-                        monetary_output=exio_out_full,
-                        extension=co2_extension,
-                        stressor_keywords=co2_keywords,
-                        cache_dir=qp_cache_dir,
-                    )
-                    if exio_co2_full is not None:
-                        eurostat_co2 = _aggregate_exio_emissions_to_eurostat(
-                            exio_co2_full, flow_sector_mapping
-                        )
-                        if flow_sector_notes is not None and not eurostat_co2.empty:
-                            eurostat_co2 = eurostat_co2.copy()
-                            eurostat_co2["mapping_notes"] = [
-                                flow_sector_notes.get(str(sector), "")
-                                for sector in eurostat_co2["aggregated_sector"].astype(
-                                    str
-                                )
-                            ]
-                        if not eurostat_co2.empty:
-                            out = flow_dir / "eurostat_sector_co2_intensity.csv"
-                            eurostat_co2.to_csv(out, index=False)
-                            _vprint(args.verbose, f"Wrote: {out.resolve()}")
+                # Environmental extensions are owned by the reusable split API.
                 if not args.no_xlsx_report:
                     out = flow_dir / "energy_split_report.xlsx"
                     write_split_report_xlsx(
@@ -1751,7 +1693,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Calling: resolve flow-specific EXIO-to-Eurostat mapping [single]",
         )
         t_map = _Timer()
-        full_sector_mapping, full_sector_notes = (
+        full_sector_mapping, _ = (
             _resolve_exio_to_eurostat_mapping_for_parsed(
                 full_sector_mapping_csv,
                 parsed_for_mapping,
@@ -1769,12 +1711,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verbose=args.verbose,
             )
 
-    single_has_origin_weighted_extension_proxies = exio_flow_single != "imports"
-    if exio_flow_single == "imports" and (extract_qp or extract_co2):
+    single_has_quantity_price_proxies = exio_flow_single != "imports"
+    single_has_environmental_extensions = exio_flow_single == "domestic"
+    if exio_flow_single == "imports" and extract_qp:
         _vprint(
             args.verbose,
-            "Skipping EXIO extension CO2/value proxy outputs for single-flow imports: "
-            "origin-weighted import intensities are not implemented; AT-region extension proxies would be misleading.",
+            "Skipping EXIO quantity/value proxy outputs for single-flow imports: "
+            "origin-weighted import proxies are not implemented.",
+        )
+    if environmental_requests and not single_has_environmental_extensions:
+        _vprint(
+            args.verbose,
+            "Skipping production environmental extensions for single non-DOM flow: "
+            "origin-weighted import extensions are not implemented.",
         )
 
     _vprint(args.verbose, "Calling: split_iot_using_exiobase_shares(...)")
@@ -1807,16 +1756,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             parsed.meta.get("source_rounding_quantum") if parsed is not None else None
         ),
         extract_quantity_and_price=extract_qp
-        and single_has_origin_weighted_extension_proxies,
+        and single_has_quantity_price_proxies,
         quantity_price_extensions=qp_extensions
-        if extract_qp and single_has_origin_weighted_extension_proxies
+        if extract_qp and single_has_quantity_price_proxies
         else None,
         quantity_price_stressor_keywords=qp_keywords
-        if extract_qp and single_has_origin_weighted_extension_proxies
+        if extract_qp and single_has_quantity_price_proxies
         else None,
         quantity_price_cache_dir=qp_cache_dir
-        if extract_qp and single_has_origin_weighted_extension_proxies
+        if extract_qp and single_has_quantity_price_proxies
         else None,
+        environmental_extension_requests=(
+            environmental_requests if single_has_environmental_extensions else None
+        ),
     )
     _vprint(
         args.verbose,
@@ -1864,7 +1816,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             disagg_values.to_csv(out, index=False)
             _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-    # Compute and output disaggregated sector CO2 intensities (direct emissions per monetary output)
+    # Load the EXIO slice once for mapping checks and optional environmental evidence.
     exio_slice_single = None
     if full_sector_mapping is not None and not args.no_mapping_consistency_check:
         exio_slice_single = load_exiobase3_region_slice(
@@ -1912,94 +1864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Skipping output consistency check for single flow "
                 f"(flow != TOTAL or year mismatch: Eurostat={eurostat_year}, EXIO={args.exio_year}).",
             )
-    if extract_co2 and single_has_origin_weighted_extension_proxies:
-        exio_sectors = raw_exio_members_from_split_profiles(res.split_profiles)
-
-        if exio_slice_single is None:
-            exio_slice_single = load_exiobase3_region_slice(
-                year=args.exio_year,
-                region=args.exio_region,
-                system="pxp",
-                flow=exio_flow_single,
-                cache_root=data_root,
-                doi=args.exio_doi,
-                verbose=args.verbose,
-            )
-        available = set(map(str, exio_slice_single.sectors))
-        exio_sectors = [s for s in exio_sectors if s in available]
-        exio_out = exio_slice_single.x_region.astype("float64")
-        exio_co2 = extract_exio_emissions_and_intensity(
-            container=exio_slice_single.source_zip,
-            region=exio_slice_single.region,
-            sectors=exio_sectors,
-            monetary_output=exio_out,
-            extension=co2_extension,
-            stressor_keywords=co2_keywords,
-            cache_dir=qp_cache_dir,
-        )
-        if exio_co2 is not None:
-            out = outdir / "exio_co2_intensity.csv"
-            exio_co2.to_csv(out, index=False)
-            _vprint(args.verbose, f"Wrote: {out.resolve()}")
-
-            mapping_for_values = emitted_sector_to_exio_members_from_split_profiles(
-                res.split_profiles
-            )
-            disagg_co2 = map_exio_emission_intensity(
-                exio_emissions_and_intensity=exio_co2,
-                sector_to_exio_sectors=mapping_for_values,
-                split_profiles=res.split_profiles,
-                eurostat_sector_mapping=full_sector_mapping,
-            )
-            if disagg_co2 is not None:
-                out = outdir / "disaggregated_sector_co2_intensity.csv"
-                disagg_co2.to_csv(out, index=False)
-                _vprint(args.verbose, f"Wrote: {out.resolve()}")
-
-    if (
-        extract_co2
-        and single_has_origin_weighted_extension_proxies
-        and full_sector_mapping is not None
-    ):
-        exio_sectors_full = flatten_exio_sectors_from_mapping(full_sector_mapping)
-
-        if exio_slice_single is None:
-            exio_slice_single = load_exiobase3_region_slice(
-                year=args.exio_year,
-                region=args.exio_region,
-                system="pxp",
-                flow=exio_flow_single,
-                cache_root=data_root,
-                doi=args.exio_doi,
-                verbose=args.verbose,
-            )
-        available = set(map(str, exio_slice_single.sectors))
-        exio_sectors_full = [s for s in exio_sectors_full if s in available]
-
-        exio_out_full = exio_slice_single.x_region.astype("float64")
-        exio_co2_full = extract_exio_emissions_and_intensity(
-            container=exio_slice_single.source_zip,
-            region=exio_slice_single.region,
-            sectors=exio_sectors_full,
-            monetary_output=exio_out_full,
-            extension=co2_extension,
-            stressor_keywords=co2_keywords,
-            cache_dir=qp_cache_dir,
-        )
-        if exio_co2_full is not None:
-            eurostat_co2 = _aggregate_exio_emissions_to_eurostat(
-                exio_co2_full, full_sector_mapping
-            )
-            if full_sector_notes is not None and not eurostat_co2.empty:
-                eurostat_co2 = eurostat_co2.copy()
-                eurostat_co2["mapping_notes"] = [
-                    full_sector_notes.get(str(sector), "")
-                    for sector in eurostat_co2["aggregated_sector"].astype(str)
-                ]
-            if not eurostat_co2.empty:
-                out = outdir / "eurostat_sector_co2_intensity.csv"
-                eurostat_co2.to_csv(out, index=False)
-                _vprint(args.verbose, f"Wrote: {out.resolve()}")
+    # Environmental extensions are owned by the reusable split API.
     if not args.no_xlsx_report:
         out = outdir / "energy_split_report.xlsx"
         write_split_report_xlsx(out, result=res, aggregates=report_aggregates)
