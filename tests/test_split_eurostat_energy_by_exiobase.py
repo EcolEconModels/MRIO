@@ -619,8 +619,8 @@ def test_domestic_export_donor_converts_exio_labels_to_codes(tmp_path):
     )
 
     result = split_iot_using_exiobase_split_profiles(
-        eurostat_Z=pd.DataFrame([[0.0]], index=["CPA_C19"], columns=["CPA_C19"]),
-        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=["CPA_C19"]),
+        eurostat_Z=pd.DataFrame([[0.0]], index=pd.Index(["CPA_C19"]), columns=pd.Index(["CPA_C19"])),
+        eurostat_Y=pd.DataFrame({"P6": [100.0]}, index=pd.Index(["CPA_C19"])),
         exio_slice=exio_slice,
         sector_to_exio_sectors={"CPA_C19": sectors.tolist()},
         export_vector_loader=lambda **_: pd.Series(
@@ -1038,11 +1038,11 @@ def test_environmental_extension_request_parser_accepts_list_and_mapping() -> No
     )
 
     assert _parse_environmental_extension_requests(
-        '["air_emissions", "material"]'
-    ) == {"air_emissions": (), "material": ()}
+        '["air_emissions", "materials"]'
+    ) == {"air_emissions": (), "materials": ()}
     assert _parse_environmental_extension_requests(
-        '{"air_emissions":["CO2"],"material":[]}'
-    ) == {"air_emissions": ("CO2",), "material": ()}
+        '{"air_emissions":["CO2"],"materials":[]}'
+    ) == {"air_emissions": ("CO2",), "materials": ()}
 
 
 def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
@@ -1071,12 +1071,39 @@ def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
         )
         _write_member(
             zf,
-            "material/unit.txt",
+            "air_emissions/F_Y.txt",
+            "\n".join(
+                [
+                    "region\tAT",
+                    "final_demand_category\tP3",
+                    "stressor\t",
+                    "CO2 - combustion - air\t5",
+                    "",
+                ]
+            ),
+        )
+        _write_member(
+            zf,
+            "Y.txt",
+            "\n".join(
+                [
+                    "\t\tAT",
+                    "\t\tP3",
+                    "\t\tM.EUR",
+                    "AT\tS1\t4",
+                    "DE\tS1\t6",
+                    "",
+                ]
+            ),
+        )
+        _write_member(
+            zf,
+            "materials/unit.txt",
             "stressor\tunit\nMaterial input\tkg\n",
         )
         _write_member(
             zf,
-            "material/F.txt",
+            "materials/F.txt",
             "\n".join(
                 [
                     "region\tAT",
@@ -1115,7 +1142,7 @@ def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
         sector_to_exio_sectors={"A": ["S1"]},
         environmental_extension_requests={
             "air_emissions": ("CO2",),
-            "material": (),
+            "materials": (),
         },
         create_io_system=False,
     )
@@ -1123,10 +1150,103 @@ def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
     assert result.exio_environmental_extensions is not None
     assert set(result.exio_environmental_extensions["extension"]) == {
         "air_emissions",
-        "material",
+        "materials",
     }
+    final_demand_rows = result.exio_environmental_extensions.loc[
+        result.exio_environmental_extensions["kind"].astype(str) == "F_Y"
+    ]
+    assert len(final_demand_rows) == 1
+    final_demand_row = final_demand_rows.iloc[0]
+    assert float(final_demand_row["value"]) == pytest.approx(5.0)
+    # The denominator is destination final demand from all producer origins: 4 + 6.
+    assert float(final_demand_row["monetary_denominator"]) == pytest.approx(10.0)
+    assert float(final_demand_row["intensity"]) == pytest.approx(0.5)
+
     assert result.environmental_extensions is not None
     satellite = result.environmental_extensions.set_index("extension")
     assert float(satellite.loc["air_emissions", "monetary_output"]) == 10.0
     assert float(satellite.loc["air_emissions", "value"]) == 20.0
-    assert float(satellite.loc["material", "value"]) == 60.0
+    assert float(satellite.loc["materials", "value"]) == 60.0
+
+def test_environmental_extension_cli_selection_prefers_readable_official_names() -> None:
+    from scripts.split_eurostat_energy_by_exiobase import (
+        _resolve_environmental_extension_requests,
+    )
+
+    assert _resolve_environmental_extension_requests(
+        preset="combustion-co2", specs=None, raw_json=None
+    ) == {"air_emissions": ("CO2 - combustion - air",)}
+    assert _resolve_environmental_extension_requests(
+        preset="none", specs=None, raw_json=None
+    ) == {}
+    assert _resolve_environmental_extension_requests(
+        preset="combustion-co2",
+        specs=[
+            "materials",
+            "air_emissions=CH4",
+            "air_emissions=CO2 - combustion - air",
+        ],
+        raw_json=None,
+    ) == {
+        "materials": (),
+        "air_emissions": ("CH4", "CO2 - combustion - air"),
+    }
+    assert _resolve_environmental_extension_requests(
+        preset="combustion-co2", specs=None, raw_json='{"water":[]}'
+    ) == {"water": ()}
+
+
+def test_environmental_extension_pattern_matches_multiple_indicator_rows() -> None:
+    from ecolecon_mrio.exiobase3_extensions import _select_rows_by_keywords
+
+    rows = [
+        "Employment: Low-skilled male",
+        "Employment: Low-skilled female",
+        "Employment: High-skilled male",
+    ]
+    assert _select_rows_by_keywords(rows, ("Low-skilled",)) == rows[:2]
+    assert _select_rows_by_keywords(rows, ()) == rows
+
+
+def test_extension_loader_rejects_malformed_existing_fy(tmp_path) -> None:
+    from ecolecon_mrio.exiobase3_extensions import load_exiobase3_extension
+
+    malformed = tmp_path / "malformed_fy.zip"
+    with zipfile.ZipFile(malformed, "w") as zf:
+        _write_member(
+            zf,
+            "air_emissions/unit.txt",
+            "stressor\tunit\nCO2 - combustion - air\tkg\n",
+        )
+        _write_member(
+            zf,
+            "air_emissions/F.txt",
+            "\n".join(
+                [
+                    "region\tAT",
+                    "sector\tS1",
+                    "stressor\t",
+                    "CO2 - combustion - air\t10",
+                    "",
+                ]
+            ),
+        )
+        _write_member(
+            zf,
+            "air_emissions/F_Y.txt",
+            "\n".join(
+                [
+                    "region\tAT",
+                    "final_demand_category\tP3",
+                    "stressor\t",
+                    "CO2 - combustion - air\tnot-a-number",
+                    "",
+                ]
+            ),
+        )
+
+    load_exiobase3_extension.cache_clear()
+    with pytest.raises(ValueError):
+        load_exiobase3_extension(
+            malformed, extension="air_emissions", region="AT"
+        )

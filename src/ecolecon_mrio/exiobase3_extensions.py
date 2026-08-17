@@ -660,7 +660,7 @@ def load_exiobase3_extension(
     else:
         try:
             F = _read_extension_matrix(container, extension=extension, kind="F", region=region)
-        except Exception:
+        except (KeyError, FileNotFoundError):
             F = None
         if f_path is not None and F is not None:
             F.to_pickle(f_path)
@@ -672,7 +672,7 @@ def load_exiobase3_extension(
     else:
         try:
             F_Y = _read_extension_matrix(container, extension=extension, kind="F_Y", region=region)
-        except Exception:
+        except (KeyError, FileNotFoundError):
             F_Y = None
         if fy_path is not None and F_Y is not None:
             F_Y.to_pickle(fy_path)

@@ -801,14 +801,20 @@ def _build_mapped_output_flow_identity_frame(
     return pd.DataFrame(rows, columns=pd.Index(columns))
 
 
+_ENVIRONMENTAL_EXTENSION_PRESETS: dict[str, dict[str, tuple[str, ...]]] = {
+    "none": {},
+    "combustion-co2": {"air_emissions": ("CO2 - combustion - air",)},
+}
+
+
 def _parse_environmental_extension_requests(
     raw: str,
 ) -> dict[str, tuple[str, ...]]:
-    """Parse JSON list shorthand or extension->stressor-keyword mapping."""
+    """Parse the advanced JSON environmental-selection form."""
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"Invalid --environmental-extensions JSON: {exc}") from exc
+        raise SystemExit(f"Invalid --environmental-extensions-json JSON: {exc}") from exc
     requests: dict[str, tuple[str, ...]] = {}
     if isinstance(value, list):
         for item in value:
@@ -819,7 +825,7 @@ def _parse_environmental_extension_requests(
         return requests
     if not isinstance(value, dict):
         raise SystemExit(
-            "--environmental-extensions must be a JSON list of extension names or "
+            "--environmental-extensions-json must be a JSON list of extension names or "
             "an object mapping extension names to stressor keyword lists."
         )
     for extension, keywords in value.items():
@@ -833,6 +839,61 @@ def _parse_environmental_extension_requests(
             )
         requests[name] = tuple(str(keyword) for keyword in keywords)
     return requests
+
+
+def _parse_environmental_extension_specs(
+    specs: Sequence[str],
+) -> dict[str, tuple[str, ...]]:
+    """Parse repeatable ``EXTENSION[=PATTERN]`` selectors.
+
+    Extension names are the EXIOBASE directory identifiers (for example
+    ``air_emissions``, ``materials`` or ``water``). A bare extension requests all
+    indicator/stressor rows. Each ``=PATTERN`` is a substring filter that may match
+    multiple rows; repeated patterns are combined for that extension.
+    """
+    requests: dict[str, tuple[str, ...]] = {}
+    for raw in specs:
+        extension_raw, separator, stressor_raw = str(raw).partition("=")
+        extension = extension_raw.strip()
+        if not extension:
+            raise SystemExit("Environmental extension names must not be blank.")
+        if not separator:
+            requests[extension] = ()
+            continue
+        stressor = stressor_raw.strip()
+        if not stressor:
+            raise SystemExit(
+                f"Environmental extension selector {raw!r} has an empty stressor; "
+                "omit '=' to select all stressors."
+            )
+        if extension in requests and requests[extension] == ():
+            continue
+        existing = requests.get(extension, ())
+        requests[extension] = tuple(dict.fromkeys((*existing, stressor)))
+    return requests
+
+
+def _resolve_environmental_extension_requests(
+    *,
+    preset: str | None,
+    specs: Sequence[str] | None,
+    raw_json: str | None,
+) -> dict[str, tuple[str, ...]]:
+    """Resolve exactly one environmental-selection interface to the core mapping."""
+    if raw_json is not None:
+        return _parse_environmental_extension_requests(raw_json)
+    if specs:
+        return _parse_environmental_extension_specs(specs)
+    preset_name = str(preset or "combustion-co2")
+    if preset_name not in _ENVIRONMENTAL_EXTENSION_PRESETS:
+        raise SystemExit(
+            f"Unknown environmental preset {preset_name!r}; "
+            f"choose from {sorted(_ENVIRONMENTAL_EXTENSION_PRESETS)!r}."
+        )
+    return {
+        extension: tuple(keywords)
+        for extension, keywords in _ENVIRONMENTAL_EXTENSION_PRESETS[preset_name].items()
+    }
 
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
@@ -1051,18 +1112,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         help='JSON list of stressor substring keywords to select quantity rows (default: ["Energy use -"]).',
     )
 
-    p.add_argument(
-        "--no-environmental-extensions",
-        action="store_true",
-        help="Skip EXIO environmental extension extraction and projection.",
-    )
-    p.add_argument(
-        "--environmental-extensions",
-        default='{"air_emissions":["CO2 - combustion - air"]}',
+    environmental_selection = p.add_mutually_exclusive_group()
+    environmental_selection.add_argument(
+        "--environmental-preset",
+        choices=tuple(_ENVIRONMENTAL_EXTENSION_PRESETS),
+        default="combustion-co2",
         help=(
-            "JSON list of EXIO extension names (all stressors), or JSON object "
-            "mapping extension names to stressor substring lists. Empty lists "
-            "select all stressors."
+            "Named environmental selection (default: combustion-co2). "
+            "Use 'none' to disable environmental extensions."
+        ),
+    )
+    environmental_selection.add_argument(
+        "--environmental-extension",
+        action="append",
+        default=None,
+        metavar="EXTENSION[=PATTERN]",
+        help=(
+            "Repeatable EXIOBASE extension selector using official extension directory "
+            "names. A bare name selects all indicator/stressor rows; '=PATTERN' "
+            "selects every row whose label contains that substring. Repeat to combine "
+            "patterns or extensions."
+        ),
+    )
+    environmental_selection.add_argument(
+        "--environmental-extensions-json",
+        default=None,
+        help=(
+            "Advanced JSON selection: a list of EXIO extension names or an object "
+            "mapping extension names to indicator/stressor substring lists."
         ),
     )
     p.add_argument(
@@ -1133,10 +1210,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     extract_qp = not args.no_exio_quantity_price
     qp_extensions = tuple(json.loads(args.qp_extensions))
     qp_keywords = tuple(json.loads(args.qp_stressor_keywords))
-    environmental_requests = (
-        {}
-        if args.no_environmental_extensions
-        else _parse_environmental_extension_requests(args.environmental_extensions)
+    environmental_requests = _resolve_environmental_extension_requests(
+        preset=args.environmental_preset,
+        specs=args.environmental_extension,
+        raw_json=args.environmental_extensions_json,
     )
     full_sector_mapping: dict[str, dict[str, float]] | None = None
     full_sector_mapping_csv: str | None = args.exio_to_eurostat_mapping_csv

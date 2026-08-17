@@ -283,6 +283,41 @@ def aggregate_environmental_extensions(
         or bool((source_output < 0.0).any())
     ):
         raise ValueError("Environmental extension output vector must be finite and non-negative.")
+    positive_sources_by_target: dict[str, set[str]] = {}
+    for source, output_value in source_output.items():
+        source_label = str(source)
+        if float(output_value) <= 0.0:
+            continue
+        if source_label in mapping:
+            target = str(mapping[source_label])
+        elif keep_unmapped:
+            target = source_label
+        else:
+            continue
+        positive_sources_by_target.setdefault(target, set()).add(source_label)
+    for keys, group in frame.groupby(
+        ["extension", "stressor", "unit"], dropna=False, sort=False
+    ):
+        key_tuple = keys if isinstance(keys, tuple) else (keys,)
+        covered = set(cast(pd.Series, group["sector"]).astype(str))
+        represented_targets: set[str] = set()
+        for source in covered:
+            if source in mapping:
+                represented_targets.add(str(mapping[source]))
+            elif keep_unmapped:
+                represented_targets.add(source)
+        for target in sorted(represented_targets):
+            missing_positive = sorted(
+                positive_sources_by_target.get(target, set()) - covered
+            )
+            if missing_positive:
+                raise ValueError(
+                    "Positive-output environmental extension coverage is incomplete before "
+                    "reaggregation: "
+                    f"extension/stressor/unit={key_tuple!r}, target={target!r}, "
+                    f"sectors={missing_positive[:20]!r}."
+                )
+
     sidecar_output = frame["sector"].map(source_output)
     if sidecar_output.isna().any():
         missing_sectors = sorted(

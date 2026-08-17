@@ -505,8 +505,29 @@ e^{agg}_i=\frac{f^{agg}_i}{x^{agg}_i}.
 \]
 
 Child intensities must never be arithmetically averaged or independently summed.
+At projection, every positive-output split child must have usable donor support;
+retained unsplit sectors without donor or concordance support may be unreported.
+An omitted sector means that no environmental result is available, not that its
+physical total is zero. At reaggregation, each reported extension/stressor/unit
+must cover every positive-output source sector contributing to each aggregate
+target it represents. This target-local closure prevents a partial physical
+numerator from being divided by the full canonical monetary-output denominator
+without requiring unrelated aggregate targets to carry environmental rows.
+
 Direct final-demand extensions \(F_Y\) are a separate accounting boundary and are
-not sector-disaggregated through \(P\).
+not sector-disaggregated through \(P\). For destination region \(r\) and final-demand
+category \(f\), the EXIO final-demand coefficient uses the category's monetary
+final demand across all producer origins/products supplying \(r\):
+
+\[
+ e^{Y,D}_{rf}=
+ \frac{F^Y_{rf}}{\sum_o\sum_k Y^D_{ok,rf}}.
+\]
+
+Using only domestically produced rows in that denominator would overstate the
+coefficient whenever the destination imports products for final demand. The
+resulting \(F_Y\) coefficient remains EXIO donor evidence for a separate use-phase
+proxy; it is not an authoritative target-country final-demand satellite total.
 
 A destination country's domestic production extension must not be reused as an
 import-production proxy. Production-side environmental extensions for imported

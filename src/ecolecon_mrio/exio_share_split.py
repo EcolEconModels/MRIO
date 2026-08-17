@@ -14,6 +14,7 @@ from ecolecon_mrio.exiobase3 import (
     _code_index,
     _exio_label_to_code_lookup,
     load_exiobase3_region_slice,
+    read_exiobase3_destination_final_demand_totals,
     read_exiobase3_region_export_vector,
 )
 from ecolecon_mrio.exiobase3_extensions import (
@@ -551,21 +552,31 @@ def project_environmental_extensions_to_split_sectors(
         )
         target_output = output.reindex(P.index).astype("float64")
 
-        required_index = target_output.index.intersection(
-            pd.Index(sorted(split_children))
+        required_index = pd.Index(
+            [
+                str(sector)
+                for sector, output_value in target_output.items()
+                if str(sector) in split_children and float(output_value) > 0.0
+            ]
         )
-        required_target = target_output.reindex(required_index).astype("float64")
         required_support = projection_support.reindex(required_index).fillna(False)
-        required_donor = donor_output.reindex(required_index).astype("float64")
-        donor_finite = pd.Series(
-            np.isfinite(required_donor.to_numpy(dtype="float64")),
+        required_donor_output = donor_output.reindex(required_index).astype("float64")
+        required_donor_value = donor_value.reindex(required_index).astype("float64")
+        donor_output_finite = pd.Series(
+            np.isfinite(required_donor_output.to_numpy(dtype="float64")),
             index=required_index,
             dtype="bool",
         )
-        required_missing_mask = required_target.gt(0.0) & (
+        donor_value_finite = pd.Series(
+            np.isfinite(required_donor_value.to_numpy(dtype="float64")),
+            index=required_index,
+            dtype="bool",
+        )
+        required_missing_mask = (
             ~required_support.astype("bool")
-            | ~donor_finite
-            | required_donor.le(0.0)
+            | ~donor_output_finite
+            | ~donor_value_finite
+            | required_donor_output.le(0.0)
         )
         required_missing_index = pd.Index(
             required_index[required_missing_mask.to_numpy(dtype="bool")]
@@ -573,12 +584,27 @@ def project_environmental_extensions_to_split_sectors(
         required_missing = list(map(str, required_missing_index))
         if required_missing:
             raise ValueError(
-                "Positive-output split children lack a usable EXIO extension denominator: "
+                "Positive-output environmental extension coverage is incomplete: "
                 f"extension={extension_label!r}, stressor={stressor_label!r}, "
-                f"children={sorted(required_missing)!r}."
+                f"sectors={sorted(required_missing)!r}."
             )
 
-        eligible = projection_support & donor_output.gt(0.0)
+        donor_output_finite_all = pd.Series(
+            np.isfinite(donor_output.to_numpy(dtype="float64")),
+            index=donor_output.index,
+            dtype="bool",
+        )
+        donor_value_finite_all = pd.Series(
+            np.isfinite(donor_value.to_numpy(dtype="float64")),
+            index=donor_value.index,
+            dtype="bool",
+        )
+        eligible = (
+            projection_support
+            & donor_output_finite_all
+            & donor_value_finite_all
+            & donor_output.gt(0.0)
+        )
         if not bool(eligible.any()):
             continue
         eligible_index = eligible.index[eligible.to_numpy(dtype="bool")]
@@ -2016,7 +2042,10 @@ def _environmental_extension_tables_for_split(
     if raw_production is None or raw_production.empty:
         raise ValueError("Requested environmental extensions produced no EXIO F rows.")
 
-    final_demand_denominator = exio_slice.Y_region.sum(axis=0).astype("float64")
+    final_demand_denominator = read_exiobase3_destination_final_demand_totals(
+        source_zip=exio_slice.source_zip,
+        region=exio_slice.region,
+    )
     raw_final_demand = extract_extension_values(
         container=exio_slice.source_zip,
         region=exio_slice.region,

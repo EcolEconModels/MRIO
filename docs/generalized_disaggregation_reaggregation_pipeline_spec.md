@@ -392,11 +392,28 @@ sector,extension,stressor,unit,value,monetary_output,intensity
 ```
 
 `value` is always the extensive physical total on the table's current sector
-basis. Reaggregation sums `value` and `monetary_output` and derives `intensity`
-afterward. `F_Y` rows remain raw final-demand sidecars because they are not a
-sector axis. Extension selection is configuration: a list requests all stressors
-from each named EXIO extension; a mapping from extension to stressor-keyword list
-selects subsets without adding extension-specific code paths.
+basis. Input `monetary_output` is an integrity copy that must match the canonical
+IOT output sector by sector. Reaggregation sums `value`, independently aggregates
+the canonical IOT output, and derives `intensity` afterward. Every positive-output
+split child must have donor support at projection. Retained unsplit sectors may be
+unreported, but each extension/stressor/unit must cover every positive-output source
+sector contributing to every aggregate target represented by that sidecar group.
+This target-local closure rejects a partial physical numerator against a full
+canonical-output denominator without requiring unrelated targets to be reported.
+
+`F_Y` rows remain raw final-demand sidecars because they are not a product-sector
+axis and therefore do not pass through the EXIO-to-Eurostat projection `P`. Their
+monetary denominator is destination-region final demand by category summed across
+all EXIO producer origins/products.
+
+The routine CLI uses `--environmental-preset combustion-co2` by default and
+`--environmental-preset none` to disable the satellite. Custom selections use the
+repeatable official EXIO extension-directory form
+`--environmental-extension EXTENSION[=PATTERN]`; a bare extension selects all
+indicator/stressor rows, while each pattern selects every matching row. A pattern
+may therefore deliberately select multiple indicators. The JSON form is retained
+only as the advanced `--environmental-extensions-json` escape hatch. All three
+interfaces resolve to the same internal extension-to-stressor mapping.
 
 The current production-side environmental sidecar is valid only for DOM flow.
 IMP and TOTAL must omit it until origin-weighted import extensions are available.

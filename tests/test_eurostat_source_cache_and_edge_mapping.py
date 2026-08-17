@@ -37,15 +37,15 @@ def test_load_eurostat_iot_ignores_derived_parsed_cache(tmp_path, monkeypatch):
     raw_path.write_text("{}", encoding="utf-8")
 
     # Stale legacy derived cache lacks V/M. load_eurostat_iot must not read it.
-    pd.DataFrame([[999.0]], index=["stale"], columns=["stale"]).to_pickle(parsed_dir / "Z.pkl")
-    pd.DataFrame([[999.0]], index=["stale"], columns=["P3"]).to_pickle(parsed_dir / "Y.pkl")
+    pd.DataFrame([[999.0]], index=pd.Index(["stale"]), columns=pd.Index(["stale"])).to_pickle(parsed_dir / "Z.pkl")
+    pd.DataFrame([[999.0]], index=pd.Index(["stale"]), columns=pd.Index(["P3"])).to_pickle(parsed_dir / "Y.pkl")
     (parsed_dir / "meta.json").write_text('{"stale": true}', encoding="utf-8")
 
     fresh = eurostat_iot.ParsedEurostatIOT(
-        Z=pd.DataFrame([[1.0]], index=["CPA_A"], columns=["CPA_A"]),
-        Y=pd.DataFrame([[2.0]], index=["CPA_A"], columns=["P3"]),
-        V=pd.DataFrame([[3.0]], index=["B1G"], columns=["CPA_A"]),
-        M=pd.DataFrame([[4.0]], index=["B1G"], columns=["P3"]),
+        Z=pd.DataFrame([[1.0]], index=pd.Index(["CPA_A"]), columns=pd.Index(["CPA_A"])),
+        Y=pd.DataFrame([[2.0]], index=pd.Index(["CPA_A"]), columns=pd.Index(["P3"])),
+        V=pd.DataFrame([[3.0]], index=pd.Index(["B1G"]), columns=pd.Index(["CPA_A"])),
+        M=pd.DataFrame([[4.0]], index=pd.Index(["B1G"]), columns=pd.Index(["P3"])),
         meta={"fresh": True},
     )
 
@@ -109,7 +109,7 @@ def test_edge_child_environmental_extension_uses_edge_weight_then_eurostat_outpu
                 "value": 100.0,
                 "monetary_denominator": 200.0,
                 "intensity": 0.5,
-            }
+            },
         ]
     )
 
@@ -169,12 +169,12 @@ def test_load_eurostat_table_2d_ignores_derived_parsed_cache(tmp_path, monkeypat
     parsed_dir.mkdir(parents=True)
     raw_path = base / "raw.json"
     raw_path.write_text("{}", encoding="utf-8")
-    pd.DataFrame([[999.0]], index=["stale"], columns=["stale"]).to_pickle(
+    pd.DataFrame([[999.0]], index=pd.Index(["stale"]), columns=pd.Index(["stale"])).to_pickle(
         parsed_dir / "table_row_x_col.pkl"
     )
     (parsed_dir / "table_row_x_col_meta.json").write_text('{"stale": true}', encoding="utf-8")
 
-    fresh_df = pd.DataFrame([[1.0]], index=["fresh_row"], columns=["fresh_col"])
+    fresh_df = pd.DataFrame([[1.0]], index=pd.Index(["fresh_row"]), columns=pd.Index(["fresh_col"]))
     fresh_meta = {"fresh": True}
 
     def fake_download(*args, **kwargs):
@@ -292,13 +292,13 @@ def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
 
     eurostat_Z = pd.DataFrame(
         [[100.0, 80.0], [60.0, 40.0]],
-        index=["CPA_C20", "CPA_C21"],
-        columns=["CPA_C20", "CPA_C21"],
+        index=pd.Index(["CPA_C20", "CPA_C21"]),
+        columns=pd.Index(["CPA_C20", "CPA_C21"]),
     )
     eurostat_Y = pd.DataFrame(
         [[50.0], [30.0]],
-        index=["CPA_C20", "CPA_C21"],
-        columns=["P3"],
+        index=pd.Index(["CPA_C20", "CPA_C21"]),
+        columns=pd.Index(["P3"]),
     )
     sector_to_exio = {
         "CPA_C20": ["S", "A"],
@@ -325,8 +325,8 @@ def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
     )
     expected_P = pd.DataFrame(
         [[0.25, 0.0], [0.0, 1.0], [0.75, 0.0]],
-        index=["S@CPA_C20", "A", "S@CPA_C21"],
-        columns=["S", "A"],
+        index=pd.Index(["S@CPA_C20", "A", "S@CPA_C21"]),
+        columns=pd.Index(["S", "A"]),
     )
     pd.testing.assert_frame_equal(P, expected_P)
 
@@ -369,7 +369,7 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
 
     children_c20 = ["S@CPA_C20", "A"]
     children_c21 = ["S@CPA_C21"]
-    all_children = children_c20 + children_c21
+    all_children = pd.Index(children_c20 + children_c21)
     profiles = {
         "CPA_C20": SplitProfiles(
             aggregate_sector="CPA_C20",
@@ -398,9 +398,9 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
         index=all_children,
         columns=all_children,
     )
-    Y = pd.DataFrame([[10.0], [20.0], [30.0]], index=all_children, columns=["P3"])
-    V = pd.DataFrame([[100.0, 200.0, 300.0]], index=["B1G"], columns=all_children)
-    M = pd.DataFrame([[5.0]], index=["B1G"], columns=["P3"])
+    Y = pd.DataFrame([[10.0], [20.0], [30.0]], index=all_children, columns=pd.Index(["P3"]))
+    V = pd.DataFrame([[100.0, 200.0, 300.0]], index=pd.Index(["B1G"]), columns=all_children)
+    M = pd.DataFrame([[5.0]], index=pd.Index(["B1G"]), columns=pd.Index(["P3"]))
 
     result = aggregate_iot(
         Z,
@@ -415,12 +415,12 @@ def test_aggregation_mapping_from_split_profiles_recovers_edge_split_z_y_v_m():
 
     expected_Z = pd.DataFrame(
         [[12.0, 9.0], [15.0, 9.0]],
-        index=["CPA_C20", "CPA_C21"],
-        columns=["CPA_C20", "CPA_C21"],
+        index=pd.Index(["CPA_C20", "CPA_C21"]),
+        columns=pd.Index(["CPA_C20", "CPA_C21"]),
     )
-    expected_Y = pd.DataFrame([[30.0], [30.0]], index=["CPA_C20", "CPA_C21"], columns=["P3"])
+    expected_Y = pd.DataFrame([[30.0], [30.0]], index=pd.Index(["CPA_C20", "CPA_C21"]), columns=pd.Index(["P3"]))
     expected_x = expected_Z.sum(axis=1) + expected_Y.sum(axis=1)
-    expected_V = pd.DataFrame([[300.0, 300.0]], index=["B1G"], columns=["CPA_C20", "CPA_C21"])
+    expected_V = pd.DataFrame([[300.0, 300.0]], index=pd.Index(["B1G"]), columns=pd.Index(["CPA_C20", "CPA_C21"]))
     expected_M = M.copy()
 
     pd.testing.assert_frame_equal(result.Z, expected_Z)
@@ -485,15 +485,15 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     split_dir.mkdir()
     agg_dir.mkdir()
 
-    children = ["S@CPA_C20", "A", "S@CPA_C21"]
+    children = pd.Index(["S@CPA_C20", "A", "S@CPA_C21"])
     Z = pd.DataFrame(
         [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
         index=children,
         columns=children,
     )
-    Y = pd.DataFrame([[10.0], [20.0], [30.0]], index=children, columns=["P3"])
-    V = pd.DataFrame([[100.0, 200.0, 300.0]], index=["B1G"], columns=children)
-    M = pd.DataFrame([[5.0]], index=["B1G"], columns=["P3"])
+    Y = pd.DataFrame([[10.0], [20.0], [30.0]], index=children, columns=pd.Index(["P3"]))
+    V = pd.DataFrame([[100.0, 200.0, 300.0]], index=pd.Index(["B1G"]), columns=children)
+    M = pd.DataFrame([[5.0]], index=pd.Index(["B1G"]), columns=pd.Index(["P3"]))
     x = Z.sum(axis=1) + Y.sum(axis=1)
 
     Z.to_csv(split_dir / "Z_split.csv")
@@ -523,6 +523,15 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
                 "value": 8.0,
                 "monetary_output": float(x.loc["S@CPA_C20"]),
                 "intensity": 0.5,
+            },
+            {
+                "sector": "A",
+                "extension": "air_emissions",
+                "stressor": "CO2",
+                "unit": "kg",
+                "value": float(x.loc["A"]),
+                "monetary_output": float(x.loc["A"]),
+                "intensity": 1.0,
             }
         ]
     )
@@ -624,14 +633,14 @@ def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary(
         # consistency code must use Z_domestic + Y_region instead, especially for
         # IMP and TOTAL flow slices where x_region is producer-side output.
         x_region = pd.Series({"exio_a": 999.0}, dtype="float64")
-        Z_domestic = pd.DataFrame([[4.0]], index=["exio_a"], columns=["exio_a"])
-        Y_region = pd.DataFrame([[6.0]], index=["exio_a"], columns=["P3"])
+        Z_domestic = pd.DataFrame([[4.0]], index=pd.Index(["exio_a"]), columns=pd.Index(["exio_a"]))
+        Y_region = pd.DataFrame([[6.0]], index=pd.Index(["exio_a"]), columns=pd.Index(["P3"]))
 
     mapping = {"CPA_A": {"exio_a": 1.0}}
-    Z = pd.DataFrame([[7.0]], index=["CPA_A"], columns=["CPA_A"])
+    Z = pd.DataFrame([[7.0]], index=pd.Index(["CPA_A"]), columns=pd.Index(["CPA_A"]))
     # P6 is export final demand. The mapped-output check must use Z + non-export
     # final demand (= 7 + 3), not Z + P3 + P6 (= 110).
-    Y = pd.DataFrame([[3.0, 100.0]], index=["CPA_A"], columns=["P3", "P6"])
+    Y = pd.DataFrame([[3.0, 100.0]], index=pd.Index(["CPA_A"]), columns=pd.Index(["P3", "P6"]))
 
     frame, exio_total, euro_total = _build_output_consistency_frame(
         sector_mapping=mapping,
@@ -719,8 +728,8 @@ def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
     split_dir.mkdir()
     agg_dir.mkdir()
 
-    pd.DataFrame([[1.0]], index=["A"], columns=["A"]).to_csv(split_dir / "Z_split.csv")
-    pd.DataFrame([[2.0]], index=["A"], columns=["P3"]).to_csv(split_dir / "Y_split.csv")
+    pd.DataFrame([[1.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])).to_csv(split_dir / "Z_split.csv")
+    pd.DataFrame([[2.0]], index=pd.Index(["A"]), columns=pd.Index(["P3"])).to_csv(split_dir / "Y_split.csv")
     pd.Series([3.0], index=["A"], name="x").to_csv(split_dir / "x_split.csv")
 
     pd.DataFrame([{"source_code": "A", "target_code": "A", "enabled": "1"}]).to_csv(
@@ -732,10 +741,10 @@ def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
     # silently reindexing observed outputs to expected labels would hide it.
     pd.DataFrame(
         [[1.0, 0.0], [0.0, 0.0]],
-        index=["A", "B"],
-        columns=["A", "B"],
+        index=pd.Index(["A", "B"]),
+        columns=pd.Index(["A", "B"]),
     ).to_csv(agg_dir / "Z_agg.csv")
-    pd.DataFrame([[2.0], [0.0]], index=["A", "B"], columns=["P3"]).to_csv(agg_dir / "Y_agg.csv")
+    pd.DataFrame([[2.0], [0.0]], index=pd.Index(["A", "B"]), columns=pd.Index(["P3"])).to_csv(agg_dir / "Y_agg.csv")
     pd.Series([3.0, 0.0], index=["A", "B"], name="x").to_csv(agg_dir / "x_agg.csv")
 
     report = validate_pipeline_outputs(

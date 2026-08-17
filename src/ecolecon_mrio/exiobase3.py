@@ -306,6 +306,34 @@ def read_exiobase3_region_export_vector(*, source_zip: str | Path, region: str) 
         y_exports.reindex(sectors, fill_value=0.0), fill_value=0.0
     ).rename("exports")
 
+def read_exiobase3_destination_final_demand_totals(
+    *, source_zip: str | Path, region: str
+) -> pd.Series:
+    """Return one destination region's final demand by category across all origins.
+
+    ``F_Y`` is indexed by the destination final-demand category, not by producer
+    product.  Its monetary denominator must therefore sum ``Y.txt`` over every
+    producer origin supplying the requested destination region.  This helper
+    streams only that destination's Y columns from the source zip.
+    """
+    total_use = _read_region_use_table_from_exio_zip(
+        zip_path=Path(source_zip),
+        member_name="Y.txt",
+        region=str(region),
+        flow="total",
+    )
+    totals = total_use.sum(axis=0).astype("float64")
+    if not isinstance(totals, pd.Series):
+        raise TypeError("EXIO final-demand total reduction did not return a Series.")
+    totals.index = pd.Index(
+        [str(label) for label in totals.index], name="final_demand_category"
+    )
+    if not totals.index.is_unique:
+        raise ValueError("EXIO destination final-demand categories must be unique.")
+    if totals.isna().any() or not np.isfinite(totals.to_numpy(dtype="float64")).all():
+        raise ValueError("EXIO destination final-demand totals must be finite.")
+    return totals.rename("final_demand_total")
+
 def _load_exio_region_slice_direct_from_zip(
     *,
     year: int,
