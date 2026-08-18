@@ -1250,3 +1250,45 @@ def test_extension_loader_rejects_malformed_existing_fy(tmp_path) -> None:
         load_exiobase3_extension(
             malformed, extension="air_emissions", region="AT"
         )
+
+
+def test_extension_extraction_rejects_blank_selected_value(tmp_path) -> None:
+    """A blank physical satellite cell is unavailable data, never physical zero."""
+    from ecolecon_mrio.exiobase3_extensions import (
+        extract_extension_values,
+        load_exiobase3_extension,
+    )
+
+    source = tmp_path / "blank_extension_value.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        _write_member(
+            zf,
+            "air_emissions/unit.txt",
+            "stressor\tunit\nCO2 - combustion - air\tkg\n",
+        )
+        _write_member(
+            zf,
+            "air_emissions/F.txt",
+            "\n".join(
+                [
+                    "region\tAT",
+                    "sector\tS1",
+                    "stressor\t",
+                    "CO2 - combustion - air\t",
+                    "",
+                ]
+            ),
+        )
+
+    load_exiobase3_extension.cache_clear()
+    with pytest.raises(ValueError, match="Non-finite values in EXIO extension"):
+        extract_extension_values(
+            container=source,
+            region="AT",
+            source_labels=["S1"],
+            monetary_denominator=pd.Series({"S1": 10.0}, dtype="float64"),
+            extension_requests={"air_emissions": ("CO2",)},
+            kind="F",
+            required=True,
+        )
+    load_exiobase3_extension.cache_clear()

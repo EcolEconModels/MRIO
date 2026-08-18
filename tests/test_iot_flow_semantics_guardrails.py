@@ -111,12 +111,31 @@ def test_display_aggregates_are_derived_from_atomic_details() -> None:
     assert out.loc["a", "P6_U3"] == 2.0
 
 
-def test_display_aggregates_reject_invalid_export_partition() -> None:
-    from ecolecon_mrio.iot_flow_semantics import enforce_final_demand_display_identities
+def test_display_export_residuals_allow_rounded_geographic_crossing() -> None:
+    """Rounded geographic controls may cross while atomic P6 remains unchanged."""
+    from ecolecon_mrio.iot_flow_semantics import (
+        atomic_final_demand,
+        enforce_final_demand_display_identities,
+    )
 
-    Y = pd.DataFrame({"P6": [3.0], "P6_B0": [4.0], "P6_D0": [0.0]})
-    with pytest.raises(ValueError, match="P6_B0 must be"):
-        enforce_final_demand_display_identities(Y)
+    Y = pd.DataFrame(
+        {
+            "P6": [3.0],
+            "P6_B0": [4.0],
+            "P6_D0": [999.0],
+            "P6_U2": [5.0],
+            "P6_U3": [999.0],
+        },
+        index=pd.Index(["a"]),
+    )
+    out = enforce_final_demand_display_identities(Y)
+
+    assert float(out.loc["a", "P6"]) == 3.0
+    assert float(out.loc["a", "P6_B0"]) == 4.0
+    assert float(out.loc["a", "P6_U2"]) == 5.0
+    assert float(out.loc["a", "P6_D0"]) == -1.0
+    assert float(out.loc["a", "P6_U3"]) == -1.0
+    assert list(atomic_final_demand(out).columns) == ["P6"]
 
 
 def test_derived_final_demand_controls_and_tu_are_rebuilt() -> None:

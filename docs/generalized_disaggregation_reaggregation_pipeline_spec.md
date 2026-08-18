@@ -392,8 +392,10 @@ sector,extension,stressor,unit,value,monetary_output,intensity
 ```
 
 `value` is always the extensive physical total on the table's current sector
-basis. Input `monetary_output` is an integrity copy that must match the canonical
-IOT output sector by sector. Reaggregation sums `value`, independently aggregates
+basis. A blank selected donor satellite cell is unavailable and must fail closed;
+it is never converted to physical zero. Input `monetary_output` is an integrity
+copy that must match the canonical IOT output sector by sector. Reaggregation sums
+`value`, independently aggregates
 the canonical IOT output, and derives `intensity` afterward. Every positive-output
 split child must have donor support at projection. Retained unsplit sectors may be
 unreported, but each extension/stressor/unit must cover every positive-output source

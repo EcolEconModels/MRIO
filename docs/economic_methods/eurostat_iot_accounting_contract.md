@@ -210,6 +210,22 @@ P5 = P51G + P52 + P53.
 Exports may be represented by `P6` or by an explicitly declared exhaustive
 partition. Export details must not be assumed exhaustive from a shared prefix.
 
+Generated geographic export residuals require an additional source/generated
+distinction. When `P6` is present, it is the atomic export total. Published
+`P6_B0` and `P6_U2` are retained as independently rounded geographic display
+controls, while generated tables rebuild
+
+\[
+P6_D0 = P6 - P6_B0,
+\qquad
+P6_U3 = P6_B0 - P6_U2.
+\]
+
+The generated residual display values may be slightly signed when independently
+rounded source controls cross. They are not atomic final demand and must not be
+clamped or used to alter `P6`. Published partition discrepancies are checked with
+the source-rounding envelope; the generated residual identities are exact.
+
 The additive final-use set `F` must contain exactly one representation of each
 included family. Controls such as total final use and total use are never part
 of `F`.

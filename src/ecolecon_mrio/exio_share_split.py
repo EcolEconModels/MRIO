@@ -941,7 +941,13 @@ def _validate_split_reconstruction(
     # Generated display controls are identities on each emitted child, before any
     # parent aggregation could hide offsetting errors between children.
     child_atomic = source_atomic_final_demand(Y_split)
-    for aggregate, detail in (("P3", ("P3_S13", "P3_S14", "P3_S15")), ("P5M", ("P52", "P53")), ("P5", ("P51G", "P5M"))):
+    for aggregate, detail in (
+        ("P3", ("P3_S13", "P3_S14", "P3_S15")),
+        ("P5M", ("P52", "P53")),
+        ("P5", ("P51G", "P5M")),
+        ("P6", ("P6_B0", "P6_D0")),
+        ("P6_B0", ("P6_U2", "P6_U3")),
+    ):
         if aggregate in Y_split.columns and set(detail).issubset(Y_split.columns):
             gap = Y_split[aggregate].sub(Y_split.loc[:, list(detail)].sum(axis=1))
             if not np.allclose(gap.to_numpy(), 0.0, rtol=rtol, atol=atol):
@@ -964,6 +970,8 @@ def _validate_split_reconstruction(
         ("P3", ("P3_S13", "P3_S14", "P3_S15"), ("P3_S13", "P3_S14", "P3_S15")),
         ("P5M", ("P52", "P53"), ("P52", "P53")),
         ("P5", ("P51G", "P52", "P53"), ("P51G", "P5M")),
+        ("P6", ("P6_B0", "P6_D0"), ("P6_B0", "P6_D0")),
+        ("P6_B0", ("P6_U2", "P6_U3"), ("P6_U2", "P6_U3")),
     ):
         if aggregate not in Y_expected.columns or not set(source_detail).issubset(
             Y_expected.columns

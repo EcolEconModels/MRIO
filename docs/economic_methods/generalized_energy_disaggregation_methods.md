@@ -505,8 +505,11 @@ e^{agg}_i=\frac{f^{agg}_i}{x^{agg}_i}.
 \]
 
 Child intensities must never be arithmetically averaged or independently summed.
-At projection, every positive-output split child must have usable donor support;
-retained unsplit sectors without donor or concordance support may be unreported.
+Selected donor satellite cells must be finite. A blank or missing selected physical
+observation is unavailable evidence, not an economic zero, and must fail before an
+intensity is derived. At projection, every positive-output split child must have
+usable donor support; retained unsplit sectors without donor or concordance support
+may be unreported.
 An omitted sector means that no environmental result is available, not that its
 physical total is zero. At reaggregation, each reported extension/stressor/unit
 must cover every positive-output source sector contributing to each aggregate

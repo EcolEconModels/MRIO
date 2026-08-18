@@ -25,7 +25,7 @@ def _core_fixture(
     tmp_path: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, ExioRegionSlice, dict[str, list[str]]]:
     """Build asymmetric parents, donors, and controls that expose axis or edge loss."""
-    parents = ["A", "CPA_C20", "CPA_C21"]
+    parents = pd.Index(["A", "CPA_C20", "CPA_C21"])
     z = pd.DataFrame(
         [[2.0, 7.0, 11.0], [13.0, 17.0, 19.0], [23.0, 29.0, 31.0]],
         index=parents,
@@ -48,7 +48,7 @@ def _core_fixture(
         },
         index=parents,
     )
-    donors = ["p24.d", "p24.g", "p24.h"]
+    donors = pd.Index(["p24.d", "p24.g", "p24.h"])
     donor_z = pd.DataFrame(
         [[3.0, 2.0, 1.0], [5.0, 7.0, 11.0], [13.0, 17.0, 19.0]],
         index=donors,
@@ -171,6 +171,58 @@ def test_wp1_keeps_zero_weight_edge_children_and_reconstructs_cells(
             assert dom.Z.loc[
                 row_children, col_children
             ].to_numpy().sum() == pytest.approx(z.loc[row, column])
+
+
+def test_split_export_geography_accepts_only_rounding_scale_source_gap(
+    tmp_path: Path,
+) -> None:
+    """Rounded P6 geography may cross, but a material source mismatch still fails."""
+    z, y, donor_slice, split_mapping = _core_fixture(tmp_path)
+    edges = {
+        "CPA_C20": {"p24.d": 0.5, "p24.g": 1.0},
+        "CPA_C21": {"p24.d": 0.5, "p24.h": 1.0},
+    }
+    y = y.copy()
+    y["P6_B0"] = [31.01, 30.0, 35.0]
+    # P6_D0 is a separately rounded published display control. The first row's
+    # 0.01 discrepancy from P6-P6_B0 is within the declared 0.01 source quantum.
+    y["P6_D0"] = [0.0, 7.0, 6.0]
+    y["P6_U2"] = [20.0, 20.0, 20.0]
+    y["P6_U3"] = [11.01, 10.0, 15.0]
+
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=z,
+        eurostat_Y=y,
+        exio_slice=donor_slice,
+        sector_to_exio_sectors=split_mapping,
+        eurostat_sector_mapping=edges,
+        source_rounding_quantum=0.01,
+        export_vector_loader=lambda **_kwargs: pd.Series(
+            0.0, index=donor_slice.sectors
+        ),
+        create_io_system=False,
+    )
+
+    assert float(result.Y.loc["A", "P6"]) == pytest.approx(31.0)
+    assert float(result.Y.loc["A", "P6_B0"]) == pytest.approx(31.01)
+    assert float(result.Y.loc["A", "P6_D0"]) == pytest.approx(-0.01)
+    assert float(result.Y.loc["A", "P6_U3"]) == pytest.approx(11.01)
+
+    materially_inconsistent = y.copy()
+    materially_inconsistent.loc["A", "P6_D0"] = 1.0
+    with pytest.raises(ValueError, match=r"P6\[A\]"):
+        split_iot_using_exiobase_split_profiles(
+            eurostat_Z=z,
+            eurostat_Y=materially_inconsistent,
+            exio_slice=donor_slice,
+            sector_to_exio_sectors=split_mapping,
+            eurostat_sector_mapping=edges,
+            source_rounding_quantum=0.01,
+            export_vector_loader=lambda **_kwargs: pd.Series(
+                0.0, index=donor_slice.sectors
+            ),
+            create_io_system=False,
+        )
 
 
 def test_wp1_rejects_unauthorised_duplicate_mapping_and_missing_donor(

@@ -810,11 +810,13 @@ def extract_extension_values(
             values = pd.to_numeric(raw_values, errors="coerce")
             if not isinstance(values, pd.Series):
                 raise TypeError("Extension numeric conversion did not return a Series.")
+            # Blank selected satellite cells remain unavailable observations;
+            # they must never be converted into a physical zero before validation.
             value_series = pd.Series(
                 values.to_numpy(dtype="float64"),
                 index=pd.Index(labels),
                 dtype="float64",
-            ).fillna(0.0)
+            )
             if not np.isfinite(value_series.to_numpy()).all():
                 raise ValueError(
                     f"Non-finite values in EXIO extension {extension_name!r}, "

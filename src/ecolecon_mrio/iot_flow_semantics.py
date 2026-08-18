@@ -189,8 +189,9 @@ def enforce_final_demand_display_identities(
     """Return Y with aggregate display columns derived from atomic uses.
 
     Complete P3/P5 detail partitions determine their aggregate display columns.
-    P6 and P6_B0 remain authoritative, with independently rounded P6_D0 and P6_U3
-    rebuilt as their respective partition residuals. TFU is the non-overlapping
+    P6 is the atomic export total. P6_B0 and P6_U2 are independently rounded
+    geographic export controls, while P6_D0 and P6_U3 are rebuilt as exact residual
+    display controls and may therefore be slightly signed. TFU is the non-overlapping
     final-use total. TU additionally includes row-wise intermediate use and therefore
     requires an aligned Z whenever present.
     """
@@ -207,13 +208,14 @@ def enforce_final_demand_display_identities(
         out.loc[:, "P5"] = (
             out.loc[:, "P51G"].add(out.loc[:, "P5M"], fill_value=0.0).astype("float64")
         )
+    # P6 is atomic. Its independently rounded geographic export controls may
+    # cross by a source-rounding quantum, so preserve the published controls and
+    # put the discrepancy into non-atomic residual display columns rather than
+    # clipping or fabricating trade. Domain checks remain owned by the declared
+    # source/generated accounting policy rather than this display-identity helper.
     if {"P6", "P6_B0", "P6_D0"}.issubset(out.columns):
-        if bool((out["P6"] < 0.0).any()) or bool((out["P6_B0"] < 0.0).any()) or bool((out["P6_B0"] > out["P6"]).any()):
-            raise ValueError("P6_B0 must be a non-negative partition of P6.")
         out.loc[:, "P6_D0"] = out.loc[:, "P6"] - out.loc[:, "P6_B0"]
     if {"P6_B0", "P6_U2", "P6_U3"}.issubset(out.columns):
-        if bool((out["P6_U2"] < 0.0).any()) or bool((out["P6_U2"] > out["P6_B0"]).any()):
-            raise ValueError("P6_U2 must be a non-negative partition of P6_B0.")
         out.loc[:, "P6_U3"] = out.loc[:, "P6_B0"] - out.loc[:, "P6_U2"]
     atomic = atomic_final_demand(out)
     tfu = atomic.sum(axis=1).astype("float64")
