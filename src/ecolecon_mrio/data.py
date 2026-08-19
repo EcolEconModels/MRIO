@@ -161,6 +161,7 @@ def _open_exio_zip_text(zf: zipfile.ZipFile, basename: str) -> io.TextIOWrapper:
 
 
 def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
+    """Read EXIO ``x.txt`` without turning missing/malformed output into zero."""
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "x.txt") as fh:
             frame = pd.read_csv(fh, sep="\t")
@@ -172,11 +173,20 @@ def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
         frame.loc[:, ["region", "sector"]].astype(str),
         names=["region", "sector"],
     )
-    x_numeric = cast(pd.Series, pd.to_numeric(frame[value_col], errors="coerce"))
-    x = x_numeric.fillna(0.0).astype(float)
+    if not basis_index.is_unique:
+        raise ValueError("EXIOBASE x.txt contains duplicate region-sector rows.")
+    x_numeric_obj = pd.to_numeric(frame[value_col], errors="coerce")
+    if not isinstance(x_numeric_obj, pd.Series):
+        raise TypeError("EXIOBASE x.txt numeric conversion did not return a Series.")
+    nonfinite = ~np.isfinite(x_numeric_obj.to_numpy(dtype="float64"))
+    if bool(nonfinite.any()):
+        bad = [str(basis_index[i]) for i in np.flatnonzero(nonfinite)[:10]]
+        raise ValueError(
+            "EXIOBASE x.txt contains blank, malformed, or non-finite output values; "
+            f"sample={bad!r}. Missing monetary output must not become zero."
+        )
+    x = x_numeric_obj.astype(float)
     return pd.Series(x.to_numpy(dtype=float), index=basis_index, name="x"), basis_index
-
-
 
 def load_exiobase3_output_for_year(
     year: int,
@@ -324,6 +334,10 @@ def _read_exio_Z_sparse_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
                         f"EXIOBASE Z.txt row width mismatch at row {row_idx}: "
                         f"got {vals.size}, expected {n}."
                     )
+                if not np.isfinite(vals).all():
+                    raise ValueError(
+                        f"EXIOBASE Z.txt contains non-finite monetary values at row {row_idx}."
+                    )
                 counts[row_idx] = int(np.count_nonzero(vals))
                 rows_seen += 1
             if rows_seen != n:
@@ -372,9 +386,12 @@ def _derive_A_from_Z_and_x(Z: csr_matrix, x: pd.Series, *, basis_index: pd.Multi
     This is column scaling by the buyer-sector output vector. Zero-output columns
     are mapped to zero coefficients to avoid infinities.
     """
-    x_numeric = cast(pd.Series, pd.to_numeric(pd.Series(x).reindex(basis_index), errors="coerce"))
-    x_aligned = x_numeric.fillna(0.0)
-    x_values = x_aligned.to_numpy(dtype=float)
+    x_numeric = cast(
+        pd.Series, pd.to_numeric(pd.Series(x).reindex(basis_index), errors="coerce")
+    )
+    if x_numeric.isna().any() or not np.isfinite(x_numeric.to_numpy(dtype=float)).all():
+        raise ValueError("EXIOBASE output vector is incomplete or non-finite on the Z basis.")
+    x_values = x_numeric.to_numpy(dtype=float)
     inv_x = np.zeros_like(x_values, dtype=float)
     np.divide(1.0, x_values, out=inv_x, where=np.isfinite(x_values) & (x_values != 0.0))
 
@@ -387,13 +404,23 @@ def _derive_A_from_Z_and_x(Z: csr_matrix, x: pd.Series, *, basis_index: pd.Multi
     return A
 
 
-def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> pd.Series:
+def _read_exio_y_direct_from_zip(
+    zip_path: Path, *, basis_index: pd.MultiIndex
+) -> pd.Series:
+    """Read non-export final demand, requiring every Y row value explicitly."""
     n = len(basis_index)
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "Y.txt") as fh:
-            _regions = next(fh).rstrip("\n\r").split("\t")[2:]
+            regions = next(fh).rstrip("\n\r").split("\t")[2:]
             categories = next(fh).rstrip("\n\r").split("\t")[2:]
-            keep = np.array(["export" not in str(cat).lower() for cat in categories], dtype=bool)
+            if len(regions) != len(categories):
+                raise ValueError(
+                    "EXIOBASE Y.txt column-header length mismatch: "
+                    f"regions={len(regions)}, categories={len(categories)}."
+                )
+            keep = np.array(
+                ["export" not in str(cat).lower() for cat in categories], dtype=bool
+            )
             next(fh)
             y_vals = np.zeros(n, dtype=float)
             rows_seen = 0
@@ -403,7 +430,9 @@ def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
                 try:
                     region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
                 except ValueError:
-                    raise ValueError(f"EXIOBASE Y.txt malformed row at position {row_idx}") from None
+                    raise ValueError(
+                        f"EXIOBASE Y.txt malformed row at position {row_idx}"
+                    ) from None
                 expected = basis_index[row_idx]
                 if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
                     raise ValueError(
@@ -411,14 +440,22 @@ def _read_exio_y_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
                         f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
                     )
                 vals = _numeric_tail_from_exio_line(line)
-                width = min(vals.size, keep.size)
-                if width:
-                    y_vals[row_idx] = float(vals[:width][keep[:width]].sum())
+                if vals.size != len(categories):
+                    raise ValueError(
+                        f"EXIOBASE Y.txt row width mismatch at row {row_idx}: "
+                        f"got {vals.size}, expected {len(categories)}."
+                    )
+                if not np.isfinite(vals).all():
+                    raise ValueError(
+                        f"EXIOBASE Y.txt contains non-finite monetary values at row {row_idx}."
+                    )
+                y_vals[row_idx] = float(vals[keep].sum())
                 rows_seen += 1
             if rows_seen != n:
-                raise ValueError(f"EXIOBASE Y.txt row count mismatch: got {rows_seen}, expected {n}.")
+                raise ValueError(
+                    f"EXIOBASE Y.txt row count mismatch: got {rows_seen}, expected {n}."
+                )
     return pd.Series(y_vals, index=basis_index, name="y", dtype=float)
-
 
 def _read_exio_Y_matrix_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> pd.DataFrame:
     """Read EXIOBASE Y.txt as a dense final-demand matrix when explicitly requested."""
@@ -454,6 +491,10 @@ def _read_exio_Y_matrix_direct_from_zip(zip_path: Path, *, basis_index: pd.Multi
                     raise ValueError(
                         f"EXIOBASE Y.txt row width mismatch at row {row_idx}: "
                         f"got {vals.size}, expected {len(columns)}."
+                    )
+                if not np.isfinite(vals).all():
+                    raise ValueError(
+                        f"EXIOBASE Y.txt matrix contains non-finite monetary values at row {row_idx}."
                     )
                 rows.append(vals)
                 rows_seen += 1

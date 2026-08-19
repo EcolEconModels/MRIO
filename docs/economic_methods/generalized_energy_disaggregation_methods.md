@@ -487,11 +487,13 @@ then
 f'_a = e^D_a x'_a,
 \]
 
-where \(x'_a\) is the authoritative transformed target output. This step prevents
-a donor economy's physical total from being mistaken for the target country's
-total. If an authoritative target-country environmental parent total exists, it
-supersedes this donor-derived total and donor evidence may only be used for the
-declared within-parent allocation.
+where \(x'_a\) is the authoritative transformed target output. Thus \(f'_a\) is
+an **EXIO-coefficient-implied target satellite estimate**, not an independently
+observed official target-country environmental total. This construction is
+deliberate: when several emitted children are later reaggregated, their coefficients
+are weighted by the actual transformed target-output composition. If an authoritative
+target-country environmental parent total exists, it supersedes this donor-derived
+estimate and donor evidence may only be used for the declared within-parent allocation.
 
 After \(f'\) has been constructed, it is an extensive satellite quantity.
 Reaggregation therefore sums physical totals and monetary output separately:
@@ -505,9 +507,12 @@ e^{agg}_i=\frac{f^{agg}_i}{x^{agg}_i}.
 \]
 
 Child intensities must never be arithmetically averaged or independently summed.
-Selected donor satellite cells must be finite. A blank or missing selected physical
-observation is unavailable evidence, not an economic zero, and must fail before an
-intensity is derived. At projection, every positive-output split child must have
+For every selected EXIO extension, both production ``F`` and direct-final-demand
+``F_Y`` must be present, together with ``unit.txt``. A missing selected matrix, unit,
+or physical observation is unavailable evidence, not an economic zero, and must fail
+before an intensity is derived. A nonzero physical observation with a zero monetary
+denominator is likewise inconsistent and must fail. At projection, every positive-output
+split child must have
 usable donor support; retained unsplit sectors without donor or concordance support
 may be unreported.
 An omitted sector means that no environmental result is available, not that its
@@ -528,9 +533,10 @@ final demand across all producer origins/products supplying \(r\):
 \]
 
 Using only domestically produced rows in that denominator would overstate the
-coefficient whenever the destination imports products for final demand. The
-resulting \(F_Y\) coefficient remains EXIO donor evidence for a separate use-phase
-proxy; it is not an authoritative target-country final-demand satellite total.
+coefficient whenever the destination imports products for final demand. The resulting \(F_Y\) coefficient remains EXIO donor evidence by final-demand
+category for a separate use-phase proxy; it is not an authoritative target-country
+final-demand satellite total and is not allocated across product/sector rows. Sector
+reaggregation therefore leaves these category-level donor rows unchanged.
 
 A destination country's domestic production extension must not be reused as an
 import-production proxy. Production-side environmental extensions for imported

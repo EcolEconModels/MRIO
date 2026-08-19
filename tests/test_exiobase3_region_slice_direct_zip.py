@@ -191,3 +191,53 @@ def test_region_slice_optional_cache_rejects_stale_metadata(tmp_path: Path) -> N
             cache_root=cache_root,
             doi=DEFAULT_EXIOBASE3_DOI,
         )
+
+
+def _write_region_integrity_zip(
+    path: Path, *, x_b: str = "200", y_b_row: str = "AT\tB\t20\n"
+) -> None:
+    """Write a two-sector domestic slice for monetary source-integrity tests."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("x.txt", f"region\tsector\tindout\nAT\tA\t100\nAT\tB\t{x_b}\n")
+        zf.writestr(
+            "Z.txt",
+            "\t\tAT\tAT\n\t\tA\tB\n\t\tunit\tunit\n"
+            "AT\tA\t1\t2\nAT\tB\t3\t4\n",
+        )
+        zf.writestr(
+            "Y.txt",
+            "\t\tAT\n\t\tHFCE\n\t\tunit\n"
+            "AT\tA\t10\n"
+            + y_b_row,
+        )
+
+
+def test_region_slice_rejects_blank_output_value(tmp_path: Path) -> None:
+    """The fuels region loader must not turn a blank producer output into zero."""
+    source = tmp_path / "blank_x.zip"
+    _write_region_integrity_zip(source, x_b="")
+    with pytest.raises(ValueError, match="x.txt contains blank"):
+        exiobase3._load_exio_region_slice_direct_from_zip(
+            year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
+        )
+
+
+def test_region_slice_rejects_missing_Y_sector_row(tmp_path: Path) -> None:
+    """Z/Y source row bases must match instead of filling a missing Y row with zero."""
+    source = tmp_path / "missing_y_row.zip"
+    _write_region_integrity_zip(source, y_b_row="")
+    with pytest.raises(ValueError, match="Y.txt row basis does not match Z.txt"):
+        exiobase3._load_exio_region_slice_direct_from_zip(
+            year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
+        )
+
+
+def test_region_slice_rejects_nonfinite_selected_Y_value(tmp_path: Path) -> None:
+    """A non-finite destination-use value cannot enter fuels donor profiles."""
+    source = tmp_path / "nonfinite_y.zip"
+    _write_region_integrity_zip(source, y_b_row="AT\tB\tnan\n")
+    with pytest.raises(ValueError, match="Y.txt contains non-finite monetary values"):
+        exiobase3._load_exio_region_slice_direct_from_zip(
+            year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
+        )

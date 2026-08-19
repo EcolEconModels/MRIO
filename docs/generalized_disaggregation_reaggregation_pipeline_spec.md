@@ -403,19 +403,27 @@ sector contributing to every aggregate target represented by that sidecar group.
 This target-local closure rejects a partial physical numerator against a full
 canonical-output denominator without requiring unrelated targets to be reported.
 
-`F_Y` rows remain raw final-demand sidecars because they are not a product-sector
-axis and therefore do not pass through the EXIO-to-Eurostat projection `P`. Their
-monetary denominator is destination-region final demand by category summed across
-all EXIO producer origins/products.
+`F_Y` rows remain final-demand-category sidecars because they are not a
+product-sector axis and therefore do not pass through the EXIO-to-Eurostat projection
+`P`. Their monetary denominator is destination-region final demand by category summed
+across all EXIO producer origins/products. Every selected extension must provide both
+`F.txt` and `F_Y.txt` plus `unit.txt`; missing selected source evidence fails closed.
+Sector reaggregation copies these `F_Y` rows unchanged rather than manufacturing a
+sector-by-final-demand satellite matrix.
 
 The routine CLI uses `--environmental-preset combustion-co2` by default and
 `--environmental-preset none` to disable the satellite. Custom selections use the
 repeatable official EXIO extension-directory form
-`--environmental-extension EXTENSION[=PATTERN]`; a bare extension selects all
+`--environmental-extension EXTENSION[=PATTERN]`; `EXTENSION` is the exact directory
+name in the selected EXIO archive, so the code does not maintain aliases such as
+release-specific singular/plural spellings. A bare extension selects all
 indicator/stressor rows, while each pattern selects every matching row. A pattern
 may therefore deliberately select multiple indicators. The JSON form is retained
-only as the advanced `--environmental-extensions-json` escape hatch. All three
-interfaces resolve to the same internal extension-to-stressor mapping.
+only as the advanced `--environmental-extensions-json` escape hatch.
+`--environmental-all-extensions` discovers every archive directory containing the
+required `F.txt`, `F_Y.txt`, and `unit.txt` triplet and selects all stressors. The
+small `combustion-co2`/`none` presets remain convenience selections, not an extension
+name registry.
 
 The current production-side environmental sidecar is valid only for DOM flow.
 IMP and TOTAL must omit it until origin-weighted import extensions are available.
@@ -647,3 +655,16 @@ Minimum tests for the generalized pipeline:
    outputs.
 6. Remove hard-coded split-parent restrictions from code after equivalent
    restrictions are represented in profile files.
+
+
+### Local EXIOBASE beta provenance caveat (2026-08-19)
+
+A development checkout may temporarily replace the DOI-downloaded yearly ZIP with a
+Box-distributed EXIOBASE beta before that beta has an official DOI. The Austria 2021
+beta archive used during this extension audit has SHA-256
+`ef1a379366a230b85883428e36322fb1a1d99ea45c8e3672077bad9414e1e2eb`. In that
+manual-substitution state, the existing `download_log.json`/`exio_doi` value still
+describes the configured download locator and **must not be cited as byte-level
+provenance for the beta archive**. Do not invent a beta DOI. Until an official release
+identifier is available, record the local archive hash in analysis provenance and do
+not use EXIO force-download when the intention is to retain the manually supplied beta.

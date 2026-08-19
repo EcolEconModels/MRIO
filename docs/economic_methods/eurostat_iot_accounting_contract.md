@@ -182,6 +182,12 @@ A validator must reject:
 
 ### Units and valuation
 
+For SDMX-sparse source tables, an absent observation is not automatically an
+economic zero. After the actual IOT structural rows and columns have been identified,
+every expected core `Z` and `Y` cell must be explicitly present and finite; otherwise
+parsing fails. Structural non-cells outside that identified core are not part of this
+completeness test.
+
 Objects may be added or compared only when their units and valuation bases are
 compatible. At minimum the role inventory must record:
 

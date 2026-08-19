@@ -2061,14 +2061,15 @@ def _environmental_extension_tables_for_split(
         monetary_denominator=final_demand_denominator,
         extension_requests=extension_requests,
         kind="F_Y",
-        required=False,
+        required=True,
         cache_dir=None,
     )
-    raw = (
-        raw_production
-        if raw_final_demand is None or raw_final_demand.empty
-        else pd.concat([raw_production, raw_final_demand], ignore_index=True)
-    )
+    if raw_final_demand is None or raw_final_demand.empty:
+        raise ValueError("Requested environmental extensions produced no EXIO F_Y rows.")
+    # F_Y remains category-level donor evidence. Only F passes through the sector
+    # projection below; concatenation keeps both source accounting boundaries in
+    # the provenance sidecar without inventing a sector x final-demand matrix.
+    raw = pd.concat([raw_production, raw_final_demand], ignore_index=True)
     projected = project_environmental_extensions_to_split_sectors(
         exio_extensions=raw_production,
         split_profiles=split_profiles,

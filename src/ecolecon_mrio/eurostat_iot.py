@@ -411,6 +411,33 @@ def build_eurostat_intermediate_use_reference_from_rows(
     return reference
 
 
+def _require_complete_iot_core_block(
+    frame: pd.DataFrame, *, label: str
+) -> pd.DataFrame:
+    """Return one numeric IOT core block only when every SDMX cell is explicit.
+
+    Eurostat SDMX ``value`` is sparse: an absent observation is missing evidence,
+    not a numerical zero.  Structural row/column identification happens before
+    this check so non-cells outside the actual IOT core are not mistaken for
+    missing economic observations.
+    """
+    missing = frame.isna()
+    if bool(missing.to_numpy().any()):
+        positions = np.argwhere(missing.to_numpy())
+        sample = [
+            (str(frame.index[int(i)]), str(frame.columns[int(j)]))
+            for i, j in positions[:10]
+        ]
+        raise EurostatParseError(
+            f"{label} contains absent SDMX observations inside the identified IOT core; "
+            f"sample={sample!r}. Missing core observations must not be filled with zero."
+        )
+    numeric = frame.astype("float64")
+    if not np.isfinite(numeric.to_numpy(dtype="float64")).all():
+        raise EurostatParseError(f"{label} contains non-finite numeric observations.")
+    return numeric
+
+
 def parse_eurostat_iot(
     payload: Mapping[str, Any],
     *,
@@ -472,8 +499,12 @@ def parse_eurostat_iot(
 
     # Keep a square intermediate block by restricting rows to the same codes
     # that appear as intermediate-demand columns.
-    Z = df.loc[ind_cols, ind_cols].astype("float64").fillna(0.0)
-    Y = df.loc[ind_cols, fd_cols].astype("float64").fillna(0.0)
+    Z = _require_complete_iot_core_block(
+        df.loc[ind_cols, ind_cols], label="Eurostat intermediate-use block Z"
+    )
+    Y = _require_complete_iot_core_block(
+        df.loc[ind_cols, fd_cols], label="Eurostat final-demand block Y"
+    )
     lower_rows = [r for r in industries if r not in set(ind_cols)]
     V = df.loc[lower_rows, ind_cols].astype("float64").fillna(0.0) if lower_rows else None
     M = df.loc[lower_rows, fd_cols].astype("float64") if lower_rows and fd_cols else None

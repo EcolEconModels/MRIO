@@ -33,6 +33,12 @@ For `load_mrio_matrices()` this means:
 
 Selected extension readers may read tables such as `air_emissions/F.txt`, but only when the caller actually needs that extension.
 
+All requested monetary source values are fail-closed. Blank, malformed, truncated, or
+non-finite observations in `x.txt`, `Z.txt`, or `Y.txt` must raise before coefficients
+or donor profiles are constructed. The region-slice `Z` and `Y` row bases must match;
+a missing `Y` row is not an implicit all-zero row. Explicit numerical zeros remain
+valid zeros.
+
 ## Sparse construction policy
 
 `A` is derived from `Z` and `x`:

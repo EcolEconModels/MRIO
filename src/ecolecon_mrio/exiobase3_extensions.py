@@ -91,6 +91,63 @@ def _resolve_container(path: str | Path) -> tuple[str, Path]:
     raise ValueError(f"Unsupported EXIOBASE container: {p}")
 
 
+_REQUIRED_EXTENSION_FILES: frozenset[str] = frozenset(
+    {"F.txt", "F_Y.txt", "unit.txt"}
+)
+
+
+def discover_exiobase3_extensions(container: str | Path) -> tuple[str, ...]:
+    """Discover complete EXIO extension directories from the actual source archive.
+
+    A directory is an extension candidate when it contains ``F.txt`` or
+    ``F_Y.txt``. Every candidate must also contain the complementary matrix and
+    ``unit.txt``. Exact archive directory names are returned; no release-specific
+    alias table is maintained.
+    """
+    ctype, cpath = _resolve_container(container)
+    present_by_extension: dict[str, set[str]] = {}
+    if ctype == "zip":
+        with zipfile.ZipFile(cpath, "r") as zf:
+            for member in zf.namelist():
+                parts = Path(member).parts
+                if len(parts) != 2 or parts[1] not in _REQUIRED_EXTENSION_FILES:
+                    continue
+                present_by_extension.setdefault(str(parts[0]), set()).add(str(parts[1]))
+    else:
+        for child in cpath.iterdir():
+            if not child.is_dir():
+                continue
+            present = {
+                name for name in _REQUIRED_EXTENSION_FILES if (child / name).is_file()
+            }
+            if present:
+                present_by_extension[str(child.name)] = present
+
+    candidates = {
+        name: present
+        for name, present in present_by_extension.items()
+        if {"F.txt", "F_Y.txt"}.intersection(present)
+    }
+    incomplete = {
+        name: sorted(_REQUIRED_EXTENSION_FILES - present)
+        for name, present in candidates.items()
+        if present != _REQUIRED_EXTENSION_FILES
+    }
+    if incomplete:
+        sample = dict(list(sorted(incomplete.items()))[:10])
+        raise ValueError(
+            "EXIOBASE extension directories are incomplete; selected/all-extension "
+            f"processing requires F.txt, F_Y.txt, and unit.txt. Missing={sample!r}."
+        )
+    return tuple(
+        sorted(
+            name
+            for name, present in candidates.items()
+            if present == _REQUIRED_EXTENSION_FILES
+        )
+    )
+
+
 def _read_header_lines(stream: TextIOWrapper) -> tuple[list[str], list[str], str]:
     line1 = stream.readline()
     line2 = stream.readline()
@@ -708,9 +765,10 @@ def extract_extension_values(
     intensity is derived only as ``value / monetary_denominator``.  Empty
     stressor keyword lists request every row in the named extension.
 
-    ``required=False`` is intended for optional ``F_Y`` sidecars: an extension
-    may have production ``F`` without a direct-final-demand matrix.  Production
-    extraction should normally remain fail-closed with ``required=True``.
+    ``required`` controls whether this low-level extractor may skip an unavailable
+    matrix. The fuels environmental pipeline requires both ``F`` and ``F_Y`` for
+    every selected extension and therefore calls this helper with ``required=True``
+    for both accounting boundaries.
     """
     kind_clean = str(kind)
     if kind_clean not in {"F", "F_Y"}:
@@ -826,6 +884,14 @@ def extract_extension_values(
             if unit_value is None or not str(unit_value).strip():
                 raise ValueError(
                     f"Missing unit for EXIO extension={extension_name!r}, stressor={stressor!r}."
+                )
+            inconsistent_zero = denominator.eq(0.0) & value_series.ne(0.0)
+            if bool(inconsistent_zero.any()):
+                bad = list(map(str, denominator.index[inconsistent_zero.to_numpy()][:10]))
+                raise ValueError(
+                    "EXIO extension has a nonzero physical value with zero monetary "
+                    f"denominator: extension={extension_name!r}, kind={kind_clean!r}, "
+                    f"stressor={stressor!r}, labels={bad!r}."
                 )
             intensity = value_series / denominator.replace(0.0, np.nan)
             rows.append(

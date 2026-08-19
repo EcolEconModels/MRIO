@@ -32,10 +32,33 @@ EXPECTED_REAGG_SECTORS="${EXPECTED_REAGG_SECTORS:-}"
 MPG4ALL_DIR="${MPG4ALL_DIR:-$(cd "$ROOT_DIR/.." && pwd)/MPG4ALL}"
 CAPITAL_STOCK_SOURCE_CSV="${CAPITAL_STOCK_SOURCE_CSV:-}"
 ENVIRONMENTAL_PRESET="${ENVIRONMENTAL_PRESET:-combustion-co2}"
+ENVIRONMENTAL_ALL_EXTENSIONS="${ENVIRONMENTAL_ALL_EXTENSIONS:-0}"
+EUROSTAT_FORCE_DOWNLOAD="${EUROSTAT_FORCE_DOWNLOAD:-0}"
+
+_is_true() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    0|false|no|off|"") return 1 ;;
+    *) echo "ERROR: Expected boolean env value, got: $1" >&2; exit 2 ;;
+  esac
+}
+
 ENVIRONMENTAL_ARGS=(--environmental-preset "$ENVIRONMENTAL_PRESET")
-# Advanced escape hatch: explicit JSON replaces the preset without shell rewriting.
-if [[ -n "${ENVIRONMENTAL_EXTENSIONS_JSON:-}" ]]; then
+if _is_true "$ENVIRONMENTAL_ALL_EXTENSIONS"; then
+  if [[ -n "${ENVIRONMENTAL_EXTENSIONS_JSON:-}" ]]; then
+    echo "ERROR: ENVIRONMENTAL_ALL_EXTENSIONS and ENVIRONMENTAL_EXTENSIONS_JSON are mutually exclusive." >&2
+    exit 2
+  fi
+  ENVIRONMENTAL_ARGS=(--environmental-all-extensions)
+elif [[ -n "${ENVIRONMENTAL_EXTENSIONS_JSON:-}" ]]; then
+  # Advanced escape hatch: explicit JSON replaces the preset without shell rewriting.
   ENVIRONMENTAL_ARGS=(--environmental-extensions-json "$ENVIRONMENTAL_EXTENSIONS_JSON")
+fi
+
+EUROSTAT_REFRESH_ARGS=()
+if _is_true "$EUROSTAT_FORCE_DOWNLOAD"; then
+  # Refresh only the Eurostat API payload. EXIO source-zip download policy is untouched.
+  EUROSTAT_REFRESH_ARGS=(--eurostat-force-download)
 fi
 
 GENERATED_MAPPINGS_OUT="${GENERATED_MAPPINGS_OUT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_generated_mappings}"
@@ -101,6 +124,7 @@ set -x
   --eurostat-row-dim prd_ava --eurostat-col-dim prd_use \
   --eurostat-stk-flow-dim stk_flow \
   --eurostat-stk-flows "$STK_FLOWS_JSON" \
+  "${EUROSTAT_REFRESH_ARGS[@]}" \
   --exio-year "$EXIO_YEAR" --exio-region "$EXIO_REGION" \
   --exio-doi "$EXIO_DOI" \
   "${ENVIRONMENTAL_ARGS[@]}" \

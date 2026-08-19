@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exio_share_split import (
@@ -774,3 +775,54 @@ def test_flow_identity_tolerance_is_strict_for_internal_additivity():
     strict = _build_mapped_output_flow_identity_frame(totals, rtol=1e-9, atol=1e-6)
 
     assert strict["ok"].tolist() == [False, False]
+
+
+def _tiny_complete_eurostat_iot_payload() -> dict[str, object]:
+    """Build a 2-product JSON-stat IOT with every core observation explicit."""
+    return {
+        "id": ["geo", "prd_ava", "prd_use"],
+        "size": [1, 2, 3],
+        "dimension": {
+            "geo": {"category": {"index": {"AT": 0}, "label": {"AT": "Austria"}}},
+            "prd_ava": {
+                "category": {
+                    "index": {"CPA_A": 0, "CPA_B": 1},
+                    "label": {"CPA_A": "A", "CPA_B": "B"},
+                }
+            },
+            "prd_use": {
+                "category": {
+                    "index": {"CPA_A": 0, "CPA_B": 1, "P3": 2},
+                    "label": {"CPA_A": "A", "CPA_B": "B", "P3": "Final consumption"},
+                }
+            },
+        },
+        # Flat positions are row * 3 + column because geo is a singleton.
+        "value": {"0": 1.0, "1": 0.0, "2": 2.0, "3": 3.0, "4": 4.0, "5": 5.0},
+    }
+
+
+def test_parse_eurostat_iot_preserves_explicit_zero_in_complete_core() -> None:
+    """An explicit SDMX zero remains zero when every actual Z/Y core cell is observed."""
+    from ecolecon_mrio.eurostat_iot import parse_eurostat_iot
+
+    parsed = parse_eurostat_iot(
+        _tiny_complete_eurostat_iot_payload(), row_dim="prd_ava", col_dim="prd_use"
+    )
+    assert parsed.Z.shape == (2, 2)
+    assert parsed.Y.shape == (2, 1)
+    assert float(parsed.Z.loc["CPA_A", "CPA_B"]) == 0.0
+
+
+def test_parse_eurostat_iot_rejects_absent_observation_inside_core() -> None:
+    """Sparse JSON-stat absence inside identified Z/Y is missing evidence, not zero."""
+    from ecolecon_mrio.eurostat_iot import EurostatParseError, parse_eurostat_iot
+
+    payload = _tiny_complete_eurostat_iot_payload()
+    values_obj = payload["value"]
+    assert isinstance(values_obj, dict)
+    values = dict(values_obj)
+    del values["4"]  # CPA_B -> CPA_B is a real core cell, not a structural non-cell.
+    payload["value"] = values
+    with pytest.raises(EurostatParseError, match="absent SDMX observations"):
+        parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")

@@ -131,7 +131,7 @@ def _code_index(index: pd.Index, *, label_to_code: dict[str, str]) -> pd.Index:
 
 
 def _read_region_x_from_exio_zip(*, zip_path: Path, region: str) -> pd.Series:
-    """Read producer-side x for one EXIOBASE region directly from x.txt."""
+    """Read producer-side x for one region without converting missing output to zero."""
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "x.txt") as fh:
             frame = pd.read_csv(fh, sep="\t")
@@ -145,14 +145,25 @@ def _read_region_x_from_exio_zip(*, zip_path: Path, region: str) -> pd.Series:
     region_frame = frame.loc[region_mask, ["sector", value_col]].copy()
     raw_values = region_frame[value_col]
     if not isinstance(raw_values, pd.Series):
-        raise ValueError(f"EXIOBASE x.txt output column {value_col!r} is not one-dimensional.")
+        raise ValueError(
+            f"EXIOBASE x.txt output column {value_col!r} is not one-dimensional."
+        )
     values = pd.to_numeric(raw_values, errors="coerce")
     if not isinstance(values, pd.Series):
         raise TypeError("EXIOBASE x.txt numeric output conversion did not produce a Series.")
-    values = values.fillna(0.0).astype("float64")
     sectors = pd.Index(region_frame["sector"].astype(str), name="sector")
-    return pd.Series(values.to_numpy(dtype=float), index=sectors, name="x_region")
-
+    if not sectors.is_unique:
+        raise ValueError(f"EXIOBASE x.txt contains duplicate sectors for region={region!r}.")
+    nonfinite = ~np.isfinite(values.to_numpy(dtype="float64"))
+    if bool(nonfinite.any()):
+        bad = [str(sectors[i]) for i in np.flatnonzero(nonfinite)[:10]]
+        raise ValueError(
+            "EXIOBASE x.txt contains blank, malformed, or non-finite output values "
+            f"for region={region!r}; sample={bad!r}."
+        )
+    return pd.Series(
+        values.to_numpy(dtype=float), index=sectors, name="x_region", dtype="float64"
+    )
 
 def _exio_table_header_for_region(
     fh,
@@ -218,11 +229,17 @@ def _read_region_use_table_from_exio_zip(
                         f"EXIOBASE {member_name} row width mismatch at row {row_idx}: "
                         f"got {values.size}, need column {max_keep + 1}."
                     )
+                selected = values[keep_positions]
+                if not np.isfinite(selected).all():
+                    raise ValueError(
+                        f"EXIOBASE {member_name} contains non-finite monetary values "
+                        f"at row {row_idx} for destination region={region!r}."
+                    )
                 sector = str(row_sector)
                 if sector not in acc:
                     acc[sector] = np.zeros(len(keep_positions), dtype=float)
                     row_order.append(sector)
-                acc[sector] += values[keep_positions]
+                acc[sector] += selected
     if not row_order:
         raise ValueError(
             f"EXIOBASE {member_name} produced an empty region slice for "
@@ -279,11 +296,17 @@ def _read_region_exports_member_from_exio_zip(
                         f"EXIOBASE {member_name} row width mismatch at row {row_idx}: "
                         f"got {numeric.size}, need column {max_keep + 1}."
                     )
+                selected = numeric[keep_positions]
+                if not np.isfinite(selected).all():
+                    raise ValueError(
+                        f"EXIOBASE {member_name} contains non-finite export-use values "
+                        f"at row {row_idx}."
+                    )
                 sector = str(row_sector)
                 if sector not in values_by_sector:
                     values_by_sector[sector] = 0.0
                     order.append(sector)
-                values_by_sector[sector] += float(numeric[keep_positions].sum())
+                values_by_sector[sector] += float(selected.sum())
     return pd.Series(
         [values_by_sector[sector] for sector in order],
         index=pd.Index(order, name="sector"),
@@ -356,9 +379,19 @@ def _load_exio_region_slice_direct_from_zip(
         region=region,
         flow=flow_norm,
     )
-    # Z determines the sector basis for downstream input/sales profiles. Y should
-    # use the same row sector basis; missing final-demand rows are explicit zeros.
-    Y_use = Y_use.reindex(pd.Index(Z_use.index.astype(str)), fill_value=0.0)
+    # Z and Y are both complete EXIO monetary source tables. A missing Y row is
+    # unavailable/malformed source evidence, not an all-zero final-demand row.
+    z_rows = pd.Index(Z_use.index.astype(str))
+    y_rows = pd.Index(Y_use.index.astype(str))
+    missing_y = z_rows.difference(y_rows)
+    extra_y = y_rows.difference(z_rows)
+    if len(missing_y) or len(extra_y):
+        raise ValueError(
+            "EXIOBASE Y.txt row basis does not match Z.txt for the region slice: "
+            f"missing={list(map(str, missing_y[:10]))!r}, "
+            f"extra={list(map(str, extra_y[:10]))!r}."
+        )
+    Y_use = Y_use.reindex(z_rows)
     x_output = _read_region_x_from_exio_zip(zip_path=source_zip, region=region)
 
     label_to_code = _exio_label_to_code_lookup(system)

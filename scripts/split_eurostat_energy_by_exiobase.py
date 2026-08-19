@@ -21,6 +21,7 @@ from ecolecon_mrio.exio_share_split import (
     emitted_sector_to_exio_members_from_split_profiles,
 )
 from ecolecon_mrio.exiobase3 import ExioRegionSlice, load_exiobase3_region_slice
+from ecolecon_mrio.exiobase3_extensions import discover_exiobase3_extensions
 from ecolecon_mrio.eurostat_iot import (
     ParsedEurostatIOT,
     build_eurostat_atomic_final_demand,
@@ -846,8 +847,9 @@ def _parse_environmental_extension_specs(
 ) -> dict[str, tuple[str, ...]]:
     """Parse repeatable ``EXTENSION[=PATTERN]`` selectors.
 
-    Extension names are the EXIOBASE directory identifiers (for example
-    ``air_emissions``, ``materials`` or ``water``). A bare extension requests all
+    Extension names are exact directory identifiers from the selected EXIOBASE
+    archive (for example ``air_emissions``, ``material`` or ``water`` in the
+    currently tested beta archive). A bare extension requests all
     indicator/stressor rows. Each ``=PATTERN`` is a substring filter that may match
     multiple rows; repeated patterns are combined for that extension.
     """
@@ -894,6 +896,18 @@ def _resolve_environmental_extension_requests(
         extension: tuple(keywords)
         for extension, keywords in _ENVIRONMENTAL_EXTENSION_PRESETS[preset_name].items()
     }
+
+def _environmental_extension_requests_from_archive(
+    source_zip: str | Path,
+) -> dict[str, tuple[str, ...]]:
+    """Select every complete extension directory present in the source archive."""
+    names = discover_exiobase3_extensions(source_zip)
+    if not names:
+        raise SystemExit(
+            f"No complete EXIOBASE extension directories found in {source_zip}."
+        )
+    return {name: () for name in names}
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
@@ -1142,6 +1156,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "mapping extension names to indicator/stressor substring lists."
         ),
     )
+    environmental_selection.add_argument(
+        "--environmental-all-extensions",
+        action="store_true",
+        help=(
+            "Select every extension directory discovered in the actual EXIO source "
+            "archive that provides F.txt, F_Y.txt, and unit.txt. No hard-coded "
+            "release-specific extension-name list is used."
+        ),
+    )
     p.add_argument(
         "--exio-to-eurostat-mapping-csv",
         default=None,
@@ -1210,10 +1233,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     extract_qp = not args.no_exio_quantity_price
     qp_extensions = tuple(json.loads(args.qp_extensions))
     qp_keywords = tuple(json.loads(args.qp_stressor_keywords))
-    environmental_requests = _resolve_environmental_extension_requests(
-        preset=args.environmental_preset,
-        specs=args.environmental_extension,
-        raw_json=args.environmental_extensions_json,
+    # Archive-driven all-extension selection can only be resolved after the
+    # DOI-checked/local EXIO source zip has been located. Other selectors resolve now.
+    environmental_requests = (
+        {}
+        if args.environmental_all_extensions
+        else _resolve_environmental_extension_requests(
+            preset=args.environmental_preset,
+            specs=args.environmental_extension,
+            raw_json=args.environmental_extensions_json,
+        )
     )
     full_sector_mapping: dict[str, dict[str, float]] | None = None
     full_sector_mapping_csv: str | None = args.exio_to_eurostat_mapping_csv
@@ -1412,6 +1441,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.verbose,
                     f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)",
                 )
+
+            if args.environmental_all_extensions:
+                domestic_slice = exio_slices.get("domestic")
+                if domestic_slice is None:
+                    environmental_requests = {}
+                    _vprint(
+                        args.verbose,
+                        "Archive-driven environmental selection requested, but no DOM "
+                        "flow is present; production extensions remain omitted.",
+                    )
+                else:
+                    environmental_requests = _environmental_extension_requests_from_archive(
+                        domestic_slice.source_zip
+                    )
+                    _vprint(
+                        args.verbose,
+                        "Discovered EXIO environmental extensions: "
+                        + ", ".join(environmental_requests),
+                    )
 
             assert outdir is not None
             flow_identity_totals: dict[str, dict[str, float]] = {}
@@ -1803,6 +1851,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             "origin-weighted import extensions are not implemented.",
         )
 
+    # Load the single-flow EXIO slice once. It supplies both donor matrices and,
+    # when requested, the actual archive manifest used for extension discovery.
+    exio_slice_single = load_exiobase3_region_slice(
+        year=args.exio_year,
+        region=args.exio_region,
+        system="pxp",
+        flow=exio_flow_single,
+        cache_root=data_root,
+        doi=args.exio_doi,
+        verbose=args.verbose,
+    )
+    if args.environmental_all_extensions:
+        if single_has_environmental_extensions:
+            environmental_requests = _environmental_extension_requests_from_archive(
+                exio_slice_single.source_zip
+            )
+            _vprint(
+                args.verbose,
+                "Discovered EXIO environmental extensions: "
+                + ", ".join(environmental_requests),
+            )
+        else:
+            environmental_requests = {}
+
     _vprint(args.verbose, "Calling: split_iot_using_exiobase_shares(...)")
     t = _Timer()
     res = split_iot_using_exiobase_shares(
@@ -1893,18 +1965,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             disagg_values.to_csv(out, index=False)
             _vprint(args.verbose, f"Wrote: {out.resolve()}")
 
-    # Load the EXIO slice once for mapping checks and optional environmental evidence.
-    exio_slice_single = None
+    # Reuse the already-loaded EXIO slice for mapping diagnostics.
     if full_sector_mapping is not None and not args.no_mapping_consistency_check:
-        exio_slice_single = load_exiobase3_region_slice(
-            year=args.exio_year,
-            region=args.exio_region,
-            system="pxp",
-            flow=exio_flow_single,
-            cache_root=data_root,
-            doi=args.exio_doi,
-            verbose=args.verbose,
-        )
         _assert_mapping_integrity(
             sector_mapping=full_sector_mapping,
             eurostat_Z=Z,
