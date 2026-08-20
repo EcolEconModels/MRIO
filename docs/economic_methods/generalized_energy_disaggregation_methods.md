@@ -510,11 +510,15 @@ Child intensities must never be arithmetically averaged or independently summed.
 For every selected EXIO extension, both production ``F`` and direct-final-demand
 ``F_Y`` must be present, together with ``unit.txt``. A missing selected matrix, unit,
 or physical observation is unavailable evidence, not an economic zero, and must fail
-before an intensity is derived. A nonzero physical observation with a zero monetary
-denominator is likewise inconsistent and must fail. At projection, every positive-output
-split child must have
-usable donor support; retained unsplit sectors without donor or concordance support
-may be unreported.
+before an intensity is derived. For production ``F``, the extensive numerator and
+EXIO monetary denominator are projected through \(P\) before division. A nonzero raw
+``F`` observation with zero raw sector output is therefore retained as donor evidence,
+while its raw intensity is undefined. It fails only if a required positive-output split
+child has no positive mapped donor denominator. For direct final-demand ``F_Y``, the
+category coefficient is reported without sector projection, so a nonzero physical
+observation with zero category monetary denominator is inconsistent and must fail. At
+projection, every positive-output split child must have usable donor support; retained
+unsplit sectors without donor or concordance support may be unreported.
 An omitted sector means that no environmental result is available, not that its
 physical total is zero. At reaggregation, each reported extension/stressor/unit
 must cover every positive-output source sector contributing to each aggregate

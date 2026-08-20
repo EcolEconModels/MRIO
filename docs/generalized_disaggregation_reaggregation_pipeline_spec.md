@@ -403,13 +403,21 @@ sector contributing to every aggregate target represented by that sidecar group.
 This target-local closure rejects a partial physical numerator against a full
 canonical-output denominator without requiring unrelated targets to be reported.
 
+Production `F` is transported as an extensive numerator together with its EXIO
+monetary-output denominator and is divided only after projection. A raw production
+donor may therefore have nonzero `F` with zero `x`: its raw `intensity` is unavailable,
+but its physical `value` remains in the mapped numerator. A required positive-output
+split child still needs a positive mapped donor denominator before a coefficient is used.
+
 `F_Y` rows remain final-demand-category sidecars because they are not a
 product-sector axis and therefore do not pass through the EXIO-to-Eurostat projection
 `P`. Their monetary denominator is destination-region final demand by category summed
-across all EXIO producer origins/products. Every selected extension must provide both
-`F.txt` and `F_Y.txt` plus `unit.txt`; missing selected source evidence fails closed.
-Sector reaggregation copies these `F_Y` rows unchanged rather than manufacturing a
-sector-by-final-demand satellite matrix.
+across all EXIO producer origins/products. Because these category coefficients are
+reported directly rather than sector-projected, a nonzero `F_Y` observation with a zero
+category monetary denominator is inconsistent and fails closed. Every selected extension
+must provide both `F.txt` and `F_Y.txt` plus `unit.txt`; missing selected source evidence
+fails closed. Sector reaggregation copies these `F_Y` rows unchanged rather than
+manufacturing a sector-by-final-demand satellite matrix.
 
 The routine CLI uses `--environmental-preset combustion-co2` by default and
 `--environmental-preset none` to disable the satellite. Custom selections use the

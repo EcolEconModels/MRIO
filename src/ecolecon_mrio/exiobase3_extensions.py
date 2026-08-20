@@ -886,7 +886,11 @@ def extract_extension_values(
                     f"Missing unit for EXIO extension={extension_name!r}, stressor={stressor!r}."
                 )
             inconsistent_zero = denominator.eq(0.0) & value_series.ne(0.0)
-            if bool(inconsistent_zero.any()):
+            # Production F is extensive donor evidence: P maps its numerator and
+            # monetary denominator before division, so x=0 leaves only the raw
+            # intensity undefined. F_Y is reported directly by category and must
+            # still reject a nonzero physical value over zero monetary final demand.
+            if kind_clean == "F_Y" and bool(inconsistent_zero.any()):
                 bad = list(map(str, denominator.index[inconsistent_zero.to_numpy()][:10]))
                 raise ValueError(
                     "EXIO extension has a nonzero physical value with zero monetary "

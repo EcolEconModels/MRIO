@@ -1355,6 +1355,35 @@ def test_selected_environmental_extension_requires_F_Y(tmp_path) -> None:
         )
 
 
+def test_production_zero_raw_output_is_retained_for_mapping(tmp_path) -> None:
+    """Production F with zero raw x remains extensive donor evidence for later mapping."""
+    from ecolecon_mrio.exiobase3_extensions import (
+        extract_extension_values,
+        load_exiobase3_extension,
+    )
+
+    source = tmp_path / "zero_raw_output_f.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        _write_member(zf, "air_emissions/unit.txt", "stressor\tunit\nCH4\tkg\n")
+        _write_member(
+            zf,
+            "air_emissions/F.txt",
+            "region\tAT\tAT\nsector\tS0\tS1\nstressor\t\t\nCH4\t2\t8\n",
+        )
+
+    load_exiobase3_extension.cache_clear()
+    raw = extract_extension_values(
+        container=source, region="AT", source_labels=["S0", "S1"],
+        monetary_denominator=pd.Series({"S0": 0.0, "S1": 10.0}, dtype="float64"),
+        extension_requests={"air_emissions": ()}, kind="F", required=True,
+    )
+    assert raw is not None
+    by_source = raw.set_index("source_label")
+    assert float(by_source.loc["S0", "value"]) == pytest.approx(2.0)
+    assert pd.isna(by_source.loc["S0", "intensity"])
+    load_exiobase3_extension.cache_clear()
+
+
 def test_extension_nonzero_value_with_zero_denominator_fails(tmp_path) -> None:
     """A positive F_Y observation over zero monetary final demand is inconsistent."""
     from ecolecon_mrio.exiobase3_extensions import (
