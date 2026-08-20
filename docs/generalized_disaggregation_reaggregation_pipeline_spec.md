@@ -388,7 +388,7 @@ Transformed and reaggregated production-side satellite accounts use the stable
 schema:
 
 ```text
-sector,extension,stressor,unit,value,monetary_output,intensity
+sector_position,sector,extension,stressor,unit,value,monetary_output,intensity,available
 ```
 
 `value` is always the extensive physical total on the table's current sector
@@ -397,11 +397,29 @@ it is never converted to physical zero. Input `monetary_output` is an integrity
 copy that must match the canonical IOT output sector by sector. Reaggregation sums
 `value`, independently aggregates
 the canonical IOT output, and derives `intensity` afterward. Every positive-output
-split child must have donor support at projection. Retained unsplit sectors may be
-unreported, but each extension/stressor/unit must cover every positive-output source
-sector contributing to every aggregate target represented by that sidecar group.
-This target-local closure rejects a partial physical numerator against a full
-canonical-output denominator without requiring unrelated targets to be reported.
+split child whose coefficient is used must have donor support at projection. Each
+supported extension/stressor/unit must cover every positive-output source sector
+contributing to every aggregate target represented by that sidecar group. This
+target-local closure rejects a partial physical numerator against a full
+canonical-output denominator.
+
+Sparse reaggregation mappings describe only sectors that change. Unmapped sectors
+retain their identifiers and supported environmental estimates. Once scientific
+reaggregation and its integrity checks finish, the final model-facing production
+sidecar is completed in long form to exactly the final IOT sector axis for every
+observed extension/stressor/unit group. `sector_position` is one-based and follows
+the authoritative final `Z`/`x`/sector-contract order; it is not an independent
+classification registry. `monetary_output` is populated from canonical final IOT
+output for every row.
+
+Availability records evidence presence, not activity or magnitude. A supported
+zero-output sector has `available=True`, `value=0`, and missing `intensity`; a
+supported physical zero at positive output also remains available. A sector without
+a valid donor coefficient has `available=False` with missing `value` and `intensity`,
+even when its monetary output is zero. Such rows preserve the model axis but are not
+imputed observations and must not enter physical sums. The canonical artifact remains
+one long-format `environmental_extensions.csv`, not a wide or per-extension family
+of files.
 
 Production `F` is transported as an extensive numerator together with its EXIO
 monetary-output denominator and is divided only after projection. A raw production
@@ -418,6 +436,11 @@ category monetary denominator is inconsistent and fails closed. Every selected e
 must provide both `F.txt` and `F_Y.txt` plus `unit.txt`; missing selected source evidence
 fails closed. Sector reaggregation copies these `F_Y` rows unchanged rather than
 manufacturing a sector-by-final-demand satellite matrix.
+
+The raw `exio_environmental_extensions.csv` remains source-oriented and retains the
+unchanged `source_label,extension,kind,stressor,unit,value,monetary_denominator,intensity`
+schema for both `F` and `F_Y`. It receives neither final-sector completion nor
+`sector_position`/`available` presentation fields.
 
 The routine CLI uses `--environmental-preset combustion-co2` by default and
 `--environmental-preset none` to disable the satellite. Custom selections use the

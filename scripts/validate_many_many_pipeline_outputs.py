@@ -110,6 +110,34 @@ def _check_ratio_file(
     missing = sorted(required - set(df.columns))
     if missing:
         return {"path": str(path), "exists": True, "ok": False, "missing_columns": missing}
+    if "available" in df.columns:
+        availability = df["available"].astype(str).str.casefold()
+        invalid_availability = ~availability.isin({"true", "false"})
+        if bool(invalid_availability.any()):
+            return {
+                "path": str(path),
+                "exists": True,
+                "ok": False,
+                "invalid_available_rows": int(invalid_availability.sum()),
+            }
+        available = availability.eq("true")
+        unavailable_values = pd.to_numeric(
+            df.loc[~available, numerator_col], errors="coerce"
+        )
+        unavailable_ratios = pd.to_numeric(
+            df.loc[~available, ratio_col], errors="coerce"
+        )
+        if bool(unavailable_values.notna().any() or unavailable_ratios.notna().any()):
+            return {
+                "path": str(path),
+                "exists": True,
+                "ok": False,
+                "unavailable_nonmissing_values": int(unavailable_values.notna().sum()),
+                "unavailable_nonmissing_ratios": int(unavailable_ratios.notna().sum()),
+            }
+        # Presentation-only unavailable rows are excluded from scientific ratio
+        # checks; their canonical monetary output remains an alignment field.
+        df = cast(pd.DataFrame, df.loc[available].copy())
     num = pd.to_numeric(df[numerator_col], errors="coerce").astype("float64")
     den = pd.to_numeric(df[denominator_col], errors="coerce").astype("float64")
     observed = pd.to_numeric(df[ratio_col], errors="coerce").astype("float64")
@@ -283,6 +311,16 @@ def validate_pipeline_outputs(
                 )
             else:
                 observed_environmental = pd.read_csv(observed_environmental_path)
+                if "available" in observed_environmental.columns:
+                    available = (
+                        observed_environmental["available"]
+                        .astype(str)
+                        .str.casefold()
+                        .eq("true")
+                    )
+                    observed_environmental = cast(
+                        pd.DataFrame, observed_environmental.loc[available].copy()
+                    )
                 gap = _max_abs_environmental_gap(
                     observed_environmental, expected_environmental
                 )

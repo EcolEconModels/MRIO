@@ -517,14 +517,31 @@ while its raw intensity is undefined. It fails only if a required positive-outpu
 child has no positive mapped donor denominator. For direct final-demand ``F_Y``, the
 category coefficient is reported without sector projection, so a nonzero physical
 observation with zero category monetary denominator is inconsistent and must fail. At
-projection, every positive-output split child must have usable donor support; retained
-unsplit sectors without donor or concordance support may be unreported.
-An omitted sector means that no environmental result is available, not that its
-physical total is zero. At reaggregation, each reported extension/stressor/unit
-must cover every positive-output source sector contributing to each aggregate
-target it represents. This target-local closure prevents a partial physical
-numerator from being divided by the full canonical monetary-output denominator
-without requiring unrelated aggregate targets to carry environmental rows.
+projection, every positive-output split child whose coefficient is used must have
+usable donor support. At reaggregation, each supported extension/stressor/unit must
+cover every positive-output source sector contributing to each aggregate target it
+represents. This target-local closure prevents a partial physical numerator from
+being divided by the full canonical monetary-output denominator.
+
+Scientific availability and the final model sector axis are separate contracts.
+Unsplit target sectors are singleton sectors and retain their identity. A sparse
+reaggregation map specifies only transformations: any sector absent from the map
+carries through under its existing identifier. After scientific projection,
+reaggregation, and numerical validation have operated only on supported estimates,
+the model-facing long-form production sidecar is completed to the exact final IOT
+sector axis for every observed extension/stressor/unit group. ``sector_position`` is
+the one-based position in the authoritative final IOT order, and
+``monetary_output`` is the canonical final IOT output for that sector.
+
+Grid completion does not impute an environmental observation. A sector without a
+valid donor coefficient is retained with ``available=False`` and missing ``value``
+and ``intensity``; missing evidence is never physical zero. A supported coefficient
+applied to zero target output instead has ``available=True``, ``value=0``, and an
+undefined intensity. Likewise, a supported physical zero at positive output remains
+available with zero intensity. The raw EXIO provenance sidecar is not grid-completed:
+production ``F`` remains source-product evidence and ``F_Y`` remains category-level
+evidence outside the sector-axis contract. Production-side model extensions remain
+DOM-only; no domestic coefficient is transferred to IMP or TOTAL.
 
 Direct final-demand extensions \(F_Y\) are a separate accounting boundary and are
 not sector-disaggregated through \(P\). For destination region \(r\) and final-demand

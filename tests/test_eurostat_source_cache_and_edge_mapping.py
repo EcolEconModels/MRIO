@@ -478,7 +478,10 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
         aggregate_environmental_extensions,
         aggregate_iot,
     )
-    from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
+    from scripts.aggregate_iot_by_mapping import (
+        _augment_mapping_from_split_child_edges,
+        _complete_environmental_extension_sector_grid,
+    )
     from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
 
     split_dir = tmp_path / "split"
@@ -597,7 +600,12 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
         keep_unmapped=True,
     )
     assert expected_environmental is not None
-    expected_environmental.to_csv(
+    completed_environmental = _complete_environmental_extension_sector_grid(
+        expected_environmental,
+        output=expected.x,
+    )
+    assert completed_environmental is not None
+    completed_environmental.to_csv(
         agg_dir / "environmental_extensions.csv", index=False
     )
 

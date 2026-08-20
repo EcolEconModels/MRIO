@@ -9,13 +9,14 @@ import pytest
 
 def _write_tables(base_dir: Path, sectors: list[str]) -> None:
     base_dir.mkdir(parents=True, exist_ok=True)
+    sector_index = pd.Index(sectors)
 
     Z = pd.DataFrame(
         [[10.0, 1.0, 2.0, 3.0], [4.0, 20.0, 5.0, 6.0], [7.0, 8.0, 30.0, 9.0], [1.0, 2.0, 3.0, 40.0]],
-        index=sectors,
-        columns=sectors,
+        index=sector_index,
+        columns=sector_index,
     )
-    Y = pd.DataFrame({"P3": [1.0, 2.0, 3.0, 4.0]}, index=sectors)
+    Y = pd.DataFrame({"P3": [1.0, 2.0, 3.0, 4.0]}, index=sector_index)
     Z.to_csv(base_dir / "Z_split.csv")
     Y.to_csv(base_dir / "Y_split.csv")
     (Z.sum(axis=1) + Y.sum(axis=1)).rename("x").to_csv(base_dir / "x_split.csv")
@@ -86,7 +87,7 @@ def test_fail_on_unmapped_split_children_errors_when_selected_child_is_missing(t
     )
     _write_selected_children_json(indir / "exio_selected_sectors.json", ["p24.g", "p24.h"])
 
-    with pytest.raises(SystemExit, match="p24\.h"):
+    with pytest.raises(SystemExit, match=r"p24\.h"):
         _run_aggregate(indir, outdir, mapping_csv, "--fail-on-unmapped-split-children")
 
 
@@ -160,12 +161,127 @@ def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path
             "intensity": [2.0, 1.0],
         }
     ).to_csv(indir / "environmental_extensions.csv", index=False)
+    raw_exio = pd.DataFrame(
+        {
+            "source_label": ["p24.g", "P3"],
+            "extension": ["air_emissions", "air_emissions"],
+            "kind": ["F", "F_Y"],
+            "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
+            "unit": ["kg", "kg"],
+            "value": [114.0, 5.0],
+            "monetary_denominator": [57.0, 10.0],
+            "intensity": [2.0, 0.5],
+        }
+    )
+    raw_exio.to_csv(indir / "exio_environmental_extensions.csv", index=False)
 
     assert _run_aggregate(indir, outdir, mapping_csv) == 0
     satellite = pd.read_csv(outdir / "environmental_extensions.csv")
-    assert len(satellite) == 1
-    row = satellite.iloc[0]
+    assert list(satellite.columns) == [
+        "sector_position",
+        "sector",
+        "extension",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_output",
+        "intensity",
+        "available",
+    ]
+    assert satellite["sector"].tolist() == ["CPA_A", "CPA_B", "ENERGY_GREEN"]
+    assert satellite["sector_position"].tolist() == [1, 2, 3]
+    unavailable = satellite.loc[~satellite["available"]].set_index("sector")
+    assert set(unavailable.index) == {"CPA_A", "CPA_B"}
+    assert unavailable["value"].isna().all()
+    assert unavailable["intensity"].isna().all()
+    assert float(unavailable.loc["CPA_A", "monetary_output"]) == 17.0
+    assert float(unavailable.loc["CPA_B", "monetary_output"]) == 37.0
+    row = satellite.loc[satellite["available"]].iloc[0]
     assert row["sector"] == "ENERGY_GREEN"
     assert float(row["value"]) == pytest.approx(164.0)
     assert float(row["monetary_output"]) == pytest.approx(107.0)
     assert float(row["intensity"]) == pytest.approx(164.0 / 107.0)
+
+    raw_written = pd.read_csv(outdir / "exio_environmental_extensions.csv")
+    pd.testing.assert_frame_equal(raw_written, raw_exio)
+    assert "sector_position" not in raw_written.columns
+    assert "available" not in raw_written.columns
+    assert "Unnamed: 0" not in raw_written.columns
+
+
+def test_environmental_grid_distinguishes_availability_from_zero_activity() -> None:
+    """Evidence presence, physical zero, and target zero remain distinct states."""
+    from scripts.aggregate_iot_by_mapping import (
+        _complete_environmental_extension_sector_grid,
+    )
+
+    actual = pd.DataFrame(
+        {
+            "sector": ["A", "B"],
+            "extension": ["synthetic", "synthetic"],
+            "stressor": ["Synthetic indicator", "Synthetic indicator"],
+            "unit": ["synthetic unit", "synthetic unit"],
+            "value": [0.0, 0.0],
+            "monetary_output": [100.0, 0.0],
+            "intensity": [0.0, float("nan")],
+        }
+    )
+    output = pd.Series({"A": 100.0, "B": 0.0, "C": 100.0, "D": 0.0})
+
+    completed = _complete_environmental_extension_sector_grid(actual, output=output)
+
+    assert completed is not None
+    assert completed["sector"].tolist() == ["A", "B", "C", "D"]
+    assert completed["sector_position"].tolist() == [1, 2, 3, 4]
+    by_sector = completed.set_index("sector")
+    assert bool(by_sector.loc["A", "available"]) is True
+    assert by_sector.loc["A", "value"] == 0.0
+    assert by_sector.loc["A", "intensity"] == 0.0
+    assert bool(by_sector.loc["B", "available"]) is True
+    assert by_sector.loc["B", "value"] == 0.0
+    assert pd.isna(by_sector.loc["B", "intensity"])
+    for sector, expected_output in (("C", 100.0), ("D", 0.0)):
+        assert bool(by_sector.loc[sector, "available"]) is False
+        assert pd.isna(by_sector.loc[sector, "value"])
+        assert pd.isna(by_sector.loc[sector, "intensity"])
+        assert by_sector.loc[sector, "monetary_output"] == expected_output
+
+
+def test_row_contract_writers_do_not_serialize_range_indices(tmp_path: Path) -> None:
+    """Explicit position columns must not be preceded by synthetic CSV indices."""
+    from scripts.aggregate_iot_by_mapping import (
+        _write_sector_contract,
+        _write_source_sector_contract,
+    )
+
+    sector_path = tmp_path / "sector_contract.csv"
+    _write_sector_contract(
+        out_path=sector_path,
+        product_order=["CPA_A01", "CPA_B"],
+        parent_by_sector={"CPA_A01": "CPA_A01", "CPA_B": "CPA_B"},
+        verbose=False,
+    )
+    sector_contract = pd.read_csv(sector_path)
+    assert list(sector_contract.columns) == [
+        "position",
+        "sector_id",
+        "parent_sector_id",
+        "nace_section",
+    ]
+
+    repo_root = Path(__file__).resolve().parents[1]
+    parent_order = pd.read_csv(
+        repo_root / "scripts/mappings/eurostat_cpa65_products_dictionary.csv"
+    )["code"].astype(str).tolist()
+    source_path = tmp_path / "source_sector_contract.csv"
+    _write_source_sector_contract(
+        out_path=source_path,
+        parent_order=parent_order,
+        verbose=False,
+    )
+    source_contract = pd.read_csv(source_path)
+    assert list(source_contract.columns) == [
+        "source_system",
+        "source_position",
+        "parent_sector_id",
+    ]

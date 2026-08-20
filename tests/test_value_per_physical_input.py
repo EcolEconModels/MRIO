@@ -141,6 +141,34 @@ def test_aggregate_environmental_extensions_sums_totals_then_derives_intensity()
     assert float(row["monetary_output"]) == 150.0
     assert float(row["intensity"]) == 2.0
 
+
+def test_aggregate_environmental_extensions_carries_unmapped_sector_identity():
+    """Sparse reaggregation changes named sectors while retaining all other estimates."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    actual = pd.DataFrame(
+        {
+            "sector": ["A", "B", "C"],
+            "extension": ["synthetic"] * 3,
+            "stressor": ["Synthetic indicator"] * 3,
+            "unit": ["synthetic unit"] * 3,
+            "value": [10.0, 20.0, 30.0],
+            "monetary_output": [5.0, 10.0, 15.0],
+            "intensity": [2.0, 2.0, 2.0],
+        }
+    )
+
+    result = aggregate_environmental_extensions(
+        actual,
+        {"A": "A_NEW"},
+        output=pd.Series({"A": 5.0, "B": 10.0, "C": 15.0}),
+    )
+
+    assert result is not None
+    assert result["sector"].tolist() == ["A_NEW", "B", "C"]
+    assert result.set_index("sector").loc["B", "value"] == 20.0
+    assert result.set_index("sector").loc["C", "value"] == 30.0
+
 def test_project_environmental_extensions_true_many_many_uses_projected_ratio_of_sums() -> None:
     from ecolecon_mrio.disaggregation import SplitProfiles
     from ecolecon_mrio.exio_share_split import (

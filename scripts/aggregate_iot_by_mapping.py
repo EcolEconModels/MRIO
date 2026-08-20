@@ -90,6 +90,13 @@ def _write_df_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
     _vprint(verbose, f"Wrote: {path.resolve()}")
 
 
+def _write_rows_csv(df: pd.DataFrame, path: Path, *, verbose: bool) -> None:
+    """Write a row-oriented table without serializing a synthetic RangeIndex."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False)
+    _vprint(verbose, f"Wrote: {path.resolve()}")
+
+
 def _write_series_csv(series: pd.Series, path: Path, *, verbose: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     series.to_csv(path, header=True)
@@ -1498,6 +1505,152 @@ def _reorder_aggregation_result(
         ),
     )
 
+
+def _complete_environmental_extension_sector_grid(
+    environmental_extensions: pd.DataFrame | None,
+    *,
+    output: pd.Series,
+) -> pd.DataFrame | None:
+    """Bind supported production estimates to the complete final IOT sector axis.
+
+    Scientific projection and reaggregation produce rows only where a valid
+    donor coefficient exists.  This final model-interface transformation adds
+    explicit unavailable rows without feeding them back into physical sums or
+    intensity calculations.  Group order comes from the supported estimates;
+    sector order and monetary output come exclusively from the final IOT vector.
+    """
+    if environmental_extensions is None or environmental_extensions.empty:
+        return None
+    required = {
+        "sector",
+        "extension",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_output",
+        "intensity",
+    }
+    missing = required - set(environmental_extensions.columns)
+    if missing:
+        raise ValueError(
+            "Aggregated environmental extensions are missing required columns: "
+            f"{sorted(missing)!r}."
+        )
+    presentation_columns = {"sector_position", "available"}
+    collisions = presentation_columns.intersection(environmental_extensions.columns)
+    if collisions:
+        raise ValueError(
+            "Scientific environmental rows already contain presentation columns: "
+            f"{sorted(collisions)!r}."
+        )
+
+    canonical_output = output.copy().astype("float64")
+    canonical_output.index = canonical_output.index.astype(str)
+    if not canonical_output.index.is_unique:
+        raise ValueError("Final environmental sector grid requires unique IOT sectors.")
+    if (
+        canonical_output.isna().any()
+        or not np.isfinite(canonical_output.to_numpy(dtype="float64")).all()
+        or bool((canonical_output < 0.0).any())
+    ):
+        raise ValueError(
+            "Final environmental sector grid requires finite non-negative IOT output."
+        )
+
+    actual = environmental_extensions.copy()
+    key_cols = ["sector", "extension", "stressor", "unit"]
+    group_cols = ["extension", "stressor", "unit"]
+    for column in key_cols:
+        actual[column] = actual[column].astype(str)
+    if bool(actual.duplicated(key_cols).any()):
+        duplicates = actual.loc[actual.duplicated(key_cols, keep=False), key_cols]
+        raise ValueError(
+            "Aggregated environmental extensions contain duplicate sector/group rows: "
+            f"{duplicates.head(10).to_dict(orient='records')!r}."
+        )
+    unsupported_sectors = sorted(
+        set(cast(pd.Series, actual["sector"]).astype(str))
+        - set(canonical_output.index)
+    )
+    if unsupported_sectors:
+        raise ValueError(
+            "Environmental estimates contain sectors outside the final IOT axis: "
+            f"{unsupported_sectors[:20]!r}."
+        )
+
+    # Supported rows must already carry the same canonical denominator; grid
+    # completion replaces no scientific number and never repairs a mismatch.
+    observed_output = cast(
+        pd.Series, pd.to_numeric(actual["monetary_output"], errors="raise")
+    ).astype("float64")
+    expected_output = cast(pd.Series, actual["sector"]).map(canonical_output)
+    if not np.allclose(
+        observed_output.to_numpy(dtype="float64"),
+        expected_output.to_numpy(dtype="float64"),
+        rtol=1e-9,
+        atol=1e-6,
+        equal_nan=False,
+    ):
+        raise ValueError(
+            "Supported environmental monetary_output disagrees with final IOT output."
+        )
+    values = cast(pd.Series, pd.to_numeric(actual["value"], errors="raise"))
+    intensities = cast(
+        pd.Series, pd.to_numeric(actual["intensity"], errors="coerce")
+    )
+    if not np.isfinite(values.to_numpy(dtype="float64")).all():
+        raise ValueError("Supported environmental values must be finite.")
+    if not np.isfinite(intensities.dropna().to_numpy(dtype="float64")).all():
+        raise ValueError("Supported environmental intensities must be finite or NA.")
+    actual["value"] = values.astype("float64")
+    actual["intensity"] = intensities.astype("float64")
+
+    # Cross each observed scientific group with the authoritative final IOT
+    # order. A left join distinguishes absent evidence from a physical zero.
+    groups = actual.loc[:, group_cols].drop_duplicates(ignore_index=True)
+    groups["__group_position"] = np.arange(len(groups), dtype="int64")
+    sectors = pd.DataFrame(
+        {
+            "sector_position": np.arange(1, len(canonical_output) + 1, dtype="int64"),
+            "sector": canonical_output.index.to_numpy(dtype=str),
+            "monetary_output": canonical_output.to_numpy(dtype="float64"),
+        }
+    )
+    grid = groups.merge(sectors, how="cross", sort=False)
+    supported = actual.loc[:, key_cols + ["value", "intensity"]].copy()
+    supported["available"] = True
+    completed = grid.merge(
+        supported,
+        on=key_cols,
+        how="left",
+        sort=False,
+        validate="one_to_one",
+    )
+    completed["available"] = completed["available"].eq(True)
+    completed = completed.sort_values(
+        ["__group_position", "sector_position"], kind="stable"
+    ).drop(columns="__group_position")
+    result = completed.loc[
+        :,
+        [
+            "sector_position",
+            "sector",
+            "extension",
+            "stressor",
+            "unit",
+            "value",
+            "monetary_output",
+            "intensity",
+            "available",
+        ],
+    ].reset_index(drop=True)
+
+    expected_rows = len(groups) * len(canonical_output)
+    if len(result) != expected_rows or bool(result.duplicated(key_cols).any()):
+        raise RuntimeError("Final environmental sector grid is incomplete or duplicated.")
+    return result
+
+
 def _write_sector_contract(
     *,
     out_path: Path,
@@ -1529,7 +1682,7 @@ def _write_sector_contract(
                 "nace_section": parts[1][0],
             }
         )
-    _write_df_csv(pd.DataFrame(rows), out_path, verbose=verbose)
+    _write_rows_csv(pd.DataFrame(rows), out_path, verbose=verbose)
 
 
 def _write_source_sector_contract(
@@ -1567,7 +1720,7 @@ def _write_source_sector_contract(
                     "parent_sector_id": parent_sector_id,
                 }
             )
-    _write_df_csv(pd.DataFrame(rows), out_path, verbose=verbose)
+    _write_rows_csv(pd.DataFrame(rows), out_path, verbose=verbose)
 
 
 def _legacy_co2_production_view(
@@ -2520,17 +2673,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"Aggregated output has {len(res.Z.index)} sectors, expected {int(args.expect_n_sectors)}."
             )
 
-        aggregated_environmental_extensions = aggregate_environmental_extensions(
+        aggregated_environmental_extensions_actual = aggregate_environmental_extensions(
             environmental_extensions,
             mapping_for_run,
             output=x_input,
             keep_unmapped=keep_unmapped,
         )
-        aggregated_environmental_extensions = _reorder_sector_metadata(
-            aggregated_environmental_extensions,
-            res.Z.index.astype(str).tolist(),
-            sector_col="sector",
-            drop_unemitted=True,
+        aggregated_environmental_extensions = (
+            _complete_environmental_extension_sector_grid(
+                aggregated_environmental_extensions_actual,
+                output=res.x,
+            )
         )
 
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
@@ -2579,13 +2732,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         if aggregated_environmental_extensions is not None:
-            _write_df_csv(
+            _write_rows_csv(
                 aggregated_environmental_extensions,
                 out_base / "environmental_extensions.csv",
                 verbose=args.verbose,
             )
         if exio_environmental_extensions is not None:
-            _write_df_csv(
+            _write_rows_csv(
                 exio_environmental_extensions,
                 out_base / "exio_environmental_extensions.csv",
                 verbose=args.verbose,
@@ -2596,7 +2749,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sector_col="disaggregated_sector",
         )
         aggregated_co2 = _legacy_co2_production_view(
-            aggregated_environmental_extensions,
+            aggregated_environmental_extensions_actual,
             sector_col="aggregated_sector",
         )
         final_demand_co2 = _legacy_co2_final_demand_view(
