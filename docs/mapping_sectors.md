@@ -15,10 +15,14 @@ This document intentionally does not repeat row tables. The detailed explanation
 
 ## Canonical Mapping CSVs
 
-These are the only mapping CSVs that should be used by code and by humans:
+These are the mapping CSVs used by code and by humans:
 
+- `scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv`
+  - preferred fuels-production EXIOBASE3 `pxp` product to Eurostat CPA65 topology,
+    generated reproducibly from the official direct CPA64/EXIOBASE3 incidence file
 - `scripts/mappings/exio_to_eurostat_cpa_products.csv`
-  - weighted EXIOBASE 3 `pxp` product to Eurostat CPA product mapping
+  - older curated/statistical C20-only route retained by the unchanged green/brown
+    wrapper and available for explicit comparison and diagnostics
 - `scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv`
   - EXIO sector split template for `CPA_C19` and `CPA_D`, preserving electricity by source
 - `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
@@ -54,13 +58,17 @@ Terminology note: under Eurostat's statistical classifications, NACE classifies 
 
 ## Classification vs analytical energy taxonomy
 
-The EXIO→Eurostat concordance maps EXIO products to Eurostat CPA sectors according to statistical classification. EXIO p24.g, p24.h, and p24.i map statistically to `CPA_C20` in the concordance.
+The preferred fuels-production EXIO→Eurostat concordance uses the official direct
+CPA64/EXIOBASE3 topology converted to CPA65. Its p24 family has incidence edges to
+both `CPA_C20` and `CPA_C21`. Those binary incidences are topology, not equal or
+static shares: the existing runtime resolver partitions each EXIO source using the
+flow-specific Eurostat target-side reference, with source weights summing to one.
 
-The fuels taxonomy is a separate analytical layer. In that taxonomy, p24.g, p24.h, and p24.i map to `CPA_C20_BIOGASOLINE`, `CPA_C20_BIODIESEL`, and `CPA_C20_OTHER_LIQUID_BIOFUELS`.
-
-The green/brown taxonomy is also separate from concordance. In that taxonomy, p24.g, p24.h, and p24.i map to `ENERGY_GREEN`. Other C20 products remain `CPA_C20_others` in green/brown, not `ENERGY_GREEN` or `ENERGY_BROWN`.
-
-The current green/brown taxonomy intentionally keeps only `ENERGY_GREEN` and `ENERGY_BROWN` as transition categories. Non-energy C20 products are retained as `CPA_C20_others`.
+The green/brown taxonomy remains a separate analytical pipeline using the older
+C20-only concordance. In that taxonomy, p24.g (biogasoline), p24.h (biodiesel),
+and p24.i (other liquid biofuels) map to `ENERGY_GREEN`; other C20 products remain
+`CPA_C20_others`. Its concordance and reaggregation recipe are intentionally
+unchanged.
 
 Ambiguous carriers such as nuclear, biomass/waste, electricity network services, and gas distribution should be documented in the reaggregation notes rather than silently mixed into the concordance layer.
 
@@ -68,24 +76,26 @@ Ambiguous carriers such as nuclear, biomass/waste, electricity network services,
 
 The checked-in CSVs fall into a small number of schema families.
 
-### 1. Reduced Weighted Concordance Rows
+### 1. Weighted concordance rows
 
-These files keep the weighted concordance shape but intentionally omit the old key/share columns that were removed from the EXIO bridge:
+These files keep the weighted concordance shape but intentionally omit the old
+key/share columns that were removed from the EXIO bridge:
 
+- `scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv`
 - `scripts/mappings/exio_to_eurostat_cpa_products.csv`
 
 Columns:
 
+- `order`
 - `kind`
 - `source_dataset`, `source_system`, `source_version`, `source_level`
 - `target_dataset`, `target_system`, `target_version`, `target_level`
 - `source_code`, `source_label`
 - `target_code`, `target_label`
-- `weight`
 - `enabled`
 - `provenance`
 - `certainty`
-- `transformation_rule`
+- `allocation_rule`
 - `source_name`
 - `official_source`
 - `notes`
@@ -93,7 +103,13 @@ Columns:
 - `target_sector_role`
 - `include_in_direct_energy`
 
-For the EXIO concordance, split rows are rule-driven: the CSV carries the split rule in `transformation_rule`, while the loader derives the actual shares from the year-specific output reference at runtime.
+The older curated comparison file additionally retains a legacy `weight` column;
+the official-direct map deliberately has no numerical-share column.
+
+For EXIO concordances, split rows are rule-driven: the CSV carries
+`allocation_rule=split-by-output-share`, while the loader derives actual shares
+from the year- and flow-specific target reference at runtime. The older curated
+file may carry explicit legacy `weight` cells for its single-target rows.
 
 ### 2. Full Canonical Mapping Rows
 
@@ -144,7 +160,7 @@ These files are narrower helper tables used by the split/reaggregation pipelines
 - `scripts/pipelines/fuels_reaggregation.csv`
 - `scripts/pipelines/fuels_more_reaggregation.csv`
 - `scripts/pipelines/energy_green_brown_reaggregation.csv`
-  - columns: `source_code`, `source_label`, `target_code`, `target_label`, `weight`, `enabled`, `notes`
+  - columns: `source_code`, `source_label`, `target_code`, `target_label`, `enabled`, `notes`
 
 For these tables, `source_code` and `target_code` are the operational keys used by the loaders. The label columns are carried only as descriptive metadata.
 
@@ -207,8 +223,10 @@ For the weighted EXIO concordance, split rows are rule-driven: the CSV now carri
 
 ## Generation and curated target topology
 
-The canonical mapping CSVs are curated and checked in under `scripts/mappings/`.
-They are not regenerated as part of normal repo use.
+Curated mappings are checked in under `scripts/mappings/`. The preferred direct
+official outputs are also checked in under `scripts/mappings/generated/official_direct/`
+and reproduce byte-for-byte from their committed source and builder; normal pipeline
+runs consume them rather than regenerating them.
 
 The CPA_64 and CPA_65 top-level product dictionaries are also curated operational dictionaries.
 Their `description` fields are human-readable documentation only and must not be parsed by code
@@ -251,7 +269,8 @@ Relevant CSVs:
 
 - `scripts/mappings/exio_energy_split_cpa_with_electricity_source.csv`
 - `scripts/mappings/exio_energy_split_cpa_no_electricity_source.csv`
-- optional CO2 re-mapping input: `scripts/mappings/exio_to_eurostat_cpa_products.csv`
+- production EXIO-to-Eurostat input:
+  `scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv`
 
 ### Aggregation pipeline
 
@@ -267,7 +286,8 @@ Relevant CSV:
 
 Relevant CSVs:
 
-- `scripts/mappings/exio_to_eurostat_cpa_products.csv`
+- `scripts/mappings/exio_to_eurostat_cpa_products.csv` (explicit retained
+  comparison/diagnostic route)
 - `scripts/mappings/energy_balance_to_cpa65_products_mapping.csv`
 
 For the energy-balance bridge specifically, the runtime contract is now broader than a final-use concordance. It includes final-use rows, refinery direct-use and refinery own-use rows for `CPA_C19`, main-activity electricity and heat transformation-input rows for `CPA_D`, and the `Households` analytical row. The CSV remains the single source of truth for which Eurostat energy-balance rows enter direct-combustion accounting. Despite the legacy filename, the operative targets in that CSV are the repo's 65-product CPA-based IO rows rather than NACE activity classes.

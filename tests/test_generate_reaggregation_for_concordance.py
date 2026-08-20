@@ -123,3 +123,27 @@ def test_write_rows_uses_lf_line_endings(tmp_path: Path) -> None:
     data = out_csv.read_bytes()
     assert b"\r\n" not in data
     assert data.endswith(b"\n")
+
+
+def test_official_direct_fuels_recipe_closes_materialized_children() -> None:
+    """Preferred topology must close without losing fuels analytical routes."""
+    module = load_reagg_module()
+    root = Path(__file__).resolve().parents[1]
+    concordance = (
+        root
+        / "scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv"
+    )
+
+    fuels_rows, fuels_review, _ = module.build_closed_reaggregation(
+        split_mapping_csv=root / "scripts/pipelines/fuels_split.csv",
+        base_reagg_csv=root / "scripts/pipelines/fuels_reaggregation.csv",
+        concordance_csv=concordance,
+        rule_csvs=[
+            root / "scripts/pipelines/fuels_reaggregation_fuel_expanded_edge_rules.csv"
+        ],
+    )
+    assert fuels_review == []
+    fuels = {row["source_code"]: row["target_code"] for row in fuels_rows}
+    assert fuels["p24.g@CPA_C20"] == "CPA_C20_BIOGASOLINE"
+    assert fuels["p24.h@CPA_C20"] == "CPA_C20_BIODIESEL"
+    assert fuels["p24.i@CPA_C20"] == "CPA_C20_OTHER_LIQUID_BIOFUELS"

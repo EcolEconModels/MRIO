@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pytest
 
@@ -505,6 +507,10 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     V.to_csv(split_dir / "V_split.csv")
     M.to_csv(split_dir / "M_split.csv")
     x.to_csv(split_dir / "x_split.csv")
+    (split_dir / "exio_selected_sectors.json").write_text(
+        json.dumps({"CPA_C20": ["S@CPA_C20"], "CPA_C21": ["S@CPA_C21"]}),
+        encoding="utf-8",
+    )
 
     pd.DataFrame(
         [
@@ -540,6 +546,33 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
         ]
     )
     environmental.to_csv(split_dir / "environmental_extensions.csv", index=False)
+    raw_environmental = pd.DataFrame(
+        [
+            {
+                "source_label": "S",
+                "extension": "air_emissions",
+                "kind": "F",
+                "stressor": "CO2",
+                "unit": "kg",
+                "value": 8.0,
+                "monetary_denominator": 16.0,
+                "intensity": 0.5,
+            },
+            {
+                "source_label": "P3",
+                "extension": "air_emissions",
+                "kind": "F_Y",
+                "stressor": "CO2",
+                "unit": "kg",
+                "value": 1.0,
+                "monetary_denominator": 2.0,
+                "intensity": 0.5,
+            },
+        ]
+    )
+    raw_environmental.to_csv(
+        split_dir / "exio_environmental_extensions.csv", index=False
+    )
     pd.DataFrame(
         [
             {
@@ -557,12 +590,11 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     mapping_csv = tmp_path / "aggregation_mapping.csv"
     mapping_df = pd.DataFrame(
         [
-            {"source_code": "A", "target_code": "CPA_C20", "enabled": "1"},
             {"source_code": "S@CPA_C21", "target_code": "CPA_C21", "enabled": "1"},
         ]
     )
     mapping_df.to_csv(mapping_csv, index=False)
-    mapping = {"A": "CPA_C20", "S@CPA_C21": "CPA_C21"}
+    mapping = {"S@CPA_C21": "CPA_C21"}
     edge_meta = pd.read_csv(split_dir / "split_child_edges.csv")
     augmented_mapping, _, audit = _augment_mapping_from_split_child_edges(
         mapping=mapping,
@@ -581,7 +613,7 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
         V=V,
         M=M,
         output=flow_use_total(Z, Y),
-        keep_unmapped=False,
+        keep_unmapped=True,
         create_io_system=False,
     )
     expected.Z.to_csv(agg_dir / "Z_agg.csv")
@@ -603,10 +635,17 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     completed_environmental = _complete_environmental_extension_sector_grid(
         expected_environmental,
         output=expected.x,
+        production_groups=raw_environmental.loc[
+            raw_environmental["kind"].eq("F"),
+            ["extension", "stressor", "unit"],
+        ],
     )
     assert completed_environmental is not None
     completed_environmental.to_csv(
         agg_dir / "environmental_extensions.csv", index=False
+    )
+    raw_environmental.to_csv(
+        agg_dir / "exio_environmental_extensions.csv", index=False
     )
 
     report = validate_pipeline_outputs(
@@ -619,9 +658,26 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     names = {check["name"] for check in report["checks"]}
     assert "Z_agg_matches_recomputed_reaggregation" in names
     assert "V_agg_matches_recomputed_reaggregation" in names
-    assert "ratio_file::environmental_extensions.csv" in names
     assert "environmental_totals_match_reaggregation" in names
-    assert "environmental_reaggregation_intensity_ratio" in names
+    assert "environmental_final_grid_contract" in names
+    assert "aggregation_mapping_covers_selected_split_children" in names
+
+    missing_mapping_csv = tmp_path / "missing_child_mapping.csv"
+    pd.DataFrame(
+        [{"source_code": "A", "target_code": "A", "enabled": "1"}]
+    ).to_csv(missing_mapping_csv, index=False)
+    missing_report = validate_pipeline_outputs(
+        split_dir=split_dir,
+        agg_dir=agg_dir,
+        mapping_csv=missing_mapping_csv,
+    )
+    closure = next(
+        check
+        for check in missing_report["checks"]
+        if check["name"] == "aggregation_mapping_covers_selected_split_children"
+    )
+    assert closure["ok"] is False
+    assert closure["missing_sample"] == ["S@CPA_C21"]
 
 
 def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary():
@@ -765,6 +821,101 @@ def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
     assert report["ok"] is False
     z_check = next(check for check in report["checks"] if check["name"] == "Z_agg_matches_recomputed_reaggregation")
     assert z_check["max_abs_gap"] == float("inf")
+
+
+def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
+    tmp_path,
+):
+    """Phase-7 storage validation must inspect undefined rows, not filter them away."""
+    from scripts.aggregate_iot_by_mapping import (
+        _complete_environmental_extension_sector_grid,
+    )
+    from scripts.validate_many_many_pipeline_outputs import (
+        _validate_environmental_grid,
+    )
+
+    output = pd.Series({"A": 10.0, "B": 0.0, "C": 5.0, "D": 0.0})
+    actual = pd.DataFrame(
+        {
+            "sector": ["A", "B"],
+            "extension": ["air_emissions", "air_emissions"],
+            "stressor": ["CO2", "CO2"],
+            "unit": ["kg", "kg"],
+            "value": [2.0, 0.0],
+            "monetary_output": [10.0, 0.0],
+            "intensity": [0.2, float("nan")],
+        }
+    )
+    raw = pd.DataFrame(
+        [
+            {
+                "source_label": "S",
+                "extension": "air_emissions",
+                "kind": "F",
+                "stressor": "CO2",
+                "unit": "kg",
+                "value": 1.0,
+                "monetary_denominator": 2.0,
+                "intensity": 0.5,
+            },
+            {
+                "source_label": "P3",
+                "extension": "use_phase_only",
+                "kind": "F_Y",
+                "stressor": "CH4",
+                "unit": "kg",
+                "value": 1.0,
+                "monetary_denominator": 2.0,
+                "intensity": 0.5,
+            },
+        ]
+    )
+    completed = _complete_environmental_extension_sector_grid(
+        actual,
+        output=output,
+        production_groups=raw.loc[
+            raw["kind"].eq("F"), ["extension", "stressor", "unit"]
+        ],
+    )
+    assert completed is not None
+    grid_path = tmp_path / "environmental_extensions.csv"
+    raw_path = tmp_path / "exio_environmental_extensions.csv"
+    raw.to_csv(raw_path, index=False)
+
+    def validate(frame: pd.DataFrame) -> dict[str, object]:
+        frame.to_csv(grid_path, index=False)
+        return _validate_environmental_grid(
+            environmental_path=grid_path,
+            raw_path=raw_path,
+            output=output,
+            rtol=1e-9,
+            atol=1e-6,
+        )
+
+    assert validate(completed)["ok"] is True
+
+    missing_row = completed.loc[~completed["sector"].eq("C")].copy()
+    assert validate(missing_row)["ok"] is False
+
+    bad_position = completed.copy()
+    bad_position.loc[bad_position["sector"].eq("C"), "sector_position"] = 99
+    assert validate(bad_position)["ok"] is False
+
+    bad_denominator = completed.copy()
+    bad_denominator.loc[bad_denominator["sector"].eq("C"), "monetary_output"] = 6.0
+    assert validate(bad_denominator)["ok"] is False
+
+    bad_missingness = completed.copy()
+    bad_missingness.loc[bad_missingness["sector"].eq("C"), "intensity"] = 0.0
+    assert validate(bad_missingness)["ok"] is False
+
+    bad_zero_value = completed.copy()
+    bad_zero_value.loc[bad_zero_value["sector"].eq("B"), "value"] = 1.0
+    assert validate(bad_zero_value)["ok"] is False
+
+    bad_zero_intensity = completed.copy()
+    bad_zero_intensity.loc[bad_zero_intensity["sector"].eq("B"), "intensity"] = 0.0
+    assert validate(bad_zero_intensity)["ok"] is False
 
 
 def test_flow_identity_tolerance_is_strict_for_internal_additivity():

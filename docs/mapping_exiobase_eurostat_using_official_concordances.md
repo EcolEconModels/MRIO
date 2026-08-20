@@ -162,6 +162,12 @@ The fuels split/reaggregation wrapper uses `CONCORDANCE_CSV` as the
 EXIOBASE3 -> Eurostat CPA weighted mapping. Keep the split and reaggregation
 recipes fixed, and change only `CONCORDANCE_CSV`.
 
+The active production default is the preferred direct official CPA65 file under
+`scripts/mappings/generated/official_direct/`. The commands below document older
+A64 and chained-official comparison experiments; neither is the default production
+route. Runtime flow-specific target shares, not binary incidence values, partition
+multi-target EXIO sources.
+
 Old A64/compat route:
 
 ```bash

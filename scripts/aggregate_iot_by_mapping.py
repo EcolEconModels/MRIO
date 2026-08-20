@@ -1510,17 +1510,35 @@ def _complete_environmental_extension_sector_grid(
     environmental_extensions: pd.DataFrame | None,
     *,
     output: pd.Series,
+    production_groups: pd.DataFrame,
 ) -> pd.DataFrame | None:
     """Bind supported production estimates to the complete final IOT sector axis.
 
     Scientific projection and reaggregation produce rows only where a valid
     donor coefficient exists.  This final model-interface transformation adds
-    explicit unavailable rows without feeding them back into physical sums or
-    intensity calculations.  Group order comes from the supported estimates;
-    sector order and monetary output come exclusively from the final IOT vector.
+    explicit undefined rows without feeding them back into physical sums or
+    intensity calculations. Group order comes from selected raw production-F
+    metadata; sector order and monetary output come exclusively from the final
+    IOT vector.
     """
-    if environmental_extensions is None or environmental_extensions.empty:
+    group_cols = ["extension", "stressor", "unit"]
+    missing_group_columns = set(group_cols) - set(production_groups.columns)
+    if missing_group_columns:
+        raise ValueError(
+            "Production environmental group domain is missing required columns: "
+            f"{sorted(missing_group_columns)!r}."
+        )
+    groups = production_groups.loc[:, group_cols].copy()
+    if groups.empty:
         return None
+    if bool(groups.isna().to_numpy().any()):
+        raise ValueError("Production environmental group metadata must not be missing.")
+    for column in group_cols:
+        groups[column] = groups[column].astype(str).str.strip()
+    if bool(groups.eq("").to_numpy().any()):
+        raise ValueError("Production environmental group metadata must not be blank.")
+    groups = groups.drop_duplicates(ignore_index=True)
+
     required = {
         "sector",
         "extension",
@@ -1530,14 +1548,18 @@ def _complete_environmental_extension_sector_grid(
         "monetary_output",
         "intensity",
     }
-    missing = required - set(environmental_extensions.columns)
-    if missing:
-        raise ValueError(
-            "Aggregated environmental extensions are missing required columns: "
-            f"{sorted(missing)!r}."
-        )
+    if environmental_extensions is None:
+        actual = pd.DataFrame(columns=list(required))
+    else:
+        missing = required - set(environmental_extensions.columns)
+        if missing:
+            raise ValueError(
+                "Aggregated environmental extensions are missing required columns: "
+                f"{sorted(missing)!r}."
+            )
+        actual = environmental_extensions.copy()
     presentation_columns = {"sector_position", "available"}
-    collisions = presentation_columns.intersection(environmental_extensions.columns)
+    collisions = presentation_columns.intersection(actual.columns)
     if collisions:
         raise ValueError(
             "Scientific environmental rows already contain presentation columns: "
@@ -1557,9 +1579,7 @@ def _complete_environmental_extension_sector_grid(
             "Final environmental sector grid requires finite non-negative IOT output."
         )
 
-    actual = environmental_extensions.copy()
     key_cols = ["sector", "extension", "stressor", "unit"]
-    group_cols = ["extension", "stressor", "unit"]
     for column in key_cols:
         actual[column] = actual[column].astype(str)
     if bool(actual.duplicated(key_cols).any()):
@@ -1577,37 +1597,51 @@ def _complete_environmental_extension_sector_grid(
             "Environmental estimates contain sectors outside the final IOT axis: "
             f"{unsupported_sectors[:20]!r}."
         )
+    actual_group_keys = actual.loc[:, group_cols].drop_duplicates(ignore_index=True)
+    unknown_groups = actual_group_keys.merge(
+        groups,
+        on=group_cols,
+        how="left",
+        indicator=True,
+        validate="one_to_one",
+    )
+    unknown_groups = unknown_groups.loc[unknown_groups["_merge"].eq("left_only")]
+    if not unknown_groups.empty:
+        raise ValueError(
+            "Scientific environmental estimates contain groups outside raw production F: "
+            f"{unknown_groups[group_cols].head(10).to_dict(orient='records')!r}."
+        )
 
     # Supported rows must already carry the same canonical denominator; grid
     # completion replaces no scientific number and never repairs a mismatch.
-    observed_output = cast(
-        pd.Series, pd.to_numeric(actual["monetary_output"], errors="raise")
-    ).astype("float64")
-    expected_output = cast(pd.Series, actual["sector"]).map(canonical_output)
-    if not np.allclose(
-        observed_output.to_numpy(dtype="float64"),
-        expected_output.to_numpy(dtype="float64"),
-        rtol=1e-9,
-        atol=1e-6,
-        equal_nan=False,
-    ):
-        raise ValueError(
-            "Supported environmental monetary_output disagrees with final IOT output."
+    if not actual.empty:
+        observed_output = cast(
+            pd.Series, pd.to_numeric(actual["monetary_output"], errors="raise")
+        ).astype("float64")
+        expected_output = cast(pd.Series, actual["sector"]).map(canonical_output)
+        if not np.allclose(
+            observed_output.to_numpy(dtype="float64"),
+            expected_output.to_numpy(dtype="float64"),
+            rtol=1e-9,
+            atol=1e-6,
+            equal_nan=False,
+        ):
+            raise ValueError(
+                "Supported environmental monetary_output disagrees with final IOT output."
+            )
+        values = cast(pd.Series, pd.to_numeric(actual["value"], errors="raise"))
+        intensities = cast(
+            pd.Series, pd.to_numeric(actual["intensity"], errors="coerce")
         )
-    values = cast(pd.Series, pd.to_numeric(actual["value"], errors="raise"))
-    intensities = cast(
-        pd.Series, pd.to_numeric(actual["intensity"], errors="coerce")
-    )
-    if not np.isfinite(values.to_numpy(dtype="float64")).all():
-        raise ValueError("Supported environmental values must be finite.")
-    if not np.isfinite(intensities.dropna().to_numpy(dtype="float64")).all():
-        raise ValueError("Supported environmental intensities must be finite or NA.")
-    actual["value"] = values.astype("float64")
-    actual["intensity"] = intensities.astype("float64")
+        if not np.isfinite(values.to_numpy(dtype="float64")).all():
+            raise ValueError("Supported environmental values must be finite.")
+        if not np.isfinite(intensities.dropna().to_numpy(dtype="float64")).all():
+            raise ValueError("Supported environmental intensities must be finite or NA.")
+        actual["value"] = values.astype("float64")
+        actual["intensity"] = intensities.astype("float64")
 
     # Cross each observed scientific group with the authoritative final IOT
     # order. A left join distinguishes absent evidence from a physical zero.
-    groups = actual.loc[:, group_cols].drop_duplicates(ignore_index=True)
     groups["__group_position"] = np.arange(len(groups), dtype="int64")
     sectors = pd.DataFrame(
         {
@@ -1618,7 +1652,6 @@ def _complete_environmental_extension_sector_grid(
     )
     grid = groups.merge(sectors, how="cross", sort=False)
     supported = actual.loc[:, key_cols + ["value", "intensity"]].copy()
-    supported["available"] = True
     completed = grid.merge(
         supported,
         on=key_cols,
@@ -1626,7 +1659,6 @@ def _complete_environmental_extension_sector_grid(
         sort=False,
         validate="one_to_one",
     )
-    completed["available"] = completed["available"].eq(True)
     completed = completed.sort_values(
         ["__group_position", "sector_position"], kind="stable"
     ).drop(columns="__group_position")
@@ -1641,7 +1673,6 @@ def _complete_environmental_extension_sector_grid(
             "value",
             "monetary_output",
             "intensity",
-            "available",
         ],
     ].reset_index(drop=True)
 
@@ -1649,6 +1680,29 @@ def _complete_environmental_extension_sector_grid(
     if len(result) != expected_rows or bool(result.duplicated(key_cols).any()):
         raise RuntimeError("Final environmental sector grid is incomplete or duplicated.")
     return result
+
+
+def _production_environmental_group_domain(
+    exio_environmental_extensions: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return selected production-F groups in deterministic raw-source order.
+
+    Raw physical values are provenance only here. The final model grid uses
+    these three metadata columns to retain even a stressor with no scientifically
+    supported target-sector estimate; direct-final-demand ``F_Y`` is excluded.
+    """
+    required = {"extension", "kind", "stressor", "unit"}
+    missing = required - set(exio_environmental_extensions.columns)
+    if missing:
+        raise ValueError(
+            "Raw EXIO environmental sidecar is missing production-group columns: "
+            f"{sorted(missing)!r}."
+        )
+    raw = exio_environmental_extensions.loc[
+        exio_environmental_extensions["kind"].astype(str).eq("F"),
+        ["extension", "stressor", "unit"],
+    ].copy()
+    return raw.drop_duplicates(ignore_index=True)
 
 
 def _write_sector_contract(
@@ -2480,23 +2534,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         mapping_for_run = dict(mapping)
         mapping_df_for_run = mapping_df.copy()
         edge_mapping_audit = pd.DataFrame()
-        if args.fail_on_unmapped_split_children:
-            selected_json = (
-                Path(args.split_selected_sectors_json)
-                if args.split_selected_sectors_json
-                else z_dir / "exio_selected_sectors.json"
-            )
-            selected_children = _load_split_selected_children(selected_json)
-            counts = mapping_df["from_sector"].astype(str).value_counts()
-            missing_selected = sorted(child for child in selected_children if int(counts.get(child, 0)) == 0)
-            duplicate_selected = sorted(child for child in selected_children if int(counts.get(child, 0)) != 1)
-            if missing_selected or duplicate_selected:
-                raise SystemExit(
-                    "Strict aggregation mapping must contain every emitted split child exactly once: "
-                    f"missing={missing_selected[:20]!r}, duplicates={duplicate_selected[:20]!r}"
-                )
         edge_metadata_path = z_dir / "split_child_edges.csv"
-        if edge_metadata_path.exists() and not args.fail_on_unmapped_split_children:
+        if edge_metadata_path.exists():
             _vprint(args.verbose, f"Reading: {edge_metadata_path.resolve()}")
             edge_metadata = pd.read_csv(edge_metadata_path)
             mapping_for_run, mapping_df_for_run, edge_mapping_audit = _augment_mapping_from_split_child_edges(
@@ -2509,7 +2548,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.verbose,
                     f"Added/verified {len(edge_mapping_audit)} edge-child aggregation mapping row(s).",
                 )
-
+        if args.fail_on_unmapped_split_children:
+            selected_json = (
+                Path(args.split_selected_sectors_json)
+                if args.split_selected_sectors_json
+                else z_dir / "exio_selected_sectors.json"
+            )
+            selected_children = _load_split_selected_children(selected_json)
+            counts = mapping_df_for_run["from_sector"].astype(str).value_counts()
+            missing_selected = sorted(child for child in selected_children if int(counts.get(child, 0)) == 0)
+            duplicate_selected = sorted(child for child in selected_children if int(counts.get(child, 0)) != 1)
+            if missing_selected or duplicate_selected:
+                raise SystemExit(
+                    "Strict aggregation mapping must contain every emitted split child exactly once: "
+                    f"missing={missing_selected[:20]!r}, duplicates={duplicate_selected[:20]!r}"
+                )
         input_sectors = set(Z.index.astype(str))
         mapped_sources = set(map(str, mapping_for_run.keys()))
         unmapped = sorted(input_sectors - mapped_sources)
@@ -2679,10 +2732,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             output=x_input,
             keep_unmapped=keep_unmapped,
         )
+        if environmental_extensions is not None and exio_environmental_extensions is None:
+            raise ValueError(
+                "Model-facing environmental completion requires the paired raw "
+                "exio_environmental_extensions.csv to define selected production groups."
+            )
+        production_groups = (
+            None
+            if exio_environmental_extensions is None
+            else _production_environmental_group_domain(exio_environmental_extensions)
+        )
         aggregated_environmental_extensions = (
-            _complete_environmental_extension_sector_grid(
+            None
+            if production_groups is None
+            else _complete_environmental_extension_sector_grid(
                 aggregated_environmental_extensions_actual,
                 output=res.x,
+                production_groups=production_groups,
             )
         )
 

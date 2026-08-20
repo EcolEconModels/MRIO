@@ -4,6 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
+
+from ecolecon_mrio.mapping_csv import read_weighted_mapping
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +37,42 @@ def test_legacy_exio_concordance_covers_all_dictionary_codes() -> None:
     mapped_codes = set(concordance["source_code"].astype(str).str.strip())
     missing = sorted(exio_codes - mapped_codes)
     assert not missing, f"Missing EXIO source codes in concordance: {missing[:20]}"
+
+
+def test_preferred_official_direct_p24_topology_and_runtime_mass_partition() -> None:
+    """Official p24 incidences reach C20/C21 while runtime shares conserve sources."""
+    path = (
+        MAPPINGS
+        / "generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv"
+    )
+    preferred = _active_rows(pd.read_csv(path, dtype=str).fillna(""))
+    p24 = preferred.loc[preferred["source_code"].astype(str).str.startswith("p24")]
+    expected_sources = {
+        "p24.a",
+        "p24.a.w",
+        "p24.b",
+        "p24.c",
+        "p24.d",
+        "p24.e",
+        "p24.f",
+        "p24.g",
+        "p24.h",
+        "p24.i",
+    }
+    assert set(p24["source_code"]) == expected_sources
+    assert all(
+        set(group["target_code"]) == {"CPA_C20", "CPA_C21"}
+        for _, group in p24.groupby("source_code", sort=False)
+    )
+
+    target_codes = _codes(_read_csv("eurostat_cpa65_products_dictionary.csv"))
+    reference = {code: 1.0 for code in target_codes}
+    reference.update({"CPA_C20": 3.0, "CPA_C21": 7.0})
+    resolved = read_weighted_mapping(path, target_output_by_code=reference)
+    for source in expected_sources:
+        assert resolved["CPA_C20"][source] == pytest.approx(0.3)
+        assert resolved["CPA_C21"][source] == pytest.approx(0.7)
+        assert resolved["CPA_C20"][source] + resolved["CPA_C21"][source] == pytest.approx(1.0)
 
 
 def test_committed_cpa64_and_cpa65_target_dictionaries_have_explicit_real_estate_granularity() -> None:
@@ -105,7 +144,11 @@ def test_concordance_allocation_rules_are_explicit() -> None:
 
 
 def test_reaggregation_source_codes_do_not_map_to_multiple_targets() -> None:
-    for csv_name in ["energy_green_brown_reaggregation.csv", "fuels_reaggregation.csv", "fuels_more_reaggregation.csv"]:
+    for csv_name in [
+        "energy_green_brown_reaggregation.csv",
+        "fuels_reaggregation.csv",
+        "fuels_more_reaggregation.csv",
+    ]:
         df = _active_rows(_read_csv(csv_name, PIPELINES))
         counts = df.groupby(df["source_code"].astype(str).str.strip())["target_code"].nunique()
         bad = counts[counts > 1]

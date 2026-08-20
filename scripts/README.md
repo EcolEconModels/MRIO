@@ -33,9 +33,13 @@ scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_
 The source file is a binary CPA64-to-EXIOBASE3 incidence relation. The generated
 files use the canonical EXIOBASE3-to-CPA runtime orientation and the existing
 many-to-many output/use-share allocation rule. No separate disaggregation engine
-or pipeline wrapper is introduced. Use the CPA65 output through `CONCORDANCE_CSV`
-for the fuels and fuels_more wrappers, or through `EXIO_TO_EUROSTAT_MAP` for the
-green/brown wrapper.
+or pipeline wrapper is introduced. The CPA65 output is the default through
+`CONCORDANCE_CSV` for the fuels and fuels_more wrappers. Because official topology
+can materialize `source@target` children, those wrappers use the existing
+concordance-aware closure generator to resolve their sparse analytical
+reaggregation recipes before strict child-coverage validation. The green/brown
+wrapper retains its older C20-only concordance because its separate analytical
+mapping is intentionally unchanged.
 <!-- END OFFICIAL DIRECT CPA MAPS -->
 
 The workflow depends on the following checked-in concordance files under `scripts/mappings/` plus the user-editable split and reaggregation helper tables under `scripts/pipelines/`.
@@ -119,7 +123,9 @@ Defaults:
 
 - `COUNTRY=AT`
 - `YEAR=2020`
-- `MAPPING_CSV=scripts/mappings/exio_to_eurostat_cpa_products.csv`
+- `MAPPING_CSV=scripts/mappings/exio_to_eurostat_cpa_products.csv` (retained
+  curated-route diagnostic default; this audit wrapper is not a production
+  split/reaggregation wrapper)
 - `REL_THRESHOLD=0.20`
 - `MIN_ABS_MEUR=5.0`
 - `IDENTITY_MODE=diagnostic`

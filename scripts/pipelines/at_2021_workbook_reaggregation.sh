@@ -8,7 +8,7 @@ set -euo pipefail
 # Optional overrides:
 #   SPLIT_MAPPING_CSV=scripts/pipelines/fuels_split.csv
 #   REAGG_MAPPING_CSV=scripts/pipelines/fuels_reaggregation.csv
-#   CONCORDANCE_CSV=scripts/mappings/exio_to_eurostat_cpa_products.csv
+#   CONCORDANCE_CSV=scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"
@@ -70,7 +70,11 @@ IDENTITY_MAPPING_CSV="$(mktemp)"
 
 SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_split.csv}"
 REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_reaggregation.csv}"
-CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa_products.csv}"
+CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv}"
+REAGG_RULE_CSV="${REAGG_RULE_CSV:-$ROOT_DIR/scripts/pipelines/fuels_reaggregation_fuel_expanded_edge_rules.csv}"
+CLOSED_REAGG_MAPPING_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed.csv"
+CLOSED_REAGG_REVIEW_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed_review.csv"
+CLOSED_REAGG_MANIFEST_JSON="$GENERATED_MAPPINGS_OUT/reaggregation_closed_manifest.json"
 
 TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_${EUROSTAT_TIME}_Eurostat.xlsx}"
 if [[ ! -f "$TEMPLATE_XLSX" ]]; then
@@ -112,9 +116,18 @@ fi
 
 set -x
 
+"$PY" "$ROOT_DIR/scripts/pipelines/generate_reaggregation_for_concordance.py" \
+  --split-mapping-csv "$SPLIT_MAPPING_CSV" \
+  --base-reagg-csv "$REAGG_MAPPING_CSV" \
+  --concordance-csv "$CONCORDANCE_CSV" \
+  --rule-csv "$REAGG_RULE_CSV" \
+  --out-csv "$CLOSED_REAGG_MAPPING_CSV" \
+  --review-csv "$CLOSED_REAGG_REVIEW_CSV" \
+  --manifest-json "$CLOSED_REAGG_MANIFEST_JSON"
+
 "$PY" "$ROOT_DIR/scripts/pipelines/check_reaggregation_coverage.py" \
   --split-mapping-csv "$SPLIT_MAPPING_CSV" \
-  --reagg-mapping-csv "$REAGG_MAPPING_CSV" \
+  --reagg-mapping-csv "$CLOSED_REAGG_MAPPING_CSV" \
   --concordance-csv "$CONCORDANCE_CSV" \
   --report-csv "$GENERATED_MAPPINGS_OUT/reaggregation_coverage_preflight.csv"
 
@@ -210,7 +223,7 @@ PY
 "$PY" "$ROOT_DIR/scripts/aggregate_iot_by_mapping.py" --verbose \
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_REAGG" \
-  --mapping-csv "$REAGG_MAPPING_CSV" \
+  --mapping-csv "$CLOSED_REAGG_MAPPING_CSV" \
   --fail-on-unmapped-split-children \
   "${EXPECT_ARGS[@]}" \
   --write-sfc-workbook \

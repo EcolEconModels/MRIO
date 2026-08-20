@@ -371,6 +371,14 @@ outputs, not primary country totals.
 
 ### Environmental extension sidecar contract
 
+The preferred fuels-production EXIOBASE3-to-CPA65 concordance is the official
+direct CPA64/EXIOBASE3 topology converted to CPA65. Multi-target edges such as p24
+to CPA_C20 and CPA_C21 carry no fixed or equal share: the common runtime resolver
+uses the flow-specific Eurostat target reference to partition every EXIO source
+with unit total weight. Fuels reaggregation remains downstream from this
+statistical concordance. The separate green/brown wrapper retains its older
+C20-only concordance and unchanged analytical reaggregation recipe.
+
 The scientific equations are owned by
 `docs/economic_methods/generalized_energy_disaggregation_methods.md`. The EXIO
 full-donor route exposes their result as two long-form tables through one generic
@@ -388,7 +396,7 @@ Transformed and reaggregated production-side satellite accounts use the stable
 schema:
 
 ```text
-sector_position,sector,extension,stressor,unit,value,monetary_output,intensity,available
+sector_position,sector,extension,stressor,unit,value,monetary_output,intensity
 ```
 
 `value` is always the extensive physical total on the table's current sector
@@ -407,17 +415,21 @@ Sparse reaggregation mappings describe only sectors that change. Unmapped sector
 retain their identifiers and supported environmental estimates. Once scientific
 reaggregation and its integrity checks finish, the final model-facing production
 sidecar is completed in long form to exactly the final IOT sector axis for every
-observed extension/stressor/unit group. `sector_position` is one-based and follows
+selected raw production-`F` extension/stressor/unit group. This raw metadata domain
+preserves even a selected stressor with no supported final-sector estimate anywhere;
+`F_Y` groups do not enter it. `sector_position` is one-based and follows
 the authoritative final `Z`/`x`/sector-contract order; it is not an independent
 classification registry. `monetary_output` is populated from canonical final IOT
 output for every row.
 
-Availability records evidence presence, not activity or magnitude. A supported
-zero-output sector has `available=True`, `value=0`, and missing `intensity`; a
-supported physical zero at positive output also remains available. A sector without
-a valid donor coefficient has `available=False` with missing `value` and `intensity`,
-even when its monetary output is zero. Such rows preserve the model axis but are not
-imputed observations and must not enter physical sums. The canonical artifact remains
+The value field records whether a scientific estimate is defined. A supported
+zero-output sector has `value=0` and missing `intensity`; a supported physical zero
+at positive output has `value=0` and zero `intensity`. A sector without a valid donor
+coefficient has missing `value` and `intensity`, even when its monetary output is
+zero. Missing `value` is not a physical zero or an absent sector, and `intensity`
+missingness alone does not diagnose support. No availability/status Boolean is part
+of the schema. Such rows preserve the model axis but are not imputed observations and
+must not enter physical sums. The canonical artifact remains
 one long-format `environmental_extensions.csv`, not a wide or per-extension family
 of files.
 
@@ -440,7 +452,7 @@ manufacturing a sector-by-final-demand satellite matrix.
 The raw `exio_environmental_extensions.csv` remains source-oriented and retains the
 unchanged `source_label,extension,kind,stressor,unit,value,monetary_denominator,intensity`
 schema for both `F` and `F_Y`. It receives neither final-sector completion nor
-`sector_position`/`available` presentation fields.
+`sector_position` presentation fields.
 
 The routine CLI uses `--environmental-preset combustion-co2` by default and
 `--environmental-preset none` to disable the satellite. Custom selections use the

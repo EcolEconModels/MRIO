@@ -163,14 +163,24 @@ def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path
     ).to_csv(indir / "environmental_extensions.csv", index=False)
     raw_exio = pd.DataFrame(
         {
-            "source_label": ["p24.g", "P3"],
-            "extension": ["air_emissions", "air_emissions"],
-            "kind": ["F", "F_Y"],
-            "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
-            "unit": ["kg", "kg"],
-            "value": [114.0, 5.0],
-            "monetary_denominator": [57.0, 10.0],
-            "intensity": [2.0, 0.5],
+            "source_label": ["p24.g", "p24.g", "P3", "P3"],
+            "extension": [
+                "air_emissions",
+                "deforestation",
+                "air_emissions",
+                "use_phase_only",
+            ],
+            "kind": ["F", "F", "F_Y", "F_Y"],
+            "stressor": [
+                "CO2 - combustion - air",
+                "Unsupported selected stressor",
+                "CO2 - combustion - air",
+                "Final-demand-only stressor",
+            ],
+            "unit": ["kg", "ha", "kg", "kg"],
+            "value": [114.0, 0.0, 5.0, 1.0],
+            "monetary_denominator": [57.0, 57.0, 10.0, 2.0],
+            "intensity": [2.0, 0.0, 0.5, 0.5],
         }
     )
     raw_exio.to_csv(indir / "exio_environmental_extensions.csv", index=False)
@@ -186,21 +196,32 @@ def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path
         "value",
         "monetary_output",
         "intensity",
-        "available",
     ]
-    assert satellite["sector"].tolist() == ["CPA_A", "CPA_B", "ENERGY_GREEN"]
-    assert satellite["sector_position"].tolist() == [1, 2, 3]
-    unavailable = satellite.loc[~satellite["available"]].set_index("sector")
+    air = satellite.loc[satellite["extension"].eq("air_emissions")]
+    assert air["sector"].tolist() == ["CPA_A", "CPA_B", "ENERGY_GREEN"]
+    assert air["sector_position"].tolist() == [1, 2, 3]
+    unavailable = air.loc[air["value"].isna()].set_index("sector")
     assert set(unavailable.index) == {"CPA_A", "CPA_B"}
     assert unavailable["value"].isna().all()
     assert unavailable["intensity"].isna().all()
     assert float(unavailable.loc["CPA_A", "monetary_output"]) == 17.0
     assert float(unavailable.loc["CPA_B", "monetary_output"]) == 37.0
-    row = satellite.loc[satellite["available"]].iloc[0]
+    row = air.loc[air["value"].notna()].iloc[0]
     assert row["sector"] == "ENERGY_GREEN"
     assert float(row["value"]) == pytest.approx(164.0)
     assert float(row["monetary_output"]) == pytest.approx(107.0)
     assert float(row["intensity"]) == pytest.approx(164.0 / 107.0)
+    unsupported_group = satellite.loc[
+        satellite["extension"].eq("deforestation")
+    ]
+    assert unsupported_group["sector"].tolist() == [
+        "CPA_A",
+        "CPA_B",
+        "ENERGY_GREEN",
+    ]
+    assert unsupported_group["value"].isna().all()
+    assert unsupported_group["intensity"].isna().all()
+    assert "use_phase_only" not in set(satellite["extension"])
 
     raw_written = pd.read_csv(outdir / "exio_environmental_extensions.csv")
     pd.testing.assert_frame_equal(raw_written, raw_exio)
@@ -209,10 +230,11 @@ def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path
     assert "Unnamed: 0" not in raw_written.columns
 
 
-def test_environmental_grid_distinguishes_availability_from_zero_activity() -> None:
+def test_environmental_grid_distinguishes_undefined_estimates_from_zero_activity() -> None:
     """Evidence presence, physical zero, and target zero remain distinct states."""
     from scripts.aggregate_iot_by_mapping import (
         _complete_environmental_extension_sector_grid,
+        _production_environmental_group_domain,
     )
 
     actual = pd.DataFrame(
@@ -227,24 +249,79 @@ def test_environmental_grid_distinguishes_availability_from_zero_activity() -> N
         }
     )
     output = pd.Series({"A": 100.0, "B": 0.0, "C": 100.0, "D": 0.0})
+    production_groups = pd.DataFrame(
+        {
+            "extension": ["synthetic", "unsupported", "final_demand_only"],
+            "stressor": ["Synthetic indicator", "No supported targets", "Use phase"],
+            "unit": ["synthetic unit", "kg", "kg"],
+            "kind": ["F", "F", "F_Y"],
+        }
+    )
 
-    completed = _complete_environmental_extension_sector_grid(actual, output=output)
+    completed = _complete_environmental_extension_sector_grid(
+        actual,
+        output=output,
+        production_groups=_production_environmental_group_domain(production_groups),
+    )
 
     assert completed is not None
-    assert completed["sector"].tolist() == ["A", "B", "C", "D"]
-    assert completed["sector_position"].tolist() == [1, 2, 3, 4]
-    by_sector = completed.set_index("sector")
-    assert bool(by_sector.loc["A", "available"]) is True
+    assert len(completed) == 8
+    assert "available" not in completed.columns
+    synthetic = completed.loc[completed["extension"].eq("synthetic")]
+    assert synthetic["sector"].tolist() == ["A", "B", "C", "D"]
+    assert synthetic["sector_position"].tolist() == [1, 2, 3, 4]
+    by_sector = synthetic.set_index("sector")
     assert by_sector.loc["A", "value"] == 0.0
     assert by_sector.loc["A", "intensity"] == 0.0
-    assert bool(by_sector.loc["B", "available"]) is True
     assert by_sector.loc["B", "value"] == 0.0
     assert pd.isna(by_sector.loc["B", "intensity"])
     for sector, expected_output in (("C", 100.0), ("D", 0.0)):
-        assert bool(by_sector.loc[sector, "available"]) is False
         assert pd.isna(by_sector.loc[sector, "value"])
         assert pd.isna(by_sector.loc[sector, "intensity"])
         assert by_sector.loc[sector, "monetary_output"] == expected_output
+    unsupported = completed.loc[completed["extension"].eq("unsupported")]
+    assert len(unsupported) == 4
+    assert unsupported["value"].isna().all()
+    assert unsupported["intensity"].isna().all()
+    assert "final_demand_only" not in set(completed["extension"])
+
+
+def test_environmental_grid_rejects_actual_group_outside_raw_production_domain() -> None:
+    """Scientific rows cannot silently expand the selected raw production domain."""
+    from scripts.aggregate_iot_by_mapping import (
+        _complete_environmental_extension_sector_grid,
+    )
+
+    actual = pd.DataFrame(
+        {
+            "sector": ["A"],
+            "extension": ["unexpected"],
+            "stressor": ["Indicator"],
+            "unit": ["kg"],
+            "value": [1.0],
+            "monetary_output": [10.0],
+            "intensity": [0.1],
+        }
+    )
+    groups = pd.DataFrame(
+        {"extension": ["selected"], "stressor": ["Indicator"], "unit": ["kg"]}
+    )
+
+    with pytest.raises(ValueError, match="outside raw production F"):
+        _complete_environmental_extension_sector_grid(
+            actual,
+            output=pd.Series({"A": 10.0}),
+            production_groups=groups,
+        )
+
+    duplicate = pd.concat([actual, actual], ignore_index=True)
+    duplicate["extension"] = "selected"
+    with pytest.raises(ValueError, match="duplicate sector/group"):
+        _complete_environmental_extension_sector_grid(
+            duplicate,
+            output=pd.Series({"A": 10.0}),
+            production_groups=groups,
+        )
 
 
 def test_row_contract_writers_do_not_serialize_range_indices(tmp_path: Path) -> None:

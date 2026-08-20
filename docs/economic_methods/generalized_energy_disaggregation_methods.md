@@ -462,6 +462,14 @@ unless a separate override policy is explicitly declared.
 
 ## Donor environmental extension transport
 
+For the production EXIOBASE3-to-CPA65 route, (P)'s structural topology comes
+from the official direct CPA64/EXIOBASE3 incidence concordance converted to the
+repository CPA65 target. Multi-target incidences—including p24 edges to both
+CPA_C20 and CPA_C21—are not numerical half-shares. The flow-specific Eurostat
+target reference partitions each raw EXIO source across its targets, and the
+resulting source weights sum to one. Fuels and green/brown categories are separate
+downstream analytical reaggregations of those statistical edges.
+
 Production-side donor environmental extensions are optional evidence, not
 authoritative target-country totals. For one donor stressor let
 \(f^D \in \mathbb{R}^{K}\) be the donor physical extension vector and let
@@ -529,16 +537,21 @@ reaggregation map specifies only transformations: any sector absent from the map
 carries through under its existing identifier. After scientific projection,
 reaggregation, and numerical validation have operated only on supported estimates,
 the model-facing long-form production sidecar is completed to the exact final IOT
-sector axis for every observed extension/stressor/unit group. ``sector_position`` is
+sector axis for every selected production ``F`` extension/stressor/unit group,
+including a selected group for which no sector coefficient is defined. The group
+domain and order come from raw ``F`` metadata, never from ``F_Y`` or a release-specific
+registry. ``sector_position`` is
 the one-based position in the authoritative final IOT order, and
 ``monetary_output`` is the canonical final IOT output for that sector.
 
 Grid completion does not impute an environmental observation. A sector without a
-valid donor coefficient is retained with ``available=False`` and missing ``value``
-and ``intensity``; missing evidence is never physical zero. A supported coefficient
-applied to zero target output instead has ``available=True``, ``value=0``, and an
-undefined intensity. Likewise, a supported physical zero at positive output remains
-available with zero intensity. The raw EXIO provenance sidecar is not grid-completed:
+valid donor coefficient is retained with missing ``value`` and ``intensity``;
+missing evidence is never physical zero. A supported coefficient applied to zero
+target output instead has ``value=0`` and an undefined intensity. Likewise, a
+supported physical zero at positive output retains ``value=0`` and zero intensity.
+Thus finite ``value`` denotes an actual projected/reaggregated estimate, while
+missing ``value`` denotes undefined environmental evidence; no separate availability
+flag is used. The raw EXIO provenance sidecar is not grid-completed:
 production ``F`` remains source-product evidence and ``F_Y`` remains category-level
 evidence outside the sector-axis contract. Production-side model extensions remain
 DOM-only; no domestic coefficient is transferred to IMP or TOTAL.

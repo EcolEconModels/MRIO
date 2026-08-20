@@ -19,7 +19,23 @@ for _extra_path in (_REPO_ROOT, _REPO_ROOT / "src"):
 
 from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions, aggregate_iot
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
-from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
+from scripts.aggregate_iot_by_mapping import (
+    _augment_mapping_from_split_child_edges,
+    _load_split_selected_children,
+    _production_environmental_group_domain,
+)
+
+
+_ENVIRONMENTAL_GRID_COLUMNS = [
+    "sector_position",
+    "sector",
+    "extension",
+    "stressor",
+    "unit",
+    "value",
+    "monetary_output",
+    "intensity",
+]
 
 
 def _read_frame(path: Path) -> pd.DataFrame:
@@ -110,34 +126,6 @@ def _check_ratio_file(
     missing = sorted(required - set(df.columns))
     if missing:
         return {"path": str(path), "exists": True, "ok": False, "missing_columns": missing}
-    if "available" in df.columns:
-        availability = df["available"].astype(str).str.casefold()
-        invalid_availability = ~availability.isin({"true", "false"})
-        if bool(invalid_availability.any()):
-            return {
-                "path": str(path),
-                "exists": True,
-                "ok": False,
-                "invalid_available_rows": int(invalid_availability.sum()),
-            }
-        available = availability.eq("true")
-        unavailable_values = pd.to_numeric(
-            df.loc[~available, numerator_col], errors="coerce"
-        )
-        unavailable_ratios = pd.to_numeric(
-            df.loc[~available, ratio_col], errors="coerce"
-        )
-        if bool(unavailable_values.notna().any() or unavailable_ratios.notna().any()):
-            return {
-                "path": str(path),
-                "exists": True,
-                "ok": False,
-                "unavailable_nonmissing_values": int(unavailable_values.notna().sum()),
-                "unavailable_nonmissing_ratios": int(unavailable_ratios.notna().sum()),
-            }
-        # Presentation-only unavailable rows are excluded from scientific ratio
-        # checks; their canonical monetary output remains an alignment field.
-        df = cast(pd.DataFrame, df.loc[available].copy())
     num = pd.to_numeric(df[numerator_col], errors="coerce").astype("float64")
     den = pd.to_numeric(df[denominator_col], errors="coerce").astype("float64")
     observed = pd.to_numeric(df[ratio_col], errors="coerce").astype("float64")
@@ -152,6 +140,141 @@ def _check_ratio_file(
         "ok": bool(np.isclose(gap, 0.0, rtol=rtol, atol=atol)),
         "max_abs_gap": gap,
         "n_checked": int(valid.sum()),
+    }
+
+
+def _validate_environmental_grid(
+    *,
+    environmental_path: Path,
+    raw_path: Path,
+    output: pd.Series,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
+    """Validate the public production-group by final-sector storage contract."""
+    errors: list[str] = []
+    if not environmental_path.is_file():
+        return {"ok": False, "errors": [f"Missing {environmental_path}"]}
+    if not raw_path.is_file():
+        return {"ok": False, "errors": [f"Missing paired raw sidecar {raw_path}"]}
+
+    observed = pd.read_csv(environmental_path)
+    raw = pd.read_csv(raw_path)
+    raw_columns = [
+        "source_label",
+        "extension",
+        "kind",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_denominator",
+        "intensity",
+    ]
+    if list(raw.columns) != raw_columns:
+        errors.append(f"raw schema={list(raw.columns)!r}")
+    if list(observed.columns) != _ENVIRONMENTAL_GRID_COLUMNS:
+        errors.append(f"environmental schema={list(observed.columns)!r}")
+        return {"ok": False, "errors": errors}
+
+    groups = _production_environmental_group_domain(raw)
+    group_cols = ["extension", "stressor", "unit"]
+    key_cols = ["sector", *group_cols]
+    canonical = output.copy().astype("float64")
+    canonical.index = canonical.index.astype(str)
+    sectors = canonical.index.tolist()
+    if not canonical.index.is_unique:
+        errors.append("final output sector index is not unique")
+    if canonical.isna().any() or not np.isfinite(canonical.to_numpy()).all():
+        errors.append("final output contains missing or non-finite values")
+
+    expected_keys = pd.DataFrame(
+        [
+            {
+                "sector_position": position,
+                "sector": sector,
+                "extension": str(group.extension),
+                "stressor": str(group.stressor),
+                "unit": str(group.unit),
+            }
+            for group in groups.itertuples(index=False)
+            for position, sector in enumerate(sectors, start=1)
+        ]
+    )
+    observed_keys = observed.loc[:, ["sector_position", *key_cols]].copy()
+    if len(observed) != len(expected_keys):
+        errors.append(
+            f"row count={len(observed)}, expected={len(expected_keys)}"
+        )
+    if bool(observed.duplicated(key_cols).any()):
+        errors.append("duplicate sector/extension/stressor/unit rows")
+    if not observed_keys.equals(expected_keys):
+        errors.append("group/sector order or sector_position differs from canonical grid")
+
+    monetary = pd.to_numeric(observed["monetary_output"], errors="coerce")
+    invalid_monetary = observed["monetary_output"].notna() & monetary.isna()
+    if (
+        bool(invalid_monetary.any())
+        or bool(monetary.isna().any())
+        or not np.isfinite(monetary.to_numpy(dtype="float64")).all()
+    ):
+        errors.append("monetary_output contains invalid or missing values")
+    else:
+        expected_output = observed["sector"].astype(str).map(canonical)
+        if not np.allclose(
+            monetary.to_numpy(dtype="float64"),
+            expected_output.to_numpy(dtype="float64"),
+            rtol=rtol,
+            atol=atol,
+            equal_nan=False,
+        ):
+            errors.append("monetary_output differs from canonical final x")
+
+    value = pd.to_numeric(observed["value"], errors="coerce")
+    intensity = pd.to_numeric(observed["intensity"], errors="coerce")
+    invalid_value = observed["value"].notna() & value.isna()
+    invalid_intensity = observed["intensity"].notna() & intensity.isna()
+    if bool(invalid_value.any()) or not np.isfinite(value.dropna()).all():
+        errors.append("value contains invalid or infinite observations")
+    if bool(invalid_intensity.any()) or not np.isfinite(intensity.dropna()).all():
+        errors.append("intensity contains invalid or infinite observations")
+
+    missing_value = value.isna()
+    if bool(intensity.loc[missing_value].notna().any()):
+        errors.append("value=NA requires intensity=NA")
+    finite_value = value.notna()
+    positive_output = monetary.gt(0.0)
+    ratio_rows = finite_value & positive_output
+    if bool(ratio_rows.any()):
+        expected_ratio = value.loc[ratio_rows] / monetary.loc[ratio_rows]
+        observed_ratio = intensity.loc[ratio_rows]
+        if bool(observed_ratio.isna().any()) or not np.allclose(
+            observed_ratio.to_numpy(dtype="float64"),
+            expected_ratio.to_numpy(dtype="float64"),
+            rtol=rtol,
+            atol=atol,
+            equal_nan=False,
+        ):
+            errors.append("positive-output intensity does not equal value/output")
+    zero_output_estimates = finite_value & monetary.eq(0.0)
+    if bool(zero_output_estimates.any()):
+        zero_values = value.loc[zero_output_estimates]
+        zero_intensities = intensity.loc[zero_output_estimates]
+        if not np.allclose(
+            zero_values.to_numpy(dtype="float64"),
+            0.0,
+            rtol=rtol,
+            atol=atol,
+        ):
+            errors.append("zero-output supported estimates must have value=0")
+        if bool(zero_intensities.notna().any()):
+            errors.append("zero-output supported estimates must have intensity=NA")
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "n_groups": int(len(groups)),
+        "n_sectors": int(len(canonical)),
+        "n_rows": int(len(observed)),
     }
 
 
@@ -243,9 +366,31 @@ def validate_pipeline_outputs(
             raise ValueError("agg_dir and mapping_csv must be supplied together for reaggregation validation.")
         agg_dir = Path(agg_dir)
         mapping_csv = Path(mapping_csv)
-        mapping, _, edge_audit = _load_augmented_mapping(mapping_csv=mapping_csv, split_dir=split_dir)
-        missing = sorted(set(map(str, Z.index)) - set(map(str, mapping.keys())))
-        add_check("aggregation_mapping_covers_split_Z_index", len(missing) == 0, n_missing=len(missing), sample=missing[:20])
+        mapping, mapping_df, edge_audit = _load_augmented_mapping(
+            mapping_csv=mapping_csv, split_dir=split_dir
+        )
+        selected_path = split_dir / "exio_selected_sectors.json"
+        selected_children = (
+            _load_split_selected_children(selected_path)
+            if selected_path.is_file()
+            else set()
+        )
+        mapping_counts = mapping_df["from_sector"].astype(str).value_counts()
+        missing_selected = sorted(
+            child for child in selected_children if int(mapping_counts.get(child, 0)) == 0
+        )
+        duplicate_selected = sorted(
+            child for child in selected_children if int(mapping_counts.get(child, 0)) > 1
+        )
+        add_check(
+            "aggregation_mapping_covers_selected_split_children",
+            not missing_selected and not duplicate_selected,
+            n_selected=len(selected_children),
+            n_missing=len(missing_selected),
+            n_duplicate=len(duplicate_selected),
+            missing_sample=missing_selected[:20],
+            duplicate_sample=duplicate_selected[:20],
+        )
 
         v_path = split_dir / "V_split.csv"
         m_path = split_dir / "M_split.csv"
@@ -260,7 +405,7 @@ def validate_pipeline_outputs(
             M=M,
             output=x_observed,
             flow_role=flow_role if flow_role in {"DOM", "IMP", "TOTAL"} else "TOTAL",
-            keep_unmapped=False,
+            keep_unmapped=True,
             create_io_system=False,
         )
 
@@ -286,20 +431,35 @@ def validate_pipeline_outputs(
             add_check(f"{name}_matches_recomputed_reaggregation", np.isclose(gap, 0.0, rtol=rtol, atol=atol), max_abs_gap=gap)
 
         split_environmental_path = split_dir / "environmental_extensions.csv"
-        if split_environmental_path.exists():
-            split_environmental = pd.read_csv(split_environmental_path)
-            expected_environmental = aggregate_environmental_extensions(
-                split_environmental,
-                mapping,
-                output=x_observed,
-                keep_unmapped=True,
-                rtol=rtol,
-                atol=atol,
+        split_raw_environmental_path = split_dir / "exio_environmental_extensions.csv"
+        if split_environmental_path.exists() or split_raw_environmental_path.exists():
+            add_check(
+                "environmental_raw_provenance_paired",
+                split_raw_environmental_path.exists(),
+                path=str(split_raw_environmental_path),
+            )
+            expected_environmental = None
+            if split_environmental_path.exists():
+                split_environmental = pd.read_csv(split_environmental_path)
+                expected_environmental = aggregate_environmental_extensions(
+                    split_environmental,
+                    mapping,
+                    output=x_observed,
+                    keep_unmapped=True,
+                    rtol=rtol,
+                    atol=atol,
+                )
+            production_groups = (
+                _production_environmental_group_domain(
+                    pd.read_csv(split_raw_environmental_path)
+                )
+                if split_raw_environmental_path.exists()
+                else pd.DataFrame(columns=["extension", "stressor", "unit"])
             )
             observed_environmental_path = agg_dir / "environmental_extensions.csv"
-            if expected_environmental is None:
+            if production_groups.empty:
                 add_check(
-                    "environmental_reaggregation_empty",
+                    "environmental_production_grid_empty",
                     not observed_environmental_path.exists(),
                     path=str(observed_environmental_path),
                 )
@@ -311,38 +471,36 @@ def validate_pipeline_outputs(
                 )
             else:
                 observed_environmental = pd.read_csv(observed_environmental_path)
-                if "available" in observed_environmental.columns:
-                    available = (
-                        observed_environmental["available"]
-                        .astype(str)
-                        .str.casefold()
-                        .eq("true")
-                    )
-                    observed_environmental = cast(
-                        pd.DataFrame, observed_environmental.loc[available].copy()
-                    )
-                gap = _max_abs_environmental_gap(
-                    observed_environmental, expected_environmental
+                scientific_rows = cast(
+                    pd.DataFrame,
+                    observed_environmental.loc[
+                        pd.to_numeric(observed_environmental["value"], errors="coerce").notna()
+                    ].copy(),
                 )
+                if expected_environmental is None:
+                    gap = 0.0 if scientific_rows.empty else float("inf")
+                else:
+                    gap = _max_abs_environmental_gap(
+                        scientific_rows, expected_environmental
+                    )
                 add_check(
                     "environmental_totals_match_reaggregation",
                     np.isclose(gap, 0.0, rtol=rtol, atol=atol),
                     max_abs_gap=gap,
                 )
-                ratio = _check_ratio_file(
-                    observed_environmental_path,
-                    numerator_col="value",
-                    denominator_col="monetary_output",
-                    ratio_col="intensity",
+                grid = _validate_environmental_grid(
+                    environmental_path=observed_environmental_path,
+                    raw_path=agg_dir / "exio_environmental_extensions.csv",
+                    output=recomputed.x,
                     rtol=rtol,
                     atol=atol,
                 )
-                ratio_extra = dict(ratio)
-                ratio_ok = bool(ratio_extra.pop("ok", False))
+                grid_extra = dict(grid)
+                grid_ok = bool(grid_extra.pop("ok", False))
                 add_check(
-                    "environmental_reaggregation_intensity_ratio",
-                    ratio_ok,
-                    **ratio_extra,
+                    "environmental_final_grid_contract",
+                    grid_ok,
+                    **grid_extra,
                 )
 
         if not edge_audit.empty:

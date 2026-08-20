@@ -1,6 +1,12 @@
 from pathlib import Path
 
 
+OFFICIAL_DIRECT_CPA65 = (
+    "scripts/mappings/generated/official_direct/"
+    "exio_to_eurostat_cpa65_products_from_official_direct.csv"
+)
+
+
 def test_at_fuels_runner_preserves_year_and_parent_lineage_contracts() -> None:
     text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(
         encoding="utf-8"
@@ -24,3 +30,14 @@ def test_at_fuels_runner_exposes_archive_extensions_and_eurostat_only_refresh() 
     assert "EUROSTAT_FORCE_DOWNLOAD" in text
     assert "--eurostat-force-download" in text
     assert "--exio-force-download" not in text
+
+
+def test_fuels_wrapper_defaults_to_official_direct_concordance() -> None:
+    """The fuels-family production wrapper must use Method-3 topology."""
+    fuels = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert OFFICIAL_DIRECT_CPA65 in fuels
+    assert "generate_reaggregation_for_concordance.py" in fuels
+    assert "scripts/mappings/exio_to_eurostat_cpa_products.csv" not in fuels
