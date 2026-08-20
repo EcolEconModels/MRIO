@@ -26,6 +26,29 @@ The longer chained-concordance workflow documented below is retained separately
 for comparison and can be deleted later without affecting this direct route.
 <!-- END DIRECT OFFICIAL ROUTE -->
 
+## Reviewed fuels production variant
+
+The EXIO official-direct files under `scripts/mappings/generated/official_direct/`
+remain byte-reproducible upstream provenance and are not edited for project
+choices. Fuels and fuels-more instead use the checked-in reviewed derivative
+`scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`.
+The derivative changes only three source families after clarification with the
+EXIO support team that the published file is an aggregate correspondence and that
+narrower project choices are legitimate:
+
+- `p23.3` — Nuclear fuel -> `CPA_C24` — Basic metals.
+- `p24.d` — Chemicals nec -> both `CPA_C20` — Chemicals and chemical products and
+  `CPA_C21` — Basic pharmaceutical products and pharmaceutical preparations; every
+  other `p24.*` product -> `CPA_C20` only.
+- `p33` — Medical, precision and optical instruments, watches and clocks ->
+  `CPA_C26` — Computer, electronic and optical products only.
+
+The reviewed CSV remains a topology table. Only `p24.d` among these reviewed
+choices is multi-target, and its numerical shares are resolved from the same
+flow-specific Eurostat target-side reference as every other many-to-many edge.
+No Python special case implements these choices. Green/brown remains on its
+existing concordance and is intentionally unchanged.
+
 This workflow builds an EXIOBASE3 product -> Eurostat CPA64/CPA65 target map
 from detailed product concordances. It is the official-concordance route used to
 test whether the fuels pipeline performs better than the older A64/compatibility
@@ -162,11 +185,12 @@ The fuels split/reaggregation wrapper uses `CONCORDANCE_CSV` as the
 EXIOBASE3 -> Eurostat CPA weighted mapping. Keep the split and reaggregation
 recipes fixed, and change only `CONCORDANCE_CSV`.
 
-The active production default is the preferred direct official CPA65 file under
-`scripts/mappings/generated/official_direct/`. The commands below document older
-A64 and chained-official comparison experiments; neither is the default production
-route. Runtime flow-specific target shares, not binary incidence values, partition
-multi-target EXIO sources.
+The active fuels/fuels-more production default is the reviewed derivative
+`scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`.
+The raw official-direct file remains the upstream provenance baseline; the commands
+below document older A64 and chained-official comparison experiments, neither of
+which is the default production route. Runtime flow-specific target shares, not
+binary incidence values, partition retained multi-target EXIO sources.
 
 Old A64/compat route:
 

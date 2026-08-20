@@ -462,13 +462,22 @@ unless a separate override policy is explicitly declared.
 
 ## Donor environmental extension transport
 
-For the production EXIOBASE3-to-CPA65 route, (P)'s structural topology comes
-from the official direct CPA64/EXIOBASE3 incidence concordance converted to the
-repository CPA65 target. Multi-target incidences—including p24 edges to both
-CPA_C20 and CPA_C21—are not numerical half-shares. The flow-specific Eurostat
-target reference partitions each raw EXIO source across its targets, and the
-resulting source weights sum to one. Fuels and green/brown categories are separate
-downstream analytical reaggregations of those statistical edges.
+For the fuels/fuels-more production EXIOBASE3-to-CPA65 route, (P)'s structural
+topology comes from the checked-in reviewed production concordance
+`scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`.
+It is derived from the EXIO official-direct CPA64/EXIOBASE3 incidence topology but
+narrows only three aggregate-correspondence choices after clarification with the
+EXIO support team: `p23.3` (Nuclear fuel) is assigned to `CPA_C24` (Basic metals);
+`p24.d` (Chemicals nec) alone retains the `CPA_C20` (Chemicals and chemical
+products) / `CPA_C21` (Basic pharmaceutical products and pharmaceutical
+preparations) split while the remaining `p24.*` products map only to `CPA_C20`;
+and `p33` (Medical, precision and optical instruments, watches and clocks) maps
+only to `CPA_C26` (Computer, electronic and optical products). The raw official
+concordance remains unchanged as provenance. The only retained multi-target choice
+among these reviewed rows, `p24.d`, carries no fixed or equal share: the
+flow-specific Eurostat target reference partitions that raw EXIO source across its
+targets and the resulting source weights sum to one. Green/brown remains a separate
+analytical pipeline on its existing concordance and is unchanged by this choice.
 
 Production-side donor environmental extensions are optional evidence, not
 authoritative target-country totals. For one donor stressor let

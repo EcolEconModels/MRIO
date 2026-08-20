@@ -31,12 +31,15 @@ scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_
 ```
 
 The source file is a binary CPA64-to-EXIOBASE3 incidence relation. The generated
-files use the canonical EXIOBASE3-to-CPA runtime orientation and the existing
-many-to-many output/use-share allocation rule. No separate disaggregation engine
-or pipeline wrapper is introduced. The CPA65 output is the default through
-`CONCORDANCE_CSV` for the fuels and fuels_more wrappers. Because official topology
-can materialize `source@target` children, those wrappers use the existing
-concordance-aware closure generator to resolve their sparse analytical
+files use the canonical EXIOBASE3-to-CPA runtime orientation and remain the
+unchanged provenance baseline. Fuels and fuels_more default instead to the
+checked-in reviewed derivative
+`scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`,
+which narrows only `p23.3` Nuclear fuel, the `p24.*` chemicals/pharmaceuticals
+family, and `p33` Medical, precision and optical instruments, watches and clocks.
+The reviewed choices live entirely in mapping data; no Python special case applies
+them. Retained many-to-many rows still use the existing output/use-share resolver,
+and the concordance-aware closure generator resolves the sparse analytical
 reaggregation recipes before strict child-coverage validation. The green/brown
 wrapper retains its older C20-only concordance because its separate analytical
 mapping is intentionally unchanged.

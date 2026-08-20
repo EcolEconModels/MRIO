@@ -371,10 +371,17 @@ outputs, not primary country totals.
 
 ### Environmental extension sidecar contract
 
-The preferred fuels-production EXIOBASE3-to-CPA65 concordance is the official
-direct CPA64/EXIOBASE3 topology converted to CPA65. Multi-target edges such as p24
-to CPA_C20 and CPA_C21 carry no fixed or equal share: the common runtime resolver
-uses the flow-specific Eurostat target reference to partition every EXIO source
+The fuels/fuels-more production EXIOBASE3-to-CPA65 concordance is the reviewed
+CSV `scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`,
+derived from the unchanged EXIO official-direct CPA64/EXIOBASE3 topology. It
+narrows only the project-reviewed `p23.3`, `p24.*`, and `p33` aggregate
+correspondences: Nuclear fuel (`p23.3`) -> `CPA_C24` Basic metals; only Chemicals
+nec (`p24.d`) retains the `CPA_C20` Chemicals and chemical products / `CPA_C21`
+Basic pharmaceutical products and pharmaceutical preparations split while all
+other `p24.*` products go to `CPA_C20`; and `p33` Medical, precision and optical
+instruments, watches and clocks -> `CPA_C26` Computer, electronic and optical
+products. Multi-target `p24.d` carries no fixed or equal share: the common runtime
+resolver uses the flow-specific Eurostat target reference to partition the source
 with unit total weight. Fuels reaggregation remains downstream from this
 statistical concordance. The separate green/brown wrapper retains its older
 C20-only concordance and unchanged analytical reaggregation recipe.

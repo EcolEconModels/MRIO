@@ -39,14 +39,11 @@ def test_legacy_exio_concordance_covers_all_dictionary_codes() -> None:
     assert not missing, f"Missing EXIO source codes in concordance: {missing[:20]}"
 
 
-def test_preferred_official_direct_p24_topology_and_runtime_mass_partition() -> None:
-    """Official p24 incidences reach C20/C21 while runtime shares conserve sources."""
-    path = (
-        MAPPINGS
-        / "generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv"
-    )
+def test_reviewed_production_p24_topology_and_runtime_mass_partition() -> None:
+    """Only Chemicals nec spans C20/C21; runtime shares conserve that source."""
+    path = MAPPINGS / "exio_to_eurostat_cpa65_products_official_direct_reviewed.csv"
     preferred = _active_rows(pd.read_csv(path, dtype=str).fillna(""))
-    p24 = preferred.loc[preferred["source_code"].astype(str).str.startswith("p24")]
+    p24 = preferred.loc[preferred["source_code"].astype(str).str.startswith("p24.")]
     expected_sources = {
         "p24.a",
         "p24.a.w",
@@ -60,19 +57,20 @@ def test_preferred_official_direct_p24_topology_and_runtime_mass_partition() -> 
         "p24.i",
     }
     assert set(p24["source_code"]) == expected_sources
-    assert all(
-        set(group["target_code"]) == {"CPA_C20", "CPA_C21"}
-        for _, group in p24.groupby("source_code", sort=False)
-    )
+    for source, group in p24.groupby("source_code", sort=False):
+        expected = {"CPA_C20", "CPA_C21"} if source == "p24.d" else {"CPA_C20"}
+        assert set(group["target_code"]) == expected
 
     target_codes = _codes(_read_csv("eurostat_cpa65_products_dictionary.csv"))
     reference = {code: 1.0 for code in target_codes}
     reference.update({"CPA_C20": 3.0, "CPA_C21": 7.0})
     resolved = read_weighted_mapping(path, target_output_by_code=reference)
-    for source in expected_sources:
-        assert resolved["CPA_C20"][source] == pytest.approx(0.3)
-        assert resolved["CPA_C21"][source] == pytest.approx(0.7)
-        assert resolved["CPA_C20"][source] + resolved["CPA_C21"][source] == pytest.approx(1.0)
+    assert resolved["CPA_C20"]["p24.d"] == pytest.approx(0.3)
+    assert resolved["CPA_C21"]["p24.d"] == pytest.approx(0.7)
+    assert resolved["CPA_C20"]["p24.d"] + resolved["CPA_C21"]["p24.d"] == pytest.approx(1.0)
+    for source in expected_sources - {"p24.d"}:
+        assert resolved["CPA_C20"][source] == pytest.approx(1.0)
+        assert source not in resolved.get("CPA_C21", {})
 
 
 def test_committed_cpa64_and_cpa65_target_dictionaries_have_explicit_real_estate_granularity() -> None:

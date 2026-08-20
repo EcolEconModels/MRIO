@@ -98,3 +98,69 @@ def test_exio_to_eurostat_mapping_has_nonblank_source_codes():
     assert all(source_codes)
     assert all(allocation_rules)
     assert "split-by-output-share" in allocation_rules
+
+def test_reviewed_official_direct_production_concordance_changes_only_accepted_sources() -> None:
+    """The production map narrows only p23.3, p24.*, and p33 target topology."""
+    root = Path(__file__).resolve().parents[1]
+    raw = pd.read_csv(
+        root
+        / "scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv",
+        dtype=str,
+        keep_default_na=False,
+    )
+    reviewed = pd.read_csv(
+        root / "scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv",
+        dtype=str,
+        keep_default_na=False,
+    )
+
+    def target_sets(frame: pd.DataFrame) -> dict[str, set[str]]:
+        return {
+            str(source): set(group["target_code"].astype(str))
+            for source, group in frame.groupby("source_code", sort=False)
+        }
+
+    raw_targets = target_sets(raw)
+    reviewed_targets = target_sets(reviewed)
+    assert set(reviewed_targets) == set(raw_targets)
+
+    p24_sources = {source for source in raw_targets if source.startswith("p24.")}
+    reviewed_sources = p24_sources | {"p23.3", "p33"}
+    for source in set(raw_targets) - reviewed_sources:
+        assert reviewed_targets[source] == raw_targets[source]
+        raw_rows = raw.loc[raw["source_code"] == source].to_dict(orient="records")
+        reviewed_rows = reviewed.loc[reviewed["source_code"] == source].to_dict(orient="records")
+        assert reviewed_rows == raw_rows
+
+    assert reviewed_targets["p23.3"] == {"CPA_C24"}
+    assert reviewed_targets["p33"] == {"CPA_C26"}
+    assert reviewed_targets["p24.d"] == {"CPA_C20", "CPA_C21"}
+    for source in p24_sources - {"p24.d"}:
+        assert reviewed_targets[source] == {"CPA_C20"}
+
+    p24_d = reviewed.loc[reviewed["source_code"] == "p24.d"]
+    assert set(p24_d["allocation_rule"]) == {"split-by-output-share"}
+    singles = reviewed.loc[
+        reviewed["source_code"].isin(
+            tuple((p24_sources - {"p24.d"}) | {"p23.3", "p33"})
+        )
+    ]
+    assert set(singles["allocation_rule"]) == {"direct-single-target"}
+
+
+def test_reviewed_official_direct_production_concordance_preserves_domains() -> None:
+    """Target narrowing must retain all EXIO products and all CPA65 target sectors."""
+    root = Path(__file__).resolve().parents[1]
+    raw = pd.read_csv(
+        root
+        / "scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv",
+        dtype=str,
+        keep_default_na=False,
+    )
+    reviewed = pd.read_csv(
+        root / "scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv",
+        dtype=str,
+        keep_default_na=False,
+    )
+    assert set(reviewed["source_code"]) == set(raw["source_code"])
+    assert set(reviewed["target_code"]) == set(raw["target_code"])

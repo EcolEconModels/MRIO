@@ -33,6 +33,7 @@ def test_edge_children_close_to_selected_target_or_compatible_fuel_bucket(tmp_pa
             {"source_code": "CPA_C10-12", "source_label": "Food"},
             {"source_code": "CPA_C19", "source_label": "Coke and refined petroleum"},
             {"source_code": "CPA_C20", "source_label": "Chemicals"},
+            {"source_code": "CPA_C24", "source_label": "Basic metals"},
             {"source_code": "CPA_D", "source_label": "Electricity"},
         ],
     )
@@ -54,7 +55,7 @@ def test_edge_children_close_to_selected_target_or_compatible_fuel_bucket(tmp_pa
             {"source_code": "p36", "source_label": "Furniture; other goods", "target_code": "CPA_C20", "target_label": "Chemicals", "enabled": True},
             {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_C19", "target_label": "Coke", "enabled": True},
             {"source_code": "p10.f", "source_label": "Lignite", "target_code": "CPA_B", "target_label": "Mining", "enabled": True},
-            {"source_code": "p23.3", "source_label": "Nuclear fuel", "target_code": "CPA_C20", "target_label": "Chemicals", "enabled": True},
+            {"source_code": "p23.3", "source_label": "Nuclear fuel", "target_code": "CPA_C24", "target_label": "Basic metals", "enabled": True},
             {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_D", "target_label": "Electricity", "enabled": True},
             {"source_code": "p40.11.a", "source_label": "Electricity by coal", "target_code": "CPA_E37-39", "target_label": "Waste", "enabled": True},
         ],
@@ -64,7 +65,7 @@ def test_edge_children_close_to_selected_target_or_compatible_fuel_bucket(tmp_pa
         rules,
         [
             {"source_code": "p10.f@CPA_C19", "source_label": "Lignite edge", "target_code": "CPA_C19_COAL", "target_label": "CPA_C19: Coal", "enabled": True, "notes": "coal rule"},
-            {"source_code": "p23.3", "source_label": "Nuclear fuel", "target_code": "CPA_C20_NUCLEAR_FUEL", "target_label": "CPA_C20: Nuclear fuel", "enabled": True, "notes": "nuclear rule"},
+            {"source_code": "p23.3", "source_label": "Nuclear fuel", "target_code": "CPA_C24_NUCLEAR_FUEL", "target_label": "CPA_C24: Nuclear fuel", "enabled": True, "notes": "nuclear rule"},
         ],
     )
 
@@ -82,7 +83,7 @@ def test_edge_children_close_to_selected_target_or_compatible_fuel_bucket(tmp_pa
     assert mapping["p36@CPA_C10-12"] == "CPA_C10-12"
     assert mapping["p36@CPA_C20"] == "CPA_C20"
     assert mapping["p10.f@CPA_C19"] == "CPA_C19_COAL"
-    assert mapping["p23.3"] == "CPA_C20_NUCLEAR_FUEL"
+    assert mapping["p23.3"] == "CPA_C24_NUCLEAR_FUEL"
     assert mapping["p40.11.a@CPA_D"] == "CPA_D_Electricity_by_coal"
     assert manifest["review_required_rows"] == 0
 
@@ -131,7 +132,7 @@ def test_official_direct_fuels_recipe_closes_materialized_children() -> None:
     root = Path(__file__).resolve().parents[1]
     concordance = (
         root
-        / "scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv"
+        / "scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv"
     )
 
     fuels_rows, fuels_review, _ = module.build_closed_reaggregation(
@@ -144,6 +145,10 @@ def test_official_direct_fuels_recipe_closes_materialized_children() -> None:
     )
     assert fuels_review == []
     fuels = {row["source_code"]: row["target_code"] for row in fuels_rows}
-    assert fuels["p24.g@CPA_C20"] == "CPA_C20_BIOGASOLINE"
-    assert fuels["p24.h@CPA_C20"] == "CPA_C20_BIODIESEL"
-    assert fuels["p24.i@CPA_C20"] == "CPA_C20_OTHER_LIQUID_BIOFUELS"
+    assert fuels["p24.g"] == "CPA_C20_BIOGASOLINE"
+    assert fuels["p24.h"] == "CPA_C20_BIODIESEL"
+    assert fuels["p24.i"] == "CPA_C20_OTHER_LIQUID_BIOFUELS"
+    assert fuels["p24.d@CPA_C20"] == "CPA_C20_others"
+    assert fuels["p23.3"] == "CPA_C24_NUCLEAR_FUEL"
+    assert fuels["p27.42"] == "CPA_C24"
+    assert "CPA_C20_NUCLEAR_FUEL" not in set(fuels.values())

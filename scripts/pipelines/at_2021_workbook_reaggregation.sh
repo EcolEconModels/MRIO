@@ -8,7 +8,7 @@ set -euo pipefail
 # Optional overrides:
 #   SPLIT_MAPPING_CSV=scripts/pipelines/fuels_split.csv
 #   REAGG_MAPPING_CSV=scripts/pipelines/fuels_reaggregation.csv
-#   CONCORDANCE_CSV=scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv
+#   CONCORDANCE_CSV=scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"
@@ -70,7 +70,7 @@ IDENTITY_MAPPING_CSV="$(mktemp)"
 
 SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_split.csv}"
 REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_reaggregation.csv}"
-CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv}"
+CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv}"
 REAGG_RULE_CSV="${REAGG_RULE_CSV:-$ROOT_DIR/scripts/pipelines/fuels_reaggregation_fuel_expanded_edge_rules.csv}"
 CLOSED_REAGG_MAPPING_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed.csv"
 CLOSED_REAGG_REVIEW_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed_review.csv"

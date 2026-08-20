@@ -17,9 +17,11 @@ This document intentionally does not repeat row tables. The detailed explanation
 
 These are the mapping CSVs used by code and by humans:
 
+- `scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`
+  - preferred fuels/fuels-more production EXIOBASE3 `pxp` product to Eurostat CPA65
+    topology; a checked-in reviewed derivative of the official-direct incidence map
 - `scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv`
-  - preferred fuels-production EXIOBASE3 `pxp` product to Eurostat CPA65 topology,
-    generated reproducibly from the official direct CPA64/EXIOBASE3 incidence file
+  - unchanged reproducible EXIO official-direct CPA65 provenance baseline
 - `scripts/mappings/exio_to_eurostat_cpa_products.csv`
   - older curated/statistical C20-only route retained by the unchanged green/brown
     wrapper and available for explicit comparison and diagnostics
@@ -58,11 +60,17 @@ Terminology note: under Eurostat's statistical classifications, NACE classifies 
 
 ## Classification vs analytical energy taxonomy
 
-The preferred fuels-production EXIO→Eurostat concordance uses the official direct
-CPA64/EXIOBASE3 topology converted to CPA65. Its p24 family has incidence edges to
-both `CPA_C20` and `CPA_C21`. Those binary incidences are topology, not equal or
-static shares: the existing runtime resolver partitions each EXIO source using the
+The preferred fuels/fuels-more production EXIO→Eurostat concordance is the
+reviewed derivative of the official-direct topology. Its three explicit target
+choices are mapping-data decisions, not code branches: `p23.3` — Nuclear fuel ->
+`CPA_C24` — Basic metals; `p24.d` — Chemicals nec retains both `CPA_C20` —
+Chemicals and chemical products and `CPA_C21` — Basic pharmaceutical products and
+pharmaceutical preparations while the remaining `p24.*` products map only to
+`CPA_C20`; and `p33` — Medical, precision and optical instruments, watches and
+clocks -> `CPA_C26` — Computer, electronic and optical products only. The runtime
+resolver still partitions the retained multi-target `p24.d` source from the
 flow-specific Eurostat target-side reference, with source weights summing to one.
+The untouched official-direct file remains the provenance baseline.
 
 The green/brown taxonomy remains a separate analytical pipeline using the older
 C20-only concordance. In that taxonomy, p24.g (biogasoline), p24.h (biodiesel),
@@ -81,6 +89,7 @@ The checked-in CSVs fall into a small number of schema families.
 These files keep the weighted concordance shape but intentionally omit the old
 key/share columns that were removed from the EXIO bridge:
 
+- `scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv`
 - `scripts/mappings/generated/official_direct/exio_to_eurostat_cpa65_products_from_official_direct.csv`
 - `scripts/mappings/exio_to_eurostat_cpa_products.csv`
 
