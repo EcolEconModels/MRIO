@@ -3,10 +3,77 @@ from __future__ import annotations
 import zipfile
 
 import pandas as pd
+import pytest
 
 
 def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
     zf.writestr(name, text.encode("utf-8"))
+
+
+def test_read_extension_units_accepts_explicit_and_unnamed_key_headers(tmp_path):
+    """Source row labels remain authoritative under both observed header forms."""
+    from ecolecon_mrio.exiobase3_extensions import read_extension_units
+
+    source = tmp_path / "unit_headers.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        _write_member(zf, "air_emissions/unit.txt", "stressor\tunit\nCH4\tkg\n")
+        _write_member(
+            zf,
+            "factor_inputs/unit.txt",
+            "\tunit\n"
+            "Compensation of employees; wages, salaries, & employers' social "
+            "contributions: Low-skilled\tM.EUR\n",
+        )
+
+    explicit = read_extension_units(source, extension="air_emissions")
+    unnamed = read_extension_units(source, extension="factor_inputs")
+
+    assert explicit.to_dict() == {"CH4": "kg"}
+    assert unnamed.to_dict() == {
+        "Compensation of employees; wages, salaries, & employers' social "
+        "contributions: Low-skilled": "M.EUR"
+    }
+    assert explicit.index.name == "stressor"
+    assert unnamed.index.name == "stressor"
+
+
+def test_read_extension_units_rejects_duplicate_row_labels(tmp_path):
+    """Duplicate physical-row keys cannot select an ambiguous source unit."""
+    from ecolecon_mrio.exiobase3_extensions import read_extension_units
+
+    source = tmp_path / "duplicate_units.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        _write_member(
+            zf,
+            "synthetic/unit.txt",
+            "stressor\tunit\nSynthetic indicator\tkg\nSynthetic indicator\tg\n",
+        )
+
+    with pytest.raises(ValueError, match="Duplicate stressor/indicator labels"):
+        read_extension_units(source, extension="synthetic")
+
+
+@pytest.mark.parametrize(
+    "metadata, message",
+    [
+        ("stressor\tquantity_unit\nSynthetic indicator\tkg\n", "Unexpected unit file format"),
+        ("stressor\tunit\tunit\nSynthetic indicator\tkg\tg\n", "Unexpected unit file format"),
+        ("stressor\tunit\nSynthetic indicator\t\n", "Blank unit"),
+        ("stressor\tunit\n\tkg\n", "Blank stressor/indicator label"),
+    ],
+)
+def test_read_extension_units_rejects_missing_or_ambiguous_metadata(
+    tmp_path, metadata, message
+):
+    """Malformed metadata must fail instead of inventing labels or dimensions."""
+    from ecolecon_mrio.exiobase3_extensions import read_extension_units
+
+    source = tmp_path / "malformed_units.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        _write_member(zf, "synthetic/unit.txt", metadata)
+
+    with pytest.raises(ValueError, match=message):
+        read_extension_units(source, extension="synthetic")
 
 
 def test_extract_quantity_and_price_from_minimal_zip(tmp_path):

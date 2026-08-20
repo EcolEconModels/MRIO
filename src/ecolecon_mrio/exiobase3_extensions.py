@@ -218,19 +218,44 @@ def _read_extension_matrix(
 
 
 def read_extension_units(container: str | Path, *, extension: str) -> pd.Series:
+    """Read the unit keyed by each source extension-matrix row label.
+
+    EXIO ``unit.txt`` files are two-column tables whose first column is the
+    authoritative indicator/stressor key even when its header is blank.  The
+    sole data column must be ``unit``; ambiguous columns, duplicate or blank
+    keys, and blank units fail before any physical values are selected.
+    """
     ctype, cpath = _resolve_container(container)
     rel = f"{extension}/unit.txt"
 
     if ctype == "zip":
         with zipfile.ZipFile(cpath, "r") as zf:
             with _open_text_from_zip(zf, rel) as fh:
-                df = pd.read_csv(fh, sep="\t")
+                df = pd.read_csv(
+                    fh, sep="\t", index_col=0, dtype=str, keep_default_na=False
+                )
     else:
-        df = pd.read_csv(cpath / rel, sep="\t")
+        df = pd.read_csv(
+            cpath / rel, sep="\t", index_col=0, dtype=str, keep_default_na=False
+        )
 
-    if "stressor" not in df.columns or "unit" not in df.columns:
-        raise ValueError(f"Unexpected unit file format for {extension}: columns={list(df.columns)}")
-    out = pd.Series(df["unit"].to_numpy(), index=df["stressor"].astype(str))
+    if list(df.columns) != ["unit"]:
+        raise ValueError(
+            f"Unexpected unit file format for {extension}: columns={list(df.columns)}"
+        )
+    labels = pd.Index(df.index.astype(str), name="stressor")
+    if labels.empty or any(not label.strip() for label in labels):
+        raise ValueError(f"Blank stressor/indicator label in unit metadata for {extension}.")
+    if labels.has_duplicates:
+        duplicates = labels[labels.duplicated(keep=False)].unique().tolist()
+        raise ValueError(
+            f"Duplicate stressor/indicator labels in unit metadata for {extension}: "
+            f"{duplicates[:10]!r}."
+        )
+    unit_values = df["unit"].astype(str)
+    if bool(unit_values.str.strip().eq("").any()):
+        raise ValueError(f"Blank unit in unit metadata for {extension}.")
+    out = pd.Series(unit_values.to_numpy(), index=labels, dtype="object")
     out.name = "unit"
     return out
 
@@ -891,7 +916,12 @@ def extract_extension_values(
             # intensity undefined. F_Y is reported directly by category and must
             # still reject a nonzero physical value over zero monetary final demand.
             if kind_clean == "F_Y" and bool(inconsistent_zero.any()):
-                bad = list(map(str, denominator.index[inconsistent_zero.to_numpy()][:10]))
+                bad_index = pd.Index(
+                    denominator.index[
+                        inconsistent_zero.to_numpy(dtype="bool")
+                    ]
+                )
+                bad = list(map(str, bad_index[:10]))
                 raise ValueError(
                     "EXIO extension has a nonzero physical value with zero monetary "
                     f"denominator: extension={extension_name!r}, kind={kind_clean!r}, "
