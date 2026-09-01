@@ -27,6 +27,11 @@ hooks, and migration rules needed to implement that methods document. The API
 spec must not weaken, replace, or silently alter the economic equations and
 accounting identities in the standalone methods spec.
 
+The independent region-scope API described below is an accepted **vNext design**,
+not an implemented API. Existing singleton EXIO loaders and current split-pipeline
+interfaces remain authoritative until the corresponding source-and-test patch is
+merged.
+
 ## Existing repo abstractions to preserve
 
 The existing low-level abstraction `SplitProfiles` is the common contract. A
@@ -66,14 +71,20 @@ third split representation.
    method and a diagnostic trail.
 10. Split and reaggregation files under `scripts/pipelines/<profile>/` are the
     source of truth for the sector profile.
-11. Region-scope mappings are independent of sector profiles; all ratios are
-    derived only after extensive geography and sector transformations.
+11. Region-scope mappings are independent of sector profiles. Extension ratios
+    follow the methods specification: fixed linear extensive accounts may be
+    geography/sector transformed before division, while external-import direct
+    accounts retain origin through product projection and form the origin-specific
+    coefficient only on that common projected basis.
 
 ## Independent geography contract
 
 Geography aggregation is an upstream donor operation, not a fuels/fuels-more or
-green/brown profile feature. Region-scope mappings live under
-`scripts/mappings/regions/` (or are supplied explicitly) and use:
+green/brown profile feature. Checked-in region-scope helpers are proposed under
+`scripts/pipelines/region_scopes/` (or may be supplied explicitly), consistent
+with the repository-wide `scripts/pipelines/` source-of-truth rule. The directory
+is created by the future implementation patch, not by this documentation-only
+change. Region-scope mappings use:
 
 ~~~text
 scope_code,scope_label,member_region,member_order,enabled,notes
@@ -253,13 +264,11 @@ The default must be `fail` beyond tolerance.
 
 ## Common dataclasses
 
-~~~python
-@dataclass(frozen=True)
-class RegionScope:
-    code: str
-    members: tuple[str, ...]
-    label: str | None = None
+`RegionScope` is owned by the proposed generic MRIO geography API in
+`docs/mrio_api_spec.md`; the split pipeline reuses that type rather than defining
+a parallel geography model. Its proposed pipeline-specific adapter is:
 
+~~~python
 @dataclass(frozen=True)
 class DonorScopeContext:
     scope: RegionScope
@@ -330,16 +339,13 @@ class GenericSplitResult:
 
 ## Public API
 
-~~~python
-def compile_region_scope(
-    *,
-    source_regions: Sequence[str],
-    mapping: Path | pd.DataFrame,
-    scope_code: str,
-    include_complement: bool = False,
-) -> RegionScope:
-    """Validate a many-source-regions-to-one-scope mapping."""
+Region membership is compiled once by the generic
+`compile_region_aggregation(...)` API from `docs/mrio_api_spec.md`. The split
+pipeline does not add a second `compile_region_scope(...)` validator. Its proposed
+adapter only packages the generic scope slices and environmental accounts needed
+by sector-plan compilation:
 
+~~~python
 def load_donor_scope(
     *,
     source: MrioSource,
@@ -347,7 +353,7 @@ def load_donor_scope(
     flows: Sequence[str] = ("internal", "external_imports", "total"),
     environmental_selection: object | None = None,
 ) -> DonorScopeContext:
-    """Load/stream geography and extensions independently of sector splitting."""
+    """Assemble pipeline donor context from generic MRIO geography results."""
 ~~~
 
 ```python

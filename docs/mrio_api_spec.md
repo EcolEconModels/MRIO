@@ -13,6 +13,20 @@ Geography and sector transformations are independent. Dataset-specific mechanics
 (EXIOBASE DOI and ZIP layout, Eurostat SDMX dimensions, or `pxp`/`ixi` choices)
 belong to providers and must not leak into the generic transformation APIs.
 
+## Status and compatibility
+
+This document contains both implemented contracts and an accepted **vNext design**
+for independent region aggregation. Code blocks explicitly described as proposed
+are specifications for a later implementation; they are not claims that those
+symbols already exist in `src/ecolecon_mrio`.
+
+Until an implementation patch changes them with tests, the current public
+contracts remain authoritative. In particular, the existing
+`load_mrio_matrices(...)`, `load_mrio_matrix_result(...)`,
+`load_exiobase3_region_slice(...)`, and exported `MrioMatrixResult` shape must be
+preserved. Region aggregation is introduced additively; any later deprecation or
+breaking result-object migration requires separate review.
+
 ## Source model
 
 ~~~python
@@ -102,8 +116,11 @@ Rules:
 - time-varying political definitions use versioned scope codes, such as
   `EU27_2020`, rather than a mutable `EU` alias.
 
-Scope mappings belong under a geography mapping directory, not inside a fuels,
-fuels-more, or green/brown sector profile.
+Scope mappings are independent of fuels, fuels-more, and green/brown sector
+profiles. The implementation patch should place checked-in region-scope helpers
+under `scripts/pipelines/region_scopes/`, consistent with the repository rule that
+pipeline helper CSVs live under `scripts/pipelines/`; that directory is proposed
+here and is not created by this documentation-only change.
 
 ## Public API layers
 
@@ -129,6 +146,33 @@ by default.
 
 ### Matrix result object
 
+The currently implemented structured result remains:
+
+~~~python
+@dataclass(frozen=True)
+class MrioMatrixResult:
+    year: int
+    dataset: str
+    system: str
+    source_zip: Path
+    A: csr_matrix | None
+    Z: csr_matrix | None
+    x: pd.Series
+    y: pd.Series | pd.DataFrame | None
+    basis_index: pd.MultiIndex
+    metadata: dict[str, Any]
+~~~
+
+`load_mrio_matrix_result(...)` uses this object today. Matrix selection accepts
+`"A"`, `"Z"`, `"both"`, or `"none"`; final-demand selection accepts
+`"summed"`, `"matrix"`, or `"none"`. Matrix-shaped final demand is carried
+by the existing `y` field.
+
+The vNext region-aggregation implementation may add extension results only in a
+backward-compatible way, for example by appending an optional field rather than
+renaming `basis_index`, deleting provenance fields, changing `x` optionality, or
+introducing a second competing result dataclass:
+
 ~~~python
 @dataclass(frozen=True)
 class MrioExtensionResult:
@@ -136,20 +180,9 @@ class MrioExtensionResult:
     F_Y: pd.DataFrame | None
     unit: pd.DataFrame | None
 
-@dataclass(frozen=True)
-class MrioMatrixResult:
-    Z: csr_matrix | None
-    A: csr_matrix | None
-    x: pd.Series | None
-    y: pd.Series | None
-    Y: pd.DataFrame | csr_matrix | None
-    index: pd.Index | pd.MultiIndex
-    extensions: Mapping[str, MrioExtensionResult] | None
-    metadata: dict[str, Any]
+# Proposed additive extension to the existing MrioMatrixResult:
+extensions: Mapping[str, MrioExtensionResult] | None = None
 ~~~
-
-Matrix selection accepts `"A"`, `"Z"`, `"both"`, or `"none"`. Final-demand
-selection accepts `"summed"`, `"matrix"`, or `"none"`.
 
 ### Geography aggregation
 
@@ -162,7 +195,7 @@ def compile_region_aggregation(
     include_complement: bool = False,
     complement_code: str = "RoW",
 ) -> RegionAggregationPlan:
-    """Validate a many-regions-to-one-or-more-regions aggregation."""
+    """Validate many-to-one aggregation for one or more disjoint scopes."""
 
 def aggregate_mrio_regions(
     result: MrioMatrixResult,
@@ -171,8 +204,11 @@ def aggregate_mrio_regions(
     """Aggregate extensive core and extension accounts; then recalculate coefficients."""
 ~~~
 
-This is the complete-object/sparse-matrix API. Sector aggregation is neither
-required nor implied.
+This is the proposed complete-object/sparse-matrix API. Sector aggregation is
+neither required nor implied. When multiple scopes are requested in one plan,
+they must be disjoint because each source region has exactly one `source_to_scope`
+assignment. If `include_complement=True`, the complement is an additional scope in
+the returned plan rather than a second return value.
 
 ### Low-memory destination-scope slice
 
@@ -283,25 +319,41 @@ u_{ok\to G}
  + \sum_{d\in G,c}Y_{ok,dc}.
 \]
 
-For \(o\notin G\), the direct production stressor associated with imports is
+For external imports, a many-to-many product projection must not transport a
+raw source intensity. Let \(P_{ak}\) be the same donor-to-target product mapping
+used by the sector route. Retain origin \(o\) until the product transformation has
+been applied, and form the extensive origin/target-product accounts
 
 \[
-F^{\mathrm{imp},G}_k
- = \sum_{o\notin G}\frac{F_{ok}}{x_{ok}}u_{ok\to G},
+\bar F_{oa}=\sum_k P_{ak}F_{ok},
 \qquad
-m^{\mathrm{imp},G}_k
- = \sum_{o\notin G}u_{ok\to G},
+\bar x_{oa}=\sum_k P_{ak}x_{ok},
+\qquad
+\bar u_{oa\to G}=\sum_k P_{ak}u_{ok\to G}.
+\]
+
+Then the direct production stressor associated with imports is
+
+\[
+F^{\mathrm{imp},G}_a
+ = \sum_{o\notin G}\frac{\bar F_{oa}}{\bar x_{oa}}
+   \bar u_{oa\to G},
+\qquad
+m^{\mathrm{imp},G}_a
+ = \sum_{o\notin G}\bar u_{oa\to G},
 \]
 
 \[
-e^{\mathrm{imp},G}_k =
-\frac{F^{\mathrm{imp},G}_k}{m^{\mathrm{imp},G}_k}.
+e^{\mathrm{imp},G}_a =
+\frac{F^{\mathrm{imp},G}_a}{m^{\mathrm{imp},G}_a}.
 \]
 
-Terms with positive use and zero or missing origin output fail closed. This is a
-gross-import-weighted direct production coefficient. It is preferable to an
-unweighted coefficient for a single collapsed RoW region. It is not a Leontief
-footprint or a full embodied-import intensity.
+A positive \(\bar u_{oa\to G}\) with zero or missing \(\bar x_{oa}\) fails
+closed. This preserves the existing numerator-first many-to-many extension rule:
+\(F\), \(x\), and import use are projected to the same target-product basis before
+an origin-specific coefficient is formed. Only then are origins weighted by their
+actual imports into the scope. The result is a direct origin-production import
+account, not a Leontief footprint or full embodied-import intensity.
 
 ### Total target supply
 
@@ -370,10 +422,18 @@ sector projection to the much smaller slice.
 
 This commutation applies only to extensive numerators and denominators under fixed
 mappings. It does not apply to ratios, target-dependent share resolvers, balancing,
-or fallbacks. Intensities must always be derived after all relevant extensive
-transformations.
+or fallbacks. Scope production can therefore collapse geography before applying
+\(P\). The external-import direct account is the important exception to an
+unqualified "collapse geography first" rule: origin must be retained through the
+product projection because the import account forms an origin-specific production
+coefficient before weighting origins by actual use. No raw `F/x` intensity is
+projected through a many-to-many product mapping.
 
-The sector API consumes a donor context and does not parse region mappings:
+The generic geography API owns `RegionScope`, `RegionAggregationPlan`, region
+validation, and low-memory scope slices. The generalized split pipeline consumes
+those objects; any `DonorScopeContext` is a pipeline adapter assembled from the
+generic geography results, not a second geography implementation. The sector API
+does not parse region mappings:
 
 ~~~python
 donor = load_mrio_scope_slice(source, scope=eu_scope, flow="internal")

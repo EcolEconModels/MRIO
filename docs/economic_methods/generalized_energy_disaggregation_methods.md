@@ -464,7 +464,9 @@ unless a separate override policy is explicitly declared.
 ## Geographic scope aggregation
 
 Geographic aggregation is a first-class operation and is independent of sector
-disaggregation/reaggregation. Let \(G\) be the set of member regions in a checked,
+disaggregation/reaggregation. This section is the accepted vNext method; the
+current source implementation remains singleton-region until the corresponding
+API and tests are implemented. Let \(G\) be the set of member regions in a checked,
 versioned region-scope mapping. The mapping is unweighted: each source region is
 either a member or not a member. The complement \(G^c\) is derived from the actual
 region basis in the selected donor release.
@@ -527,26 +529,45 @@ u_{ok\to G}
  + \sum_{d\in G,c}Y_{ok,dc}.
 \]
 
-The direct production extension attributable to external imports and its
-denominator are
+For a many-to-many donor-to-target product projection \(P_{ak}\), do not
+transport the raw source intensity \(F_{ok}/x_{ok}\) through \(P\). Retain each
+external origin until \(F\), \(x\), and the import-use denominator have been
+projected to the same target-product basis:
 
 \[
-F^{\mathrm{imp},G}_k
- = \sum_{o\notin G}\frac{F_{ok}}{x_{ok}}u_{ok\to G},
+\bar F_{oa}=\sum_k P_{ak}F_{ok},
 \qquad
-m^{\mathrm{imp},G}_k
- = \sum_{o\notin G}u_{ok\to G},
+\bar x_{oa}=\sum_k P_{ak}x_{ok},
+\qquad
+\bar u_{oa\to G}=\sum_k P_{ak}u_{ok\to G}.
+\]
+
+The direct production extension attributable to external imports and its
+denominator are then
+
+\[
+F^{\mathrm{imp},G}_a
+ = \sum_{o\notin G}\frac{\bar F_{oa}}{\bar x_{oa}}
+   \bar u_{oa\to G},
+\qquad
+m^{\mathrm{imp},G}_a
+ = \sum_{o\notin G}\bar u_{oa\to G},
 \]
 
 \[
-e^{\mathrm{imp},G}_k
- = \frac{F^{\mathrm{imp},G}_k}{m^{\mathrm{imp},G}_k}.
+e^{\mathrm{imp},G}_a
+ = \frac{F^{\mathrm{imp},G}_a}{m^{\mathrm{imp},G}_a}.
 \]
 
-A positive \(u_{ok\to G}\) with zero or missing \(x_{ok}\) is inconsistent and
-fails closed. This coefficient is weighted by actual EXIO imports to the selected
-scope. It is a direct origin-production account, not a full embodied footprint:
-upstream burdens would require a separately declared Leontief calculation.
+A positive \(\bar u_{oa\to G}\) with zero or missing \(\bar x_{oa}\) is
+inconsistent and fails closed. This is the import analogue of the existing
+numerator-first extension rule: mapped extensive numerator and denominator are
+formed before division, then origin coefficients are weighted by actual imports
+to the selected scope. A nonzero raw \(F_{ok}\) with zero raw \(x_{ok}\) is not
+rejected merely because the raw ratio is undefined; it fails only if the required
+mapped origin/target-product denominator remains non-positive where import use is
+positive. The account is direct origin production, not a full embodied footprint;
+upstream burdens require a separately declared Leontief calculation.
 
 The target total-supply extension must not reuse the domestic coefficient. When
 the target IOT publishes domestic-output and import-supply components, form
@@ -582,13 +603,16 @@ demand in the destination region, not foreign production. It remains a category
 sidecar and is never projected through a product concordance.
 
 Let \(R\) be a region concordance and \(P\) a product concordance/projection.
-With fixed linear mappings, region and product transforms commute for extensive
-accounts; a full-system core concordance is \(R\otimes P\). Ratios,
+With fixed linear mappings, region and product transforms commute for genuinely
+extensive accounts; a full-system core concordance is \(R\otimes P\). Ratios,
 target-dependent share resolution, balancing, and fallback policies do not
-commute. Therefore the implementation may collapse geography before product
-transformation for memory efficiency, but it must derive every intensity only
-after the relevant extensive numerator and denominator have both been
-transformed.
+commute. Scope-production \(F\) and \(x\) may therefore collapse geography
+before product transformation for memory efficiency. External-import direct
+production is different: because origins are weighted by an origin-specific
+production coefficient, the origin axis must be retained through the product
+projection and only collapsed after the mapped \(\bar F/\bar x\) coefficient
+has been applied to mapped import use. In no case is a raw intensity projected
+through a many-to-many product mapping.
 
 Limiting cases required by tests are:
 
@@ -596,8 +620,10 @@ Limiting cases required by tests are:
   matrices;
 - a scope containing every source region has zero external imports;
 - internal plus external imports equals total cellwise for \(Z\) and \(Y\);
-- summing \(F\) and \(x\) separately before division matches full-object region
-  aggregation; and
+- summing scope-production \(F\) and \(x\) separately before division matches
+  full-object region aggregation;
+- external-import extensions retain origin through product projection and agree
+  with an origin-resolved reference calculation under a many-to-many mapping; and
 - changing only the sector mapping does not change scope membership, while
   changing only the scope mapping does not change sector topology.
 
