@@ -131,6 +131,12 @@ by default.
 
 ~~~python
 @dataclass(frozen=True)
+class MrioExtensionResult:
+    F: pd.DataFrame | None
+    F_Y: pd.DataFrame | None
+    unit: pd.DataFrame | None
+
+@dataclass(frozen=True)
 class MrioMatrixResult:
     Z: csr_matrix | None
     A: csr_matrix | None
@@ -138,6 +144,7 @@ class MrioMatrixResult:
     y: pd.Series | None
     Y: pd.DataFrame | csr_matrix | None
     index: pd.Index | pd.MultiIndex
+    extensions: Mapping[str, MrioExtensionResult] | None
     metadata: dict[str, Any]
 ~~~
 
