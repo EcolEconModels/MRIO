@@ -502,8 +502,7 @@ Raw donor evidence uses:
 source_label,extension,kind,stressor,unit,value,monetary_denominator,intensity
 ```
 
-Transformed and reaggregated production-side satellite accounts use the stable
-schema:
+The temporary legacy production-side compatibility view uses:
 
 ```text
 sector_position,sector,extension,stressor,unit,value,monetary_output,intensity
