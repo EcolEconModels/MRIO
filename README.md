@@ -25,7 +25,7 @@ Workflow scaffold to replicate Cahen-Fourot et al. (2020) inverted pyramid analy
    source .venv/bin/activate
    python -m ipykernel install --user --name=mrio-venv --display-name "Python (.venv)"
    ```
-2) Download or point to an MRIO dataset (EXIOBASE3 or WIOD). `ecolecon_mrio.data.load_exiobase3` can download and parse EXIOBASE3 when network is available.
+2) Download or point to an MRIO dataset (EXIOBASE3 or WIOD). For low-RAM EXIOBASE table-level work, use `load_mrio_iot_matrices("exiobase", year, matrices=("Z", "x", "Y"))`; requested members are streamed from the DOI-checked source zip when download is allowed. Full-object EXIO loading is intentionally not the table-level API.
 3) Run notebooks (headless) with local paths on the Python path and a writable IPython dir:
    ```
    source .venv/bin/activate

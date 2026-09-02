@@ -336,7 +336,11 @@ from .region_aggregation import (
     MrioScopeSlice,
     RegionAggregationPlan,
     RegionScope,
+    aggregate_external_import_extension_direct,
     aggregate_mrio_regions,
+    aggregate_scope_final_demand_extension,
+    aggregate_scope_production_extension,
+    combine_total_supply_extension_direct,
     compile_region_aggregation,
     load_mrio_iot_scope_slice,
 )
@@ -345,7 +349,11 @@ __all__.extend([
     "MrioScopeSlice",
     "RegionAggregationPlan",
     "RegionScope",
+    "aggregate_external_import_extension_direct",
     "aggregate_mrio_regions",
+    "aggregate_scope_final_demand_extension",
+    "aggregate_scope_production_extension",
+    "combine_total_supply_extension_direct",
     "compile_region_aggregation",
     "load_mrio_iot_scope_slice",
 ])

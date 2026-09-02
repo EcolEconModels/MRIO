@@ -466,9 +466,11 @@ unless a separate override policy is explicitly declared.
 Geographic aggregation is a first-class operation and is independent of sector
 disaggregation/reaggregation. The low-memory source implementation supports checked
 multi-region destination scopes for monetary \(Z\), \(Y\), and scope production
-output \(x^G\). Complete primitive monetary IOT aggregation is also implemented for
-full \(Z\), \(x\), and \(Y\) source accounts; scope environmental accounts remain a
-later work package. Let \(G\) be the set of member regions in a checked, versioned
+output \(x^G\); complete primitive monetary IOT aggregation is also implemented for
+full \(Z\), \(x\), and \(Y\) source accounts. The boundary-aware WP3 environmental
+operators now implement scope production, origin-retaining direct external imports,
+direct final demand, and target total-supply combination without changing the sector
+split pipeline. Let \(G\) be the set of member regions in a checked, versioned
 region-scope mapping. The mapping is unweighted: each source region is either a member
 or not a member. The complement \(G^c\) is derived from the actual region basis in
 the selected donor release.
@@ -648,7 +650,11 @@ Limiting cases required by tests are:
 - summing scope-production \(F\) and \(x\) separately before division matches
   complete monetary region aggregation once environmental geography is implemented;
 - external-import extensions retain origin through product projection and agree
-  with an origin-resolved reference calculation under a many-to-many mapping; and
+  with an origin-resolved reference calculation under a many-to-many mapping;
+- an all-source scope yields an empty external-origin use domain and therefore a
+  zero-valued/zero-denominator direct-import account rather than fabricated imports;
+- direct `F_Y` aggregation has no product-projection path and rejects nonzero direct
+  physical values over a zero category monetary denominator; and
 - changing only the sector mapping does not change scope membership, while
   changing only the scope mapping does not change sector topology.
 

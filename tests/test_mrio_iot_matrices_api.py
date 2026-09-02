@@ -64,3 +64,21 @@ def test_derive_A_default_does_not_mutate_Z() -> None:
     np.testing.assert_array_equal(Z.indptr, before.indptr)
     np.testing.assert_array_equal(Z.indices, before.indices)
     np.testing.assert_allclose(Z.data, before.data)
+
+
+def test_full_object_adapter_calculates_requested_missing_x() -> None:
+    import pymrio
+
+    matrices, basis, metadata = data.load_mrio_iot_matrices(
+        "test", 2010, matrices=("Z", "x", "Y")
+    )
+    assert isinstance(matrices["x"], pd.Series)
+    reference = pymrio.load_test()
+    reference.calc_system(include_ghosh=False)
+    assert reference.x is not None
+    expected = reference.x.iloc[:, 0].astype("float64")
+    expected.index = basis
+    pd.testing.assert_series_equal(
+        matrices["x"], expected.rename("x"), check_names=True
+    )
+    assert metadata["loader"] == "pymrio_full_object_adapter"

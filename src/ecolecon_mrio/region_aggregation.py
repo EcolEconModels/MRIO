@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping, Sequence, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -505,6 +505,11 @@ def aggregate_mrio_regions(
     )
 
     out_metadata = dict(metadata or {})
+    if "region_aggregation" in out_metadata:
+        raise ValueError(
+            "aggregate_mrio_regions refuses to overwrite existing region_aggregation "
+            "provenance; aggregate from primitive source accounts instead."
+        )
     out_metadata["region_aggregation"] = {
         "method": "unweighted_many_to_one_extensive",
         "source_regions": list(source_regions),
@@ -517,6 +522,553 @@ def aggregate_mrio_regions(
         "final_demand_categories": list(category_order),
     }
     return {"Z": Z_agg, "x": x_agg, "Y": Y_agg}, target_basis, out_metadata
+
+
+_ENVIRONMENTAL_ACCOUNT_COLUMNS = (
+    "axis_position",
+    "axis_label",
+    "boundary",
+    "denominator_role",
+    "extension",
+    "stressor",
+    "unit",
+    "value",
+    "monetary_denominator",
+    "intensity",
+)
+
+
+def _environmental_text(value: object, *, field: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"Environmental account {field} must not be blank.")
+    return text
+
+
+def _validated_region_sector_extension_inputs(
+    production_values: pd.Series,
+    output: pd.Series,
+) -> tuple[pd.MultiIndex, tuple[str, ...], tuple[str, ...], np.ndarray, np.ndarray]:
+    """Validate one complete production extension row against canonical monetary x."""
+    if not isinstance(production_values, pd.Series) or not isinstance(output, pd.Series):
+        raise TypeError("Production extension values and monetary output must be pandas Series.")
+    index = production_values.index
+    if not isinstance(index, pd.MultiIndex) or index.nlevels != 2:
+        raise TypeError("Production extension values require MultiIndex(region, sector).")
+    if list(index.names) != ["region", "sector"]:
+        raise ValueError("Production extension index names must be exactly ['region', 'sector'].")
+    if not index.is_unique:
+        raise ValueError("Production extension region-sector index must be unique.")
+    if not output.index.equals(index):
+        raise ValueError("Production extension values and monetary output must use the exact same basis.")
+
+    production_numeric = cast(pd.Series, pd.to_numeric(production_values, errors="coerce"))
+    output_numeric = cast(pd.Series, pd.to_numeric(output, errors="coerce"))
+    f_values = production_numeric.to_numpy(dtype="float64")
+    x_values = output_numeric.to_numpy(dtype="float64")
+    if not np.isfinite(f_values).all():
+        raise ValueError("Production extension values must be finite; missing evidence is not zero.")
+    if not np.isfinite(x_values).all() or bool((x_values < 0.0).any()):
+        raise ValueError("Production monetary output must be finite and non-negative.")
+
+    region_values = index.get_level_values("region").astype(str)
+    sector_values = index.get_level_values("sector").astype(str)
+    source_regions = tuple(dict.fromkeys(map(str, region_values)))
+    sector_order: tuple[str, ...] | None = None
+    for region in source_regions:
+        current = tuple(map(str, sector_values[region_values == region]))
+        if not current or len(set(current)) != len(current) or any(not value for value in current):
+            raise ValueError(f"Production extension region {region!r} has a malformed sector basis.")
+        if sector_order is None:
+            sector_order = current
+        elif current != sector_order:
+            raise ValueError(
+                "Production extension requires the same unique ordered sector basis "
+                f"for every source region; region={region!r}."
+            )
+    if not source_regions or sector_order is None:
+        raise ValueError("Production extension basis is empty.")
+    return index, source_regions, sector_order, f_values, x_values
+
+
+def _validated_product_projection(
+    product_projection: pd.DataFrame,
+    *,
+    source_sectors: tuple[str, ...],
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """Validate one complete non-negative source-product partition P."""
+    if not isinstance(product_projection, pd.DataFrame):
+        raise TypeError("product_projection must be a pandas DataFrame.")
+    if product_projection.empty:
+        raise ValueError("product_projection must contain at least one target row.")
+    target_labels = tuple(str(value).strip() for value in product_projection.index)
+    source_labels = tuple(str(value).strip() for value in product_projection.columns)
+    if any(not value for value in target_labels) or len(set(target_labels)) != len(target_labels):
+        raise ValueError("product_projection target labels must be unique and non-blank.")
+    if any(not value for value in source_labels) or len(set(source_labels)) != len(source_labels):
+        raise ValueError("product_projection source labels must be unique and non-blank.")
+    missing = [value for value in source_sectors if value not in set(source_labels)]
+    extra = [value for value in source_labels if value not in set(source_sectors)]
+    if missing or extra:
+        raise ValueError(
+            "product_projection must cover the complete source-sector basis exactly; "
+            f"missing={missing!r}, extra={extra!r}."
+        )
+    source_to_position = {label: pos for pos, label in enumerate(source_labels)}
+    order = [source_to_position[label] for label in source_sectors]
+    try:
+        values = product_projection.to_numpy(dtype="float64")[:, order]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("product_projection weights must be numeric.") from exc
+    if not np.isfinite(values).all() or bool((values < 0.0).any()):
+        raise ValueError("product_projection weights must be finite and non-negative.")
+    column_sums = values.sum(axis=0)
+    if not np.allclose(column_sums, 1.0, rtol=0.0, atol=1e-9):
+        bad = {
+            source_sectors[pos]: float(total)
+            for pos, total in enumerate(column_sums)
+            if abs(float(total) - 1.0) > 1e-9
+        }
+        raise ValueError(
+            "product_projection must preserve each source product with weights summing "
+            f"to 1.0; mismatches={dict(list(bad.items())[:10])!r}."
+        )
+    frame = pd.DataFrame(
+        values,
+        index=pd.Index(target_labels, name="axis_label"),
+        columns=pd.Index(source_sectors, name="source_sector"),
+        dtype="float64",
+    )
+    return frame, target_labels
+
+
+def _environmental_account_frame(
+    *,
+    axis_labels: Sequence[str],
+    boundary: str,
+    denominator_role: str,
+    extension: str,
+    stressor: str,
+    unit: str,
+    values: np.ndarray,
+    monetary_denominator: np.ndarray,
+) -> pd.DataFrame:
+    labels = tuple(str(value).strip() for value in axis_labels)
+    if not labels or any(not value for value in labels) or len(set(labels)) != len(labels):
+        raise ValueError("Environmental account axis labels must be unique and non-blank.")
+    physical = np.asarray(values, dtype="float64")
+    denominator = np.asarray(monetary_denominator, dtype="float64")
+    if physical.ndim != 1 or denominator.ndim != 1 or len(physical) != len(labels) or len(denominator) != len(labels):
+        raise ValueError("Environmental account values and denominators must match the one-dimensional axis.")
+    if not np.isfinite(physical).all() or not np.isfinite(denominator).all():
+        raise ValueError("Environmental account values and monetary denominators must be finite.")
+    intensity = np.full(len(labels), np.nan, dtype="float64")
+    np.divide(physical, denominator, out=intensity, where=denominator != 0.0)
+    # Pandas accepts the heterogeneous column mapping at runtime; annotate the
+    # constructor boundary explicitly so Pyright does not widen numeric columns.
+    frame_data: dict[str, Any] = {
+        "axis_position": np.arange(1, len(labels) + 1, dtype=np.int64),
+        "axis_label": labels,
+        "boundary": _environmental_text(boundary, field="boundary"),
+        "denominator_role": _environmental_text(denominator_role, field="denominator_role"),
+        "extension": _environmental_text(extension, field="extension"),
+        "stressor": _environmental_text(stressor, field="stressor"),
+        "unit": _environmental_text(unit, field="unit"),
+        "value": physical,
+        "monetary_denominator": denominator,
+        "intensity": intensity,
+    }
+    return pd.DataFrame(
+        frame_data, columns=cast(Any, list(_ENVIRONMENTAL_ACCOUNT_COLUMNS))
+    )
+
+
+def aggregate_scope_production_extension(
+    production_values: pd.Series,
+    output: pd.Series,
+    *,
+    scope: RegionScope,
+    extension: str,
+    stressor: str,
+    unit: str,
+    product_projection: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Aggregate territorial production F and x over a scope, then divide.
+
+    If ``product_projection`` is supplied, both extensive numerator and denominator
+    are projected with the same complete source-product partition before intensity
+    is formed. Raw or regional ``F/x`` intensities are never projected directly.
+    """
+    index, source_regions, sectors, f_values, x_values = _validated_region_sector_extension_inputs(
+        production_values, output
+    )
+    members = _validate_scope(scope)
+    unknown = [member for member in members if member not in set(source_regions)]
+    if unknown:
+        raise ValueError(f"Scope production members are absent from the extension basis: {unknown!r}.")
+    regions = index.get_level_values("region").astype(str)
+    f_scope = np.zeros(len(sectors), dtype="float64")
+    x_scope = np.zeros(len(sectors), dtype="float64")
+    for member in members:
+        mask = np.asarray(regions == member, dtype=bool)
+        f_scope += f_values[mask]
+        x_scope += x_values[mask]
+
+    if product_projection is None:
+        labels = sectors
+        physical = f_scope
+        denominator = x_scope
+    else:
+        P, labels = _validated_product_projection(
+            product_projection, source_sectors=sectors
+        )
+        p_values = P.to_numpy(dtype="float64")
+        physical = p_values @ f_scope
+        denominator = p_values @ x_scope
+    return _environmental_account_frame(
+        axis_labels=labels,
+        boundary="scope_production",
+        denominator_role="scope_production_output",
+        extension=extension,
+        stressor=stressor,
+        unit=unit,
+        values=physical,
+        monetary_denominator=denominator,
+    )
+
+
+def aggregate_external_import_extension_direct(
+    production_values: pd.Series,
+    output: pd.Series,
+    import_use: pd.Series,
+    *,
+    scope: RegionScope,
+    product_projection: pd.DataFrame,
+    extension: str,
+    stressor: str,
+    unit: str,
+) -> pd.DataFrame:
+    """Build the origin-retaining direct production account for scope imports.
+
+    For every external origin ``o``, apply ``P`` independently to F, x, and actual
+    destination-scope import use u. Only then form ``(P F_o)/(P x_o)`` and weight it
+    by ``P u_o``. Origins are collapsed only after this origin-specific coefficient
+    has been applied. Signed finite use is preserved; it is never clamped or replaced
+    by a share proxy.
+    """
+    index, source_regions, sectors, f_values, x_values = _validated_region_sector_extension_inputs(
+        production_values, output
+    )
+    members = _validate_scope(scope)
+    unknown = [member for member in members if member not in set(source_regions)]
+    if unknown:
+        raise ValueError(f"Import scope members are absent from the production basis: {unknown!r}.")
+    member_set = set(members)
+    external_origins = tuple(region for region in source_regions if region not in member_set)
+    P, target_labels = _validated_product_projection(
+        product_projection, source_sectors=sectors
+    )
+    p_values = P.to_numpy(dtype="float64")
+
+    expected_index = pd.MultiIndex.from_tuples(
+        [
+            (str(region), str(sector))
+            for region, sector in index
+            if str(region) in set(external_origins)
+        ],
+        names=["region", "sector"],
+    )
+    if not isinstance(import_use, pd.Series):
+        raise TypeError("import_use must be a pandas Series indexed by external origin and sector.")
+    if not isinstance(import_use.index, pd.MultiIndex) or list(import_use.index.names) != ["region", "sector"]:
+        raise ValueError("import_use index must be MultiIndex(region, sector).")
+    if not import_use.index.equals(expected_index):
+        raise ValueError(
+            "import_use must cover every external origin-sector row exactly in source order."
+        )
+    use_numeric = cast(pd.Series, pd.to_numeric(import_use, errors="coerce"))
+    use_values = use_numeric.to_numpy(dtype="float64")
+    if not np.isfinite(use_values).all():
+        raise ValueError("import_use must be finite; missing monetary use is not zero.")
+
+    physical_total = np.zeros(len(target_labels), dtype="float64")
+    denominator_total = np.zeros(len(target_labels), dtype="float64")
+    regions = index.get_level_values("region").astype(str)
+    offset = 0
+    for origin in external_origins:
+        mask = np.asarray(regions == origin, dtype=bool)
+        origin_count = int(mask.sum())
+        if origin_count != len(sectors):
+            raise RuntimeError(f"External origin {origin!r} lost the validated sector basis.")
+        f_bar = p_values @ f_values[mask]
+        x_bar = p_values @ x_values[mask]
+        u_origin = use_values[offset : offset + origin_count]
+        offset += origin_count
+        u_bar = p_values @ u_origin
+        undefined = (u_bar != 0.0) & (x_bar <= 0.0)
+        if bool(undefined.any()):
+            labels = [target_labels[pos] for pos in np.flatnonzero(undefined)[:10]]
+            raise ValueError(
+                "External-import direct extension has nonzero mapped import use with "
+                f"non-positive mapped production output: origin={origin!r}, targets={labels!r}."
+            )
+        coefficient = np.full(len(target_labels), np.nan, dtype="float64")
+        np.divide(f_bar, x_bar, out=coefficient, where=x_bar > 0.0)
+        contribution = np.zeros(len(target_labels), dtype="float64")
+        active = u_bar != 0.0
+        contribution[active] = coefficient[active] * u_bar[active]
+        physical_total += contribution
+        denominator_total += u_bar
+    if offset != len(use_values):
+        raise RuntimeError("External-import use accounting did not consume its exact source basis.")
+    return _environmental_account_frame(
+        axis_labels=target_labels,
+        boundary="external_imports_direct",
+        denominator_role="scope_external_import_use",
+        extension=extension,
+        stressor=stressor,
+        unit=unit,
+        values=physical_total,
+        monetary_denominator=denominator_total,
+    )
+
+
+def aggregate_scope_final_demand_extension(
+    final_demand_values: pd.Series,
+    monetary_final_demand: pd.Series,
+    *,
+    scope: RegionScope,
+    extension: str,
+    stressor: str,
+    unit: str,
+) -> pd.DataFrame:
+    """Aggregate direct final-demand F_Y over destination members by category.
+
+    ``F_Y`` stays on the destination final-demand category axis. There is
+    deliberately no product-projection argument and no imported-RoW counterpart.
+    """
+    if not isinstance(final_demand_values, pd.Series):
+        raise TypeError("final_demand_values must be a pandas Series.")
+    index = final_demand_values.index
+    if not isinstance(index, pd.MultiIndex) or index.nlevels != 2:
+        raise TypeError("F_Y values require MultiIndex(region, final_demand_category).")
+    if list(index.names) != ["region", "final_demand_category"]:
+        raise ValueError(
+            "F_Y index names must be exactly ['region', 'final_demand_category']."
+        )
+    if not index.is_unique:
+        raise ValueError("F_Y destination/category index must be unique.")
+    f_numeric = cast(pd.Series, pd.to_numeric(final_demand_values, errors="coerce"))
+    f_values = f_numeric.to_numpy(dtype="float64")
+    if not np.isfinite(f_values).all():
+        raise ValueError("F_Y values must be finite; missing direct emissions are not zero.")
+
+    members = _validate_scope(scope)
+    regions = index.get_level_values("region").astype(str)
+    categories = index.get_level_values("final_demand_category").astype(str)
+    available_regions = set(map(str, regions))
+    unknown = [member for member in members if member not in available_regions]
+    if unknown:
+        raise ValueError(f"F_Y is missing scope destination members: {unknown!r}.")
+    category_order: tuple[str, ...] | None = None
+    physical: np.ndarray | None = None
+    for member in members:
+        mask = np.asarray(regions == member, dtype=bool)
+        current = tuple(map(str, categories[mask]))
+        if not current or len(set(current)) != len(current) or any(not value for value in current):
+            raise ValueError(f"F_Y member {member!r} has a malformed category basis.")
+        if category_order is None:
+            category_order = current
+            physical = np.zeros(len(current), dtype="float64")
+        elif current != category_order:
+            raise ValueError(
+                "F_Y requires the same unique ordered final-demand category basis for "
+                f"every scope member; member={member!r}."
+            )
+        assert physical is not None
+        physical += f_values[mask]
+    if category_order is None or physical is None:
+        raise ValueError("F_Y scope aggregation produced an empty category basis.")
+
+    if not isinstance(monetary_final_demand, pd.Series):
+        raise TypeError("monetary_final_demand must be a pandas Series by category.")
+    if not monetary_final_demand.index.is_unique:
+        raise ValueError("monetary_final_demand category index must be unique.")
+    denominator = monetary_final_demand.copy()
+    denominator.index = pd.Index(
+        [str(value).strip() for value in denominator.index],
+        name="final_demand_category",
+    )
+    expected_index = pd.Index(category_order, name="final_demand_category")
+    if not denominator.index.equals(expected_index):
+        raise ValueError(
+            "monetary_final_demand must exactly match the scope F_Y category basis in order."
+        )
+    denominator_numeric = cast(pd.Series, pd.to_numeric(denominator, errors="coerce"))
+    denominator_values = denominator_numeric.to_numpy(dtype="float64")
+    if not np.isfinite(denominator_values).all():
+        raise ValueError("monetary_final_demand must be finite.")
+    inconsistent_zero = (denominator_values == 0.0) & (physical != 0.0)
+    if bool(inconsistent_zero.any()):
+        labels = [category_order[pos] for pos in np.flatnonzero(inconsistent_zero)[:10]]
+        raise ValueError(
+            "Direct final-demand extension has nonzero F_Y with zero monetary final "
+            f"demand for categories={labels!r}."
+        )
+    return _environmental_account_frame(
+        axis_labels=category_order,
+        boundary="scope_final_demand_direct",
+        denominator_role="scope_final_demand",
+        extension=extension,
+        stressor=stressor,
+        unit=unit,
+        values=physical,
+        monetary_denominator=denominator_values,
+    )
+
+
+def _validated_environmental_account_group(
+    account: pd.DataFrame,
+    *,
+    expected_boundary: str,
+    expected_denominator_role: str,
+) -> tuple[tuple[str, ...], np.ndarray, np.ndarray, tuple[str, str, str]]:
+    if not isinstance(account, pd.DataFrame):
+        raise TypeError("Environmental account must be a pandas DataFrame.")
+    if list(account.columns) != list(_ENVIRONMENTAL_ACCOUNT_COLUMNS):
+        raise ValueError(
+            "Environmental account columns must exactly match the canonical long-form schema."
+        )
+    if account.empty:
+        raise ValueError("Environmental account must not be empty.")
+    if set(cast(pd.Series, account["boundary"]).astype(str)) != {expected_boundary}:
+        raise ValueError(f"Expected only boundary={expected_boundary!r}.")
+    if set(cast(pd.Series, account["denominator_role"]).astype(str)) != {expected_denominator_role}:
+        raise ValueError(f"Expected denominator_role={expected_denominator_role!r}.")
+    labels = tuple(cast(pd.Series, account["axis_label"]).astype(str).tolist())
+    if any(not label for label in labels) or len(set(labels)) != len(labels):
+        raise ValueError("Environmental account axis labels must be unique and non-blank.")
+    positions_numeric = cast(
+        pd.Series,
+        pd.to_numeric(cast(pd.Series, account["axis_position"]), errors="coerce"),
+    )
+    positions = positions_numeric.to_numpy(dtype="float64")
+    expected_positions = np.arange(1, len(labels) + 1, dtype="float64")
+    if not np.array_equal(positions, expected_positions):
+        raise ValueError("Environmental account axis_position must be one-based and contiguous.")
+    values_numeric = cast(
+        pd.Series, pd.to_numeric(cast(pd.Series, account["value"]), errors="coerce")
+    )
+    denominator_numeric = cast(
+        pd.Series,
+        pd.to_numeric(cast(pd.Series, account["monetary_denominator"]), errors="coerce"),
+    )
+    values = values_numeric.to_numpy(dtype="float64")
+    denominator = denominator_numeric.to_numpy(dtype="float64")
+    if not np.isfinite(values).all() or not np.isfinite(denominator).all():
+        raise ValueError("Environmental account values and denominators must be finite.")
+    implied = np.full(len(labels), np.nan, dtype="float64")
+    np.divide(values, denominator, out=implied, where=denominator != 0.0)
+    reported_numeric = cast(
+        pd.Series, pd.to_numeric(cast(pd.Series, account["intensity"]), errors="coerce")
+    )
+    reported = reported_numeric.to_numpy(dtype="float64")
+    finite = denominator != 0.0
+    if not np.allclose(reported[finite], implied[finite], rtol=1e-12, atol=1e-12):
+        raise ValueError("Environmental account intensity disagrees with value/denominator.")
+    if bool(np.isfinite(reported[~finite]).any()):
+        raise ValueError("Environmental account intensity must be missing at zero denominator.")
+    identity: list[str] = []
+    for column in ("extension", "stressor", "unit"):
+        unique = list(dict.fromkeys(cast(pd.Series, account[column]).astype(str)))
+        if len(unique) != 1 or not unique[0].strip():
+            raise ValueError(f"Environmental account {column} must identify exactly one non-blank group.")
+        identity.append(unique[0].strip())
+    return labels, values, denominator, (identity[0], identity[1], identity[2])
+
+
+def combine_total_supply_extension_direct(
+    *,
+    production_account: pd.DataFrame,
+    import_account: pd.DataFrame,
+    target_domestic_output: pd.Series,
+    target_import_supply: pd.Series,
+    target_total_supply: pd.Series,
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> pd.DataFrame:
+    """Combine direct domestic-production and import coefficients on target controls."""
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("Total-supply identity tolerances must be non-negative.")
+    prod_labels, prod_values, prod_den, prod_identity = _validated_environmental_account_group(
+        production_account,
+        expected_boundary="scope_production",
+        expected_denominator_role="scope_production_output",
+    )
+    imp_labels, imp_values, imp_den, imp_identity = _validated_environmental_account_group(
+        import_account,
+        expected_boundary="external_imports_direct",
+        expected_denominator_role="scope_external_import_use",
+    )
+    if imp_labels != prod_labels:
+        raise ValueError("Production and import environmental accounts must use the same target-product axis.")
+    if imp_identity != prod_identity:
+        raise ValueError("Production and import environmental accounts must identify the same extension/stressor/unit.")
+
+    def control(series: pd.Series, *, name: str) -> np.ndarray:
+        if not isinstance(series, pd.Series):
+            raise TypeError(f"{name} must be a pandas Series.")
+        if not series.index.is_unique:
+            raise ValueError(f"{name} index must be unique.")
+        normalized = series.copy()
+        normalized.index = pd.Index([str(value).strip() for value in normalized.index])
+        if tuple(normalized.index) != prod_labels:
+            raise ValueError(f"{name} must exactly match the environmental target-product axis in order.")
+        numeric = cast(pd.Series, pd.to_numeric(normalized, errors="coerce"))
+        values = numeric.to_numpy(dtype="float64")
+        if not np.isfinite(values).all() or bool((values < 0.0).any()):
+            raise ValueError(f"{name} must be finite and non-negative.")
+        return values
+
+    domestic = control(target_domestic_output, name="target_domestic_output")
+    imports = control(target_import_supply, name="target_import_supply")
+    total = control(target_total_supply, name="target_total_supply")
+    if not np.allclose(domestic + imports, total, rtol=float(rtol), atol=float(atol)):
+        max_gap = float(np.max(np.abs((domestic + imports) - total))) if len(total) else 0.0
+        raise ValueError(
+            "Target total-supply identity failed: domestic output + import supply must "
+            f"equal total supply; max_abs_gap={max_gap:.12g}."
+        )
+
+    prod_coeff = np.full(len(prod_labels), np.nan, dtype="float64")
+    imp_coeff = np.full(len(prod_labels), np.nan, dtype="float64")
+    np.divide(prod_values, prod_den, out=prod_coeff, where=prod_den != 0.0)
+    np.divide(imp_values, imp_den, out=imp_coeff, where=imp_den != 0.0)
+    missing_prod = (domestic > 0.0) & ~np.isfinite(prod_coeff)
+    missing_imp = (imports > 0.0) & ~np.isfinite(imp_coeff)
+    if bool(missing_prod.any()) or bool(missing_imp.any()):
+        bad_prod = [prod_labels[pos] for pos in np.flatnonzero(missing_prod)[:10]]
+        bad_imp = [prod_labels[pos] for pos in np.flatnonzero(missing_imp)[:10]]
+        raise ValueError(
+            "Target supply has positive monetary mass without the required direct "
+            f"environmental coefficient; domestic={bad_prod!r}, imports={bad_imp!r}."
+        )
+    physical = np.zeros(len(prod_labels), dtype="float64")
+    physical += np.where(domestic > 0.0, prod_coeff * domestic, 0.0)
+    physical += np.where(imports > 0.0, imp_coeff * imports, 0.0)
+    if not np.isfinite(physical).all():
+        raise RuntimeError("Total-supply environmental combination produced non-finite physical values.")
+    extension, stressor, unit = prod_identity
+    return _environmental_account_frame(
+        axis_labels=prod_labels,
+        boundary="total_supply_direct",
+        denominator_role="target_total_supply",
+        extension=extension,
+        stressor=stressor,
+        unit=unit,
+        values=physical,
+        monetary_denominator=total,
+    )
 
 def load_mrio_iot_scope_slice(
     dataset: str,

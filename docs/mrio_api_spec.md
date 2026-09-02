@@ -398,6 +398,21 @@ Allowed initial boundaries are `scope_production`,
 `external_imports_direct`, `total_supply_direct`, and
 `scope_final_demand_direct`. Missing evidence is not zero.
 
+WP3 implements these boundaries as independent geography/satellite operators:
+`aggregate_scope_production_extension(...)`,
+`aggregate_external_import_extension_direct(...)`,
+`aggregate_scope_final_demand_extension(...)`, and
+`combine_total_supply_extension_direct(...)`. The production/import operators accept
+a complete product projection whose non-negative weights sum to one for every source
+product; both extensive numerator and denominator traverse that projection before any
+ratio is formed. The EXIO provider exposes
+`read_exiobase3_scope_external_import_use_by_origin(...)` so the external origin is
+retained through product projection. `F_Y` has no product-projection argument.
+
+These operators do not migrate the fuels/fuels-more split pipeline. They produce the
+boundary-aware accounts that a later pipeline adapter consumes; CLI wiring and
+DOM/IMP/TOTAL output integration remain WP4.
+
 ## Independence of geography and sector transformations
 
 Let \(R\) be a region concordance and \(P\) a sector concordance/projection.
@@ -474,9 +489,11 @@ The breaking API cleanup is complete for monetary loading and geography:
 2. `load_mrio_iot_scope_slice(...)` is the one low-memory destination-scope reader.
 3. `aggregate_mrio_regions(...)` is the one complete primitive monetary region
    aggregation, and requires complete source-region coverage.
-4. Environmental extension geography is deferred to the extensive-first satellite
-   work package; no intensity aggregation is introduced here.
-5. Split-pipeline donor-context assembly remains a downstream adapter and must consume
-   the generic geography APIs rather than implement region membership itself.
+4. Environmental extension geography is implemented by the boundary-aware WP3
+   satellite operators. Production and import coefficients are formed only after their
+   required extensive aggregations/projections; direct final demand remains on its
+   category axis, and target total supply requires authoritative DOM/IMP controls.
+5. Split-pipeline donor-context assembly and CLI/output wiring remain WP4 and must
+   consume the generic geography/satellite APIs rather than reimplement them.
 
 > **Current loader contract:** `load_mrio_iot_matrices(dataset, year, matrices=(...))` loads only requested primitive square-IOT accounts `Z`, `x`, and `Y`. `A` and non-export `y` are explicit derivations; obsolete compatibility APIs were deleted.

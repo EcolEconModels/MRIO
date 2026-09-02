@@ -1,122 +1,68 @@
 # EXIO low-RAM zip-stream contract
 
-This is the MRIO-side contract for reusable EXIOBASE loading under the eigenmode paper pipeline.
+This is the MRIO-side contract for reusable EXIOBASE source loading under data-heavy analysis workflows.
 
 ## Durable cache policy
 
-The raw source zip is the only default durable EXIOBASE data cache:
-
-```text
-data/exiobase3_YYYY/IOT_YYYY_pxp.zip
-```
-
-Default loaders must not create:
-
-- full `pymrio` pickle caches;
-- extracted text-directory caches;
-- `A.txt`;
-- derived matrix caches such as `.npz` or parquet;
-- any cache that becomes an authoritative source instead of the raw zip.
-
-Optional caches must be profile/script opt-in, documented, and safely regenerable from the source zip.
-
-## Table-level loading policy
-
-Load only the tables requested by the caller.
-
-For `load_mrio_matrices()` this means:
-
-- `x.txt`;
-- `Z.txt`;
-- `Y.txt`;
-- metadata needed to identify the source zip and basis.
-
-Selected extension readers may read tables such as `air_emissions/F.txt`, but only when the caller actually needs that extension.
-
-All requested monetary source values are fail-closed. Blank, malformed, truncated, or
-non-finite observations in `x.txt`, `Z.txt`, or `Y.txt` must raise before coefficients
-or donor profiles are constructed. The region-slice `Z` and `Y` row bases must match;
-a missing `Y` row is not an implicit all-zero row. Explicit numerical zeros remain
-valid zeros.
-
-## Sparse construction policy
-
-`A` is derived from `Z` and `x`:
-
-```text
-A_ij = Z_ij / x_j
-```
-
-The loader must not require `A.txt`.
-
-`Z` and `A` must be sparse for full EXIOBASE basis work. Diagnostics must accept sparse input and must not convert sparse matrices to dense objects unless guarded by a small-test-matrix check.
-
-Forbidden on full EXIO matrices:
-
-```python
-pd.DataFrame(A)
-A.values
-np.asarray(A)
-A.toarray()
-A.todense()
-```
-
-## Memory and cleanup
-
-MRIO loaders and diagnostics used by the paper pipeline must remain compatible with a 4 GB RSS ceiling.
-
-Required practices:
-
-- stream zip members rather than extracting full text directories;
-- construct sparse rows in bounded passes;
-- avoid keeping both dense and sparse copies of the same matrix;
-- delete temporary arrays and intermediate matrices when no longer needed;
-- call `gc.collect()` after large year-level work when running long loops;
-- preserve progress messages for long-running loads.
-
-## Basis contract
-
-The basis returned by EXIO loaders is:
-
-```python
-pd.MultiIndex(names=["region", "sector"])
-```
-
-`x`, `y`, sparse `A.index`, and sparse `A.columns` should all align to that same basis.
-
-## Disk-space and derived-cache policy
-
-The MRIO repo must not create large derived EXIOBASE caches by default. The raw source zip is the only default durable cache:
+The DOI-checked raw source zip is the only default durable EXIOBASE data cache:
 
 ```text
 data/exiobase3_YYYY/IOT_YYYY_pxp.zip
 data/exiobase3_YYYY/IOT_YYYY_ixi.zip
 ```
 
-Default EXIO loaders must not write:
+Default loaders must not create full `pymrio` pickle caches, extracted text directories, generated `A.txt`, derived matrix caches, or hidden alternative authoritative sources.
 
-- full `pymrio.IOSystem` pickle caches;
-- extracted text-cache directories;
-- generated `A.txt`;
-- generated `Z.npz`, `A.npz`, `x.npz`, `y.npz`;
-- parquet/feather equivalents of `Z`, `A`, `x`, or `y`;
-- hidden matrix-cache directories.
+## Complete-IOT primitive loading
 
-Development-only caches are permitted only behind explicit opt-in flags. Such flags must:
+`load_mrio_iot_matrices(dataset, year, matrices=(...))` loads only requested primitive source accounts. The supported account names are exactly `Z`, `x`, and `Y`.
 
-1. default to off;
-2. state expected disk use;
-3. write under an ignored scratch/development path;
-4. never be used by production paper profiles;
-5. be safely deletable without changing scientific results;
-6. have cleanup instructions.
+For EXIOBASE:
 
-Do not remove source zips during cleanup. They avoid expensive redownloads and are the authoritative input.
+- `Z` comes from `Z.txt` and remains sparse at full basis;
+- `x` comes from `x.txt`;
+- `Y` comes from `Y.txt`;
+- metadata identifies the source zip and canonical basis;
+- a Y-only request must not read x/Z, and analogous selective requests must avoid unrelated members.
 
-Suggested inspection command before cleanup:
+Technical coefficients are an explicit post-load derivation:
 
-```bash
-find data -type f \( -name '*.pkl' -o -name '*.pickle' -o -name '*.npz' -o -name 'A.txt' \) -print
+```text
+A_ij = Z_ij / x_j
 ```
 
-Inspect the list before deleting. Keep all `IOT_*_pxp.zip` and `IOT_*_ixi.zip` files.
+using `derive_A_from_Z_and_x(...)`. The loader does not expose `A` or summed `y` as source-account selectors and does not require `A.txt`.
+
+## Geography boundaries
+
+`aggregate_mrio_regions(...)` transforms complete primitive monetary accounts extensively:
+
+```text
+Z^R = R Z R^T
+x^R = R x
+Y^R = R Y H^T
+```
+
+and callers derive `A` only afterward.
+
+`load_mrio_iot_scope_slice(...)` is the low-memory destination-use boundary. It streams only destination columns for a declared `RegionScope` and returns `internal`, `external_imports`, or `total` Z/Y use together with separate member-production `x_scope`. These use blocks are not interchangeable with a balanced complete IOT.
+
+For direct environmental imports, origin must remain explicit until after product projection. `read_exiobase3_scope_external_import_use_by_origin(...)` therefore streams origin-product Z+Y use into a scope without forming an intensity.
+
+## Fail-closed source semantics
+
+Requested monetary values must be finite. Blank, malformed, truncated, duplicate, basis-mismatched, or non-finite observations in requested x/Z/Y members raise before coefficients or donor profiles are constructed. Explicit numerical zero remains a valid zero; missing evidence is never converted to zero.
+
+Region-scope streaming must prove identical ordered destination bases across members, identical ordered producer-sector bases across origins, and exact x/Z sector equality.
+
+## Sparse and memory policy
+
+Full-basis EXIO Z and derived A must remain sparse. Do not convert EXIO-scale sparse matrices to dense arrays or DataFrames unless a small-fixture guard proves the operation is bounded.
+
+Long loops should release large temporary matrices promptly and remain compatible with the repository's resource-bounded analysis policy.
+
+## Development caches
+
+Optional development-only caches are permitted only behind explicit opt-in controls, under ignored scratch paths, with documented disk use and safe regeneration from the source zip. They must never become production source-of-truth artifacts.
+
+Never remove source zips during routine cleanup; they are the authoritative reproducibility cache and avoid unnecessary redownloads.

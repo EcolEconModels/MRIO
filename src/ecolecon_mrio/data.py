@@ -533,7 +533,7 @@ def ensure_exiobase_year_zip(
         print(f"EXIOBASE zip not found at {zip_path}; downloading {url} ...")
 
     downlog = MRIOMetaData._make_download_log(
-        location=data_dir,
+        location=cast(Any, data_dir),
         description="Download log of EXIOBASE3",
         name="EXIO3",
         system=str(system),
@@ -760,7 +760,7 @@ def load_mrio(
 
         cache_path = data_dir / f"mrio_system_{year}.pkl"
         if cache_path.exists():
-            mrio = pymrio.load(cache_path)
+            mrio = cast(pymrio.IOSystem, pymrio.load(cache_path))
             if calc_all and getattr(mrio, "G", None) is None:
                 if verbose:
                     print("Computing MRIO derived matrices (calc_all)...")
@@ -947,6 +947,20 @@ def load_mrio_iot_matrices(
         download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
         download_retries=download_retries,
     )
+    # Some pymrio providers (including load_test()) expose primitive Z/Y before x.
+    # Calculate only the missing core system when x was explicitly requested; do not
+    # calculate extensions and do not route EXIOBASE through this full-object adapter.
+    if "x" in requested and getattr(mrio, "x", None) is None:
+        try:
+            mrio.calc_system(include_ghosh=False)
+        except Exception as exc:
+            raise RuntimeError(
+                f"{dataset_norm} full-object adapter could not calculate requested output x."
+            ) from exc
+        if getattr(mrio, "x", None) is None:
+            raise RuntimeError(
+                f"{dataset_norm} full-object adapter still has no output x after calc_system()."
+            )
     source_index: pd.Index | None = None
     if "Z" in requested:
         Z_df = pd.DataFrame(mrio.Z)
@@ -962,7 +976,10 @@ def load_mrio_iot_matrices(
         candidate = x_series.index if isinstance(x_series.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(x_series.index), names=["region", "sector"])
         candidate = candidate.set_names(["region", "sector"])
         basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.x")
-        result["x"] = pd.Series(pd.to_numeric(x_series, errors="raise").to_numpy(dtype=float), index=candidate, name="x")
+        x_numeric = cast(pd.Series, pd.to_numeric(x_series, errors="raise"))
+        result["x"] = pd.Series(
+            x_numeric.to_numpy(dtype="float64"), index=candidate, name="x"
+        )
         source_index = x_series.index
     if "Y" in requested:
         Y_df = pd.DataFrame(mrio.Y)

@@ -15,13 +15,18 @@ alignment.
 
 ## Loader boundary
 
-`load_mrio_iot_matrices(...) ` remains the low-RAM EXIOBASE source-zip loader for
-SDA inputs. It streams `x.txt`, `Z.txt`, and `Y.txt`, derives sparse technical
-coefficients `A`, and returns `Z, x, Y, basis_index, metadata`. It does not write
-derived matrix caches or return raw `Z`.
+`load_mrio_iot_matrices(...)` is the canonical low-RAM primitive IOT loader used by SDA and other complete-basis analyses. Its selectable source accounts are only `Z`, `x`, and `Y`, and its return is `(matrices, basis_index, metadata)`.
 
-The current SDA average uses `A`, `x`, and `y`. A raw-`Z` return mode should be
-added only when a separate analysis stage explicitly needs `Z` without `A`.
+SDA callers explicitly derive the quantities they need:
+
+- sparse `A` from `Z` and `x` using `derive_A_from_Z_and_x(...)`;
+- the established non-export final-demand vector from complete `Y` using `derive_nonexport_final_demand_from_Y(...)`.
+
+The loader does not require `A.txt`, does not return a compatibility tuple `(A, x, y, ...)`, and does not write derived matrix caches. A caller needing only Y or x should request only that primitive account.
+
+Complete region aggregation uses `aggregate_mrio_regions(...)` on primitive Z/x/Y and derives A afterward. Low-memory destination-scope work uses `load_mrio_iot_scope_slice(...)`; its external-import use block must not be treated as a complete IOT denominator boundary.
+
+Production extension rows continue to align to the canonical `MultiIndex(region, sector)` basis. Geography-aware environmental aggregation keeps extensive physical numerators and monetary denominators separate until transformation is complete; direct `F_Y` remains a separate final-demand-category account.
 
 ## Strict SDA pair result
 

@@ -113,3 +113,31 @@ def test_flat_diagnostics_scope_loader_uses_current_api(monkeypatch, tmp_path: P
         "flow": "external_imports",
         "data_root": tmp_path,
     }
+
+def test_current_guidance_uses_canonical_iot_and_geography_api() -> None:
+    """Operational guidance must not send agents back to deleted loader surfaces."""
+    current_docs = (
+        ROOT / "AGENTS.md",
+        ROOT / "docs/exio_lowram_zip_stream_contract.md",
+        ROOT / "docs/exio_sparse_multiindex_contract.md",
+        ROOT / "docs/mrio_index_and_sda_contract.md",
+    )
+    for path in current_docs:
+        text = path.read_text(encoding="utf-8")
+        assert "load_mrio_matrices" not in text, path
+        assert "load_mrio_iot_matrices" in text, path
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "ecolecon_mrio.data.load_exiobase3" not in readme
+    assert "load_mrio_iot_matrices" in readme
+
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for name in (
+        "aggregate_mrio_regions",
+        "load_mrio_iot_scope_slice",
+        "aggregate_scope_production_extension",
+        "aggregate_external_import_extension_direct",
+        "aggregate_scope_final_demand_extension",
+        "combine_total_supply_extension_direct",
+    ):
+        assert name in agents, name

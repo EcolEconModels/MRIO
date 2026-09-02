@@ -249,6 +249,19 @@ def test_complete_region_aggregation_matches_pymrio_region_aggregation() -> None
     )
 
 
+
+
+
+def test_complete_region_aggregation_refuses_to_overwrite_provenance() -> None:
+    matrices, basis = _synthetic_bundle()
+    with pytest.raises(ValueError, match="refuses to overwrite existing region_aggregation provenance"):
+        aggregate_mrio_regions(
+            matrices,
+            basis_index=basis,
+            plan=_eu_row_plan(),
+            metadata={"region_aggregation": {"target_regions": ["old"]}},
+        )
+
 def test_aggregate_mrio_regions_is_public_unique_and_does_not_derive_A() -> None:
     from ecolecon_mrio import aggregate_mrio_regions as public_aggregate
 

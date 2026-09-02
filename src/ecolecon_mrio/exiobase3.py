@@ -310,6 +310,120 @@ def _read_scope_use_table_from_exio_zip(
     )
 
 
+
+def _read_scope_external_origin_use_member_from_exio_zip(
+    *,
+    zip_path: Path,
+    member_name: str,
+    scope: RegionScope,
+) -> pd.Series:
+    """Return external-origin row use into a destination scope for Z.txt or Y.txt."""
+    members = set(_scope_members(scope))
+    with zipfile.ZipFile(zip_path) as zf:
+        with _open_exio_zip_text(zf, member_name) as fh:
+            keep_positions, _output_labels, _collapse_positions = _exio_table_header_for_scope(
+                fh, table_name=member_name, scope=scope
+            )
+            if not keep_positions:
+                raise ValueError(f"EXIOBASE {member_name} has no destination columns for scope {scope.code!r}.")
+            max_keep = max(keep_positions)
+            origin_rows: dict[str, list[str]] = {}
+            origin_seen: dict[str, set[str]] = {}
+            external_values: dict[tuple[str, str], float] = {}
+            for row_idx, line in enumerate(fh):
+                try:
+                    row_region, row_sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                except ValueError:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} malformed row at position {row_idx}"
+                    ) from None
+                origin = str(row_region)
+                sector = str(row_sector)
+                seen = origin_seen.setdefault(origin, set())
+                if sector in seen:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} contains duplicate producer sector {sector!r} "
+                        f"for origin {origin!r}."
+                    )
+                seen.add(sector)
+                origin_rows.setdefault(origin, []).append(sector)
+                numeric = _numeric_tail_from_exio_line(line)
+                if numeric.size <= max_keep:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} row width mismatch at row {row_idx}: "
+                        f"got {numeric.size}, need column {max_keep + 1}."
+                    )
+                selected = numeric[keep_positions]
+                if not np.isfinite(selected).all():
+                    raise ValueError(
+                        f"EXIOBASE {member_name} contains non-finite monetary use at row {row_idx}."
+                    )
+                if origin not in members:
+                    external_values[(origin, sector)] = float(selected.sum())
+    if not origin_rows:
+        raise ValueError(f"EXIOBASE {member_name} contains no producer rows.")
+    reference: tuple[str, ...] | None = None
+    for origin, rows in origin_rows.items():
+        current = tuple(rows)
+        if reference is None:
+            reference = current
+        elif current != reference:
+            missing = [sector for sector in reference if sector not in set(current)]
+            extra = [sector for sector in current if sector not in set(reference)]
+            raise ValueError(
+                f"EXIOBASE {member_name} producer sector basis differs across origins: "
+                f"origin={origin!r}, missing={missing[:10]!r}, extra={extra[:10]!r}, "
+                f"order_matches={set(current) == set(reference)}."
+            )
+    assert reference is not None
+    external_origins = [origin for origin in origin_rows if origin not in members]
+    index = pd.MultiIndex.from_tuples(
+        [(origin, sector) for origin in external_origins for sector in reference],
+        names=["region", "sector"],
+    )
+    # Build values from the validated Cartesian basis directly; do not rely on
+    # pandas MultiIndex iterator typing to recover the economic (origin, sector) pair.
+    values = [
+        external_values[(origin, sector)]
+        for origin in external_origins
+        for sector in reference
+    ]
+    return pd.Series(
+        values,
+        index=index,
+        dtype="float64",
+        name=f"{member_name}_scope_external_use",
+    )
+
+
+def read_exiobase3_scope_external_import_use_by_origin(
+    *,
+    source_zip: str | Path,
+    scope: RegionScope,
+) -> pd.Series:
+    """Return origin-product monetary use from outside ``scope`` into its destinations.
+
+    The result retains the external origin axis deliberately. It is the monetary
+    ``u_{ok->G}`` primitive required before an origin-specific production extension
+    coefficient can be formed. No region or product projection is applied here.
+    """
+    zip_path = Path(source_zip)
+    z_use = _read_scope_external_origin_use_member_from_exio_zip(
+        zip_path=zip_path, member_name="Z.txt", scope=scope
+    )
+    y_use = _read_scope_external_origin_use_member_from_exio_zip(
+        zip_path=zip_path, member_name="Y.txt", scope=scope
+    )
+    if not z_use.index.equals(y_use.index):
+        raise ValueError(
+            "EXIOBASE Z.txt and Y.txt external origin-product bases differ for the scope."
+        )
+    out = cast(pd.Series, z_use.add(y_use, fill_value=0.0)).astype("float64")
+    if not np.isfinite(out.to_numpy(dtype="float64")).all():
+        raise RuntimeError("EXIOBASE external import-use aggregation produced non-finite values.")
+    out.name = "scope_external_import_use"
+    return out
+
 def _read_region_exports_member_from_exio_zip(
     *,
     zip_path: Path,

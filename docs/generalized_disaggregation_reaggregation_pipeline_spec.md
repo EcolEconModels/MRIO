@@ -27,11 +27,11 @@ hooks, and migration rules needed to implement that methods document. The API
 spec must not weaken, replace, or silently alter the economic equations and
 accounting identities in the standalone methods spec.
 
-The generic low-memory region-scope API and complete primitive monetary region
-aggregation are implemented. The obsolete singleton EXIO wrappers remain deleted.
-The pipeline-specific `DonorScopeContext`, environmental scope accounts, and
-sector-pipeline integration remain **vNext design** until their later source-and-test
-patches are merged.
+The generic low-memory region-scope API, complete primitive monetary region
+aggregation, and boundary-aware environmental scope-account operators are implemented.
+The obsolete singleton EXIO wrappers remain deleted. The pipeline-specific
+`DonorScopeContext`, sector-pipeline integration, CLI wiring, and model-output use of
+those environmental accounts remain **vNext design** until WP4 is merged.
 
 ## Existing repo abstractions to preserve
 
@@ -589,6 +589,14 @@ DOM, IMP, and TOTAL outputs use distinct satellite boundaries. A scope-productio
 coefficient is valid only for DOM/scope production. IMP uses the origin-weighted
 external-import account, and TOTAL combines target DOM and IMP extensive components;
 no coefficient is copied between these boundaries.
+
+The generic WP3 operators implementing those equations are now available independently
+of the split pipeline. They deliberately require a complete column-preserving product
+projection for production/import product transforms, retain external origin until the
+mapped coefficient is applied to mapped use, and expose no product projection on
+`F_Y`. The current singleton-only `_environmental_extension_tables_for_split(...)`
+path is not broadened here; replacing that adapter and wiring group scopes into the
+fuels/fuels-more CLI remains WP4.
 
 ## Route 2: row/column-specific evidence disaggregation
 

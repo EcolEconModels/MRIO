@@ -23,15 +23,23 @@ the scientific question, reconcile the MRIO boundary with that repository's
 scientific authority rather than reasoning about the library in isolation.
 <!-- /ecolecon-scientific-method-reasoning -->
 
-## EXIO sparse loading and strict MultiIndex contract
+## Current MRIO IOT, geography, and environmental API contract
 
 > [!IMPORTANT]
-> EXIOBASE loaders and diagnostics must obey `docs/exio_sparse_multiindex_contract.md`.
+> EXIOBASE loaders and diagnostics must obey `docs/exio_sparse_multiindex_contract.md`,
+> `docs/exio_lowram_zip_stream_contract.md`, and `docs/mrio_api_spec.md`.
 
-- `load_mrio_matrices()` reads `x.txt`, `Z.txt`, and `Y.txt` from the source zip and derives sparse `A`; it must not require `A.txt`.
-- Returned EXIO vectors use `pd.MultiIndex(names=["region", "sector"])`.
-- Sparse EXIO matrices may carry `.index` and `.columns` metadata; diagnostics must not densify EXIO-scale CSR matrices.
-- Preserve tab fields when parsing EXIO extension tables; do not use whitespace parsing that drops blank numeric cells.
+- `load_mrio_iot_matrices(dataset, year, matrices=(...))` is the lightweight complete-IOT source-account boundary. The only selectable primitive accounts are `Z`, `x`, and `Y`; it reads only requested source tables and returns `(matrices, basis_index, metadata)`.
+- `A` is never a source-account selector. Derive it explicitly with `derive_A_from_Z_and_x(Z, x, basis_index=...)`. The transition non-export final-demand vector is likewise an explicit derivation from `Y`.
+- `load_mrio(...)` is the distinct heavy `pymrio.IOSystem` boundary for providers where full-object loading is supported. Do not route EXIOBASE table-level work through a full object.
+- `aggregate_mrio_regions(...)` performs complete many-to-one monetary geography aggregation on primitive `Z`, `x`, and `Y` only. Aggregate extensive accounts first and derive coefficients afterward.
+- `load_mrio_iot_scope_slice(...)` is the one low-memory destination-use scope reader. Its `internal`, `external_imports`, and `total` `Z`/`Y` blocks are use boundaries; `x_scope` is member production and must not be combined with arbitrary import-use `Z` to derive `A`.
+- Environmental geography is extensive-first. `aggregate_scope_production_extension(...)`, `aggregate_external_import_extension_direct(...)`, `aggregate_scope_final_demand_extension(...)`, and `combine_total_supply_extension_direct(...)` keep physical numerators and monetary denominators separate until after the required geography/product transformation.
+- External-import direct environmental accounting must retain external origin through product projection before forming an origin-specific production coefficient. `read_exiobase3_scope_external_import_use_by_origin(...)` provides that origin-product monetary-use primitive; do not substitute the already-collapsed external-import scope slice.
+- `F_Y` stays on the destination final-demand-category axis and never receives a product projection or a RoW-import counterpart.
+- Obsolete loader/result APIs, singleton/plural EXIO region-slice wrappers, legacy source/result types, and derived scope caches remain deleted. Do not recreate compatibility aliases without an explicit external contract.
+
+## EXIO low-RAM zip-stream contract
 
 ## EXIO low-RAM zip-stream contract
 
