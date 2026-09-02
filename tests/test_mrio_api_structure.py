@@ -37,7 +37,13 @@ def test_data_api_definitions_are_unique() -> None:
 
 def test_scope_api_definitions_are_unique() -> None:
     names = _top_level_names(ROOT / "src/ecolecon_mrio/region_aggregation.py")
-    for name in ("MrioScopeSlice", "RegionScope", "RegionAggregationPlan", "load_mrio_iot_scope_slice"):
+    for name in (
+        "MrioScopeSlice",
+        "RegionScope",
+        "RegionAggregationPlan",
+        "aggregate_mrio_regions",
+        "load_mrio_iot_scope_slice",
+    ):
         assert names.count(name) == 1, name
 
 

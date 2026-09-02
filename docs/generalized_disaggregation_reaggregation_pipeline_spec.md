@@ -27,10 +27,11 @@ hooks, and migration rules needed to implement that methods document. The API
 spec must not weaken, replace, or silently alter the economic equations and
 accounting identities in the standalone methods spec.
 
-The generic low-memory region-scope API described below is implemented and the
-existing singleton EXIO loader remains backward compatible. The pipeline-specific
-`DonorScopeContext`, environmental scope accounts, and sector-pipeline integration
-remain **vNext design** until their later source-and-test patches are merged.
+The generic low-memory region-scope API and complete primitive monetary region
+aggregation are implemented. The obsolete singleton EXIO wrappers remain deleted.
+The pipeline-specific `DonorScopeContext`, environmental scope accounts, and
+sector-pipeline integration remain **vNext design** until their later source-and-test
+patches are merged.
 
 ## Existing repo abstractions to preserve
 
@@ -98,10 +99,10 @@ The target geography and donor scope are independent:
 - never infer the EXIO scope from the Eurostat code; and
 - never sum national target IOTs to replace an official consolidated table.
 
-The generic region API returns a donor context with `internal`,
-`external_imports`, and `total` destination-use boundaries plus the separate
-scope-production output account. A singleton-region compatibility wrapper maps
-the old `domestic` and `imports` names to the neutral boundaries.
+The generic low-memory API returns one `MrioScopeSlice` per requested `internal`,
+`external_imports`, or `total` destination-use boundary, with scope-production output
+kept separately as `x_scope`. There is no singleton compatibility wrapper. Complete
+primitive `Z`/`x`/`Y` bundles use `aggregate_mrio_regions(...)` with a complete plan.
 
 Sector plan compilation consumes this donor context but does not read or validate
 region membership itself. Consequently, region aggregation can be run and
@@ -348,7 +349,8 @@ by sector-plan compilation:
 ~~~python
 def load_donor_scope(
     *,
-    source: MrioSource,
+    dataset: str,
+    year: int,
     scope: RegionScope,
     flows: Sequence[str] = ("internal", "external_imports", "total"),
     environmental_selection: object | None = None,

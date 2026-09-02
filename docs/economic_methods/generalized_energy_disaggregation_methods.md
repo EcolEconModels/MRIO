@@ -464,13 +464,14 @@ unless a separate override policy is explicitly declared.
 ## Geographic scope aggregation
 
 Geographic aggregation is a first-class operation and is independent of sector
-disaggregation/reaggregation. The low-memory source implementation now supports
-checked multi-region destination scopes for monetary \(Z\), \(Y\), and scope
-production output \(x^G\); complete-object aggregation and scope environmental
-accounts remain later work packages. Let \(G\) be the set of member regions in a
-checked, versioned region-scope mapping. The mapping is unweighted: each source
-region is either a member or not a member. The complement \(G^c\) is derived from
-the actual region basis in the selected donor release.
+disaggregation/reaggregation. The low-memory source implementation supports checked
+multi-region destination scopes for monetary \(Z\), \(Y\), and scope production
+output \(x^G\). Complete primitive monetary IOT aggregation is also implemented for
+full \(Z\), \(x\), and \(Y\) source accounts; scope environmental accounts remain a
+later work package. Let \(G\) be the set of member regions in a checked, versioned
+region-scope mapping. The mapping is unweighted: each source region is either a member
+or not a member. The complement \(G^c\) is derived from the actual region basis in
+the selected donor release.
 
 A published target table for the desired geography is authoritative. In
 particular, Eurostat publishes consolidated European `naio_10_cp1700` tables, so
@@ -506,6 +507,26 @@ x^G_k=\sum_{o\in G}x_{ok}.
 \]
 
 It is not replaced by an import-use total when the requested flow is imports.
+
+
+For a complete source-region partition, let `R` map region-sector rows/columns and
+`H` map region-final-demand-category columns without changing sector or category
+classification. The primitive monetary IOT is aggregated as
+
+\[
+Z^R=RZR^\top,\qquad x^R=Rx,\qquad Y^R=RYH^\top.
+\]
+
+This operation requires complete source-region coverage; partial destination scopes
+remain low-memory donor slices rather than complete IOTs. Technical coefficients are
+formed only after the extensive aggregation,
+
+\[
+A^R_{ij}=Z^R_{ij}/x^R_j.
+\]
+
+Thus a source `A` is never geographically averaged or summed. The zero-output rule is
+inherited from the explicit coefficient derivation helper after region aggregation.
 
 All environmental aggregation is extensive-first. For production extension
 \(F\),
@@ -621,8 +642,11 @@ Limiting cases required by tests are:
   matrices;
 - a scope containing every source region has zero external imports;
 - internal plus external imports equals total cellwise for \(Z\) and \(Y\);
+- complete monetary region aggregation conserves the explicit \(RZR^\top\), \(Rx\),
+  and \(RYH^\top\) sums and agrees with `pymrio.IOSystem.aggregate(region_agg=...)`
+  on a small complete fixture;
 - summing scope-production \(F\) and \(x\) separately before division matches
-  full-object region aggregation;
+  complete monetary region aggregation once environmental geography is implemented;
 - external-import extensions retain origin through product projection and agree
   with an origin-resolved reference calculation under a many-to-many mapping; and
 - changing only the sector mapping does not change scope membership, while

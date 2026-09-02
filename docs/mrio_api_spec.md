@@ -20,13 +20,14 @@ The implemented public source boundaries are deliberately small:
 - `load_mrio(...)` for practical full `pymrio.IOSystem` providers;
 - `load_mrio_iot_matrices(...)` for selected primitive square-IOT accounts `Z`, `x`, and `Y`;
 - explicit `derive_A_from_Z_and_x(...)` and `derive_nonexport_final_demand_from_Y(...)`;
-- `compile_region_aggregation(...)` for validated many-to-one region membership; and
+- `compile_region_aggregation(...)` for validated many-to-one region membership;
+- `aggregate_mrio_regions(...)` for complete primitive monetary region aggregation; and
 - `load_mrio_iot_scope_slice(...)` for low-memory destination-scope use blocks.
 
 The earlier `MrioMatrixResult`, tuple wrappers, `MrioSource`, EXIO singleton/plural
 region-slice loaders, and derived slice pickle cache are deleted rather than kept as
-compatibility aliases. `aggregate_mrio_regions(...)` and environmental extension
-aggregation remain WP2+ work and must build on the primitive extensive accounts.
+compatibility aliases. Environmental extension region aggregation remains a later
+work package and must build on extensive physical and monetary accounts.
 
 ## Source selection
 
@@ -162,16 +163,48 @@ a model boundary, not a source account; callers that need all final demand can u
 
 ### Geography aggregation
 
-`compile_region_aggregation(...)` is implemented. Complete-object
-`aggregate_mrio_regions(...)` is a WP2 operation and must aggregate extensive
-accounts first:
+`compile_region_aggregation(...)` validates an unweighted many-to-one membership plan.
+`aggregate_mrio_regions(...)` applies a **complete** plan to the canonical primitive
+`Z`/`x`/`Y` bundle returned by `load_mrio_iot_matrices(...)`:
+
+~~~python
+matrices_R, basis_R, metadata_R = aggregate_mrio_regions(
+    matrices,
+    basis_index=basis_index,
+    plan=plan,
+    metadata=metadata,
+)
+~~~
+
+The operation requires every source region to be assigned exactly once. A partial
+scope is valid for `load_mrio_iot_scope_slice(...)`, but not for a complete-IOT
+aggregation; callers normally request `include_complement=True` when compiling a
+single named scope such as `EU27_2020`.
+
+The monetary transformation is extensive-first:
 
 $$
 Z^R = R Z R^\mathsf{T},\qquad x^R = R x,\qquad Y^R = RYH^\mathsf{T}.
 $$
 
-Only after those operations may coefficients be derived from `Z^R` and `x^R`.
-An `A`-only object is not a valid input to geographic aggregation.
+`R` maps `(region, sector)` rows/columns while preserving the sector classification;
+`H` maps `(region, final-demand-category)` columns while preserving final-demand
+categories. Every source region must expose the same unique ordered sector basis and
+the same unique ordered final-demand-category basis. Malformed or incomplete bases
+fail closed rather than being filled with zero or silently dropped.
+
+The result contains only primitive `Z`, `x`, and `Y`, on a new `(scope, sector)`
+basis and `(scope, category)` final-demand columns. It does **not** aggregate or
+return `A`. Only after the extensive transformation may callers derive
+
+$$
+A^R_{ij}=\frac{Z^R_{ij}}{x^R_j}
+$$
+
+with `derive_A_from_Z_and_x(...)`. Environmental extensions are not part of WP2;
+their extensive-first region transformation is a later work package. The full
+EXIOBASE production path therefore remains source-ZIP based and does not create a
+full `pymrio.IOSystem` merely to aggregate geography.
 
 ### Low-memory destination-scope slice
 
@@ -396,7 +429,9 @@ generic geography results, not a second geography implementation. The sector API
 does not parse region mappings:
 
 ~~~python
-donor = load_mrio_scope_slice(source, scope=eu_scope, flow="internal")
+donor = load_mrio_iot_scope_slice(
+    "exiobase", 2022, scope=eu_scope, flow="internal"
+)
 plan = compile_split_plan(..., donor_context=donor)
 result = run_split_plan(..., plan=plan)
 ~~~
@@ -426,21 +461,22 @@ mismatches fail unless replacement is explicitly requested. Integrity checking
 includes source structure and version provenance.
 
 EXIOBASE scope slices stream directly from the checked ZIP and read only required
-members. Persistent derived caches are disabled by default. If enabled, cache
-metadata includes year, system, scope code, ordered members, flow, source
-DOI/version, and mapping hash; mismatches fail rather than silently reusing a
-stale slice.
+members. Persistent derived scope-slice caches are not part of the public API; the
+DOI-checked source ZIP is the reproducibility cache.
 
 ## Compatibility and migration
 
-1. Keep `load_exiobase3_region_slice` and current single-region CLI flags as
-   singleton wrappers.
-2. Add a mutually exclusive scope-mapping argument; do not add EU-specific code.
-3. Move shared extensive-first extension projection/reaggregation into one
-   satellite-account operator.
-4. Keep the legacy production sidecar adapter temporarily for
-   `scope_production`; new multi-boundary callers use the generic schema.
-5. Delete flow-specific DOM/IMP/TOTAL extension branches after they delegate to
-   the boundary-aware account builder.
+The breaking API cleanup is complete for monetary loading and geography:
+
+1. `load_exiobase3_region_slice(s)`, `load_exiobase3_scope_slice`, `MrioSource`,
+   `ExioRegionSlice`, and derived region-slice caches remain deleted; no singleton
+   compatibility wrappers are retained.
+2. `load_mrio_iot_scope_slice(...)` is the one low-memory destination-scope reader.
+3. `aggregate_mrio_regions(...)` is the one complete primitive monetary region
+   aggregation, and requires complete source-region coverage.
+4. Environmental extension geography is deferred to the extensive-first satellite
+   work package; no intensity aggregation is introduced here.
+5. Split-pipeline donor-context assembly remains a downstream adapter and must consume
+   the generic geography APIs rather than implement region membership itself.
 
 > **Current loader contract:** `load_mrio_iot_matrices(dataset, year, matrices=(...))` loads only requested primitive square-IOT accounts `Z`, `x`, and `Y`. `A` and non-export `y` are explicit derivations; obsolete compatibility APIs were deleted.
