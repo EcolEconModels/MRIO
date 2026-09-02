@@ -36,7 +36,7 @@ from ecolecon_mrio.exio_eurostat_concordance_audit import (
     load_default_label_maps,
     write_concordance_audit_outputs,
 )
-from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -134,7 +134,6 @@ def run_single_flow_audit(
     full_subcomponent_z_scan: bool,
     run_command: str | None = None,
     force_download: bool = False,
-    force_rebuild_slice: bool = False,
 ) -> ConcordanceAuditResult:
     data_root = default_data_root()
     resolved_exio_year = exio_year if exio_year is not None else year
@@ -156,17 +155,18 @@ def run_single_flow_audit(
     eurostat_Y_atomic = build_eurostat_atomic_final_demand(parsed, include_exports=False)
     selected_final_demand_columns = select_eurostat_atomic_final_demand_columns(parsed, include_exports=False)
 
-    exio = load_exiobase3_region_slice(
-        year=resolved_exio_year,
-        region=country,
-        system=exio_system,
-        flow=exio_flow,
-        cache_root=data_root,
+    scope_flow = {"domestic": "internal", "imports": "external_imports", "total": "total"}[exio_flow]
+    exio = load_mrio_iot_scope_slice(
+        "exiobase",
+        resolved_exio_year,
+        scope=RegionScope(code=str(country), members=(str(country),)),
+        exio_system=exio_system,
+        flow=scope_flow,
+        data_root=data_root,
         force_download=force_download,
-        force_rebuild_slice=force_rebuild_slice,
     )
-    exio_Z_flow = exio.Z_domestic
-    exio_Y_flow = exio.Y_region
+    exio_Z_flow = exio.Z
+    exio_Y_flow = exio.Y
     exio_x_flow_proxy = build_flow_total_use_proxy(exio_Z_flow, exio_Y_flow)
 
     exio_labels, euro_labels = load_default_label_maps(REPO_ROOT)

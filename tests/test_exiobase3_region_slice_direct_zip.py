@@ -8,6 +8,12 @@ import pandas as pd
 import pytest
 
 from ecolecon_mrio import exiobase3
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
 from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
 
 
@@ -67,18 +73,19 @@ def test_region_slice_streams_domestic_block_without_cache_or_full_mrio(
 ) -> None:
     cache_root = _prepare_cache_root(tmp_path)
 
-    out = exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
-        flow="domestic",
-        cache_root=cache_root,
+    out = load_mrio_iot_scope_slice(
+        "exiobase",
+        2020,
+        scope=RegionScope(code="AT", members=("AT",)),
+        exio_system="pxp",
+        flow="internal",
+        data_root=cache_root,
         doi=DEFAULT_EXIOBASE3_DOI,
     )
 
-    assert list(out.sectors) == ["CPA_A", "CPA_B"]
+    assert list(out.Z.index) == ["CPA_A", "CPA_B"]
     pd.testing.assert_frame_equal(
-        out.Z_domestic,
+        out.Z,
         pd.DataFrame(
             [[1.0, 2.0], [5.0, 6.0]],
             index=pd.Index(["CPA_A", "CPA_B"], name="sector"),
@@ -86,7 +93,7 @@ def test_region_slice_streams_domestic_block_without_cache_or_full_mrio(
         ),
     )
     pd.testing.assert_frame_equal(
-        out.Y_region,
+        out.Y,
         pd.DataFrame(
             [[100.0, 1.0], [200.0, 2.0]],
             index=pd.Index(["CPA_A", "CPA_B"], name="sector"),
@@ -94,7 +101,7 @@ def test_region_slice_streams_domestic_block_without_cache_or_full_mrio(
         ),
     )
     pd.testing.assert_series_equal(
-        out.x_region,
+        out.x_scope,
         pd.Series([100.0, 200.0], index=pd.Index(["CPA_A", "CPA_B"], name="sector"), name="x_region"),
     )
     assert not (cache_root / "exiobase3_2020" / "slices").exists()
@@ -103,89 +110,31 @@ def test_region_slice_streams_domestic_block_without_cache_or_full_mrio(
 def test_region_slice_streams_import_and_total_flows(tmp_path: Path) -> None:
     cache_root = _prepare_cache_root(tmp_path)
 
-    imports = exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
-        flow="imports",
-        cache_root=cache_root,
+    imports = load_mrio_iot_scope_slice(
+        "exiobase",
+        2020,
+        scope=RegionScope(code="AT", members=("AT",)),
+        exio_system="pxp",
+        flow="external_imports",
+        data_root=cache_root,
         doi=DEFAULT_EXIOBASE3_DOI,
     )
-    total = exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
+    total = load_mrio_iot_scope_slice(
+        "exiobase",
+        2020,
+        scope=RegionScope(code="AT", members=("AT",)),
+        exio_system="pxp",
         flow="total",
-        cache_root=cache_root,
+        data_root=cache_root,
         doi=DEFAULT_EXIOBASE3_DOI,
     )
 
-    assert imports.Z_domestic.loc["CPA_A", "CPA_A"] == 9.0
-    assert imports.Z_domestic.loc["CPA_B", "CPA_B"] == 14.0
-    assert imports.Y_region.loc["CPA_A", "HFCE"] == 300.0
-    assert total.Z_domestic.loc["CPA_A", "CPA_A"] == 10.0
-    assert total.Z_domestic.loc["CPA_B", "CPA_B"] == 20.0
-    assert total.Y_region.loc["CPA_A", "GFCF"] == 4.0
-
-
-def test_region_slice_optional_cache_writes_and_reuses_valid_metadata(tmp_path: Path) -> None:
-    cache_root = _prepare_cache_root(tmp_path)
-
-    first = exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
-        flow="domestic",
-        cache_region_slice=True,
-        cache_root=cache_root,
-        doi=DEFAULT_EXIOBASE3_DOI,
-    )
-    slice_dir = cache_root / "exiobase3_2020" / "slices" / "AT" / "pxp"
-    assert (slice_dir / "Z_domestic.pkl").exists()
-    assert (slice_dir / "Y_region.pkl").exists()
-    assert (slice_dir / "x_region.pkl").exists()
-    meta = json.loads((slice_dir / "meta.json").read_text(encoding="utf-8"))
-    assert meta["exio_doi"] == DEFAULT_EXIOBASE3_DOI
-    assert meta["flow"] == "domestic"
-
-    second = exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
-        flow="domestic",
-        cache_region_slice=True,
-        cache_root=cache_root,
-        doi=DEFAULT_EXIOBASE3_DOI,
-    )
-    pd.testing.assert_frame_equal(first.Z_domestic, second.Z_domestic)
-    pd.testing.assert_frame_equal(first.Y_region, second.Y_region)
-    pd.testing.assert_series_equal(first.x_region, second.x_region)
-
-
-def test_region_slice_optional_cache_rejects_stale_metadata(tmp_path: Path) -> None:
-    cache_root = _prepare_cache_root(tmp_path)
-    exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
-        cache_region_slice=True,
-        cache_root=cache_root,
-        doi=DEFAULT_EXIOBASE3_DOI,
-    )
-    meta_path = cache_root / "exiobase3_2020" / "slices" / "AT" / "pxp" / "meta.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["exio_doi"] = "10.5281/zenodo.3583070"
-    meta_path.write_text(json.dumps(meta) + "\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="metadata does not match"):
-        exiobase3.load_exiobase3_region_slice(
-            year=2020,
-            region="AT",
-            system="pxp",
-            cache_region_slice=True,
-            cache_root=cache_root,
-            doi=DEFAULT_EXIOBASE3_DOI,
-        )
+    assert imports.Z.loc["CPA_A", "CPA_A"] == 9.0
+    assert imports.Z.loc["CPA_B", "CPA_B"] == 14.0
+    assert imports.Y.loc["CPA_A", "HFCE"] == 300.0
+    assert total.Z.loc["CPA_A", "CPA_A"] == 10.0
+    assert total.Z.loc["CPA_B", "CPA_B"] == 20.0
+    assert total.Y.loc["CPA_A", "GFCF"] == 4.0
 
 
 def _write_region_integrity_zip(
@@ -213,8 +162,9 @@ def test_region_slice_rejects_blank_output_value(tmp_path: Path) -> None:
     source = tmp_path / "blank_x.zip"
     _write_region_integrity_zip(source, x_b="")
     with pytest.raises(ValueError, match="x.txt contains blank"):
-        exiobase3._load_exio_region_slice_direct_from_zip(
-            year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
+        exiobase3._load_exio_scope_slice_direct_from_zip(
+            year=2020, system="pxp", scope=RegionScope(code="AT", members=("AT",)),
+            source_zip=source, flow="internal"
         )
 
 
@@ -223,8 +173,9 @@ def test_region_slice_rejects_missing_Y_sector_row(tmp_path: Path) -> None:
     source = tmp_path / "missing_y_row.zip"
     _write_region_integrity_zip(source, y_b_row="")
     with pytest.raises(ValueError, match="Y.txt row basis does not match Z.txt"):
-        exiobase3._load_exio_region_slice_direct_from_zip(
-            year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
+        exiobase3._load_exio_scope_slice_direct_from_zip(
+            year=2020, system="pxp", scope=RegionScope(code="AT", members=("AT",)),
+            source_zip=source, flow="internal"
         )
 
 
@@ -233,8 +184,9 @@ def test_region_slice_rejects_nonfinite_selected_Y_value(tmp_path: Path) -> None
     source = tmp_path / "nonfinite_y.zip"
     _write_region_integrity_zip(source, y_b_row="AT\tB\tnan\n")
     with pytest.raises(ValueError, match="Y.txt contains non-finite monetary values"):
-        exiobase3._load_exio_region_slice_direct_from_zip(
-            year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
+        exiobase3._load_exio_scope_slice_direct_from_zip(
+            year=2020, system="pxp", scope=RegionScope(code="AT", members=("AT",)),
+            source_zip=source, flow="internal"
         )
 
 
@@ -372,20 +324,13 @@ def test_checked_in_eu27_scope_mapping_has_expected_membership() -> None:
 
 def test_scope_slice_streams_internal_external_and_total_boundaries(tmp_path: Path) -> None:
     """Protect scope trade boundaries, additive totals, and flow-invariant production x."""
-    from ecolecon_mrio.region_aggregation import MrioSource, RegionScope, load_mrio_scope_slice
+    from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
 
     cache_root = _prepare_scope_cache_root(tmp_path)
-    source = MrioSource(
-        dataset="exiobase",
-        year=2020,
-        version=DEFAULT_EXIOBASE3_DOI,
-        system="pxp",
-        data_root=cache_root,
-    )
     scope = RegionScope(code="AT_DE", members=("AT", "DE"), label="Austria and Germany")
-    internal = load_mrio_scope_slice(source, scope=scope, flow="internal")
-    external = load_mrio_scope_slice(source, scope=scope, flow="external_imports")
-    total = load_mrio_scope_slice(source, scope=scope, flow="total")
+    internal = load_mrio_iot_scope_slice("exiobase", 2020, scope=scope, data_root=cache_root, doi=DEFAULT_EXIOBASE3_DOI, flow="internal")
+    external = load_mrio_iot_scope_slice("exiobase", 2020, scope=scope, data_root=cache_root, doi=DEFAULT_EXIOBASE3_DOI, flow="external_imports")
+    total = load_mrio_iot_scope_slice("exiobase", 2020, scope=scope, data_root=cache_root, doi=DEFAULT_EXIOBASE3_DOI, flow="total")
 
     assert internal.Z.loc["CPA_A", "CPA_A"] == 208.0
     assert external.Z.loc["CPA_A", "CPA_A"] == 404.0
@@ -403,17 +348,14 @@ def test_scope_slice_streams_internal_external_and_total_boundaries(tmp_path: Pa
 
 def test_all_regions_scope_has_zero_external_imports(tmp_path: Path) -> None:
     """An all-source scope has a well-defined zero external-import monetary account."""
-    from ecolecon_mrio.region_aggregation import MrioSource, RegionScope, load_mrio_scope_slice
+    from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
 
     cache_root = _prepare_scope_cache_root(tmp_path)
-    out = load_mrio_scope_slice(
-        MrioSource(
-            dataset="exiobase",
-            year=2020,
-            version=DEFAULT_EXIOBASE3_DOI,
-            system="pxp",
-            data_root=cache_root,
-        ),
+    out = load_mrio_iot_scope_slice(
+        "exiobase",
+        2020,
+        data_root=cache_root,
+        doi=DEFAULT_EXIOBASE3_DOI,
         scope=RegionScope(code="ALL", members=("AT", "DE", "FR")),
         flow="external_imports",
     )
@@ -422,51 +364,120 @@ def test_all_regions_scope_has_zero_external_imports(tmp_path: Path) -> None:
     assert out.x_scope.loc["CPA_A"] == 900.0
 
 
-def test_singleton_scope_matches_existing_region_slice(tmp_path: Path) -> None:
-    """The new scope core must reproduce the existing singleton domestic API exactly."""
-    from ecolecon_mrio.region_aggregation import MrioSource, RegionScope, load_mrio_scope_slice
-
-    cache_root = _prepare_scope_cache_root(tmp_path)
-    legacy = exiobase3.load_exiobase3_region_slice(
-        year=2020,
-        region="AT",
-        system="pxp",
-        flow="domestic",
-        cache_root=cache_root,
-        doi=DEFAULT_EXIOBASE3_DOI,
-    )
-    generic = load_mrio_scope_slice(
-        MrioSource(
-            dataset="exiobase",
-            year=2020,
-            version=DEFAULT_EXIOBASE3_DOI,
-            system="pxp",
-            data_root=cache_root,
-        ),
-        scope=RegionScope(code="AT", members=("AT",)),
-        flow="internal",
-    )
-    pd.testing.assert_frame_equal(legacy.Z_domestic, generic.Z)
-    pd.testing.assert_frame_equal(legacy.Y_region, generic.Y)
-    pd.testing.assert_series_equal(
-        legacy.x_region.rename("x_scope"), generic.x_scope
-    )
-
-
 def test_region_scope_api_is_exported_from_package() -> None:
     """Protect the accepted public geography symbols at the package root."""
     from ecolecon_mrio import (
         MrioScopeSlice,
-        MrioSource,
         RegionAggregationPlan,
         RegionScope,
         compile_region_aggregation,
-        load_mrio_scope_slice,
+        load_mrio_iot_scope_slice,
     )
 
     assert MrioScopeSlice is not None
-    assert MrioSource is not None
     assert RegionAggregationPlan is not None
     assert RegionScope is not None
     assert callable(compile_region_aggregation)
-    assert callable(load_mrio_scope_slice)
+    assert callable(load_mrio_iot_scope_slice)
+
+
+
+def test_scope_slice_rejects_mismatched_destination_member_basis(tmp_path: Path) -> None:
+    source = tmp_path / "bad_destination_basis.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        zf.writestr("x.txt", "region\tsector\tindout\nAT\tA\t1\nAT\tB\t2\nDE\tA\t3\nDE\tB\t4\n")
+        zf.writestr(
+            "Z.txt",
+            "\t\tAT\tAT\tDE\tDE\n\t\tA\tB\tB\tA\n\t\tu\tu\tu\tu\n"
+            "AT\tA\t1\t0\t0\t0\nAT\tB\t0\t1\t0\t0\nDE\tA\t0\t0\t1\t0\nDE\tB\t0\t0\t0\t1\n",
+        )
+        zf.writestr(
+            "Y.txt",
+            "\t\tAT\tDE\n\t\tHFCE\tHFCE\n\t\tu\tu\n"
+            "AT\tA\t0\t0\nAT\tB\t0\t0\nDE\tA\t0\t0\nDE\tB\t0\t0\n",
+        )
+    with pytest.raises(ValueError, match="destination label basis differs"):
+        exiobase3._load_exio_scope_slice_direct_from_zip(
+            year=2020,
+            system="pxp",
+            scope=RegionScope(code="AT_DE", members=("AT", "DE")),
+            source_zip=source,
+            flow="internal",
+        )
+
+
+def test_scope_slice_rejects_malformed_producer_origin_basis(tmp_path: Path) -> None:
+    source = tmp_path / "bad_origin_basis.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        zf.writestr("x.txt", "region\tsector\tindout\nAT\tA\t1\nAT\tB\t2\nDE\tA\t3\nDE\tB\t4\n")
+        zf.writestr(
+            "Z.txt",
+            "\t\tAT\tAT\tDE\tDE\n\t\tA\tB\tA\tB\n\t\tu\tu\tu\tu\n"
+            "AT\tA\t1\t0\t0\t0\nAT\tB\t0\t1\t0\t0\nDE\tB\t0\t0\t0\t1\nDE\tA\t0\t0\t1\t0\n",
+        )
+        zf.writestr(
+            "Y.txt",
+            "\t\tAT\tDE\n\t\tHFCE\tHFCE\n\t\tu\tu\n"
+            "AT\tA\t0\t0\nAT\tB\t0\t0\nDE\tB\t0\t0\nDE\tA\t0\t0\n",
+        )
+    with pytest.raises(ValueError, match="producer sector basis differs"):
+        exiobase3._load_exio_scope_slice_direct_from_zip(
+            year=2020,
+            system="pxp",
+            scope=RegionScope(code="AT", members=("AT",)),
+            source_zip=source,
+            flow="internal",
+        )
+
+
+def test_scope_slice_rejects_extra_x_sector(tmp_path: Path) -> None:
+    source = tmp_path / "extra_x.zip"
+    with zipfile.ZipFile(source, "w") as zf:
+        zf.writestr("x.txt", "region\tsector\tindout\nAT\tA\t1\nAT\tB\t2\nAT\tC\t3\n")
+        zf.writestr(
+            "Z.txt",
+            "\t\tAT\tAT\n\t\tA\tB\n\t\tu\tu\nAT\tA\t1\t0\nAT\tB\t0\t1\n",
+        )
+        zf.writestr(
+            "Y.txt",
+            "\t\tAT\n\t\tHFCE\n\t\tu\nAT\tA\t0\nAT\tB\t0\n",
+        )
+    with pytest.raises(ValueError, match="x.txt sector basis does not exactly match"):
+        exiobase3._load_exio_scope_slice_direct_from_zip(
+            year=2020,
+            system="pxp",
+            scope=RegionScope(code="AT", members=("AT",)),
+            source_zip=source,
+            flow="internal",
+        )
+
+
+def test_scope_loader_forwards_download_policy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    source = tmp_path / "IOT_2020_pxp.zip"
+    _write_tiny_exio_zip(source)
+
+    def fake_ensure(*args, **kwargs):
+        captured.update(kwargs)
+        return source
+
+    monkeypatch.setattr("ecolecon_mrio.data.ensure_exiobase_year_zip", fake_ensure)
+    load_mrio_iot_scope_slice(
+        "exiobase",
+        2020,
+        scope=RegionScope(code="AT", members=("AT",)),
+        flow="internal",
+        data_root=tmp_path,
+        allow_download_missing=False,
+        resume_downloads=False,
+        show_download_progress=False,
+        download_chunk_mb=7,
+        download_timeout_seconds=12.0,
+        download_retries=2,
+    )
+    assert captured["allow_download_missing"] is False
+    assert captured["resume_downloads"] is False
+    assert captured["show_download_progress"] is False
+    assert captured["download_chunk_mb"] == 7
+    assert captured["download_timeout_seconds"] == 12.0
+    assert captured["download_retries"] == 2

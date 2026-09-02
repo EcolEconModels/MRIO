@@ -17,13 +17,13 @@ from ecolecon_mrio.exio_share_split import (
     split_iot_using_exiobase_shares,
     split_iot_using_exiobase_split_profiles,
 )
-from ecolecon_mrio.exiobase3 import ExioRegionSlice
+from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
 from ecolecon_mrio.mapping_csv import resolve_weighted_mapping_frame
 
 
 def _core_fixture(
     tmp_path: Path,
-) -> tuple[pd.DataFrame, pd.DataFrame, ExioRegionSlice, dict[str, list[str]]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, MrioScopeSlice, dict[str, list[str]]]:
     """Build asymmetric parents, donors, and controls that expose axis or edge loss."""
     parents = pd.Index(["A", "CPA_C20", "CPA_C21"])
     z = pd.DataFrame(
@@ -55,17 +55,7 @@ def _core_fixture(
         columns=donors,
     )
     donor_y = pd.DataFrame({"Households": [2.0, 3.0, 5.0]}, index=donors)
-    slice_ = ExioRegionSlice(
-        year=2021,
-        system="pxp",
-        region="AT",
-        flow="domestic",
-        sectors=pd.Index(donors),
-        Z_domestic=donor_z,
-        Y_region=donor_y,
-        x_region=(donor_z.sum(axis=1) + donor_y.sum(axis=1)),
-        source_zip=tmp_path / "donors.zip",
-    )
+    slice_ = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=donor_z, Y=donor_y, x_scope=donor_z.sum(axis=1) + donor_y.sum(axis=1), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'donors.zip')})
     return z, y, slice_, {"CPA_C20": ["p24.d", "p24.g"], "CPA_C21": ["p24.d", "p24.h"]}
 
 
@@ -251,17 +241,7 @@ def test_wp1_rejects_unauthorised_duplicate_mapping_and_missing_donor(
     dom_profiles, _ = build_split_profiles_from_exiobase_domestic_block(
         donor_slice, sector_to_exio_sectors=split_mapping
     )
-    missing_slice = ExioRegionSlice(
-        year=2021,
-        system="pxp",
-        region="AT",
-        flow="imports",
-        sectors=pd.Index(["p24.g", "p24.h"]),
-        Z_domestic=donor_slice.Z_domestic.loc[["p24.g", "p24.h"], ["p24.g", "p24.h"]],
-        Y_region=donor_slice.Y_region.loc[["p24.g", "p24.h"]],
-        x_region=donor_slice.x_region.loc[["p24.g", "p24.h"]],
-        source_zip=tmp_path / "missing.zip",
-    )
+    missing_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=donor_slice.Z_domestic.loc[['p24.g', 'p24.h'], ['p24.g', 'p24.h']], Y=donor_slice.Y_region.loc[['p24.g', 'p24.h']], x_scope=donor_slice.x_region.loc[['p24.g', 'p24.h']], flow='external_imports', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'missing.zip')})
     with pytest.raises(
         ValueError,
         match="missing_exio_code=.*p24.d.*eurostat_parent=.*CPA_C20.*emitted_child=.*p24.d",

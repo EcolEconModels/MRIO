@@ -20,7 +20,7 @@ from ecolecon_mrio.exio_share_split import (
     map_exio_value_per_physical_input,
     emitted_sector_to_exio_members_from_split_profiles,
 )
-from ecolecon_mrio.exiobase3 import ExioRegionSlice, load_exiobase3_region_slice
+from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope, load_mrio_iot_scope_slice
 from ecolecon_mrio.exiobase3_extensions import discover_exiobase3_extensions
 from ecolecon_mrio.eurostat_iot import (
     ParsedEurostatIOT,
@@ -56,6 +56,32 @@ DEFAULT_ELECTRICITY_BY_SOURCE_PATTERNS: tuple[str, ...] = (
     "biomass",
     "geothermal",
 )
+
+
+def _load_exio_scope_slice(
+    *,
+    year: int,
+    region: str,
+    flow: str,
+    data_root: Path,
+    doi: str,
+    force_download: bool,
+    verbose: bool,
+) -> MrioScopeSlice:
+    scope_flow = {"domestic": "internal", "imports": "external_imports", "total": "total"}.get(
+        str(flow), str(flow)
+    )
+    return load_mrio_iot_scope_slice(
+        "exiobase",
+        int(year),
+        scope=RegionScope(code=str(region), members=(str(region),)),
+        exio_system="pxp",
+        flow=scope_flow,
+        data_root=data_root,
+        doi=doi,
+        force_download=force_download,
+        verbose=verbose,
+    )
 
 
 def _vprint(enabled: bool, msg: str) -> None:
@@ -620,12 +646,14 @@ def _build_output_consistency_frame(
     # that destination region's final demand. Do not use x_region here: x_region is
     # producer-side output and is the wrong object for IMP/TOTAL destination-use
     # flow checks.
-    exio_Z = (
-        cast(pd.DataFrame, getattr(exio_slice, "Z_domestic")).copy().astype("float64")
-    )
-    exio_Y = (
-        cast(pd.DataFrame, getattr(exio_slice, "Y_region")).copy().astype("float64")
-    )
+    exio_Z_value = getattr(exio_slice, "Z", None)
+    if exio_Z_value is None:
+        exio_Z_value = getattr(exio_slice, "Z_domestic")
+    exio_Y_value = getattr(exio_slice, "Y", None)
+    if exio_Y_value is None:
+        exio_Y_value = getattr(exio_slice, "Y_region")
+    exio_Z = cast(pd.DataFrame, exio_Z_value).copy().astype("float64")
+    exio_Y = cast(pd.DataFrame, exio_Y_value).copy().astype("float64")
     exio_Z.index = exio_Z.index.astype(str)
     exio_Y.index = exio_Y.index.astype(str)
     exio_out = (
@@ -1261,13 +1289,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         _vprint(args.verbose, "Calling: load_exiobase3_region_slice(...)")
         t = _Timer()
-        exio_slice = load_exiobase3_region_slice(
+        exio_slice = _load_exio_scope_slice(
             year=args.exio_year,
             region=args.exio_region,
-            system="pxp",
             flow="domestic",
-            cache_root=data_root,
+            data_root=data_root,
             doi=args.exio_doi,
+            force_download=False,
             verbose=args.verbose,
         )
         _vprint(
@@ -1278,7 +1306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.dump_exio_sectors_csv is not None:
             out = Path(args.dump_exio_sectors_csv)
             _write_rows_csv(
-                pd.DataFrame({"exio_sector": list(map(str, exio_slice.sectors))}),
+                pd.DataFrame({"exio_sector": list(map(str, exio_slice.Z.index))}),
                 out,
                 verbose=args.verbose,
             )
@@ -1289,7 +1317,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows: list[dict[str, str]] = []
         for agg, pats in sector_patterns.items():
             matched = []
-            for s in map(str, exio_slice.sectors):
+            for s in map(str, exio_slice.Z.index):
                 s_l = s.casefold()
                 if any(p.casefold() in s_l for p in pats):
                     matched.append(s)
@@ -1418,7 +1446,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "from that flow's Eurostat Z + non-export Y reference.",
                 )
 
-            exio_slices: dict[str, ExioRegionSlice] = {}
+            exio_slices: dict[str, MrioScopeSlice] = {}
             for flow in flows:
                 exio_flow = _exio_flow_for_eurostat_flow_value(flow)
                 if exio_flow in exio_slices:
@@ -1428,15 +1456,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Calling: load_exiobase3_region_slice(..., flow={exio_flow})",
                 )
                 t = _Timer()
-                exio_slices[exio_flow] = load_exiobase3_region_slice(
-                    year=args.exio_year,
-                    region=args.exio_region,
-                    system="pxp",
-                    flow=exio_flow,
-                    cache_root=data_root,
-                    doi=args.exio_doi,
-                    verbose=args.verbose,
-                )
+                exio_slices[exio_flow] = _load_exio_scope_slice(
+            year=args.exio_year,
+            region=args.exio_region,
+            flow=exio_flow,
+            data_root=data_root,
+            doi=args.exio_doi,
+            force_download=False,
+            verbose=args.verbose,
+        )
                 _vprint(
                     args.verbose,
                     f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)",
@@ -1722,15 +1750,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     required_target_codes=report_aggregates,
                     label=f"{args.eurostat_stk_flow_dim}=TOTAL diagnostic reference",
                 )
-                total_slice = load_exiobase3_region_slice(
-                    year=args.exio_year,
-                    region=args.exio_region,
-                    system="pxp",
-                    flow="total",
-                    cache_root=data_root,
-                    doi=args.exio_doi,
-                    verbose=args.verbose,
-                )
+                total_slice = _load_exio_scope_slice(
+            year=args.exio_year,
+            region=args.exio_region,
+            flow="total",
+            data_root=data_root,
+            doi=args.exio_doi,
+            force_download=False,
+            verbose=args.verbose,
+        )
                 total_consistency, _, _ = _build_output_consistency_frame(
                     sector_mapping=total_mapping,
                     eurostat_Z=parsed_total.Z,
@@ -1853,15 +1881,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Load the single-flow EXIO slice once. It supplies both donor matrices and,
     # when requested, the actual archive manifest used for extension discovery.
-    exio_slice_single = load_exiobase3_region_slice(
-        year=args.exio_year,
-        region=args.exio_region,
-        system="pxp",
-        flow=exio_flow_single,
-        cache_root=data_root,
-        doi=args.exio_doi,
-        verbose=args.verbose,
-    )
+    exio_slice_single = _load_exio_scope_slice(
+            year=args.exio_year,
+            region=args.exio_region,
+            flow=exio_flow_single,
+            data_root=data_root,
+            doi=args.exio_doi,
+            force_download=False,
+            verbose=args.verbose,
+        )
     if args.environmental_all_extensions:
         if single_has_environmental_extensions:
             environmental_requests = _environmental_extension_requests_from_archive(
@@ -1884,13 +1912,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         eurostat_M=parsed.M if parsed is not None else None,
         exio_year=args.exio_year,
         exio_region=args.exio_region,
-        exio_slice=load_exiobase3_region_slice(
+        exio_slice=_load_exio_scope_slice(
             year=args.exio_year,
             region=args.exio_region,
-            system="pxp",
             flow=exio_flow_single,
-            cache_root=data_root,
+            data_root=data_root,
             doi=args.exio_doi,
+            force_download=False,
             verbose=args.verbose,
         ),
         sector_to_exio_sectors=sector_to_exio_sectors,

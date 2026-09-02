@@ -106,7 +106,7 @@ def test_io_system_calc_system():
 
 def test_primitive_split_result_defers_io_system():
     """Primitive split has no canonical x/A, so it cannot create pymrio state."""
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     # Minimal EXIO slice
@@ -119,16 +119,7 @@ def test_primitive_split_result_defers_io_system():
     Y_region = pd.DataFrame({"FD": [1.0, 2.0]}, index=exio_sectors)
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=None,  # Not needed for this test
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(None)})
 
     # Minimal Eurostat IOT
     euro_sectors = ["A", "C19"]

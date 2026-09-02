@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import gc
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from ecolecon_mrio.data import default_data_root  # noqa: E402
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot, load_eurostat_table_2d  # noqa: E402
-from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice  # noqa: E402
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice  # noqa: E402
 
 
 REGION = "AT"
@@ -27,7 +27,7 @@ BIOFUELS = ("p24.g", "p24.h", "p24.i")
 WHOLESALE = "p51"
 EUROSTAT_C20 = "CPA_C20"
 EUROSTAT_G46 = "CPA_G46"
-FLOWS: tuple[tuple[str, str], ...] = (("domestic", "DOM"), ("imports", "IMP"), ("total", "TOTAL"))
+FLOWS: tuple[tuple[str, str], ...] = (("internal", "DOM"), ("external_imports", "IMP"), ("total", "TOTAL"))
 CENTRAL_FLOW = "total"
 
 OUTDIR = REPO_ROOT / "outputs" / "audits" / "liquid_biofuels_exio_vs_eurostat"
@@ -63,14 +63,14 @@ def safe_ratio(num: float, den: float) -> float:
 
 
 def exio_slice(year: int, flow: str):
-    return load_exiobase3_region_slice(
-        year=year,
-        region=REGION,
-        system="pxp",
+    return load_mrio_iot_scope_slice(
+        "exiobase",
+        year,
+        scope=RegionScope(code=REGION, members=(REGION,)),
+        exio_system="pxp",
         flow=flow,
-        cache_root=default_data_root(),
+        data_root=default_data_root(),
         force_download=False,
-        force_rebuild_slice=False,
     )
 
 
@@ -117,8 +117,8 @@ def audit_exio_z_y(lab: LabelMaps) -> tuple[pd.DataFrame, pd.DataFrame]:
     top_rows: list[dict[str, Any]] = []
 
     for fuel in BIOFUELS:
-        z = pd.to_numeric(sl.Z_domestic.loc[fuel], errors="coerce").fillna(0.0)
-        y = pd.to_numeric(sl.Y_region.loc[fuel], errors="coerce").fillna(0.0)
+        z = pd.to_numeric(sl.Z.loc[fuel], errors="coerce").fillna(0.0)
+        y = pd.to_numeric(sl.Y.loc[fuel], errors="coerce").fillna(0.0)
         z_total = float(z.sum())
         y_total = float(y.sum())
         total = z_total + y_total
@@ -198,7 +198,7 @@ def audit_exio_c20_parent(lab: LabelMaps, c20_products: list[str]) -> pd.DataFra
     rows: list[dict[str, Any]] = []
     for exio_flow, _euro_flow in FLOWS:
         sl = exio_slice(EXIO_YEAR, exio_flow)
-        z = sl.Z_domestic
+        z = sl.Z
         c20_available = [p for p in c20_products if p in z.index]
         exio_c20 = float(z.loc[c20_available, WHOLESALE].sum())
         bio = {fuel: float(z.loc[fuel, WHOLESALE]) for fuel in BIOFUELS}
@@ -252,7 +252,7 @@ def load_eurostat_cell(year: int, flow: str) -> tuple[float, dict[str, str]]:
 def audit_exio_vs_eurostat(parent: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     parent_by_flow = {str(r.exio_flow_scope): r for r in parent.itertuples(index=False)}
-    flow_map = {"domestic": "DOM", "imports": "IMP", "total": "TOTAL"}
+    flow_map = {"internal": "DOM", "external_imports": "IMP", "total": "TOTAL"}
     for year in EUROSTAT_YEARS:
         for exio_flow, euro_flow in flow_map.items():
             euro_value, meta = load_eurostat_cell(year, euro_flow)
@@ -300,7 +300,7 @@ def audit_pxp_ixi(lab: LabelMaps) -> pd.DataFrame:
     ixi_slice = default_data_root() / f"exiobase3_{EXIO_YEAR}" / "slices" / REGION / "ixi"
     sl = exio_slice(EXIO_YEAR, CENTRAL_FLOW)
     for fuel in BIOFUELS:
-        z = pd.to_numeric(sl.Z_domestic.loc[fuel], errors="coerce").fillna(0.0)
+        z = pd.to_numeric(sl.Z.loc[fuel], errors="coerce").fillna(0.0)
         value = float(z.get(WHOLESALE, 0.0))
         rows.append(
             {
@@ -346,8 +346,8 @@ def audit_timeseries(lab: LabelMaps) -> pd.DataFrame:
         if not slice_path.exists():
             continue
         sl = exio_slice(year, CENTRAL_FLOW)
-        z = pd.to_numeric(sl.Z_domestic.loc["p24.g"], errors="coerce").fillna(0.0)
-        y = pd.to_numeric(sl.Y_region.loc["p24.g"], errors="coerce").fillna(0.0)
+        z = pd.to_numeric(sl.Z.loc["p24.g"], errors="coerce").fillna(0.0)
+        y = pd.to_numeric(sl.Y.loc["p24.g"], errors="coerce").fillna(0.0)
         total = float(z.sum() + y.sum())
         rows.append(
             {
@@ -569,6 +569,8 @@ def write_report(
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit liquid-biofuel EXIOBASE/Eurostat allocation diagnostics.")
+    parser.parse_args()
     OUTDIR.mkdir(parents=True, exist_ok=True)
     lab = labels()
     write_settings_report()

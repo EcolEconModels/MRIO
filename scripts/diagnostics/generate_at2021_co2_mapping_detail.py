@@ -151,10 +151,10 @@ def main() -> int:
     export_output = gross_output - domestic_output
 
     exio_energy = exio_ext.extract_quantity_and_price(
-        container=exio_slice.source_zip,
+        container=Path(str(exio_slice.metadata["source_zip"])),
         region=args.region,
-        sectors=list(map(str, exio_slice.sectors)),
-        monetary_output=exio_slice.x_region,
+        sectors=list(map(str, exio_slice.Z.index)),
+        monetary_output=exio_slice.x_scope,
         extensions=("energy",),
         stressor_keywords=("Energy use",),
         cache_dir=repo_root.parent / "MRIO" / "data" / "_ext_cache",
@@ -165,17 +165,17 @@ def main() -> int:
     exio_energy_by_sector = (energy_rows.groupby("exio_sector")["quantity"].sum().astype("float64") / 3.6)
 
     exio_co2 = exio_ext.extract_emissions_and_intensity(
-        container=exio_slice.source_zip,
+        container=Path(str(exio_slice.metadata["source_zip"])),
         region=args.region,
-        sectors=list(map(str, exio_slice.sectors)),
-        monetary_output=exio_slice.x_region,
+        sectors=list(map(str, exio_slice.Z.index)),
+        monetary_output=exio_slice.x_scope,
         extension="air_emissions",
         stressor_keywords=("CO2 - combustion - air",),
         cache_dir=repo_root.parent / "MRIO" / "data" / "_ext_cache",
     )
     exio_co2_by_sector = (exio_co2.groupby("exio_sector")["emission"].sum().astype("float64") / 1000.0)
 
-    output_alloc = concordance.allocate_weighted_values(exio_slice.x_region, mapping_df)
+    output_alloc = concordance.allocate_weighted_values(exio_slice.x_scope, mapping_df)
     energy_alloc = concordance.allocate_weighted_values(exio_energy_by_sector, mapping_df)
     co2_alloc = concordance.allocate_weighted_values(exio_co2_by_sector, mapping_df)
 

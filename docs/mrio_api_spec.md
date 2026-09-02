@@ -15,35 +15,27 @@ belong to providers and must not leak into the generic transformation APIs.
 
 ## Status and compatibility
 
-This document contains both implemented contracts and staged **vNext design**.
-The low-memory geography layer (`MrioSource`, `RegionScope`,
-`RegionAggregationPlan`, `MrioScopeSlice`, `compile_region_aggregation(...)`, and
-`load_mrio_scope_slice(...)`) is implemented. Complete-object
-`aggregate_mrio_regions(...)`, extension aggregation, and split-pipeline donor
-contexts remain proposed until their later source-and-test patches are merged.
+The implemented public source boundaries are deliberately small:
 
-Until an implementation patch changes them with tests, the current public
-contracts remain authoritative. In particular, the existing
-`load_mrio_iot_matrices(...) `, `load_mrio_iot_matrices(...) + explicit derivation helpers`,
-`load_exiobase3_region_slice(...)`, and exported `primitive Z/x/Y result dictionary` shape must be
-preserved. Region aggregation is introduced additively; any later deprecation or
-breaking result-object migration requires separate review.
+- `load_mrio(...)` for practical full `pymrio.IOSystem` providers;
+- `load_mrio_iot_matrices(...)` for selected primitive square-IOT accounts `Z`, `x`, and `Y`;
+- explicit `derive_A_from_Z_and_x(...)` and `derive_nonexport_final_demand_from_Y(...)`;
+- `compile_region_aggregation(...)` for validated many-to-one region membership; and
+- `load_mrio_iot_scope_slice(...)` for low-memory destination-scope use blocks.
 
-## Source model
+The earlier `MrioMatrixResult`, tuple wrappers, `MrioSource`, EXIO singleton/plural
+region-slice loaders, and derived slice pickle cache are deleted rather than kept as
+compatibility aliases. `aggregate_mrio_regions(...)` and environmental extension
+aggregation remain WP2+ work and must build on the primitive extensive accounts.
 
-~~~python
-@dataclass(frozen=True)
-class MrioSource:
-    dataset: str
-    year: int
-    version: str | None = None
-    system: str | None = None
-    data_root: Path | None = None
-~~~
+## Source selection
 
-Provider interpretations include EXIOBASE 3 DOI releases, WIOD releases, and OECD
-ICIO releases. The generic layer passes `version` through; the provider decides
-whether it is a DOI, release tag, bundle version, or local-source identifier.
+Source selection is expressed directly on the loader call: dataset, year and the
+provider-specific source controls required to locate an authoritative release.
+The public transformation functions do not carry a second `MrioSource` descriptor.
+EXIOBASE interprets `doi` as its source version and `exio_system` as `pxp`/`ixi`;
+other providers may use their own full-object adapters under the same primitive
+`Z`/`x`/`Y` result contract.
 
 ## Target geography selection is not donor aggregation
 
@@ -130,97 +122,58 @@ supplied explicitly.
 ### Full MRIO object
 
 ~~~python
-load_mrio(...)
+mrio = load_mrio(dataset="wiod16", year=2014, ...)
 ~~~
 
-This loads a full MRIO object only when explicitly requested and practical. An
-EXIOBASE full-object load must not be silently invoked by scope-slice or sparse
-matrix workflows.
+`load_mrio(...)` returns one full `pymrio.IOSystem` for providers where that is
+practical. Full EXIOBASE loading remains deliberately disabled; EXIOBASE analysis
+uses the source-ZIP primitive loader below.
 
-### Backward-compatible sparse matrix tuple
+### Primitive square-IOT accounts
 
 ~~~python
-load_mrio_iot_matrices(...)  -> tuple[Z, x, Y, basis_index, metadata]
+matrices, basis_index, metadata = load_mrio_iot_matrices(
+    "exiobase",
+    2022,
+    matrices=("Z", "x", "Y"),
+    ...,
+)
 ~~~
 
-This compatibility API retains sparse `A`, `x`, summed `y`, basis index, and
-metadata. For EXIOBASE it remains ZIP-streaming and writes no derived matrix cache
-by default.
+`matrices` is a dictionary containing exactly the requested primitive source
+accounts. Allowed requests are `"Z"`, `"x"`, and `"Y"`. The loader does not expose
+`A` or summed `y` as source selectors. For EXIOBASE, unrequested ZIP members are
+not read.
 
-### Matrix result object
-
-The currently implemented structured result remains:
+Derived objects are explicit:
 
 ~~~python
-@dataclass(frozen=True)
-class primitive Z/x/Y result dictionary:
-    year: int
-    dataset: str
-    system: str
-    source_zip: Path
-    A: csr_matrix | None
-    Z: csr_matrix | None
-    x: pd.Series
-    y: pd.Series | pd.DataFrame | None
-    basis_index: pd.MultiIndex
-    metadata: dict[str, Any]
+A = derive_A_from_Z_and_x(
+    matrices["Z"], matrices["x"], basis_index=basis_index
+)
+y_nonexport = derive_nonexport_final_demand_from_Y(matrices["Y"])
 ~~~
 
-`load_mrio_iot_matrices(...) + explicit derivation helpers` uses this object today. Matrix selection accepts
-`"A"`, `"Z"`, `"both"`, or `"none"`; final-demand selection accepts
-`"summed"`, `"matrix"`, or `"none"`. Matrix-shaped final demand is carried
-by the existing `y` field.
-
-The vNext region-aggregation implementation may add extension results only in a
-backward-compatible way, for example by appending an optional field rather than
-renaming `basis_index`, deleting provenance fields, changing `x` optionality, or
-introducing a second competing result dataclass:
-
-~~~python
-@dataclass(frozen=True)
-class MrioExtensionResult:
-    F: pd.DataFrame | None
-    F_Y: pd.DataFrame | None
-    unit: pd.DataFrame | None
-
-# Proposed additive extension to the existing primitive Z/x/Y result dictionary:
-extensions: Mapping[str, MrioExtensionResult] | None = None
-~~~
+`derive_A_from_Z_and_x` uses the column-output convention `A_ij = Z_ij / x_j`,
+requires exact basis alignment, maps zero-output columns to zero coefficients, and
+does not mutate caller-owned `Z` by default. The non-export final-demand helper is
+a model boundary, not a source account; callers that need all final demand can use
+`Y.sum(axis=1)` explicitly.
 
 ### Geography aggregation
 
-`compile_region_aggregation(...)` and its scope/plan dataclasses are implemented
-in the low-memory geography layer. `aggregate_mrio_regions(...)` remains the
-proposed complete-object operation for the next work package.
+`compile_region_aggregation(...)` is implemented. Complete-object
+`aggregate_mrio_regions(...)` is a WP2 operation and must aggregate extensive
+accounts first:
 
-~~~python
-def compile_region_aggregation(
-    *,
-    source_regions: Sequence[str],
-    mapping: Path | pd.DataFrame,
-    scopes: Sequence[str] | None = None,
-    include_complement: bool = False,
-    complement_code: str = "RoW",
-) -> RegionAggregationPlan:
-    """Validate many-to-one aggregation for one or more disjoint scopes."""
+$$
+Z^R = R Z R^\mathsf{T},\qquad x^R = R x,\qquad Y^R = RYH^\mathsf{T}.
+$$
 
-def aggregate_mrio_regions(
-    result: primitive Z/x/Y result dictionary,
-    plan: RegionAggregationPlan,
-) -> primitive Z/x/Y result dictionary:
-    """Aggregate extensive core and extension accounts; then recalculate coefficients."""
-~~~
-
-This is the proposed complete-object/sparse-matrix API. Sector aggregation is
-neither required nor implied. When multiple scopes are requested in one plan,
-they must be disjoint because each source region has exactly one `source_to_scope`
-assignment. If `include_complement=True`, the complement is an additional scope in
-the returned plan rather than a second return value.
+Only after those operations may coefficients be derived from `Z^R` and `x^R`.
+An `A`-only object is not a valid input to geographic aggregation.
 
 ### Low-memory destination-scope slice
-
-This API is implemented for EXIOBASE through direct source-ZIP streaming and does
-not write a derived scope cache.
 
 ~~~python
 @dataclass(frozen=True)
@@ -230,29 +183,26 @@ class MrioScopeSlice:
     Y: pd.DataFrame
     x_scope: pd.Series
     flow: Literal["internal", "external_imports", "total"]
-    metadata: dict[str, Any]
+    metadata: dict[str, object]
 
-def load_mrio_scope_slice(
-    source: MrioSource,
-    *,
-    scope: RegionScope,
-    flow: Literal["internal", "external_imports", "total"],
-) -> MrioScopeSlice:
-    """Stream a destination-scope use block without loading the full MRIO."""
+slice_ = load_mrio_iot_scope_slice(
+    "exiobase",
+    2022,
+    scope=RegionScope(code="AT", members=("AT",)),
+    flow="internal",
+    ...,
+)
 ~~~
 
-`x_scope` is production output of members of the scope and therefore does not
-change with the requested destination-use flow. Flow-specific import-use
-denominators are separate named accounts; they must not be stored as `x_scope`.
+This is a low-memory destination-use boundary, not a second full-IOT loader.
+`Z` and `Y` contain use by destinations in the scope; origin rows are selected by
+the requested boundary. `x_scope` is production of scope members and therefore is
+identical across `internal`, `external_imports`, and `total` requests. A caller
+must not combine an external-import `Z` with `x_scope` to derive `A`.
 
-The existing EXIO singleton API remains as a wrapper:
-
-~~~python
-load_exiobase3_region_slice(region="AT", flow="domestic")
-~~~
-
-For a singleton, `domestic` aliases `internal` and `imports` aliases
-`external_imports`. New generic code uses the boundary-neutral names.
+The EXIO-specific scope streaming function is a private provider implementation.
+There are no public singleton-country or plural EXIO slice wrappers and no derived
+slice pickle cache; the DOI-checked source ZIP remains the reproducibility cache.
 
 ## Scope-flow accounting
 

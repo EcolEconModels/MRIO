@@ -28,17 +28,6 @@ _FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off"})
 
 
 @dataclass(frozen=True)
-class MrioSource:
-    """Provider-neutral source request for generic MRIO operations."""
-
-    dataset: str
-    year: int
-    version: str | None = None
-    system: str | None = None
-    data_root: Path | None = None
-
-
-@dataclass(frozen=True)
 class RegionScope:
     """One unweighted many-source-regions-to-one-scope definition."""
 
@@ -58,7 +47,14 @@ class RegionAggregationPlan:
 
 @dataclass(frozen=True)
 class MrioScopeSlice:
-    """Low-memory destination-scope monetary use block and scope production output."""
+    """Low-memory destination-use slice on one consolidated region scope.
+
+    ``Z`` and ``Y`` are extensive use flows into ``scope`` for the requested
+    boundary. ``x_scope`` is production output of scope members and is therefore
+    invariant across ``internal``, ``external_imports`` and ``total`` requests.
+    A scope slice is not, in general, a balanced standalone IOT; in particular,
+    callers must not derive technical coefficients from an external-import slice.
+    """
 
     scope: RegionScope
     Z: pd.DataFrame
@@ -66,6 +62,42 @@ class MrioScopeSlice:
     x_scope: pd.Series
     flow: ScopeFlow
     metadata: dict[str, object]
+
+    @property
+    def sectors(self) -> pd.Index:
+        return self.Z.index
+
+    @property
+    def system(self) -> str:
+        return str(self.metadata.get("system", self.metadata.get("exio_system", "pxp")))
+
+    @property
+    def Z_domestic(self) -> pd.DataFrame:
+        return self.Z
+
+    @property
+    def Y_region(self) -> pd.DataFrame:
+        return self.Y
+
+    @property
+    def x_region(self) -> pd.Series:
+        return self.x_scope
+
+    def __post_init__(self) -> None:
+        if self.flow not in {"internal", "external_imports", "total"}:
+            raise ValueError(f"Unsupported scope flow {self.flow!r}.")
+        z_rows = pd.Index(self.Z.index.astype(str), name="sector")
+        z_cols = pd.Index(self.Z.columns.astype(str))
+        y_rows = pd.Index(self.Y.index.astype(str), name="sector")
+        x_rows = pd.Index(self.x_scope.index.astype(str), name="sector")
+        if not z_rows.is_unique or not z_cols.is_unique or not y_rows.is_unique or not x_rows.is_unique:
+            raise ValueError("MRIO scope-slice sector axes must be unique.")
+        if not z_rows.equals(pd.Index(z_cols, name="sector")):
+            raise ValueError("MRIO scope-slice Z must be square on one ordered sector basis.")
+        if not y_rows.equals(z_rows):
+            raise ValueError("MRIO scope-slice Y rows must exactly match the Z sector basis.")
+        if not x_rows.equals(z_rows):
+            raise ValueError("MRIO scope-slice production output must exactly match the Z sector basis.")
 
 
 def _parse_enabled(value: object) -> bool:
@@ -253,31 +285,56 @@ def compile_region_aggregation(
     )
 
 
-def load_mrio_scope_slice(
-    source: MrioSource,
+def load_mrio_iot_scope_slice(
+    dataset: str,
+    year: int,
     *,
     scope: RegionScope,
     flow: ScopeFlow,
+    data_root: str | Path | None = None,
+    exio_system: str = "pxp",
+    doi: str | None = None,
+    force_download: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    verbose: bool = False,
 ) -> MrioScopeSlice:
-    """Stream a destination-scope use block through the selected MRIO provider."""
+    """Stream one destination-scope IOT use block through the selected provider.
+
+    This is the low-memory counterpart to ``load_mrio_iot_matrices``. It returns
+    extensive ``Z``/``Y`` use accounts plus scope-member production ``x_scope``;
+    it never derives ``A`` or environmental intensities.
+    """
 
     _validate_scope(scope)
-    dataset = str(source.dataset).strip().lower()
-    if dataset not in {"exiobase", "exiobase3"}:
-        raise NotImplementedError(
-            "load_mrio_scope_slice currently supports only dataset='exiobase'."
-        )
+    dataset_norm = str(dataset).strip().lower()
     if flow not in {"internal", "external_imports", "total"}:
         raise ValueError("flow must be one of: internal, external_imports, total")
+    if dataset_norm not in {"exiobase", "exiobase3"}:
+        raise NotImplementedError(
+            "load_mrio_iot_scope_slice currently supports only dataset='exiobase'."
+        )
 
     from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
-    from ecolecon_mrio.exiobase3 import load_exiobase3_scope_slice
+    from ecolecon_mrio.exiobase3 import _load_exiobase3_iot_scope_slice
 
-    return load_exiobase3_scope_slice(
-        year=int(source.year),
+    return _load_exiobase3_iot_scope_slice(
+        year=int(year),
         scope=scope,
-        system=str(source.system or "pxp"),
+        system=str(exio_system),
         flow=flow,
-        cache_root=source.data_root,
-        doi=str(source.version or DEFAULT_EXIOBASE3_DOI),
+        data_root=data_root,
+        doi=str(doi or DEFAULT_EXIOBASE3_DOI),
+        force_download=bool(force_download),
+        allow_download_missing=bool(allow_download_missing),
+        resume_downloads=bool(resume_downloads),
+        show_download_progress=bool(show_download_progress),
+        download_chunk_mb=int(download_chunk_mb),
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=int(download_retries),
+        verbose=bool(verbose),
     )

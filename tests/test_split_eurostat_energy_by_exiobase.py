@@ -167,7 +167,7 @@ def _write_member(zf: zipfile.ZipFile, name: str, text: str) -> None:
 
 
 def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = [
@@ -213,16 +213,7 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
             ),
         )
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=zp,
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(zp)})
 
     euro_sectors = ["A", "C19", "D35"]
     euro_sectors_index = pd.Index(euro_sectors)
@@ -259,7 +250,7 @@ def test_split_eurostat_energy_sectors_extract_quantity_and_price(tmp_path):
 
 
 def test_write_energy_split_report_xlsx(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import (
         split_iot_using_exiobase_split_profiles,
         write_energy_split_report_xlsx,
@@ -297,16 +288,7 @@ def test_write_energy_split_report_xlsx(tmp_path):
             ),
         )
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=zp,
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(zp)})
 
     euro_sectors = ["A", "C19", "D35"]
     euro_sectors_index = pd.Index(euro_sectors)
@@ -342,7 +324,7 @@ def test_write_energy_split_report_xlsx(tmp_path):
 
 
 def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = [
@@ -363,16 +345,7 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
     Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=exio_sectors_index)
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
 
     euro_sectors = ["CPA_D", "A"]
     euro_sectors_index = pd.Index(euro_sectors)
@@ -405,7 +378,7 @@ def test_split_with_grouped_mapping_collapses_electricity_sources(tmp_path):
 
 
 def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2", "b1", "b2"]
@@ -426,16 +399,7 @@ def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
 
     euro_Z = pd.DataFrame(
         [[0.0, 200.0], [0.0, 0.0]], index=pd.Index(["A", "B"]), columns=pd.Index(["A", "B"])
@@ -458,7 +422,7 @@ def test_donor_split_preserves_nonseparable_cross_block(tmp_path):
 
 
 def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["u", "v", "a1", "a2"]
@@ -479,16 +443,7 @@ def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
 
     euro_Z = pd.DataFrame(
         [[0.0, 0.0, 100.0], [0.0, 0.0, 100.0], [0.0, 0.0, 0.0]],
@@ -513,7 +468,7 @@ def test_donor_split_uses_mapping_for_unchanged_to_split_block(tmp_path):
 
 
 def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
@@ -530,16 +485,7 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
 
     euro_Z = pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"]))
     euro_Y = pd.DataFrame({"P3": [100.0], "P6": [100.0]}, index=pd.Index(["A"]))
@@ -565,7 +511,7 @@ def test_donor_split_uses_category_specific_final_demand_shares(tmp_path):
 
 
 def test_import_donor_uses_documented_import_use_proxy(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block, split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
@@ -576,17 +522,7 @@ def test_import_donor_uses_documented_import_use_proxy(tmp_path):
     Y_region = pd.DataFrame(
         {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors_index
     )
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=Z_domestic.sum(axis=1) + Y_region.sum(axis=1),
-        source_zip=tmp_path / "not-needed.zip",
-        flow="imports",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=Z_domestic.sum(axis=1) + Y_region.sum(axis=1), flow='external_imports', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'not-needed.zip')})
     dom_profiles, _ = build_split_profiles_from_exiobase_domestic_block(
         exio_slice, sector_to_exio_sectors={"A": exio_sectors}
     )
@@ -603,20 +539,11 @@ def test_import_donor_uses_documented_import_use_proxy(tmp_path):
 
 
 def test_domestic_export_donor_converts_exio_labels_to_codes(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     sectors = pd.Index(["p23.20.a", "p23.20.m"])
-    exio_slice = ExioRegionSlice(
-        year=2021,
-        system="pxp",
-        region="AT",
-        sectors=sectors,
-        Z_domestic=pd.DataFrame(np.eye(2), index=sectors, columns=sectors),
-        Y_region=pd.DataFrame({"Households": [1.0, 1.0]}, index=sectors),
-        x_region=pd.Series([2.0, 2.0], index=sectors),
-        source_zip=tmp_path / "IOT_2021_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=pd.DataFrame(np.eye(2), index=sectors, columns=sectors), Y=pd.DataFrame({'Households': [1.0, 1.0]}, index=sectors), x_scope=pd.Series([2.0, 2.0], index=sectors), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2021_pxp.zip')})
 
     result = split_iot_using_exiobase_split_profiles(
         eurostat_Z=pd.DataFrame([[0.0]], index=pd.Index(["CPA_C19"]), columns=pd.Index(["CPA_C19"])),
@@ -634,7 +561,7 @@ def test_domestic_export_donor_converts_exio_labels_to_codes(tmp_path):
 
 
 def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["a1", "a2"]
@@ -645,16 +572,7 @@ def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
     Y_region = pd.DataFrame(
         {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors_index
     )
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=Y_region.sum(axis=1),
-        source_zip=tmp_path / "not-needed.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=Y_region.sum(axis=1), flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'not-needed.zip')})
 
     def zero_export_loader(*, source_zip, region):
         return pd.Series([0.0, 0.0], index=exio_sectors, dtype="float64")
@@ -676,7 +594,7 @@ def test_zero_export_donor_uses_explicit_final_demand_fallback(tmp_path):
 
 
 def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
     from ecolecon_mrio.iot_flow_semantics import flow_use_total
 
@@ -696,16 +614,7 @@ def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path)
         index=exio_sectors_index,
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
     euro_Z = pd.DataFrame(
         [[100.0, 20.0], [30.0, 40.0]],
         index=pd.Index(["CPA_C20", "CPA_C21"]),
@@ -752,7 +661,7 @@ def test_edge_aware_split_emits_source_target_child_and_preserves_mass(tmp_path)
 
 
 def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["p24.d", "p24.g"]
@@ -765,16 +674,7 @@ def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
         index=exio_sectors_index,
     )
     x_region = Y_region.sum(axis=1).astype("float64")
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
     euro_Z = pd.DataFrame([[0.0]], index=pd.Index(["CPA_C20"]), columns=pd.Index(["CPA_C20"]))
     euro_Y = pd.DataFrame({"P3": [100.0]}, index=pd.Index(["CPA_C20"]))
 
@@ -796,7 +696,7 @@ def test_edge_aware_final_demand_shares_use_edge_weights(tmp_path):
 
 
 def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     exio_sectors = ["p24.d", "p24.g"]
@@ -810,16 +710,7 @@ def test_supplementary_rows_split_columnwise_with_edge_aware_input_shares(tmp_pa
         {"Final consumption expenditure by households": [1.0, 1.0]}, index=exio_sectors_index
     )
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
     euro_Z = pd.DataFrame([[0.0]], index=pd.Index(["CPA_C20"]), columns=pd.Index(["CPA_C20"]))
     euro_Y = pd.DataFrame({"P3": [1.0]}, index=pd.Index(["CPA_C20"]))
     euro_V = pd.DataFrame(
@@ -1047,7 +938,7 @@ def test_environmental_extension_request_parser_accepts_list_and_mapping() -> No
 
 def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
     """Selected extensions retain F_Y and project only production F to sectors."""
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     source = tmp_path / "IOT_2021_pxp.zip"
@@ -1106,17 +997,7 @@ def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
         [[1.0]], index=pd.Index(["S1"]), columns=pd.Index(["S1"])
     )
     exio_Y = pd.DataFrame({"P3": [4.0]}, index=pd.Index(["S1"]))
-    exio_slice = ExioRegionSlice(
-        year=2021,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(["S1"]),
-        Z_domestic=exio_Z,
-        Y_region=exio_Y,
-        x_region=pd.Series({"S1": 5.0}, dtype="float64"),
-        source_zip=source,
-        flow="domestic",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=exio_Z, Y=exio_Y, x_scope=pd.Series({'S1': 5.0}, dtype='float64'), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(source)})
     euro_Z = pd.DataFrame(
         [[2.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])
     )
@@ -1319,7 +1200,7 @@ def test_archive_driven_environmental_selection_rejects_partial_extension(
 
 def test_selected_environmental_extension_requires_F_Y(tmp_path) -> None:
     """Every selected extension must provide direct-final-demand F_Y as well as F."""
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     source = tmp_path / "missing_fy.zip"
@@ -1337,13 +1218,7 @@ def test_selected_environmental_extension_requires_F_Y(tmp_path) -> None:
             "\t\tAT\n\t\tP3\n\t\tM.EUR\nAT\tS1\t5\n",
         )
 
-    exio_slice = ExioRegionSlice(
-        year=2021, system="pxp", region="AT", sectors=pd.Index(["S1"]),
-        Z_domestic=pd.DataFrame([[1.0]], index=["S1"], columns=["S1"]),
-        Y_region=pd.DataFrame({"P3": [5.0]}, index=["S1"]),
-        x_region=pd.Series({"S1": 6.0}, dtype="float64"),
-        source_zip=source, flow="domestic",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=pd.DataFrame([[1.0]], index=['S1'], columns=['S1']), Y=pd.DataFrame({'P3': [5.0]}, index=['S1']), x_scope=pd.Series({'S1': 6.0}, dtype='float64'), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(source)})
     with pytest.raises(ValueError, match="kind='F_Y'"):
         split_iot_using_exiobase_split_profiles(
             eurostat_Z=pd.DataFrame([[1.0]], index=["A"], columns=["A"]),

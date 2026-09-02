@@ -130,9 +130,13 @@ def build_eurostat_product_use_reference(
 
 
 def load_exio_slice(repo_root: Path, *, region: str, year: int, flow_name: str):
-    exio_mod = import_repo_module(repo_root, "ecolecon_mrio.exiobase3")
+    region_mod = import_repo_module(repo_root, "ecolecon_mrio.region_aggregation")
     data_mod = import_repo_module(repo_root, "ecolecon_mrio.data")
-    return exio_mod.load_exiobase3_region_slice(
+    scope_flow = {"domestic": "internal", "imports": "external_imports", "total": "total"}.get(
+        str(flow_name), str(flow_name)
+    )
+    return region_mod.load_mrio_iot_scope_slice(
+        "exiobase",
         year=year,
         region=region,
         system="pxp",

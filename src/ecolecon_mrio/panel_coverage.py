@@ -106,6 +106,7 @@ def _coverage_load_mrio(dataset: str, year: int, **kwargs):
             metadata=dict(metadata),
         )
         return mrio, mrio.y
+    kwargs.pop("delete_source_zip_after_parse", None)
     mrio = load_mrio(dataset=dataset, year=int(year), **kwargs)
     return mrio, derive_nonexport_final_demand_from_Y(pd.DataFrame(mrio.Y))
 

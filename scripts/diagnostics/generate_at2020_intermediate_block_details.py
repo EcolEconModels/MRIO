@@ -541,7 +541,7 @@ def generate_flow_outputs(
     order_lookup = eurostat_order_map(target_index)
 
     exio_slice = load_exio_slice(repo_root, region=region, year=year, flow_name=exio_flow)
-    exio_z = exio_slice.Z_domestic.copy().astype("float64")
+    exio_z = exio_slice.Z.copy().astype("float64")
     exio_z.index = exio_z.index.astype(str)
     exio_z.columns = exio_z.columns.astype(str)
 

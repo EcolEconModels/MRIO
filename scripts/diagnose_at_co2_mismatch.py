@@ -23,7 +23,7 @@ from ecolecon_mrio.eurostat_energy_balances import (
 )
 from ecolecon_mrio.eurostat_air_emissions import load_eurostat_air_emissions_by_nace
 from ecolecon_mrio.eurostat_iot import load_eurostat_iot
-from ecolecon_mrio.exiobase3 import load_exiobase3_region_slice
+from ecolecon_mrio.region_aggregation import RegionScope, load_mrio_iot_scope_slice
 from ecolecon_mrio.exiobase3_extensions import extract_emissions_and_intensity, extract_quantity_and_price
 from ecolecon_mrio.mapping_csv import load_category_mapping_frame, load_weighted_mapping_frame
 
@@ -50,26 +50,28 @@ def _load_eurostat_outputs(*, geo: str, year: int, storage_folder: Path) -> pd.S
 
 
 def _load_exio_outputs(*, region: str, year: int, data_root: Path) -> pd.Series:
-    exio_slice = load_exiobase3_region_slice(
-        year=year,
-        region=region,
-        system="pxp",
+    exio_slice = load_mrio_iot_scope_slice(
+        "exiobase",
+        year,
+        scope=RegionScope(code=str(region), members=(str(region),)),
+        exio_system="pxp",
         flow="total",
-        cache_root=data_root,
+        data_root=data_root,
     )
-    x = exio_slice.x_region.astype("float64")
+    x = exio_slice.x_scope.astype("float64")
     x.index = x.index.astype(str)
     x.name = "exio_output"
     return x
 
 
 def _load_exio_slice(*, region: str, year: int, data_root: Path):
-    return load_exiobase3_region_slice(
-        year=year,
-        region=region,
-        system="pxp",
+    return load_mrio_iot_scope_slice(
+        "exiobase",
+        year,
+        scope=RegionScope(code=str(region), members=(str(region),)),
+        exio_system="pxp",
         flow="total",
-        cache_root=data_root,
+        data_root=data_root,
     )
 
 
@@ -192,10 +194,10 @@ def _run_energy_diagnostics(
 
     exio_slice = _load_exio_slice(region=region, year=exio_year, data_root=data_root)
     exio_qp = extract_quantity_and_price(
-        container=exio_slice.source_zip,
+        container=Path(str(exio_slice.metadata["source_zip"])),
         region=region,
-        sectors=list(map(str, exio_slice.sectors)),
-        monetary_output=exio_slice.x_region,
+        sectors=list(map(str, exio_slice.Z.index)),
+        monetary_output=exio_slice.x_scope,
         extensions=("energy",),
         stressor_keywords=("Energy use",),
         cache_dir=data_root / "_ext_cache",
@@ -299,10 +301,10 @@ def _run_co2_diagnostics(
 
     exio_slice = _load_exio_slice(region=region, year=exio_year, data_root=data_root)
     exio_emissions = extract_emissions_and_intensity(
-        container=exio_slice.source_zip,
+        container=Path(str(exio_slice.metadata["source_zip"])),
         region=region,
-        sectors=list(map(str, exio_slice.sectors)),
-        monetary_output=exio_slice.x_region,
+        sectors=list(map(str, exio_slice.Z.index)),
+        monetary_output=exio_slice.x_scope,
         extension="air_emissions",
         stressor_keywords=("CO2 - combustion - air",),
         cache_dir=data_root / "_ext_cache",

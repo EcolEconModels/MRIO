@@ -263,7 +263,7 @@ def test_load_eurostat_series_1d_ignores_derived_parsed_cache(tmp_path, monkeypa
 
 
 def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import (
         build_projection_matrix_for_split_profiles,
         project_exio_donor_blocks_for_split_profiles,
@@ -281,17 +281,7 @@ def test_projection_matrix_matches_explicit_pzp_and_py_toy(tmp_path):
         columns=pd.Index(["P3"], name="final_demand"),
     )
     exio_x = exio_Z.sum(axis=1) + exio_Y.sum(axis=1)
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(["S", "A"], name="sector"),
-        Z_domestic=exio_Z,
-        Y_region=exio_Y,
-        x_region=exio_x,
-        source_zip=tmp_path / "dummy.zip",
-        flow="domestic",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=exio_Z, Y=exio_Y, x_scope=exio_x, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'dummy.zip')})
 
     eurostat_Z = pd.DataFrame(
         [[100.0, 80.0], [60.0, 40.0]],

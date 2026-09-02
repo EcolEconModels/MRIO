@@ -52,3 +52,15 @@ def test_obsolete_matrix_requests_are_rejected() -> None:
         data._normalize_iot_matrix_requests(("A",))
     with pytest.raises(ValueError, match="allowed"):
         data._normalize_iot_matrix_requests(("y",))
+
+
+
+def test_derive_A_default_does_not_mutate_Z() -> None:
+    basis = pd.MultiIndex.from_tuples([("AT", "a"), ("AT", "b")], names=["region", "sector"])
+    Z = csr_matrix([[1.0, 2.0], [3.0, 4.0]])
+    before = Z.copy()
+    x = pd.Series([10.0, 20.0], index=basis, name="x")
+    _ = data.derive_A_from_Z_and_x(Z, x, basis_index=basis)
+    np.testing.assert_array_equal(Z.indptr, before.indptr)
+    np.testing.assert_array_equal(Z.indices, before.indices)
+    np.testing.assert_allclose(Z.data, before.data)

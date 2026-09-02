@@ -7,13 +7,16 @@ from typing import Callable, Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
+from ecolecon_mrio.region_aggregation import (
+    MrioScopeSlice,
+    RegionScope,
+    load_mrio_iot_scope_slice,
+)
 
 from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exiobase3 import (
-    ExioRegionSlice,
     _code_index,
     _exio_label_to_code_lookup,
-    load_exiobase3_region_slice,
     read_exiobase3_destination_final_demand_totals,
     read_exiobase3_region_export_vector,
 )
@@ -28,6 +31,23 @@ from ecolecon_mrio.iot_flow_semantics import (
     rounded_source_control_diagnostic,
     source_atomic_final_demand,
 )
+
+
+def _scope_slice_single_region(exio_slice: MrioScopeSlice) -> str:
+    members = tuple(map(str, exio_slice.scope.members))
+    if len(members) != 1:
+        raise ValueError(
+            "Sector-splitting donor extensions currently require a singleton source scope; "
+            f"got scope={exio_slice.scope.code!r}, members={members!r}."
+        )
+    return members[0]
+
+
+def _scope_slice_source_zip(exio_slice: MrioScopeSlice) -> Path:
+    raw = exio_slice.metadata.get("source_zip")
+    if raw is None or not str(raw).strip():
+        raise ValueError("EXIOBASE scope slice metadata is missing source_zip provenance.")
+    return Path(str(raw))
 
 
 @dataclass(frozen=True)
@@ -208,12 +228,13 @@ def _production_column_share(
     weights = candidate.where(output > tolerance, 0.0)
     mass = float(weights.sum())
     if source_column_total != 0.0 and (not np.isfinite(mass) or mass <= 0.0):
+        flow_label = "imports" if flow == "external_imports" else flow
         raise ValueError(
             "No active domestic production child for nonzero source production column: "
-            f"parent={parent!r}, children={children.astype(str).tolist()!r}, "
+            f"parent={parent!r}, source column total={source_column_total!r}, "
+            f"flow={flow_label!r}, children={children.astype(str).tolist()!r}, "
             f"DOM output shares={output.to_dict()!r}, "
-            f"candidate column shares={candidate.to_dict()!r}, "
-            f"source column total={source_column_total!r}, flow={flow!r}."
+            f"candidate column shares={candidate.to_dict()!r}."
         )
     if not np.isfinite(mass) or mass <= 0.0:
         return pd.Series(0.0, index=children, dtype="float64")
@@ -810,13 +831,13 @@ def _validate_emitted_children(
 
 def _validate_projection_donor_domain(
     *,
-    exio_slice: ExioRegionSlice,
+    exio_slice: MrioScopeSlice,
     sectors_old: Sequence[str],
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
 ) -> None:
     """Fail before projection if any emitted-table donor would otherwise be filled with zero."""
-    available = set(map(str, exio_slice.sectors))
+    available = set(map(str, exio_slice.Z.index))
     required: list[tuple[str, str, str, str]] = []
     for parent, profile in split_profiles.items():
         for child, members in (profile.subsector_to_exio_sectors or {}).items():
@@ -1067,7 +1088,7 @@ def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
 
 def _project_export_donor_for_split(
     *,
-    exio_slice: ExioRegionSlice,
+    exio_slice: MrioScopeSlice,
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     emitted_labels: Sequence[str],
@@ -1085,20 +1106,20 @@ def _project_export_donor_for_split(
     P = build_projection_matrix_for_split_profiles(
         split_profiles=split_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
-        raw_exio_sectors=list(map(str, exio_slice.sectors)),
+        raw_exio_sectors=list(map(str, exio_slice.Z.index)),
         emitted_labels=emitted_labels,
     )
-    if exio_slice.flow == "domestic":
+    if exio_slice.flow == "internal":
         raw = export_vector_loader(
-            source_zip=exio_slice.source_zip,
-            region=exio_slice.region,
+            source_zip=_scope_slice_source_zip(exio_slice),
+            region=_scope_slice_single_region(exio_slice),
         )
         method = "exio_origin_export_share"
-    elif exio_slice.flow == "imports":
+    elif exio_slice.flow == "external_imports":
         raw = (
-            exio_slice.Z_domestic.sum(axis=1)
-            + exio_slice.Y_region.sum(axis=1)
-            .reindex(exio_slice.Z_domestic.index)
+            exio_slice.Z.sum(axis=1)
+            + exio_slice.Y.sum(axis=1)
+            .reindex(exio_slice.Z.index)
             .fillna(0.0)
         ).astype("float64")
         method = "import_use_share_proxy_for_reexports"
@@ -1130,7 +1151,7 @@ def _split_iot_using_donor_blocks(
     eurostat_Y: pd.DataFrame,
     eurostat_V: pd.DataFrame | None = None,
     eurostat_M: pd.DataFrame | None = None,
-    exio_slice: ExioRegionSlice,
+    exio_slice: MrioScopeSlice,
     split_profiles: Mapping[str, SplitProfiles],
     column_split_profiles: Mapping[str, SplitProfiles] | None = None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
@@ -1166,13 +1187,13 @@ def _split_iot_using_donor_blocks(
     ]
 
     _, donor_Z, donor_Y = project_exio_donor_blocks_for_split_profiles(
-        exio_Z=exio_slice.Z_domestic,
-        exio_Y=exio_slice.Y_region,
+        exio_Z=exio_slice.Z,
+        exio_Y=exio_slice.Y,
         split_profiles=split_profiles,
         column_split_profiles=column_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
         column_eurostat_sector_mapping=column_eurostat_sector_mapping,
-        raw_exio_sectors=list(map(str, exio_slice.sectors)),
+        raw_exio_sectors=list(map(str, exio_slice.Z.index)),
         emitted_labels=sectors_new,
     )
 
@@ -1491,7 +1512,7 @@ def load_local_iot(
 
 
 def build_split_profiles_from_exiobase_domestic_block(
-    exio_slice: ExioRegionSlice,
+    exio_slice: MrioScopeSlice,
     *,
     sector_to_exio_sectors: Mapping[str, Sequence[str]]
     | Mapping[str, Mapping[str, Sequence[str]]]
@@ -1513,16 +1534,16 @@ def build_split_profiles_from_exiobase_domestic_block(
 
     profiles: dict[str, SplitProfiles] = {}
     selected: dict[str, list[str]] = {}
-    exio_sector_index = pd.Index(exio_slice.sectors.astype(str))
+    exio_sector_index = pd.Index(exio_slice.Z.index.astype(str))
     available_codes = set(map(str, exio_sector_index))
-    x_region_index = pd.Index(exio_slice.x_region.index.astype(str))
+    x_region_index = pd.Index(exio_slice.x_scope.index.astype(str))
     if set(x_region_index) != set(exio_sector_index):
         raise ValueError(
             "EXIO producer output sector coverage differs from the donor sector index: "
             f"missing={sorted(set(exio_sector_index) - set(x_region_index))!r}, "
             f"extra={sorted(set(x_region_index) - set(exio_sector_index))!r}."
         )
-    producer_output = exio_slice.x_region.copy()
+    producer_output = exio_slice.x_scope.copy()
     producer_output.index = producer_output.index.astype(str)
     producer_output = producer_output.reindex(exio_sector_index).astype("float64")
     if producer_output.isna().any() or not np.isfinite(producer_output.to_numpy()).all() or (producer_output < 0.0).any():
@@ -1531,8 +1552,8 @@ def build_split_profiles_from_exiobase_domestic_block(
     if sector_to_exio_sectors is not None:
         from ecolecon_mrio.disaggregation import SplitProfiles, normalize_share
 
-        Z_rr = exio_slice.Z_domestic
-        Y_r = exio_slice.Y_region
+        Z_rr = exio_slice.Z
+        Y_r = exio_slice.Y
 
         # Pre-compute sums to avoid repetitive matrix summing in loop
         # These are series indexed by exio sector
@@ -1771,8 +1792,8 @@ def build_split_profiles_from_exiobase_domestic_block(
         return profiles, selected
 
     assert sector_patterns is not None
-    Z_rr = exio_slice.Z_domestic
-    Y_r = exio_slice.Y_region
+    Z_rr = exio_slice.Z
+    Y_r = exio_slice.Y
     Z_sales_sum = Z_rr.sum(axis=1)
     Z_inputs_sum = Z_rr.sum(axis=0)
     Y_fd_sum = Y_r.sum(axis=1)
@@ -2022,7 +2043,7 @@ def map_exio_value_per_physical_input(
 
 def _environmental_extension_tables_for_split(
     *,
-    exio_slice: ExioRegionSlice,
+    exio_slice: MrioScopeSlice,
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_output: pd.Series,
     extension_requests: Mapping[str, Sequence[str]] | None,
@@ -2031,17 +2052,17 @@ def _environmental_extension_tables_for_split(
     """Build raw EXIO evidence and Eurostat-side production satellite totals."""
     if not extension_requests:
         return None, None
-    if str(exio_slice.flow) != "domestic":
+    if str(exio_slice.flow) not in {"domestic", "internal"}:
         raise ValueError(
             "Production environmental extensions are currently supported only for "
             "DOM flow; origin-weighted import extensions are not implemented."
         )
 
     raw_production = extract_extension_values(
-        container=exio_slice.source_zip,
-        region=exio_slice.region,
-        source_labels=list(map(str, exio_slice.sectors)),
-        monetary_denominator=exio_slice.x_region.astype("float64"),
+        container=_scope_slice_source_zip(exio_slice),
+        region=_scope_slice_single_region(exio_slice),
+        source_labels=list(map(str, exio_slice.Z.index)),
+        monetary_denominator=exio_slice.x_scope.astype("float64"),
         extension_requests=extension_requests,
         kind="F",
         required=True,
@@ -2051,12 +2072,12 @@ def _environmental_extension_tables_for_split(
         raise ValueError("Requested environmental extensions produced no EXIO F rows.")
 
     final_demand_denominator = read_exiobase3_destination_final_demand_totals(
-        source_zip=exio_slice.source_zip,
-        region=exio_slice.region,
+        source_zip=_scope_slice_source_zip(exio_slice),
+        region=_scope_slice_single_region(exio_slice),
     )
     raw_final_demand = extract_extension_values(
-        container=exio_slice.source_zip,
-        region=exio_slice.region,
+        container=_scope_slice_source_zip(exio_slice),
+        region=_scope_slice_single_region(exio_slice),
         source_labels=list(map(str, final_demand_denominator.index)),
         monetary_denominator=final_demand_denominator,
         extension_requests=extension_requests,
@@ -2088,7 +2109,7 @@ def split_iot_using_exiobase_split_profiles(
     eurostat_Y: pd.DataFrame,
     eurostat_V: pd.DataFrame | None = None,
     eurostat_M: pd.DataFrame | None = None,
-    exio_slice: ExioRegionSlice,
+    exio_slice: MrioScopeSlice,
     sector_to_exio_sectors: (
         Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None
     ) = None,
@@ -2121,7 +2142,7 @@ def split_iot_using_exiobase_split_profiles(
         raise ValueError(
             "source_rounding_quantum must be finite and positive when provided."
         )
-    if exio_slice.flow == "imports" and column_split_profiles is None:
+    if exio_slice.flow == "external_imports" and column_split_profiles is None:
         raise ValueError(
             "IMP primitive splitting requires domestic production-column profiles. "
             "Run DOM and IMP together or supply column_split_profiles explicitly."
@@ -2151,7 +2172,7 @@ def split_iot_using_exiobase_split_profiles(
             raise ValueError("coverage_tol must be >= 0")
 
         use_total = (
-            exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)
+            exio_slice.Z.sum(axis=1) + exio_slice.Y.sum(axis=1)
         ).astype("float64")
         use_total.index = use_total.index.astype(str)
 
@@ -2246,11 +2267,11 @@ def split_iot_using_exiobase_split_profiles(
         exio_sectors = _raw_exio_members_from_profiles(profiles)
 
         monetary_output = (
-            exio_slice.Z_domestic.sum(axis=1) + exio_slice.Y_region.sum(axis=1)
+            exio_slice.Z.sum(axis=1) + exio_slice.Y.sum(axis=1)
         ).astype("float64")
         exio_qp = extract_exio_quantity_and_price(
-            container=exio_slice.source_zip,
-            region=exio_slice.region,
+            container=_scope_slice_source_zip(exio_slice),
+            region=_scope_slice_single_region(exio_slice),
             sectors=exio_sectors,
             monetary_output=monetary_output,
             extensions=tuple(quantity_price_extensions),
@@ -2297,7 +2318,7 @@ def split_iot_using_exiobase_shares(
     eurostat_M: pd.DataFrame | None = None,
     exio_year: int,
     exio_region: str,
-    exio_slice: ExioRegionSlice | None = None,
+    exio_slice: MrioScopeSlice | None = None,
     exio_system: str = "pxp",
     exio_cache_root: str | Path | None = None,
     sector_to_exio_sectors: (
@@ -2319,11 +2340,13 @@ def split_iot_using_exiobase_shares(
 ) -> SplitResult:
     """Convenience wrapper: load an EXIOBASE region slice if needed, then split+balance."""
     if exio_slice is None:
-        exio_slice = load_exiobase3_region_slice(
-            year=exio_year,
-            region=exio_region,
-            system=exio_system,
-            cache_root=exio_cache_root,
+        exio_slice = load_mrio_iot_scope_slice(
+            "exiobase",
+            int(exio_year),
+            scope=RegionScope(code=str(exio_region), members=(str(exio_region),)),
+            exio_system=exio_system,
+            flow="total",
+            data_root=exio_cache_root,
         )
     return split_iot_using_exiobase_split_profiles(
         eurostat_Z=eurostat_Z,

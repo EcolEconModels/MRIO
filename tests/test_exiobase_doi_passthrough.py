@@ -46,7 +46,7 @@ def test_split_script_forwards_exio_doi_to_all_region_slice_calls() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "load_exiobase3_region_slice"
+        and node.func.id in {"load_mrio_iot_scope_slice", "_load_exio_scope_slice"}
     ]
     assert calls
     missing = [node.lineno for node in calls if not any(kw.arg == "doi" for kw in node.keywords)]

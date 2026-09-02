@@ -40,11 +40,10 @@ def main() -> int:
     matrices, basis_index, metadata = load_mrio_iot_matrices(
         "exiobase",
         int(args.year),
-        matrices=("Z", "x"),        data_root=data_root,
+        matrices=("Z", "x"),
+        data_root=data_root,
         exio_system=args.system,
         allow_download_missing=False,
-        cache_matrices=False,
-        read_existing_cache=False,
         verbose=False,
     )
     Z = matrices["Z"]
@@ -58,7 +57,8 @@ def main() -> int:
     print(f"A source: explicit derive_A_from_Z_and_x(Z, x)")
     print(f"A shape: {A.shape[0]} x {A.shape[1]}")
     print(f"A nnz: {int(A.nnz)}")
-    print(f"A density: {float(metadata.get('density', 0.0)):.6g}")
+    density = float(A.nnz) / float(A.shape[0] * A.shape[1]) if A.shape[0] else 0.0
+    print(f"A density: {density:.6g}")
     print(f"zip-stream load time: {load_seconds:.3f}s")
     print(f"index size: {len(basis_index)}")
     print(f"x size: {len(x)}")

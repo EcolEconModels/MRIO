@@ -66,7 +66,7 @@ def generate_flow_detail(repo_root: Path, *, geo: str, region: str, year: int, f
     exio_slice = load_exio_slice(repo_root, region=region, year=year, flow_name=exio_flow)
     detail, summary = build_signed_value_summary(
         repo_root,
-        source_values=exio_slice.x_region,
+        source_values=exio_slice.x_scope,
         reference_values=eurostat_output,
         mapping_df=mapping_df,
     )

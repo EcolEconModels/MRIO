@@ -334,18 +334,16 @@ __all__.extend([
 
 from .region_aggregation import (
     MrioScopeSlice,
-    MrioSource,
     RegionAggregationPlan,
     RegionScope,
     compile_region_aggregation,
-    load_mrio_scope_slice,
+    load_mrio_iot_scope_slice,
 )
 
 __all__.extend([
     "MrioScopeSlice",
-    "MrioSource",
     "RegionAggregationPlan",
     "RegionScope",
     "compile_region_aggregation",
-    "load_mrio_scope_slice",
+    "load_mrio_iot_scope_slice",
 ])

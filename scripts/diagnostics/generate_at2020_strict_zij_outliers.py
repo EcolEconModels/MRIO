@@ -161,7 +161,7 @@ def _run_single_flow(
     parsed_iot, _, _ = load_eurostat_iot_bundle(repo_root, geo=geo, year=year, flow_code=flow_code)
     exio_slice = load_exio_slice(repo_root, region=region, year=year, flow_name=exio_flow)
     z_euro = parsed_iot.Z.astype("float64")
-    z_exio = exio_slice.Z_domestic.astype("float64")
+    z_exio = exio_slice.Z.astype("float64")
 
     cell_outliers = _build_cell_outliers(
         strict_pairs=strict_pairs,

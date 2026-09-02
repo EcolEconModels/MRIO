@@ -17,7 +17,7 @@ def test_normalize_vector_rejects_missing_or_malformed_donor(values: pd.Series) 
 
 
 def test_output_share_uses_weighted_producer_output_for_canonical_p1(tmp_path: Path) -> None:
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import build_split_profiles_from_exiobase_domestic_block
 
     sectors = pd.Index(["a", "b"])
@@ -25,12 +25,7 @@ def test_output_share_uses_weighted_producer_output_for_canonical_p1(tmp_path: P
     # asymmetric (80/20).  The edge-child labels exercise concordance weights.
     Z = pd.DataFrame([[10.0, 0.0], [0.0, 10.0]], index=sectors, columns=sectors)
     Y = pd.DataFrame({"FD": [10.0, 10.0]}, index=sectors)
-    exio = ExioRegionSlice(
-        year=2021, system="pxp", region="AT", sectors=sectors,
-        Z_domestic=Z, Y_region=Y,
-        x_region=pd.Series([80.0, 20.0], index=sectors),
-        source_zip=tmp_path / "donor.zip",
-    )
+    exio = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z, Y=Y, x_scope=pd.Series([80.0, 20.0], index=sectors), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'donor.zip')})
     profiles, _ = build_split_profiles_from_exiobase_domestic_block(
         exio,
         sector_to_exio_sectors={"CPA": {"a@CPA": ["a"], "b@CPA": ["b"]}},
@@ -49,7 +44,7 @@ def test_output_share_uses_weighted_producer_output_for_canonical_p1(tmp_path: P
 
 def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> None:
     from ecolecon_mrio.disaggregation import SplitProfiles
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import _split_iot_using_donor_blocks
 
     exio_sectors = ["a1", "a2", "b1", "b2"]
@@ -57,16 +52,7 @@ def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> N
     Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0, 1.0]}, index=exio_sectors)
     x_region = (Z_domestic.sum(axis=1) + Y_region.sum(axis=1)).astype("float64")
 
-    exio_slice = ExioRegionSlice(
-        year=2020,
-        system="pxp",
-        region="AT",
-        sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic,
-        Y_region=Y_region,
-        x_region=x_region,
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=x_region, flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
 
     eurostat_Z = pd.DataFrame([[12.0, 3.0], [4.0, 5.0]], index=["A", "B"], columns=["A", "B"])
     # Reduced Eurostat fixture: use a recognized aggregate final-demand family.
@@ -110,18 +96,13 @@ def test_donor_block_fallback_diagnostics_count_and_columns(tmp_path: Path) -> N
 
 def test_donor_block_derives_controls_instead_of_allocating_them(tmp_path: Path) -> None:
     from ecolecon_mrio.disaggregation import SplitProfiles
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import _split_iot_using_donor_blocks
 
     exio_sectors = ["a1", "a2", "b"]
     Z_domestic = pd.DataFrame(0.0, index=exio_sectors, columns=exio_sectors)
     Y_region = pd.DataFrame({"FD": [1.0, 1.0, 1.0]}, index=exio_sectors)
-    exio_slice = ExioRegionSlice(
-        year=2020, system="pxp", region="AT", sectors=pd.Index(exio_sectors),
-        Z_domestic=Z_domestic, Y_region=Y_region,
-        x_region=Y_region.sum(axis=1).astype("float64"),
-        source_zip=tmp_path / "IOT_2020_pxp.zip",
-    )
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=Z_domestic, Y=Y_region, x_scope=Y_region.sum(axis=1).astype('float64'), flow='internal', metadata={"dataset": "exiobase", "year": int(2020), "system": str('pxp'), "source_zip": str(tmp_path / 'IOT_2020_pxp.zip')})
     eurostat_Z = pd.DataFrame([[2.0, 0.0], [0.0, 3.0]], index=["A", "B"], columns=["A", "B"])
     eurostat_Y = pd.DataFrame(
         {
@@ -160,7 +141,7 @@ def test_donor_block_derives_controls_instead_of_allocating_them(tmp_path: Path)
 
 def _primitive_fixture(tmp_path: Path, *, dom_output: tuple[float, float] = (0.0, 1.0)):
     from ecolecon_mrio.disaggregation import SplitProfiles
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
 
     children = ("a0", "a1")
     dom = SplitProfiles(
@@ -182,11 +163,7 @@ def _primitive_fixture(tmp_path: Path, *, dom_output: tuple[float, float] = (0.0
     raw = ["a0", "a1", "B"]
     donor = pd.DataFrame(0.0, index=raw, columns=raw)
     y = pd.DataFrame({"P3": [1.0, 1.0, 1.0]}, index=raw)
-    exio = ExioRegionSlice(
-        year=2021, system="pxp", region="AT", sectors=pd.Index(raw),
-        Z_domestic=donor, Y_region=y, x_region=y.sum(axis=1),
-        source_zip=tmp_path / "donors.zip", flow="imports",
-    )
+    exio = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=donor, Y=y, x_scope=y.sum(axis=1), flow='external_imports', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'donors.zip')})
     Z = pd.DataFrame([[5.0, 8.0], [2.0, 3.0]], index=["A", "B"], columns=["A", "B"])
     Y = pd.DataFrame({"P3": [2.0, 1.0]}, index=["A", "B"])
     return Z, Y, exio, {"A": dom}, {"A": imp}
@@ -259,16 +236,11 @@ def test_mapped_imp_rows_use_imp_weights_and_columns_use_dom_weights() -> None:
 
 
 def test_public_import_split_requires_domestic_column_profiles(tmp_path: Path) -> None:
-    from ecolecon_mrio.exiobase3 import ExioRegionSlice
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from ecolecon_mrio.exio_share_split import split_iot_using_exiobase_split_profiles
 
     raw = pd.Index(["s"])
-    exio = ExioRegionSlice(
-        year=2021, system="pxp", region="AT", flow="imports", sectors=raw,
-        Z_domestic=pd.DataFrame([[1.0]], index=raw, columns=raw),
-        Y_region=pd.DataFrame({"P3": [1.0]}, index=raw),
-        x_region=pd.Series([2.0], index=raw), source_zip=tmp_path / "donors.zip",
-    )
+    exio = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=pd.DataFrame([[1.0]], index=raw, columns=raw), Y=pd.DataFrame({'P3': [1.0]}, index=raw), x_scope=pd.Series([2.0], index=raw), flow='external_imports', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'donors.zip')})
     with pytest.raises(ValueError, match="requires domestic production-column profiles"):
         split_iot_using_exiobase_split_profiles(
             eurostat_Z=pd.DataFrame([[1.0]], index=["A"], columns=["A"]),
