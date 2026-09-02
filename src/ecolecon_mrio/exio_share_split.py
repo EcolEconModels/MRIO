@@ -1133,7 +1133,9 @@ def _project_export_donor_for_split(
     if not set(map(str, P.columns)).issubset(set(raw.index)):
         raw.index = _code_index(
             raw.index,
-            label_to_code=_exio_label_to_code_lookup(exio_slice.system),
+            label_to_code=_exio_label_to_code_lookup(
+                str(exio_slice.metadata.get("system", "pxp"))
+            ),
         )
     raw = raw.reindex(P.columns).fillna(0.0).astype("float64")
     projected = pd.Series(

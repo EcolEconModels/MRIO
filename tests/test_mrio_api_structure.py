@@ -63,3 +63,47 @@ def test_generic_full_loader_has_no_dead_exio_cache_knobs() -> None:
         "exio_system",
     ):
         assert name not in params
+
+def test_scope_result_exposes_no_legacy_region_slice_aliases() -> None:
+    for name in ("sectors", "system", "Z_domestic", "Y_region", "x_region"):
+        assert name not in region_aggregation.MrioScopeSlice.__dict__, name
+
+def test_flat_diagnostics_scope_loader_uses_current_api(monkeypatch, tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from scripts.diagnostics import _flat_diagnostics_common as helper
+
+    captured: dict[str, object] = {}
+    sentinel = object()
+
+    def fake_loader(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return sentinel
+
+    region_mod = SimpleNamespace(
+        RegionScope=region_aggregation.RegionScope,
+        load_mrio_iot_scope_slice=fake_loader,
+    )
+    data_mod = SimpleNamespace(default_data_root=lambda: tmp_path)
+
+    def fake_import_repo_module(_repo_root: Path, module_name: str):
+        if module_name == "ecolecon_mrio.region_aggregation":
+            return region_mod
+        if module_name == "ecolecon_mrio.data":
+            return data_mod
+        raise AssertionError(module_name)
+
+    monkeypatch.setattr(helper, "import_repo_module", fake_import_repo_module)
+    result = helper.load_exio_slice(ROOT, region="AT", year=2020, flow_name="imports")
+
+    assert result is sentinel
+    assert captured["args"] == ("exiobase",)
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs == {
+        "year": 2020,
+        "scope": region_aggregation.RegionScope(code="AT", members=("AT",)),
+        "exio_system": "pxp",
+        "flow": "external_imports",
+        "data_root": tmp_path,
+    }

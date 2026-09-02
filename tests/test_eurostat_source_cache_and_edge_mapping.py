@@ -683,13 +683,19 @@ def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary(
     for flow in ("DOM", "IMP", "TOTAL", "TOT"):
         assert _should_check_output(flow, eurostat_year=2021, exio_year=2020)
 
-    class DummyExioSlice:
-        # x_region is deliberately wrong for this destination-use check. The
-        # consistency code must use Z_domestic + Y_region instead, especially for
-        # IMP and TOTAL flow slices where x_region is producer-side output.
-        x_region = pd.Series({"exio_a": 999.0}, dtype="float64")
-        Z_domestic = pd.DataFrame([[4.0]], index=pd.Index(["exio_a"]), columns=pd.Index(["exio_a"]))
-        Y_region = pd.DataFrame([[6.0]], index=pd.Index(["exio_a"]), columns=pd.Index(["P3"]))
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
+
+    # x_scope is deliberately unrelated to this destination-use check. The
+    # consistency code must use the selected scope Z + Y flow instead, especially
+    # for external-import and total slices where x_scope is producer-side output.
+    exio_slice = MrioScopeSlice(
+        scope=RegionScope(code="AT", members=("AT",)),
+        Z=pd.DataFrame([[4.0]], index=pd.Index(["exio_a"]), columns=pd.Index(["exio_a"])),
+        Y=pd.DataFrame([[6.0]], index=pd.Index(["exio_a"]), columns=pd.Index(["P3"])),
+        x_scope=pd.Series({"exio_a": 999.0}, dtype="float64"),
+        flow="total",
+        metadata={"system": "pxp"},
+    )
 
     mapping = {"CPA_A": {"exio_a": 1.0}}
     Z = pd.DataFrame([[7.0]], index=pd.Index(["CPA_A"]), columns=pd.Index(["CPA_A"]))
@@ -701,7 +707,7 @@ def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary(
         sector_mapping=mapping,
         eurostat_Z=Z,
         eurostat_Y=Y,
-        exio_slice=DummyExioSlice(),
+        exio_slice=exio_slice,
     )
 
     assert exio_total == 10.0
@@ -712,7 +718,7 @@ def test_output_consistency_runs_for_dom_imp_total_and_uses_non_export_boundary(
         sector_mapping=mapping,
         eurostat_Z=Z,
         eurostat_Y=Y,
-        exio_slice=DummyExioSlice(),
+        exio_slice=exio_slice,
         rtol=0.0,
         atol=0.0,
         label="boundary-test",

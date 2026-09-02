@@ -20,7 +20,12 @@ from ecolecon_mrio.exio_share_split import (
     map_exio_value_per_physical_input,
     emitted_sector_to_exio_members_from_split_profiles,
 )
-from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope, load_mrio_iot_scope_slice
+from ecolecon_mrio.region_aggregation import (
+    MrioScopeSlice,
+    RegionScope,
+    ScopeFlow,
+    load_mrio_iot_scope_slice,
+)
 from ecolecon_mrio.exiobase3_extensions import discover_exiobase3_extensions
 from ecolecon_mrio.eurostat_iot import (
     ParsedEurostatIOT,
@@ -76,7 +81,7 @@ def _load_exio_scope_slice(
         int(year),
         scope=RegionScope(code=str(region), members=(str(region),)),
         exio_system="pxp",
-        flow=scope_flow,
+        flow=cast(ScopeFlow, scope_flow),
         data_root=data_root,
         doi=doi,
         force_download=force_download,
@@ -637,23 +642,16 @@ def _build_output_consistency_frame(
     sector_mapping: dict[str, dict[str, float]],
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
-    exio_slice: object,
+    exio_slice: MrioScopeSlice,
 ) -> tuple[pd.DataFrame, float, float]:
     euro_x = _eurostat_output_reference_from_frames(eurostat_Z, eurostat_Y)
 
     # Match the EXIO side to the same destination-use boundary as the Eurostat
     # reference: rows from the selected EXIO flow into the destination region plus
-    # that destination region's final demand. Do not use x_region here: x_region is
-    # producer-side output and is the wrong object for IMP/TOTAL destination-use
-    # flow checks.
-    exio_Z_value = getattr(exio_slice, "Z", None)
-    if exio_Z_value is None:
-        exio_Z_value = getattr(exio_slice, "Z_domestic")
-    exio_Y_value = getattr(exio_slice, "Y", None)
-    if exio_Y_value is None:
-        exio_Y_value = getattr(exio_slice, "Y_region")
-    exio_Z = cast(pd.DataFrame, exio_Z_value).copy().astype("float64")
-    exio_Y = cast(pd.DataFrame, exio_Y_value).copy().astype("float64")
+    # that destination region's final demand. Scope production x is deliberately
+    # not used for IMP/TOTAL destination-use checks.
+    exio_Z = exio_slice.Z.copy().astype("float64")
+    exio_Y = exio_slice.Y.copy().astype("float64")
     exio_Z.index = exio_Z.index.astype(str)
     exio_Y.index = exio_Y.index.astype(str)
     exio_out = (
@@ -706,7 +704,7 @@ def _assert_output_consistency(
     sector_mapping: dict[str, dict[str, float]],
     eurostat_Z: pd.DataFrame,
     eurostat_Y: pd.DataFrame,
-    exio_slice: object,
+    exio_slice: MrioScopeSlice,
     rtol: float,
     atol: float,
     label: str,
@@ -1481,7 +1479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 else:
                     environmental_requests = _environmental_extension_requests_from_archive(
-                        domestic_slice.source_zip
+                        cast(str | Path, domestic_slice.metadata["source_zip"])
                     )
                     _vprint(
                         args.verbose,
@@ -1893,7 +1891,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.environmental_all_extensions:
         if single_has_environmental_extensions:
             environmental_requests = _environmental_extension_requests_from_archive(
-                exio_slice_single.source_zip
+                cast(str | Path, exio_slice_single.metadata["source_zip"])
             )
             _vprint(
                 args.verbose,

@@ -138,10 +138,10 @@ def load_exio_slice(repo_root: Path, *, region: str, year: int, flow_name: str):
     return region_mod.load_mrio_iot_scope_slice(
         "exiobase",
         year=year,
-        region=region,
-        system="pxp",
-        flow=flow_name,
-        cache_root=Path(data_mod.default_data_root()),
+        scope=region_mod.RegionScope(code=str(region), members=(str(region),)),
+        exio_system="pxp",
+        flow=scope_flow,
+        data_root=Path(data_mod.default_data_root()),
     )
 
 

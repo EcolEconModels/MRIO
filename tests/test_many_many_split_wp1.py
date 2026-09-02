@@ -102,7 +102,7 @@ def test_wp1_keeps_zero_weight_edge_children_and_reconstructs_cells(
 
     def export_loader(**_kwargs: object) -> pd.Series:
         """Supply an explicit zero export donor without requiring an EXIO zip."""
-        return pd.Series(0.0, index=donor_slice.sectors)
+        return pd.Series(0.0, index=donor_slice.Z.index)
 
     dom = split_iot_using_exiobase_split_profiles(
         eurostat_Z=z,
@@ -188,7 +188,7 @@ def test_split_export_geography_accepts_only_rounding_scale_source_gap(
         eurostat_sector_mapping=edges,
         source_rounding_quantum=0.01,
         export_vector_loader=lambda **_kwargs: pd.Series(
-            0.0, index=donor_slice.sectors
+            0.0, index=donor_slice.Z.index
         ),
         create_io_system=False,
     )
@@ -209,7 +209,7 @@ def test_split_export_geography_accepts_only_rounding_scale_source_gap(
             eurostat_sector_mapping=edges,
             source_rounding_quantum=0.01,
             export_vector_loader=lambda **_kwargs: pd.Series(
-                0.0, index=donor_slice.sectors
+                0.0, index=donor_slice.Z.index
             ),
             create_io_system=False,
         )
@@ -241,7 +241,7 @@ def test_wp1_rejects_unauthorised_duplicate_mapping_and_missing_donor(
     dom_profiles, _ = build_split_profiles_from_exiobase_domestic_block(
         donor_slice, sector_to_exio_sectors=split_mapping
     )
-    missing_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=donor_slice.Z_domestic.loc[['p24.g', 'p24.h'], ['p24.g', 'p24.h']], Y=donor_slice.Y_region.loc[['p24.g', 'p24.h']], x_scope=donor_slice.x_region.loc[['p24.g', 'p24.h']], flow='external_imports', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'missing.zip')})
+    missing_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=donor_slice.Z.loc[['p24.g', 'p24.h'], ['p24.g', 'p24.h']], Y=donor_slice.Y.loc[['p24.g', 'p24.h']], x_scope=donor_slice.x_scope.loc[['p24.g', 'p24.h']], flow='external_imports', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(tmp_path / 'missing.zip')})
     with pytest.raises(
         ValueError,
         match="missing_exio_code=.*p24.d.*eurostat_parent=.*CPA_C20.*emitted_child=.*p24.d",
@@ -284,7 +284,7 @@ def test_wp1_accepts_explicit_weights_and_rejects_cellwise_or_p5m_drift(
         sector_to_exio_sectors=split_mapping,
         eurostat_sector_mapping=edges,
         export_vector_loader=lambda **_kwargs: pd.Series(
-            0.0, index=donor_slice.sectors
+            0.0, index=donor_slice.Z.index
         ),
         create_io_system=False,
     )

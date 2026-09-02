@@ -102,7 +102,7 @@ def test_region_slice_streams_domestic_block_without_cache_or_full_mrio(
     )
     pd.testing.assert_series_equal(
         out.x_scope,
-        pd.Series([100.0, 200.0], index=pd.Index(["CPA_A", "CPA_B"], name="sector"), name="x_region"),
+        pd.Series([100.0, 200.0], index=pd.Index(["CPA_A", "CPA_B"], name="sector"), name="x_scope"),
     )
     assert not (cache_root / "exiobase3_2020" / "slices").exists()
 

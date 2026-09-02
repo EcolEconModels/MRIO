@@ -63,26 +63,6 @@ class MrioScopeSlice:
     flow: ScopeFlow
     metadata: dict[str, object]
 
-    @property
-    def sectors(self) -> pd.Index:
-        return self.Z.index
-
-    @property
-    def system(self) -> str:
-        return str(self.metadata.get("system", self.metadata.get("exio_system", "pxp")))
-
-    @property
-    def Z_domestic(self) -> pd.DataFrame:
-        return self.Z
-
-    @property
-    def Y_region(self) -> pd.DataFrame:
-        return self.Y
-
-    @property
-    def x_region(self) -> pd.Series:
-        return self.x_scope
-
     def __post_init__(self) -> None:
         if self.flow not in {"internal", "external_imports", "total"}:
             raise ValueError(f"Unsupported scope flow {self.flow!r}.")

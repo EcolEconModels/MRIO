@@ -27,7 +27,7 @@ def test_mapping_integrity_check_passes():
 
 
 def test_output_consistency_check_uses_destination_use_not_x_region():
-    from types import SimpleNamespace
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
     euro_Z = pd.DataFrame(
@@ -35,14 +35,17 @@ def test_output_consistency_check_uses_destination_use_not_x_region():
     )
     euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
-    exio_slice = SimpleNamespace(
-        Z_domestic=pd.DataFrame(
+    exio_slice = MrioScopeSlice(
+        scope=RegionScope(code="AT", members=("AT",)),
+        Z=pd.DataFrame(
             [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["S1", "S2"]), columns=pd.Index(["S1", "S2"])
         ),
-        Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=pd.Index(["S1", "S2"])),
+        Y=pd.DataFrame({"P3": [100.0, 100.0]}, index=pd.Index(["S1", "S2"])),
         # Deliberately wrong producer-output values. The boundary-correct check
-        # must use Z_domestic + Y_region, not x_region.
-        x_region=pd.Series([40.0, 40.0], index=["S1", "S2"], dtype="float64"),
+        # must use Z + Y, not x_scope.
+        x_scope=pd.Series([40.0, 40.0], index=["S1", "S2"], dtype="float64"),
+        flow="internal",
+        metadata={},
     )
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
 
@@ -58,7 +61,7 @@ def test_output_consistency_check_uses_destination_use_not_x_region():
 
 
 def test_output_consistency_strict_helper_still_fails_on_destination_use_mismatch():
-    from types import SimpleNamespace
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
     euro_Z = pd.DataFrame(
@@ -66,12 +69,15 @@ def test_output_consistency_strict_helper_still_fails_on_destination_use_mismatc
     )
     euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
-    exio_slice = SimpleNamespace(
-        Z_domestic=pd.DataFrame(
+    exio_slice = MrioScopeSlice(
+        scope=RegionScope(code="AT", members=("AT",)),
+        Z=pd.DataFrame(
             [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["S1", "S2"]), columns=pd.Index(["S1", "S2"])
         ),
-        Y_region=pd.DataFrame({"P3": [50.0, 100.0]}, index=pd.Index(["S1", "S2"])),
-        x_region=pd.Series([999.0, 999.0], index=["S1", "S2"], dtype="float64"),
+        Y=pd.DataFrame({"P3": [50.0, 100.0]}, index=pd.Index(["S1", "S2"])),
+        x_scope=pd.Series([999.0, 999.0], index=["S1", "S2"], dtype="float64"),
+        flow="internal",
+        metadata={},
     )
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
 
@@ -88,7 +94,7 @@ def test_output_consistency_strict_helper_still_fails_on_destination_use_mismatc
 
 
 def test_output_consistency_check_allows_sector_mix_differences_within_total_tolerance():
-    from types import SimpleNamespace
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
     from scripts.split_eurostat_energy_by_exiobase import _assert_output_consistency
 
     euro_Z = pd.DataFrame(
@@ -96,12 +102,15 @@ def test_output_consistency_check_allows_sector_mix_differences_within_total_tol
     )
     euro_Y = pd.DataFrame({"P3": [50.0, 150.0]}, index=pd.Index(["CPA_A", "CPA_B"]))
 
-    exio_slice = SimpleNamespace(
-        Z_domestic=pd.DataFrame(
+    exio_slice = MrioScopeSlice(
+        scope=RegionScope(code="AT", members=("AT",)),
+        Z=pd.DataFrame(
             [[0.0, 0.0], [0.0, 0.0]], index=pd.Index(["S1", "S2"]), columns=pd.Index(["S1", "S2"])
         ),
-        Y_region=pd.DataFrame({"P3": [100.0, 100.0]}, index=pd.Index(["S1", "S2"])),
-        x_region=pd.Series([150.0, 50.0], index=["S1", "S2"], dtype="float64"),
+        Y=pd.DataFrame({"P3": [100.0, 100.0]}, index=pd.Index(["S1", "S2"])),
+        x_scope=pd.Series([150.0, 50.0], index=["S1", "S2"], dtype="float64"),
+        flow="internal",
+        metadata={},
     )
     mapping = {"CPA_A": {"S1": 1.0}, "CPA_B": {"S2": 1.0}}
 

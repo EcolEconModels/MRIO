@@ -497,7 +497,7 @@ def _load_exio_scope_slice_direct_from_zip(
         scope=scope,
         Z=Z_use.astype("float64"),
         Y=Y_use.astype("float64"),
-        x_scope=x_scope.astype("float64").rename("x_region"),
+        x_scope=x_scope.astype("float64").rename("x_scope"),
         flow=cast(ScopeFlow, flow_norm),
         metadata=metadata,
     )
