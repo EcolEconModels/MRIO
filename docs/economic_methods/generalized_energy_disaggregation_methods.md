@@ -40,6 +40,7 @@ mapping set must define the following objects.
 | Compatibility map | Gives optional multiplicative weights for allowed child-child pairs. |
 | Residual policy | Declares how unresolved parent mass is represented and when negative residuals fail. |
 | Supplementary-row role map | Classifies lower rows such as output identities, imports, margins, taxes, value added, and totals. |
+| Region-scope map | Defines a versioned many-source-regions-to-one-scope aggregation independently of all sector mappings. |
 
 The mapping set is authoritative. A classification code absent from the
 dictionaries is unknown. A child absent from the parent-child map does not exist.
@@ -460,6 +461,172 @@ A donor table is a structural prior, not an authority for target-country totals.
 The target aggregate cell totals \(Z_{ij}\) and \(Y_{if}\) remain authoritative
 unless a separate override policy is explicitly declared.
 
+## Geographic scope aggregation
+
+Geographic aggregation is a first-class operation and is independent of sector
+disaggregation/reaggregation. This section is the accepted vNext method; the
+current source implementation remains singleton-region until the corresponding
+API and tests are implemented. Let \(G\) be the set of member regions in a checked,
+versioned region-scope mapping. The mapping is unweighted: each source region is
+either a member or not a member. The complement \(G^c\) is derived from the actual
+region basis in the selected donor release.
+
+A published target table for the desired geography is authoritative. In
+particular, Eurostat publishes consolidated European `naio_10_cp1700` tables, so
+`geo=EU27_2020` must be selected directly for the target EU IOT. National tables
+must not be summed to recreate that published target. The region-scope map is
+still applied to the multi-regional donor and to custom groups for which no
+published target exists.
+
+For EXIO origin \(o\), destination \(d\), origin product \(k\), using product
+\(j\), and final-demand category \(c\), the destination-scope use blocks are
+
+\[
+Z^{\mathrm{int},G}_{kj}
+ = \sum_{o\in G}\sum_{d\in G}Z_{ok,dj},
+\qquad
+Y^{\mathrm{int},G}_{kc}
+ = \sum_{o\in G}\sum_{d\in G}Y_{ok,dc},
+\]
+
+\[
+Z^{\mathrm{imp},G}_{kj}
+ = \sum_{o\notin G}\sum_{d\in G}Z_{ok,dj},
+\qquad
+Y^{\mathrm{imp},G}_{kc}
+ = \sum_{o\notin G}\sum_{d\in G}Y_{ok,dc}.
+\]
+
+The total-use blocks are the cellwise sums of internal and external-import
+blocks. Scope production output is a separate account,
+
+\[
+x^G_k=\sum_{o\in G}x_{ok}.
+\]
+
+It is not replaced by an import-use total when the requested flow is imports.
+
+All environmental aggregation is extensive-first. For production extension
+\(F\),
+
+\[
+F^G_k=\sum_{o\in G}F_{ok},
+\qquad
+e^{\mathrm{prod},G}_k=\frac{F^G_k}{x^G_k}.
+\]
+
+This is a scope-production coefficient for the target domestic-output account.
+It includes member production irrespective of whether that output is used inside
+the scope or exported; this matches the production denominator and must not be
+confused with an internal-use weighting.
+
+A collapsed Rest-of-World production average is not the coefficient of imports
+to \(G\). Define the use of origin-product \(ok\) by the scope as
+
+\[
+u_{ok\to G}
+ = \sum_{d\in G,j}Z_{ok,dj}
+ + \sum_{d\in G,c}Y_{ok,dc}.
+\]
+
+For a many-to-many donor-to-target product projection \(P_{ak}\), do not
+transport the raw source intensity \(F_{ok}/x_{ok}\) through \(P\). Retain each
+external origin until \(F\), \(x\), and the import-use denominator have been
+projected to the same target-product basis:
+
+\[
+\bar F_{oa}=\sum_k P_{ak}F_{ok},
+\qquad
+\bar x_{oa}=\sum_k P_{ak}x_{ok},
+\qquad
+\bar u_{oa\to G}=\sum_k P_{ak}u_{ok\to G}.
+\]
+
+The direct production extension attributable to external imports and its
+denominator are then
+
+\[
+F^{\mathrm{imp},G}_a
+ = \sum_{o\notin G}\frac{\bar F_{oa}}{\bar x_{oa}}
+   \bar u_{oa\to G},
+\qquad
+m^{\mathrm{imp},G}_a
+ = \sum_{o\notin G}\bar u_{oa\to G},
+\]
+
+\[
+e^{\mathrm{imp},G}_a
+ = \frac{F^{\mathrm{imp},G}_a}{m^{\mathrm{imp},G}_a}.
+\]
+
+A positive \(\bar u_{oa\to G}\) with zero or missing \(\bar x_{oa}\) is
+inconsistent and fails closed. This is the import analogue of the existing
+numerator-first extension rule: mapped extensive numerator and denominator are
+formed before division, then origin coefficients are weighted by actual imports
+to the selected scope. A nonzero raw \(F_{ok}\) with zero raw \(x_{ok}\) is not
+rejected merely because the raw ratio is undefined; it fails only if the required
+mapped origin/target-product denominator remains non-positive where import use is
+positive. The account is direct origin production, not a full embodied footprint;
+upstream burdens require a separately declared Leontief calculation.
+
+The target total-supply extension must not reuse the domestic coefficient. When
+the target IOT publishes domestic-output and import-supply components, form
+
+\[
+\widehat F^{\mathrm{total}}_a
+ = e^{\mathrm{prod},G}_a x^{\mathrm{target,dom}}_a
+ + e^{\mathrm{imp},G}_a m^{\mathrm{target,imp}}_a,
+\]
+
+\[
+e^{\mathrm{total}}_a
+ = \frac{\widehat F^{\mathrm{total}}_a}
+ {x^{\mathrm{target,dom}}_a+m^{\mathrm{target,imp}}_a}.
+\]
+
+Here \(a\) is on the transformed target product basis. The monetary sum must
+validate against the target total-supply control. EXIO domestic/import shares are
+only an explicit lower-quality fallback when those target components are absent.
+
+Direct final-demand extensions remain on their own axis:
+
+\[
+F^{Y,G}_c=\sum_{d\in G}F^Y_{dc},
+\qquad
+y^G_c=\sum_{d\in G}\sum_o\sum_kY_{ok,dc},
+\qquad
+e^{Y,G}_c=\frac{F^{Y,G}_c}{y^G_c}.
+\]
+
+There is no imported-RoW version of \(F_Y\): it records direct emissions of final
+demand in the destination region, not foreign production. It remains a category
+sidecar and is never projected through a product concordance.
+
+Let \(R\) be a region concordance and \(P\) a product concordance/projection.
+With fixed linear mappings, region and product transforms commute for genuinely
+extensive accounts; a full-system core concordance is \(R\otimes P\). Ratios,
+target-dependent share resolution, balancing, and fallback policies do not
+commute. Scope-production \(F\) and \(x\) may therefore collapse geography
+before product transformation for memory efficiency. External-import direct
+production is different: because origins are weighted by an origin-specific
+production coefficient, the origin axis must be retained through the product
+projection and only collapsed after the mapped \(\bar F/\bar x\) coefficient
+has been applied to mapped import use. In no case is a raw intensity projected
+through a many-to-many product mapping.
+
+Limiting cases required by tests are:
+
+- a singleton scope reproduces the current single-region domestic/import/total
+  matrices;
+- a scope containing every source region has zero external imports;
+- internal plus external imports equals total cellwise for \(Z\) and \(Y\);
+- summing scope-production \(F\) and \(x\) separately before division matches
+  full-object region aggregation;
+- external-import extensions retain origin through product projection and agree
+  with an origin-resolved reference calculation under a many-to-many mapping; and
+- changing only the sector mapping does not change scope membership, while
+  changing only the scope mapping does not change sector topology.
+
 ## Donor environmental extension transport
 
 For the fuels/fuels-more production EXIOBASE3-to-CPA65 route, (P)'s structural
@@ -562,8 +729,10 @@ Thus finite ``value`` denotes an actual projected/reaggregated estimate, while
 missing ``value`` denotes undefined environmental evidence; no separate availability
 flag is used. The raw EXIO provenance sidecar is not grid-completed:
 production ``F`` remains source-product evidence and ``F_Y`` remains category-level
-evidence outside the sector-axis contract. Production-side model extensions remain
-DOM-only; no domestic coefficient is transferred to IMP or TOTAL.
+evidence outside the sector-axis contract. Production-side model extensions use the explicit boundaries defined in
+`Geographic scope aggregation`. A domestic/scope-production coefficient is never
+transferred to external imports or total supply; those accounts use the
+import-weighted and target-component equations above.
 
 Direct final-demand extensions \(F_Y\) are a separate accounting boundary and are
 not sector-disaggregated through \(P\). For destination region \(r\) and final-demand
@@ -581,10 +750,11 @@ category for a separate use-phase proxy; it is not an authoritative target-count
 final-demand satellite total and is not allocated across product/sector rows. Sector
 reaggregation therefore leaves these category-level donor rows unchanged.
 
-A destination country's domestic production extension must not be reused as an
-import-production proxy. Production-side environmental extensions for imported
-products, and therefore combined TOTAL-flow extensions, remain unavailable until
-an origin-weighted import extension is explicitly implemented and validated.
+A destination scope's production extension must not be reused as an import-production
+proxy. Imported-product and combined total-supply extensions are defined only by the
+origin-weighted and target-component equations in `Geographic scope aggregation`;
+unweighted complement production is a different descriptive account and is not a
+valid substitute.
 
 ## Balancing and reconciliation
 

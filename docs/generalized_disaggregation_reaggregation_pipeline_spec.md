@@ -27,6 +27,11 @@ hooks, and migration rules needed to implement that methods document. The API
 spec must not weaken, replace, or silently alter the economic equations and
 accounting identities in the standalone methods spec.
 
+The independent region-scope API described below is an accepted **vNext design**,
+not an implemented API. Existing singleton EXIO loaders and current split-pipeline
+interfaces remain authoritative until the corresponding source-and-test patch is
+merged.
+
 ## Existing repo abstractions to preserve
 
 The existing low-level abstraction `SplitProfiles` is the common contract. A
@@ -65,7 +70,43 @@ third split representation.
 9. Every output cell created by a split must have a deterministic allocation
    method and a diagnostic trail.
 10. Split and reaggregation files under `scripts/pipelines/<profile>/` are the
-    source of truth for the profile.
+    source of truth for the sector profile.
+11. Region-scope mappings are independent of sector profiles. Extension ratios
+    follow the methods specification: fixed linear extensive accounts may be
+    geography/sector transformed before division, while external-import direct
+    accounts retain origin through product projection and form the origin-specific
+    coefficient only on that common projected basis.
+
+## Independent geography contract
+
+Geography aggregation is an upstream donor operation, not a fuels/fuels-more or
+green/brown profile feature. Checked-in region-scope helpers are proposed under
+`scripts/pipelines/region_scopes/` (or may be supplied explicitly), consistent
+with the repository-wide `scripts/pipelines/` source-of-truth rule. The directory
+is created by the future implementation patch, not by this documentation-only
+change. Region-scope mappings use:
+
+~~~text
+scope_code,scope_label,member_region,member_order,enabled,notes
+~~~
+
+The target geography and donor scope are independent:
+
+- when Eurostat publishes the target geography, load it directly through the
+  `geo` filter (for example `EU27_2020`);
+- aggregate the EXIOBASE donor with a versioned region-scope mapping;
+- never infer the EXIO scope from the Eurostat code; and
+- never sum national target IOTs to replace an official consolidated table.
+
+The generic region API returns a donor context with `internal`,
+`external_imports`, and `total` destination-use boundaries plus the separate
+scope-production output account. A singleton-region compatibility wrapper maps
+the old `domestic` and `imports` names to the neutral boundaries.
+
+Sector plan compilation consumes this donor context but does not read or validate
+region membership itself. Consequently, region aggregation can be run and
+inspected without a sector split, and every sector route can operate on either a
+singleton or a group donor.
 
 ## Profile file layout
 
@@ -223,6 +264,23 @@ The default must be `fail` beyond tolerance.
 
 ## Common dataclasses
 
+`RegionScope` is owned by the proposed generic MRIO geography API in
+`docs/mrio_api_spec.md`; the split pipeline reuses that type rather than defining
+a parallel geography model. Its proposed pipeline-specific adapter is:
+
+~~~python
+@dataclass(frozen=True)
+class DonorScopeContext:
+    scope: RegionScope
+    internal: object
+    external_imports: object
+    total: object
+    x_scope: pd.Series
+    environmental_accounts: pd.DataFrame | None
+    final_demand_environmental_accounts: pd.DataFrame | None
+    metadata: dict[str, object]
+~~~
+
 ```python
 @dataclass(frozen=True)
 class SplitChild:
@@ -281,16 +339,34 @@ class GenericSplitResult:
 
 ## Public API
 
+Region membership is compiled once by the generic
+`compile_region_aggregation(...)` API from `docs/mrio_api_spec.md`. The split
+pipeline does not add a second `compile_region_scope(...)` validator. Its proposed
+adapter only packages the generic scope slices and environmental accounts needed
+by sector-plan compilation:
+
+~~~python
+def load_donor_scope(
+    *,
+    source: MrioSource,
+    scope: RegionScope,
+    flows: Sequence[str] = ("internal", "external_imports", "total"),
+    environmental_selection: object | None = None,
+) -> DonorScopeContext:
+    """Assemble pipeline donor context from generic MRIO geography results."""
+~~~
+
 ```python
 def compile_split_plan(
     *,
     Z: pd.DataFrame,
     Y: pd.DataFrame,
     profile_dir: Path,
-    geo: str,
+    target_geo: str,
     year: int,
     providers: Mapping[str, EvidenceProvider],
     archive_store: SourceArchiveStore,
+    donor_context: DonorScopeContext | None = None,
 ) -> GenericSplitPlan:
     """Resolve evidence, shares, residuals, and allocators from profile files."""
 ```
@@ -338,7 +414,7 @@ Inputs:
 
 ```text
 target Z,Y,V,M
-donor Z,Y and optional extension tables
+donor scope context with selected flow boundary and optional extension tables
 SplitProfiles
 donor_mapping.csv
 final-demand dictionary
@@ -393,14 +469,46 @@ pair of `SplitResult` fields rather than adding environment-specific fields.
 Reaggregation stays outside the monetary `AggregationResult` and is handled by one
 total-first satellite operator.
 
+#### Geography-aware satellite boundaries
+
+The generic satellite operator carries extensive physical values and monetary
+denominators using:
+
+~~~text
+axis_position,axis_label,boundary,denominator_role,extension,stressor,unit,
+value,monetary_denominator,intensity
+~~~
+
+Initial boundaries are:
+
+| boundary | axis | denominator role |
+|---|---|---|
+| `scope_production` | product/sector | member-region production output |
+| `external_imports_direct` | product/sector | imports used by the destination scope |
+| `total_supply_direct` | product/sector | target domestic output plus target import supply |
+| `scope_final_demand_direct` | final-demand category | all-origin final demand in the scope |
+
+`scope_production` is formed by summing member-region `F` and `x` before
+division. `external_imports_direct` weights origin-specific `F/x` by actual EXIO
+`Z+Y` flows from origins outside the scope to destinations inside it.
+`total_supply_direct` combines the first two coefficients with the authoritative
+target DOM and IMP monetary components. `F_Y` is summed over destination members
+and divided by final demand by category; it never receives a product position or
+a RoW-import counterpart.
+
+The existing model-facing
+`sector_position,sector,extension,stressor,unit,value,monetary_output,intensity`
+file remains a temporary compatibility view of `scope_production` only. New
+multi-boundary APIs return the generic table above and a separate category-axis
+table for `F_Y`. Missing evidence remains missing, not zero.
+
 Raw donor evidence uses:
 
 ```text
 source_label,extension,kind,stressor,unit,value,monetary_denominator,intensity
 ```
 
-Transformed and reaggregated production-side satellite accounts use the stable
-schema:
+The temporary legacy production-side compatibility view uses:
 
 ```text
 sector_position,sector,extension,stressor,unit,value,monetary_output,intensity
@@ -475,8 +583,10 @@ required `F.txt`, `F_Y.txt`, and `unit.txt` triplet and selects all stressors. T
 small `combustion-co2`/`none` presets remain convenience selections, not an extension
 name registry.
 
-The current production-side environmental sidecar is valid only for DOM flow.
-IMP and TOTAL must omit it until origin-weighted import extensions are available.
+DOM, IMP, and TOTAL outputs use distinct satellite boundaries. A scope-production
+coefficient is valid only for DOM/scope production. IMP uses the origin-weighted
+external-import account, and TOTAL combines target DOM and IMP extensive components;
+no coefficient is copied between these boundaries.
 
 ## Route 2: row/column-specific evidence disaggregation
 
@@ -693,6 +803,12 @@ Minimum tests for the generalized pipeline:
 9. Full-MRIO paths do not densify sparse matrices.
 10. Profile validation catches duplicate child codes, duplicate reaggregation
     targets, and unknown dictionary codes.
+11. A singleton scope reproduces current region-slice results; all-region scope has
+    zero external imports; internal plus external imports equals total.
+12. Streamed scope aggregation agrees with `pymrio.IOSystem.aggregate` on a small
+    fixture for `Z`, `Y`, `x`, `F`, and `F_Y`.
+13. Environmental tests sum numerators and denominators before division and verify
+    that target TOTAL uses target DOM/IMP monetary components.
 
 ## Migration from current routes
 
@@ -705,6 +821,10 @@ Minimum tests for the generalized pipeline:
    outputs.
 6. Remove hard-coded split-parent restrictions from code after equivalent
    restrictions are represented in profile files.
+7. Introduce the region-scope loader independently, then make the existing
+   single-region loader a singleton wrapper.
+8. Replace DOM-only extension branches with one boundary-aware extensive-account
+   builder; keep the old production-sidecar schema only as a compatibility view.
 
 
 ### Local EXIOBASE beta provenance caveat (2026-08-19)
