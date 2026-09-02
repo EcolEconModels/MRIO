@@ -15,10 +15,12 @@ belong to providers and must not leak into the generic transformation APIs.
 
 ## Status and compatibility
 
-This document contains both implemented contracts and an accepted **vNext design**
-for independent region aggregation. Code blocks explicitly described as proposed
-are specifications for a later implementation; they are not claims that those
-symbols already exist in `src/ecolecon_mrio`.
+This document contains both implemented contracts and staged **vNext design**.
+The low-memory geography layer (`MrioSource`, `RegionScope`,
+`RegionAggregationPlan`, `MrioScopeSlice`, `compile_region_aggregation(...)`, and
+`load_mrio_scope_slice(...)`) is implemented. Complete-object
+`aggregate_mrio_regions(...)`, extension aggregation, and split-pipeline donor
+contexts remain proposed until their later source-and-test patches are merged.
 
 Until an implementation patch changes them with tests, the current public
 contracts remain authoritative. In particular, the existing
@@ -117,10 +119,11 @@ Rules:
   `EU27_2020`, rather than a mutable `EU` alias.
 
 Scope mappings are independent of fuels, fuels-more, and green/brown sector
-profiles. The implementation patch should place checked-in region-scope helpers
-under `scripts/pipelines/region_scopes/`, consistent with the repository rule that
-pipeline helper CSVs live under `scripts/pipelines/`; that directory is proposed
-here and is not created by this documentation-only change.
+profiles. Checked-in region-scope helpers live under
+`scripts/pipelines/region_scopes/`, consistent with the repository rule that
+pipeline helper CSVs live under `scripts/pipelines/`. The initial implementation
+ships the versioned `EU27_2020` membership there; custom mappings may still be
+supplied explicitly.
 
 ## Public API layers
 
@@ -186,6 +189,10 @@ extensions: Mapping[str, MrioExtensionResult] | None = None
 
 ### Geography aggregation
 
+`compile_region_aggregation(...)` and its scope/plan dataclasses are implemented
+in the low-memory geography layer. `aggregate_mrio_regions(...)` remains the
+proposed complete-object operation for the next work package.
+
 ~~~python
 def compile_region_aggregation(
     *,
@@ -211,6 +218,9 @@ assignment. If `include_complement=True`, the complement is an additional scope 
 the returned plan rather than a second return value.
 
 ### Low-memory destination-scope slice
+
+This API is implemented for EXIOBASE through direct source-ZIP streaming and does
+not write a derived scope cache.
 
 ~~~python
 @dataclass(frozen=True)

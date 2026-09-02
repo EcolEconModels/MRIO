@@ -18,6 +18,8 @@ from ecolecon_mrio.data import (
     _open_exio_zip_text,
 )
 
+from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope, ScopeFlow
+
 try:
     import pymrio
 except Exception:  # pragma: no cover
@@ -130,8 +132,27 @@ def _code_index(index: pd.Index, *, label_to_code: dict[str, str]) -> pd.Index:
 
 
 
-def _read_region_x_from_exio_zip(*, zip_path: Path, region: str) -> pd.Series:
-    """Read producer-side x for one region without converting missing output to zero."""
+def _normalize_scope_flow(flow: str) -> str:
+    flow_norm = str(flow).strip().lower()
+    if flow_norm in {"internal", "external_imports", "total"}:
+        return flow_norm
+    raise ValueError("scope flow must be one of: internal, external_imports, total")
+
+
+def _scope_members(scope: RegionScope) -> tuple[str, ...]:
+    members = tuple(str(member).strip() for member in scope.members)
+    if not str(scope.code).strip():
+        raise ValueError("RegionScope.code must not be blank.")
+    if not members or any(not member for member in members):
+        raise ValueError(f"RegionScope {scope.code!r} must contain non-blank members.")
+    if len(set(members)) != len(members):
+        raise ValueError(f"RegionScope {scope.code!r} contains duplicate members.")
+    return members
+
+
+def _read_scope_x_from_exio_zip(*, zip_path: Path, scope: RegionScope) -> pd.Series:
+    """Sum producer-side x over scope members without fabricating missing output."""
+    members = _scope_members(scope)
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "x.txt") as fh:
             frame = pd.read_csv(fh, sep="\t")
@@ -139,39 +160,74 @@ def _read_region_x_from_exio_zip(*, zip_path: Path, region: str) -> pd.Series:
     if not required.issubset(frame.columns):
         raise ValueError("EXIOBASE x.txt must contain region and sector columns.")
     value_col = "indout" if "indout" in frame.columns else frame.columns[-1]
-    region_mask = frame["region"].astype(str) == str(region)
-    if not bool(region_mask.any()):
-        raise ValueError(f"EXIOBASE x.txt has no rows for region={region!r}.")
-    region_frame = frame.loc[region_mask, ["sector", value_col]].copy()
-    raw_values = region_frame[value_col]
-    if not isinstance(raw_values, pd.Series):
+    frame_regions = frame["region"].astype(str)
+    available_regions = set(frame_regions)
+    missing_regions = [member for member in members if member not in available_regions]
+    if missing_regions:
         raise ValueError(
-            f"EXIOBASE x.txt output column {value_col!r} is not one-dimensional."
+            f"EXIOBASE x.txt has no rows for scope members: {missing_regions!r}."
         )
-    values = pd.to_numeric(raw_values, errors="coerce")
-    if not isinstance(values, pd.Series):
-        raise TypeError("EXIOBASE x.txt numeric output conversion did not produce a Series.")
-    sectors = pd.Index(region_frame["sector"].astype(str), name="sector")
-    if not sectors.is_unique:
-        raise ValueError(f"EXIOBASE x.txt contains duplicate sectors for region={region!r}.")
-    nonfinite = ~np.isfinite(values.to_numpy(dtype="float64"))
-    if bool(nonfinite.any()):
-        bad = [str(sectors[i]) for i in np.flatnonzero(nonfinite)[:10]]
-        raise ValueError(
-            "EXIOBASE x.txt contains blank, malformed, or non-finite output values "
-            f"for region={region!r}; sample={bad!r}."
-        )
-    return pd.Series(
-        values.to_numpy(dtype=float), index=sectors, name="x_region", dtype="float64"
-    )
 
-def _exio_table_header_for_region(
+    sector_order: pd.Index | None = None
+    total: pd.Series | None = None
+    # Sum each member's producer output on a common sector basis. Missing member
+    # sectors are malformed source evidence, not zeros to be synthesized.
+    for member in members:
+        member_frame = frame.loc[frame_regions == member, ["sector", value_col]].copy()
+        sectors = pd.Index(member_frame["sector"].astype(str), name="sector")
+        if not sectors.is_unique:
+            raise ValueError(
+                f"EXIOBASE x.txt contains duplicate sectors for region={member!r}."
+            )
+        raw_values = member_frame[value_col]
+        if not isinstance(raw_values, pd.Series):
+            raise ValueError(
+                f"EXIOBASE x.txt output column {value_col!r} is not one-dimensional."
+            )
+        values = pd.to_numeric(raw_values, errors="coerce")
+        if not isinstance(values, pd.Series):
+            raise TypeError("EXIOBASE x.txt numeric output conversion did not produce a Series.")
+        nonfinite = ~np.isfinite(values.to_numpy(dtype="float64"))
+        if bool(nonfinite.any()):
+            bad = [str(sectors[i]) for i in np.flatnonzero(nonfinite)[:10]]
+            raise ValueError(
+                "EXIOBASE x.txt contains blank, malformed, or non-finite output values "
+                f"for region={member!r}; sample={bad!r}."
+            )
+        member_values = pd.Series(
+            values.to_numpy(dtype=float),
+            index=sectors,
+            dtype="float64",
+        )
+        if sector_order is None:
+            sector_order = sectors
+            total = member_values.copy()
+            continue
+        if set(sectors.astype(str)) != set(sector_order.astype(str)):
+            missing = sorted(set(sector_order.astype(str)) - set(sectors.astype(str)))
+            extra = sorted(set(sectors.astype(str)) - set(sector_order.astype(str)))
+            raise ValueError(
+                "EXIOBASE x.txt sector basis differs across scope members: "
+                f"region={member!r}, missing={missing[:10]!r}, extra={extra[:10]!r}."
+            )
+        assert total is not None
+        total = total.add(member_values.reindex(sector_order), fill_value=0.0)
+
+    if sector_order is None or total is None:
+        raise ValueError(f"EXIOBASE x.txt produced an empty scope {scope.code!r}.")
+    total.name = "x_scope"
+    total.index = pd.Index(total.index.astype(str), name="sector")
+    return total.astype("float64")
+
+
+def _exio_table_header_for_scope(
     fh,
     *,
     table_name: str,
-    region: str,
-) -> tuple[list[int], list[str]]:
-    """Return zero-based numeric-column positions and labels for destination region columns."""
+    scope: RegionScope,
+) -> tuple[list[int], list[str], list[int]]:
+    """Select scope destination columns and map duplicates to one collapsed label axis."""
+    members = _scope_members(scope)
     regions = next(fh).rstrip("\n\r").split("\t")[2:]
     labels = next(fh).rstrip("\n\r").split("\t")[2:]
     next(fh)
@@ -180,48 +236,76 @@ def _exio_table_header_for_region(
             f"EXIOBASE {table_name} column-header length mismatch: "
             f"regions={len(regions)}, labels={len(labels)}."
         )
-    keep_positions = [idx for idx, col_region in enumerate(regions) if str(col_region) == str(region)]
-    if not keep_positions:
-        raise ValueError(f"EXIOBASE {table_name} has no destination/final-demand columns for region={region!r}.")
+    missing_destinations = [member for member in members if member not in set(map(str, regions))]
+    if missing_destinations:
+        raise ValueError(
+            f"EXIOBASE {table_name} has no destination columns for scope members: "
+            f"{missing_destinations!r}."
+        )
+    member_set = set(members)
+    keep_positions = [
+        idx for idx, col_region in enumerate(regions) if str(col_region) in member_set
+    ]
     keep_labels = [str(labels[idx]) for idx in keep_positions]
-    return keep_positions, keep_labels
+    # Every destination country repeats the same sector/final-demand labels. Collapse
+    # those duplicate destination labels while retaining first-occurrence order.
+    collapsed_labels = list(dict.fromkeys(keep_labels))
+    label_position = {label: idx for idx, label in enumerate(collapsed_labels)}
+    collapse_positions = [label_position[label] for label in keep_labels]
+    return keep_positions, collapsed_labels, collapse_positions
 
 
-def _row_belongs_to_flow(*, row_region: str, region: str, flow: str) -> bool:
-    if flow == "domestic":
-        return str(row_region) == str(region)
-    if flow == "imports":
-        return str(row_region) != str(region)
+def _row_belongs_to_scope_flow(
+    *, row_region: str, members: set[str], flow: str
+) -> bool:
+    if flow == "internal":
+        return str(row_region) in members
+    if flow == "external_imports":
+        return str(row_region) not in members
     if flow == "total":
         return True
-    raise ValueError(f"Unsupported normalized flow {flow!r}")
+    raise ValueError(f"Unsupported normalized scope flow {flow!r}")
 
 
-def _read_region_use_table_from_exio_zip(
+def _read_scope_use_table_from_exio_zip(
     *,
     zip_path: Path,
     member_name: str,
-    region: str,
+    scope: RegionScope,
     flow: str,
 ) -> pd.DataFrame:
-    """Stream a Z.txt or Y.txt use block for one destination region from the source zip."""
-    flow_norm = _normalize_flow(flow)
+    """Stream and collapse a Z.txt or Y.txt destination-scope use block."""
+    flow_norm = _normalize_scope_flow(flow)
+    members = set(_scope_members(scope))
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, member_name) as fh:
-            keep_positions, keep_labels = _exio_table_header_for_region(
+            keep_positions, output_labels, collapse_positions = _exio_table_header_for_scope(
                 fh,
                 table_name=member_name,
-                region=region,
+                scope=scope,
             )
+            collapse_index = np.asarray(collapse_positions, dtype=np.int64)
             acc: dict[str, np.ndarray] = {}
             row_order: list[str] = []
+            all_row_order: list[str] = []
+            seen_all: set[str] = set()
             max_keep = max(keep_positions)
+            # Stream producer rows once. Origin membership determines internal versus
+            # external-import use; destination membership was fixed by the header slice.
             for row_idx, line in enumerate(fh):
                 try:
                     row_region, row_sector, _rest = line.rstrip("\n\r").split("\t", 2)
                 except ValueError:
-                    raise ValueError(f"EXIOBASE {member_name} malformed row at position {row_idx}") from None
-                if not _row_belongs_to_flow(row_region=row_region, region=region, flow=flow_norm):
+                    raise ValueError(
+                        f"EXIOBASE {member_name} malformed row at position {row_idx}"
+                    ) from None
+                sector = str(row_sector)
+                if sector not in seen_all:
+                    seen_all.add(sector)
+                    all_row_order.append(sector)
+                if not _row_belongs_to_scope_flow(
+                    row_region=row_region, members=members, flow=flow_norm
+                ):
                     continue
                 values = _numeric_tail_from_exio_line(line)
                 if values.size <= max_keep:
@@ -233,27 +317,52 @@ def _read_region_use_table_from_exio_zip(
                 if not np.isfinite(selected).all():
                     raise ValueError(
                         f"EXIOBASE {member_name} contains non-finite monetary values "
-                        f"at row {row_idx} for destination region={region!r}."
+                        f"at row {row_idx} for destination scope={scope.code!r}."
                     )
-                sector = str(row_sector)
+                # Sum the selected destination-country columns onto one scope-level
+                # sector/category axis before accumulating across producer origins.
+                collapsed = np.zeros(len(output_labels), dtype="float64")
+                np.add.at(collapsed, collapse_index, selected)
                 if sector not in acc:
-                    acc[sector] = np.zeros(len(keep_positions), dtype=float)
+                    acc[sector] = np.zeros(len(output_labels), dtype="float64")
                     row_order.append(sector)
-                acc[sector] += selected
+                acc[sector] += collapsed
+    if not all_row_order:
+        raise ValueError(f"EXIOBASE {member_name} contains no source rows.")
     if not row_order:
-        raise ValueError(
-            f"EXIOBASE {member_name} produced an empty region slice for "
-            f"region={region!r}, flow={flow_norm!r}."
-        )
-    data = np.vstack([acc[sector] for sector in row_order])
+        # The all-regions external-import limiting case is a valid zero account.
+        row_order = all_row_order
+    data = np.vstack(
+        [acc.get(sector, np.zeros(len(output_labels), dtype="float64")) for sector in row_order]
+    )
     return pd.DataFrame(
         data,
         index=pd.Index(row_order, name="sector"),
-        columns=pd.Index(keep_labels),
+        columns=pd.Index(output_labels),
         dtype="float64",
     )
 
 
+def _read_region_use_table_from_exio_zip(
+    *,
+    zip_path: Path,
+    member_name: str,
+    region: str,
+    flow: str,
+) -> pd.DataFrame:
+    """Backward-compatible singleton adapter to the scope-streaming implementation."""
+    flow_norm = _normalize_flow(flow)
+    scope_flow = {
+        "domestic": "internal",
+        "imports": "external_imports",
+        "total": "total",
+    }[flow_norm]
+    return _read_scope_use_table_from_exio_zip(
+        zip_path=zip_path,
+        member_name=member_name,
+        scope=RegionScope(code=str(region), members=(str(region),)),
+        flow=scope_flow,
+    )
 
 def _read_region_exports_member_from_exio_zip(
     *,
@@ -357,6 +466,88 @@ def read_exiobase3_destination_final_demand_totals(
         raise ValueError("EXIO destination final-demand totals must be finite.")
     return totals.rename("final_demand_total")
 
+def _load_exio_scope_slice_direct_from_zip(
+    *,
+    year: int,
+    system: str,
+    scope: RegionScope,
+    source_zip: Path,
+    flow: str,
+    doi: str | None = None,
+) -> MrioScopeSlice:
+    """Build one EXIOBASE destination-scope use slice from x.txt/Z.txt/Y.txt."""
+    flow_norm = _normalize_scope_flow(flow)
+    # Z and Y are extensive destination-use accounts. Collapse geography first; no
+    # coefficient or intensity is formed in this work package.
+    Z_use = _read_scope_use_table_from_exio_zip(
+        zip_path=source_zip,
+        member_name="Z.txt",
+        scope=scope,
+        flow=flow_norm,
+    )
+    Y_use = _read_scope_use_table_from_exio_zip(
+        zip_path=source_zip,
+        member_name="Y.txt",
+        scope=scope,
+        flow=flow_norm,
+    )
+    # A missing Y product row is unavailable/malformed source evidence, not a valid
+    # all-zero final-demand row. Preserve the existing fail-closed singleton rule.
+    z_rows = pd.Index(Z_use.index.astype(str))
+    y_rows = pd.Index(Y_use.index.astype(str))
+    missing_y = z_rows.difference(y_rows)
+    extra_y = y_rows.difference(z_rows)
+    if len(missing_y) or len(extra_y):
+        raise ValueError(
+            "EXIOBASE Y.txt row basis does not match Z.txt for the scope slice: "
+            f"missing={list(map(str, missing_y[:10]))!r}, "
+            f"extra={list(map(str, extra_y[:10]))!r}."
+        )
+    Y_use = Y_use.reindex(z_rows)
+    x_output = _read_scope_x_from_exio_zip(zip_path=source_zip, scope=scope)
+
+    # Translate EXIO source labels to the canonical product codes used by existing
+    # split/concordance consumers only after the monetary aggregation is complete.
+    label_to_code = _exio_label_to_code_lookup(system)
+    Z_use = Z_use.copy()
+    Y_use = Y_use.copy()
+    Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code).rename("sector")
+    Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
+    Y_use.index = _code_index(Y_use.index, label_to_code=label_to_code).rename("sector")
+    x_output = x_output.copy()
+    x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
+
+    sectors = pd.Index(Z_use.index.astype(str), name="sector")
+    x_scope = x_output.reindex(sectors)
+    missing_x = [str(sector) for sector, value in x_scope.items() if pd.isna(value)]
+    if missing_x:
+        raise ValueError(
+            f"EXIOBASE x.txt is missing output values for scope sectors: {missing_x[:10]!r}"
+        )
+    metadata: dict[str, object] = {
+        "dataset": "exiobase",
+        "year": int(year),
+        "system": str(system),
+        "scope_code": str(scope.code),
+        "scope_members": list(map(str, scope.members)),
+        "flow": flow_norm,
+        "source_zip": str(source_zip),
+        "cache_kind": "exiobase_zip_stream_scope_slice",
+        "zip_only_cache": True,
+        "source_zip_retained": True,
+    }
+    if doi is not None:
+        metadata["exio_doi"] = _normalize_exiobase_doi(str(doi))
+    return MrioScopeSlice(
+        scope=scope,
+        Z=Z_use.astype("float64"),
+        Y=Y_use.astype("float64"),
+        x_scope=x_scope.astype("float64"),
+        flow=cast(ScopeFlow, flow_norm),
+        metadata=metadata,
+    )
+
+
 def _load_exio_region_slice_direct_from_zip(
     *,
     year: int,
@@ -365,61 +556,32 @@ def _load_exio_region_slice_direct_from_zip(
     source_zip: Path,
     flow: str,
 ) -> ExioRegionSlice:
-    """Build an EXIOBASE region use slice directly from x.txt/Z.txt/Y.txt."""
+    """Backward-compatible singleton adapter over the scope streaming core."""
     flow_norm = _normalize_flow(flow)
-    Z_use = _read_region_use_table_from_exio_zip(
-        zip_path=source_zip,
-        member_name="Z.txt",
-        region=region,
-        flow=flow_norm,
+    scope_flow = {
+        "domestic": "internal",
+        "imports": "external_imports",
+        "total": "total",
+    }[flow_norm]
+    scope_slice = _load_exio_scope_slice_direct_from_zip(
+        year=year,
+        system=system,
+        scope=RegionScope(code=str(region), members=(str(region),)),
+        source_zip=source_zip,
+        flow=scope_flow,
     )
-    Y_use = _read_region_use_table_from_exio_zip(
-        zip_path=source_zip,
-        member_name="Y.txt",
-        region=region,
-        flow=flow_norm,
-    )
-    # Z and Y are both complete EXIO monetary source tables. A missing Y row is
-    # unavailable/malformed source evidence, not an all-zero final-demand row.
-    z_rows = pd.Index(Z_use.index.astype(str))
-    y_rows = pd.Index(Y_use.index.astype(str))
-    missing_y = z_rows.difference(y_rows)
-    extra_y = y_rows.difference(z_rows)
-    if len(missing_y) or len(extra_y):
-        raise ValueError(
-            "EXIOBASE Y.txt row basis does not match Z.txt for the region slice: "
-            f"missing={list(map(str, missing_y[:10]))!r}, "
-            f"extra={list(map(str, extra_y[:10]))!r}."
-        )
-    Y_use = Y_use.reindex(z_rows)
-    x_output = _read_region_x_from_exio_zip(zip_path=source_zip, region=region)
-
-    label_to_code = _exio_label_to_code_lookup(system)
-    Z_use = Z_use.copy()
-    Y_use = Y_use.copy()
-    Z_use.index = _code_index(Z_use.index, label_to_code=label_to_code)
-    Z_use.columns = _code_index(Z_use.columns, label_to_code=label_to_code)
-    Y_use.index = _code_index(Y_use.index, label_to_code=label_to_code)
-    x_output = x_output.copy()
-    x_output.index = _code_index(x_output.index, label_to_code=label_to_code)
-
-    sectors = pd.Index(Z_use.index.astype(str), name="sector")
-    x_region = x_output.reindex(sectors)
-    missing_x = [str(sector) for sector, value in x_region.items() if pd.isna(value)]
-    if missing_x:
-        raise ValueError(f"EXIOBASE x.txt is missing output values for slice sectors: {missing_x[:10]!r}")
+    sectors = pd.Index(scope_slice.Z.index.astype(str), name="sector")
     return ExioRegionSlice(
         year=int(year),
         system=str(system),
         region=str(region),
         sectors=sectors,
-        Z_domestic=Z_use.astype("float64"),
-        Y_region=Y_use.astype("float64"),
-        x_region=x_region.astype("float64"),
+        Z_domestic=scope_slice.Z,
+        Y_region=scope_slice.Y,
+        x_region=scope_slice.x_scope.rename("x_region"),
         source_zip=source_zip,
         flow=flow_norm,
     )
-
 
 def _region_slice_cache_paths(
     *,
@@ -652,6 +814,57 @@ def load_exiobase3(
         raise RuntimeError(f"Failed to load EXIOBASE 3 for year={year}. {hint}") from e
 
 
+
+def load_exiobase3_scope_slice(
+    *,
+    year: int,
+    scope: RegionScope,
+    system: str = "pxp",
+    flow: str = "internal",
+    force_download: bool = False,
+    cache_root: str | Path | None = None,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
+    verbose: bool = False,
+) -> MrioScopeSlice:
+    """Stream one EXIOBASE destination-scope use block without a derived cache."""
+    if cache_root is None:
+        from ecolecon_mrio.data import default_data_root
+
+        cache_root = default_data_root()
+    cache_root = Path(cache_root)
+    flow_norm = _normalize_scope_flow(flow)
+    _scope_members(scope)
+
+    from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_cache_paths
+
+    exio_paths = resolve_exiobase_cache_paths(year, system=system, data_root=cache_root)
+    data_dir = exio_paths["data_dir"]
+    data_dir.mkdir(parents=True, exist_ok=True)
+    # Preserve the repository low-RAM contract: ensure/reuse only the DOI-checked
+    # source ZIP and do not create a persistent derived scope cache.
+    source_zip = ensure_exiobase_year_zip(
+        year,
+        data_dir=data_dir,
+        system=system,
+        force_download=force_download,
+        allow_download_missing=True,
+        doi=str(doi),
+        verbose=verbose,
+    )
+    if verbose:
+        print(
+            f"Streaming EXIOBASE scope slice directly from {source_zip.name} "
+            f"for scope={scope.code} members={list(scope.members)!r} year={year} "
+            f"system={system} flow={flow_norm} (without derived scope cache) ..."
+        )
+    return _load_exio_scope_slice_direct_from_zip(
+        year=year,
+        system=system,
+        scope=scope,
+        source_zip=source_zip,
+        flow=flow_norm,
+        doi=doi,
+    )
 
 def load_exiobase3_region_slice(
     *,

@@ -333,3 +333,21 @@ __all__.extend([
     "run_energy_balance_pxp_split",
     "write_energy_balance_pxp_diagnostics",
 ])
+
+from .region_aggregation import (
+    MrioScopeSlice,
+    MrioSource,
+    RegionAggregationPlan,
+    RegionScope,
+    compile_region_aggregation,
+    load_mrio_scope_slice,
+)
+
+__all__.extend([
+    "MrioScopeSlice",
+    "MrioSource",
+    "RegionAggregationPlan",
+    "RegionScope",
+    "compile_region_aggregation",
+    "load_mrio_scope_slice",
+])

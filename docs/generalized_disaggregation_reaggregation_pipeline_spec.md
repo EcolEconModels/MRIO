@@ -27,10 +27,10 @@ hooks, and migration rules needed to implement that methods document. The API
 spec must not weaken, replace, or silently alter the economic equations and
 accounting identities in the standalone methods spec.
 
-The independent region-scope API described below is an accepted **vNext design**,
-not an implemented API. Existing singleton EXIO loaders and current split-pipeline
-interfaces remain authoritative until the corresponding source-and-test patch is
-merged.
+The generic low-memory region-scope API described below is implemented and the
+existing singleton EXIO loader remains backward compatible. The pipeline-specific
+`DonorScopeContext`, environmental scope accounts, and sector-pipeline integration
+remain **vNext design** until their later source-and-test patches are merged.
 
 ## Existing repo abstractions to preserve
 
@@ -80,11 +80,11 @@ third split representation.
 ## Independent geography contract
 
 Geography aggregation is an upstream donor operation, not a fuels/fuels-more or
-green/brown profile feature. Checked-in region-scope helpers are proposed under
+green/brown profile feature. Checked-in region-scope helpers live under
 `scripts/pipelines/region_scopes/` (or may be supplied explicitly), consistent
-with the repository-wide `scripts/pipelines/` source-of-truth rule. The directory
-is created by the future implementation patch, not by this documentation-only
-change. Region-scope mappings use:
+with the repository-wide `scripts/pipelines/` source-of-truth rule. The initial
+implementation includes the versioned `EU27_2020` scope. Region-scope mappings
+use:
 
 ~~~text
 scope_code,scope_label,member_region,member_order,enabled,notes

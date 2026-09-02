@@ -464,12 +464,13 @@ unless a separate override policy is explicitly declared.
 ## Geographic scope aggregation
 
 Geographic aggregation is a first-class operation and is independent of sector
-disaggregation/reaggregation. This section is the accepted vNext method; the
-current source implementation remains singleton-region until the corresponding
-API and tests are implemented. Let \(G\) be the set of member regions in a checked,
-versioned region-scope mapping. The mapping is unweighted: each source region is
-either a member or not a member. The complement \(G^c\) is derived from the actual
-region basis in the selected donor release.
+disaggregation/reaggregation. The low-memory source implementation now supports
+checked multi-region destination scopes for monetary \(Z\), \(Y\), and scope
+production output \(x^G\); complete-object aggregation and scope environmental
+accounts remain later work packages. Let \(G\) be the set of member regions in a
+checked, versioned region-scope mapping. The mapping is unweighted: each source
+region is either a member or not a member. The complement \(G^c\) is derived from
+the actual region basis in the selected donor release.
 
 A published target table for the desired geography is authoritative. In
 particular, Eurostat publishes consolidated European `naio_10_cp1700` tables, so

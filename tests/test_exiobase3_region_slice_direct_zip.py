@@ -241,3 +241,237 @@ def test_region_slice_rejects_nonfinite_selected_Y_value(tmp_path: Path) -> None
         exiobase3._load_exio_region_slice_direct_from_zip(
             year=2020, system="pxp", region="AT", source_zip=source, flow="domestic"
         )
+
+
+# Region-scope API regressions: geography aggregation is independent of sector splitting.
+def _write_three_region_exio_zip(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    regions = ("AT", "DE", "FR")
+    sectors = ("A", "B")
+    z_columns = [(region, sector) for region in regions for sector in sectors]
+    y_columns = [(region, category) for region in regions for category in ("HFCE", "GFCF")]
+
+    z_lines = [
+        "\t\t" + "\t".join(region for region, _ in z_columns),
+        "\t\t" + "\t".join(sector for _, sector in z_columns),
+        "\t\t" + "\t".join("unit" for _ in z_columns),
+    ]
+    y_lines = [
+        "\t\t" + "\t".join(region for region, _ in y_columns),
+        "\t\t" + "\t".join(category for _, category in y_columns),
+        "\t\t" + "\t".join("unit" for _ in y_columns),
+    ]
+    x_lines = ["region\tsector\tindout"]
+    for origin_idx, region in enumerate(regions):
+        for sector_idx, sector in enumerate(sectors):
+            z_values = [
+                float(100 * origin_idx + 10 * sector_idx + column_idx + 1)
+                for column_idx in range(len(z_columns))
+            ]
+            y_values = [
+                float(1000 * origin_idx + 100 * sector_idx + column_idx + 1)
+                for column_idx in range(len(y_columns))
+            ]
+            z_lines.append(
+                f"{region}\t{sector}\t" + "\t".join(f"{value:g}" for value in z_values)
+            )
+            y_lines.append(
+                f"{region}\t{sector}\t" + "\t".join(f"{value:g}" for value in y_values)
+            )
+            output = 100.0 + 200.0 * origin_idx + 100.0 * sector_idx
+            x_lines.append(f"{region}\t{sector}\t{output:g}")
+
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("file_parameters.json", "{}")
+        zf.writestr("x.txt", "\n".join(x_lines) + "\n")
+        zf.writestr("Z.txt", "\n".join(z_lines) + "\n")
+        zf.writestr("Y.txt", "\n".join(y_lines) + "\n")
+
+
+def _prepare_scope_cache_root(tmp_path: Path) -> Path:
+    data_dir = tmp_path / "exiobase3_2020"
+    _write_three_region_exio_zip(data_dir / "IOT_2020_pxp.zip")
+    (data_dir / "download_log.json").write_text(
+        json.dumps({"version": DEFAULT_EXIOBASE3_DOI}) + "\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_compile_region_aggregation_builds_disjoint_scope_and_complement() -> None:
+    """Protect one-to-one geography membership and source-derived RoW construction."""
+    from ecolecon_mrio.region_aggregation import compile_region_aggregation
+
+    mapping = pd.DataFrame(
+        [
+            {
+                "scope_code": "AT_DE",
+                "scope_label": "Austria and Germany",
+                "member_region": "DE",
+                "member_order": 2,
+                "enabled": True,
+                "notes": "",
+            },
+            {
+                "scope_code": "AT_DE",
+                "scope_label": "Austria and Germany",
+                "member_region": "AT",
+                "member_order": 1,
+                "enabled": True,
+                "notes": "",
+            },
+        ]
+    )
+    plan = compile_region_aggregation(
+        source_regions=("AT", "DE", "FR"),
+        mapping=mapping,
+        scopes=("AT_DE",),
+        include_complement=True,
+        complement_code="RoW",
+    )
+    assert [scope.code for scope in plan.scopes] == ["AT_DE", "RoW"]
+    assert plan.scopes[0].members == ("AT", "DE")
+    assert plan.scopes[1].members == ("FR",)
+    assert plan.source_to_scope.to_dict() == {"AT": "AT_DE", "DE": "AT_DE", "FR": "RoW"}
+
+
+def test_compile_region_aggregation_rejects_overlap_and_unknown_members() -> None:
+    """Reject geographic disaggregation and source-region codes absent from the donor."""
+    from ecolecon_mrio.region_aggregation import compile_region_aggregation
+
+    overlapping = pd.DataFrame(
+        [
+            ["S1", "one", "AT", 1, True, ""],
+            ["S2", "two", "AT", 1, True, ""],
+        ],
+        columns=["scope_code", "scope_label", "member_region", "member_order", "enabled", "notes"],  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(ValueError, match="at most one selected scope"):
+        compile_region_aggregation(source_regions=("AT", "DE"), mapping=overlapping)
+
+    unknown = overlapping.iloc[[0]].copy()
+    unknown.loc[:, "member_region"] = "ZZ"
+    with pytest.raises(ValueError, match="absent from the selected source release"):
+        compile_region_aggregation(source_regions=("AT", "DE"), mapping=unknown)
+
+
+def test_checked_in_eu27_scope_mapping_has_expected_membership() -> None:
+    """Lock the checked EU27_2020 helper to its 27 canonical EXIOBASE members."""
+    from ecolecon_mrio.region_aggregation import compile_region_aggregation
+
+    eu27 = (
+        "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR",
+        "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO",
+        "SE", "SI", "SK",
+    )
+    plan = compile_region_aggregation(
+        source_regions=(*eu27, "US"),
+        mapping=Path("scripts/pipelines/region_scopes/eu27_2020.csv"),
+        scopes=("EU27_2020",),
+        include_complement=True,
+    )
+    assert plan.scopes[0].members == eu27
+    assert plan.scopes[1].code == "RoW"
+    assert plan.scopes[1].members == ("US",)
+
+
+def test_scope_slice_streams_internal_external_and_total_boundaries(tmp_path: Path) -> None:
+    """Protect scope trade boundaries, additive totals, and flow-invariant production x."""
+    from ecolecon_mrio.region_aggregation import MrioSource, RegionScope, load_mrio_scope_slice
+
+    cache_root = _prepare_scope_cache_root(tmp_path)
+    source = MrioSource(
+        dataset="exiobase",
+        year=2020,
+        version=DEFAULT_EXIOBASE3_DOI,
+        system="pxp",
+        data_root=cache_root,
+    )
+    scope = RegionScope(code="AT_DE", members=("AT", "DE"), label="Austria and Germany")
+    internal = load_mrio_scope_slice(source, scope=scope, flow="internal")
+    external = load_mrio_scope_slice(source, scope=scope, flow="external_imports")
+    total = load_mrio_scope_slice(source, scope=scope, flow="total")
+
+    assert internal.Z.loc["CPA_A", "CPA_A"] == 208.0
+    assert external.Z.loc["CPA_A", "CPA_A"] == 404.0
+    assert total.Z.loc["CPA_A", "CPA_A"] == 612.0
+    assert internal.Y.loc["CPA_A", "HFCE"] == 2008.0
+    assert external.Y.loc["CPA_A", "HFCE"] == 4004.0
+    assert total.Y.loc["CPA_A", "HFCE"] == 6012.0
+    assert internal.x_scope.loc["CPA_A"] == 400.0
+    pd.testing.assert_series_equal(internal.x_scope, external.x_scope)
+    pd.testing.assert_series_equal(internal.x_scope, total.x_scope)
+    pd.testing.assert_frame_equal(internal.Z.add(external.Z), total.Z)
+    pd.testing.assert_frame_equal(internal.Y.add(external.Y), total.Y)
+    assert not (cache_root / "exiobase3_2020" / "slices").exists()
+
+
+def test_all_regions_scope_has_zero_external_imports(tmp_path: Path) -> None:
+    """An all-source scope has a well-defined zero external-import monetary account."""
+    from ecolecon_mrio.region_aggregation import MrioSource, RegionScope, load_mrio_scope_slice
+
+    cache_root = _prepare_scope_cache_root(tmp_path)
+    out = load_mrio_scope_slice(
+        MrioSource(
+            dataset="exiobase",
+            year=2020,
+            version=DEFAULT_EXIOBASE3_DOI,
+            system="pxp",
+            data_root=cache_root,
+        ),
+        scope=RegionScope(code="ALL", members=("AT", "DE", "FR")),
+        flow="external_imports",
+    )
+    assert float(out.Z.to_numpy(dtype="float64").sum()) == 0.0
+    assert float(out.Y.to_numpy(dtype="float64").sum()) == 0.0
+    assert out.x_scope.loc["CPA_A"] == 900.0
+
+
+def test_singleton_scope_matches_existing_region_slice(tmp_path: Path) -> None:
+    """The new scope core must reproduce the existing singleton domestic API exactly."""
+    from ecolecon_mrio.region_aggregation import MrioSource, RegionScope, load_mrio_scope_slice
+
+    cache_root = _prepare_scope_cache_root(tmp_path)
+    legacy = exiobase3.load_exiobase3_region_slice(
+        year=2020,
+        region="AT",
+        system="pxp",
+        flow="domestic",
+        cache_root=cache_root,
+        doi=DEFAULT_EXIOBASE3_DOI,
+    )
+    generic = load_mrio_scope_slice(
+        MrioSource(
+            dataset="exiobase",
+            year=2020,
+            version=DEFAULT_EXIOBASE3_DOI,
+            system="pxp",
+            data_root=cache_root,
+        ),
+        scope=RegionScope(code="AT", members=("AT",)),
+        flow="internal",
+    )
+    pd.testing.assert_frame_equal(legacy.Z_domestic, generic.Z)
+    pd.testing.assert_frame_equal(legacy.Y_region, generic.Y)
+    pd.testing.assert_series_equal(
+        legacy.x_region.rename("x_scope"), generic.x_scope
+    )
+
+
+def test_region_scope_api_is_exported_from_package() -> None:
+    """Protect the accepted public geography symbols at the package root."""
+    from ecolecon_mrio import (
+        MrioScopeSlice,
+        MrioSource,
+        RegionAggregationPlan,
+        RegionScope,
+        compile_region_aggregation,
+        load_mrio_scope_slice,
+    )
+
+    assert MrioScopeSlice is not None
+    assert MrioSource is not None
+    assert RegionAggregationPlan is not None
+    assert RegionScope is not None
+    assert callable(compile_region_aggregation)
+    assert callable(load_mrio_scope_slice)
