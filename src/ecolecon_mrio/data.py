@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
 import io
 import json
 import numpy as np
@@ -11,7 +10,7 @@ import re
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Tuple, cast
+from typing import Any, Sequence, cast
 
 import pandas as pd
 import pymrio
@@ -27,27 +26,6 @@ from ecolecon_mrio.mrio_sda import UnitMetadata
 # intentionally unchanged in this patch; the DOI controls only source
 # discovery/download and provenance metadata.
 DEFAULT_EXIOBASE3_DOI = "10.5281/zenodo.20051562"
-
-
-@dataclass(frozen=True)
-class MrioMatrixResult:
-    """Structured result for direct MRIO matrix reads.
-
-    Phase 3 keeps this EXIOBASE-backed and zip-streamed while making the
-    requested matrix and final-demand shape explicit.  ``load_mrio_matrices``
-    remains the backward-compatible tuple wrapper around this result.
-    """
-
-    year: int
-    dataset: str
-    system: str
-    source_zip: Path
-    A: csr_matrix | None
-    Z: csr_matrix | None
-    x: pd.Series
-    y: pd.Series | pd.DataFrame | None
-    basis_index: pd.MultiIndex
-    metadata: dict[str, Any]
 
 
 def default_data_root() -> Path:
@@ -188,97 +166,6 @@ def _read_exio_x_from_zip(zip_path: Path) -> tuple[pd.Series, pd.MultiIndex]:
     x = x_numeric_obj.astype(float)
     return pd.Series(x.to_numpy(dtype=float), index=basis_index, name="x"), basis_index
 
-def load_exiobase3_output_for_year(
-    year: int,
-    *,
-    system: str = "pxp",
-    data_root: str | Path | None = None,
-    force_download: bool = False,
-    allow_download_missing: bool = False,
-    resume_downloads: bool = True,
-    show_download_progress: bool = True,
-    download_chunk_mb: int = 1,
-    download_timeout_seconds: float | None = None,
-    download_retries: int = 3,
-    doi: str = DEFAULT_EXIOBASE3_DOI,
-    verbose: bool = False,
-) -> tuple[pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load only EXIOBASE ``x.txt`` for one year.
-
-    Basis compilation and observed-output projection need only the annual
-    monetary output vector ``x_t`` and its canonical ``(region, sector)`` index.
-    They do not need ``Z.txt``, ``Y.txt``, sparse ``A``, Leontief inverses, Ghosh
-    objects, a full pymrio ``IOSystem``, or any derived matrix cache.  This public
-    MRIO boundary keeps source-zip discovery/download policy in MRIO while
-    reading exactly the one source member needed by those analysis stages.
-    """
-
-    # Normalize the requested EXIOBASE IO system before any file path is built;
-    # pxp and ixi have different sector bases and must never be silently mixed.
-    system_clean = str(system).strip().lower()
-
-    # Reject unsupported systems loudly because a wrong system changes the
-    # region-sector index and therefore all downstream basis/projection rows.
-    if system_clean not in {"pxp", "ixi"}:
-        raise ValueError(f"Unsupported exiobase system '{system}'. Use 'pxp' or 'ixi'.")
-
-    # Resolve the standard MRIO source-zip path without exposing zip internals to
-    # downstream analysis repos.
-    paths = resolve_exiobase_cache_paths(int(year), system=system_clean, data_root=data_root)
-
-    # Ensure the year directory exists; the only durable data cache created or
-    # reused by this function is the raw EXIOBASE source zip in that directory.
-    data_dir = paths["data_dir"]
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # Locate or optionally download the raw IOT zip.  This call validates the zip
-    # container but does not parse a full pymrio object or write derived caches.
-    zip_path = ensure_exiobase_year_zip(
-        int(year),
-        data_dir=data_dir,
-        system=system_clean,
-        force_download=force_download,
-        allow_download_missing=allow_download_missing,
-        resume_downloads=resume_downloads,
-        show_download_progress=show_download_progress,
-        download_chunk_mb=download_chunk_mb,
-        download_timeout_seconds=download_timeout_seconds,
-        download_retries=download_retries,
-        doi=str(doi),
-        verbose=verbose,
-    )
-
-    # Read only x.txt.  This is the critical low-RAM step: no Z/Y streaming and no
-    # A derivation happen in stages that only need the output vector or index.
-    x, basis_index = _read_exio_x_from_zip(zip_path)
-
-    # Return explicit metadata so callers and manifests can audit that this was
-    # an x-only source-zip read rather than a full-object or matrix-cache load.
-    metadata: dict[str, Any] = {
-        "cache_kind": "exiobase_zip_stream_x_only",
-        "cache_status": "read_x_direct_from_zip_no_cache_write",
-        "source_zip": str(zip_path),
-        "system": system_clean,
-        "year": int(year),
-        "exio_doi": _normalize_exiobase_doi(doi),
-        "index_columns": ["region", "sector"],
-        "stored_objects": [],
-        "not_stored_objects": [
-            "Z",
-            "A",
-            "Y",
-            "full_pymrio_iosystem",
-            "fast_pickle",
-            "text_cache_dir",
-            "matrix_npz_cache",
-        ],
-        "source_zip_retained": True,
-    }
-
-    # The output vector carries the authoritative MultiIndex used by analysis_v2;
-    # the metadata documents the source path and cache policy for reproducibility.
-    return x, basis_index, metadata
-
 def _exio_text_header_index(fh: io.TextIOBase, *, table_name: str) -> pd.MultiIndex:
     regions = next(fh).rstrip("\n\r").split("\t")[2:]
     sectors = next(fh).rstrip("\n\r").split("\t")[2:]
@@ -300,24 +187,19 @@ def _numeric_tail_from_exio_line(line: str) -> np.ndarray:
     return np.fromstring(rest.replace("\t", " "), sep=" ", dtype=float)
 
 
-def _read_exio_Z_sparse_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> csr_matrix:
-    """Read EXIOBASE Z.txt as CSR without materializing a dense matrix.
-
-    The EXIOBASE source zip is the only on-disk cache. A.txt is not part of the
-    required source archive and must not be required by this loader.
-    """
-    n = len(basis_index)
-    counts = np.zeros(int(n), dtype=np.int64)
-
+def _read_exio_Z_sparse_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.MultiIndex]:
+    """Read EXIOBASE ``Z.txt`` as CSR and derive its own canonical square-IOT basis."""
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "Z.txt") as fh:
-            column_index = _exio_text_header_index(fh, table_name="Z.txt")
-            if not column_index.equals(basis_index):
-                raise ValueError("EXIOBASE Z.txt column labels do not match x.txt basis order.")
+            basis_index = _exio_text_header_index(fh, table_name="Z.txt")
+            if not basis_index.is_unique:
+                raise ValueError("EXIOBASE Z.txt contains duplicate region-sector columns.")
+            n = len(basis_index)
+            counts = np.zeros(n, dtype=np.int64)
             rows_seen = 0
             for row_idx, line in enumerate(fh):
                 if row_idx >= n:
-                    break
+                    raise ValueError(f"EXIOBASE Z.txt row count exceeds square basis length {n}.")
                 try:
                     region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
                 except ValueError:
@@ -325,210 +207,153 @@ def _read_exio_Z_sparse_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) 
                 expected = basis_index[row_idx]
                 if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
                     raise ValueError(
-                        "EXIOBASE Z.txt row labels do not match x.txt basis order: "
+                        "EXIOBASE Z.txt row labels do not match its column basis order: "
                         f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
                     )
                 vals = _numeric_tail_from_exio_line(line)
                 if vals.size != n:
-                    raise ValueError(
-                        f"EXIOBASE Z.txt row width mismatch at row {row_idx}: "
-                        f"got {vals.size}, expected {n}."
-                    )
+                    raise ValueError(f"EXIOBASE Z.txt row width mismatch at row {row_idx}: got {vals.size}, expected {n}.")
                 if not np.isfinite(vals).all():
-                    raise ValueError(
-                        f"EXIOBASE Z.txt contains non-finite monetary values at row {row_idx}."
-                    )
+                    raise ValueError(f"EXIOBASE Z.txt contains non-finite monetary values at row {row_idx}.")
                 counts[row_idx] = int(np.count_nonzero(vals))
                 rows_seen += 1
             if rows_seen != n:
                 raise ValueError(f"EXIOBASE Z.txt row count mismatch: got {rows_seen}, expected {n}.")
-
-    indptr = np.empty(int(n) + 1, dtype=np.int64)
+    indptr = np.empty(n + 1, dtype=np.int64)
     indptr[0] = 0
     np.cumsum(counts, out=indptr[1:])
-    nnz = int(indptr[-1])
-    indices = np.empty(nnz, dtype=np.int32)
-    data = np.empty(nnz, dtype=float)
-
+    indices = np.empty(int(indptr[-1]), dtype=np.int32)
+    data = np.empty(int(indptr[-1]), dtype=float)
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "Z.txt") as fh:
-            column_index = _exio_text_header_index(fh, table_name="Z.txt")
-            if not column_index.equals(basis_index):
-                raise ValueError("EXIOBASE Z.txt column labels do not match x.txt basis order.")
+            second_basis = _exio_text_header_index(fh, table_name="Z.txt")
+            if not second_basis.equals(basis_index):
+                raise ValueError("EXIOBASE Z.txt header changed between sparse read passes.")
             for row_idx, line in enumerate(fh):
-                if row_idx >= n:
-                    break
-                try:
-                    region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
-                except ValueError:
-                    raise ValueError(f"EXIOBASE Z.txt malformed row at position {row_idx}") from None
-                expected = basis_index[row_idx]
-                if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
-                    raise ValueError(
-                        "EXIOBASE Z.txt row labels do not match x.txt basis order: "
-                        f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
-                    )
                 vals = _numeric_tail_from_exio_line(line)
                 nz = np.flatnonzero(vals)
-                start = int(indptr[row_idx])
-                stop = int(indptr[row_idx + 1])
+                start, stop = int(indptr[row_idx]), int(indptr[row_idx + 1])
                 indices[start:stop] = nz.astype(np.int32, copy=False)
                 data[start:stop] = vals[nz]
-
-    Z = csr_matrix((data, indices, indptr), shape=(int(n), int(n)))
+    Z = csr_matrix((data, indices, indptr), shape=(n, n))
     Z.eliminate_zeros()
-    return Z
+    return Z, basis_index
 
+def derive_A_from_Z_and_x(
+    Z: csr_matrix,
+    x: pd.Series,
+    *,
+    basis_index: pd.MultiIndex | None = None,
+    copy: bool = True,
+) -> csr_matrix:
+    """Derive sparse technical coefficients ``A_ij = Z_ij / x_j`` explicitly.
 
-def _derive_A_from_Z_and_x(Z: csr_matrix, x: pd.Series, *, basis_index: pd.MultiIndex) -> csr_matrix:
-    """Compute sparse technical coefficients A_ij = Z_ij / x_j.
-
-    This is column scaling by the buyer-sector output vector. Zero-output columns
-    are mapped to zero coefficients to avoid infinities.
+    ``A`` is not a source-loader product. Zero-output columns map to zero coefficients.
+    Set ``copy=False`` only when the caller deliberately permits reuse of ``Z`` sparse storage.
     """
-    x_numeric = cast(
-        pd.Series, pd.to_numeric(pd.Series(x).reindex(basis_index), errors="coerce")
-    )
-    if x_numeric.isna().any() or not np.isfinite(x_numeric.to_numpy(dtype=float)).all():
-        raise ValueError("EXIOBASE output vector is incomplete or non-finite on the Z basis.")
-    x_values = x_numeric.to_numpy(dtype=float)
-    inv_x = np.zeros_like(x_values, dtype=float)
-    np.divide(1.0, x_values, out=inv_x, where=np.isfinite(x_values) & (x_values != 0.0))
-
-    # Reuse the just-parsed sparse Z storage as A; the caller never needs raw Z
-    # after this point, and avoiding Z.copy() cuts load-time sparse peak memory.
-    A = Z.astype(float, copy=False).tocsr()
+    index = basis_index if basis_index is not None else x.index
+    if not isinstance(index, pd.MultiIndex) or index.nlevels != 2:
+        raise TypeError("A derivation requires a 2-level MRIO region-sector basis.")
+    if Z.shape != (len(index), len(index)):
+        raise ValueError(f"Z shape {Z.shape} does not match basis length {len(index)}.")
+    if not x.index.equals(index):
+        raise ValueError("x index must exactly match the Z basis for A derivation.")
+    x_numeric = cast(pd.Series, pd.to_numeric(x, errors="coerce"))
+    values = x_numeric.to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError("MRIO output vector is incomplete or non-finite on the Z basis.")
+    inv_x = np.zeros_like(values, dtype=float)
+    np.divide(1.0, values, out=inv_x, where=values != 0.0)
+    A = Z.astype(float, copy=copy).tocsr(copy=False)
     if A.nnz:
+        if not np.isfinite(A.data).all():
+            raise ValueError("Z contains non-finite monetary values.")
         A.data *= inv_x[A.indices]
     A.eliminate_zeros()
     return A
 
-
-def _read_exio_y_direct_from_zip(
-    zip_path: Path, *, basis_index: pd.MultiIndex
-) -> pd.Series:
-    """Read non-export final demand, requiring every Y row value explicitly."""
-    n = len(basis_index)
-    with zipfile.ZipFile(zip_path) as zf:
-        with _open_exio_zip_text(zf, "Y.txt") as fh:
-            regions = next(fh).rstrip("\n\r").split("\t")[2:]
-            categories = next(fh).rstrip("\n\r").split("\t")[2:]
-            if len(regions) != len(categories):
-                raise ValueError(
-                    "EXIOBASE Y.txt column-header length mismatch: "
-                    f"regions={len(regions)}, categories={len(categories)}."
-                )
-            keep = np.array(
-                ["export" not in str(cat).lower() for cat in categories], dtype=bool
-            )
-            next(fh)
-            y_vals = np.zeros(n, dtype=float)
-            rows_seen = 0
-            for row_idx, line in enumerate(fh):
-                if row_idx >= n:
-                    break
-                try:
-                    region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
-                except ValueError:
-                    raise ValueError(
-                        f"EXIOBASE Y.txt malformed row at position {row_idx}"
-                    ) from None
-                expected = basis_index[row_idx]
-                if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
-                    raise ValueError(
-                        "EXIOBASE Y.txt row labels do not match x.txt basis order: "
-                        f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
-                    )
-                vals = _numeric_tail_from_exio_line(line)
-                if vals.size != len(categories):
-                    raise ValueError(
-                        f"EXIOBASE Y.txt row width mismatch at row {row_idx}: "
-                        f"got {vals.size}, expected {len(categories)}."
-                    )
-                if not np.isfinite(vals).all():
-                    raise ValueError(
-                        f"EXIOBASE Y.txt contains non-finite monetary values at row {row_idx}."
-                    )
-                y_vals[row_idx] = float(vals[keep].sum())
-                rows_seen += 1
-            if rows_seen != n:
-                raise ValueError(
-                    f"EXIOBASE Y.txt row count mismatch: got {rows_seen}, expected {n}."
-                )
-    return pd.Series(y_vals, index=basis_index, name="y", dtype=float)
-
-def _read_exio_Y_matrix_direct_from_zip(zip_path: Path, *, basis_index: pd.MultiIndex) -> pd.DataFrame:
-    """Read EXIOBASE Y.txt as a dense final-demand matrix when explicitly requested."""
-    n = len(basis_index)
+def _read_exio_Y_matrix_direct_from_zip(zip_path: Path) -> tuple[pd.DataFrame, pd.MultiIndex]:
+    """Read complete EXIOBASE ``Y.txt`` and derive its producer row basis independently."""
     with zipfile.ZipFile(zip_path) as zf:
         with _open_exio_zip_text(zf, "Y.txt") as fh:
             regions = next(fh).rstrip("\n\r").split("\t")[2:]
             categories = next(fh).rstrip("\n\r").split("\t")[2:]
             next(fh)
             if len(regions) != len(categories):
-                raise ValueError(
-                    "EXIOBASE Y.txt column-header length mismatch: "
-                    f"regions={len(regions)}, categories={len(categories)}."
-                )
+                raise ValueError("EXIOBASE Y.txt column-header length mismatch.")
             columns = pd.MultiIndex.from_arrays([regions, categories], names=["region", "category"])
+            labels: list[tuple[str, str]] = []
             rows: list[np.ndarray] = []
-            rows_seen = 0
             for row_idx, line in enumerate(fh):
-                if row_idx >= n:
-                    break
                 try:
                     region, sector, _rest = line.rstrip("\n\r").split("\t", 2)
                 except ValueError:
                     raise ValueError(f"EXIOBASE Y.txt malformed row at position {row_idx}") from None
-                expected = basis_index[row_idx]
-                if (str(region), str(sector)) != (str(expected[0]), str(expected[1])):
-                    raise ValueError(
-                        "EXIOBASE Y.txt row labels do not match x.txt basis order: "
-                        f"row {row_idx} has {(region, sector)!r}, expected {expected!r}."
-                    )
                 vals = _numeric_tail_from_exio_line(line)
                 if vals.size != len(columns):
-                    raise ValueError(
-                        f"EXIOBASE Y.txt row width mismatch at row {row_idx}: "
-                        f"got {vals.size}, expected {len(columns)}."
-                    )
+                    raise ValueError(f"EXIOBASE Y.txt row width mismatch at row {row_idx}: got {vals.size}, expected {len(columns)}.")
                 if not np.isfinite(vals).all():
-                    raise ValueError(
-                        f"EXIOBASE Y.txt matrix contains non-finite monetary values at row {row_idx}."
-                    )
+                    raise ValueError(f"EXIOBASE Y.txt contains non-finite monetary values at row {row_idx}.")
+                labels.append((str(region), str(sector)))
                 rows.append(vals)
-                rows_seen += 1
-            if rows_seen != n:
-                raise ValueError(f"EXIOBASE Y.txt row count mismatch: got {rows_seen}, expected {n}.")
+    basis_index = pd.MultiIndex.from_tuples(labels, names=["region", "sector"])
+    if not basis_index.is_unique:
+        raise ValueError("EXIOBASE Y.txt contains duplicate producer region-sector rows.")
     data = np.vstack(rows) if rows else np.empty((0, len(columns)), dtype=float)
-    return pd.DataFrame(data, index=basis_index, columns=columns, dtype="float64")
+    return pd.DataFrame(data, index=basis_index, columns=columns, dtype="float64"), basis_index
 
 
-def _load_exio_matrices_direct_from_zip(zip_path: Path) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    x, basis_index = _read_exio_x_from_zip(zip_path)
-    Z = _read_exio_Z_sparse_from_zip(zip_path, basis_index=basis_index)
-    A = _derive_A_from_Z_and_x(Z, x, basis_index=basis_index)
-    y = _read_exio_y_direct_from_zip(zip_path, basis_index=basis_index)
-    density = float(A.nnz) / float(A.shape[0] * A.shape[1]) if A.shape[0] and A.shape[1] else 0.0
-    metadata = {
-        "cache_kind": "exiobase_zip_stream",
-        "cache_status": "parsed_z_x_y_direct_from_zip_no_cache_write",
-        "matrix_source": "Z.txt/x.txt",
-        "a_derivation": "A_ij = Z_ij / x_j; zero-output columns set to zero",
-        "matrix_shape": [int(A.shape[0]), int(A.shape[1])],
-        "z_nnz": int(Z.nnz),
-        "nnz": int(A.nnz),
-        "density": density,
-        "stored_objects": [],
-        "not_stored_objects": ["Z", "full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "extensions"],
-        "source_zip": str(zip_path),
-        "index_columns": ["region", "sector"],
-        "cache_matrices": False,
-    }
-    return A, x, y, basis_index, metadata
+def derive_nonexport_final_demand_from_Y(Y: pd.DataFrame) -> pd.Series:
+    """Derive the established non-export final-demand vector from a complete ``Y`` table."""
+    if not isinstance(Y, pd.DataFrame):
+        raise TypeError("Y must be a pandas DataFrame.")
+    labels = Y.columns.get_level_values("category") if isinstance(Y.columns, pd.MultiIndex) and "category" in Y.columns.names else Y.columns
+    def _is_export(label: object) -> bool:
+        folded = str(label).strip().casefold()
+        return "export" in folded or re.search(r"(^|[^a-z])exp([^a-z]|$)", folded) is not None
+    keep = np.asarray([not _is_export(label) for label in labels], dtype=bool)
+    values = Y.loc[:, keep].sum(axis=1).astype(float)
+    values.name = "y"
+    return values
 
+def derive_nonexport_final_demand_from_Y(Y: pd.DataFrame) -> pd.Series:
+    """Derive the established non-export final-demand vector from a complete ``Y`` table."""
+    if not isinstance(Y, pd.DataFrame):
+        raise TypeError("Y must be a pandas DataFrame.")
+    labels = Y.columns.get_level_values("category") if isinstance(Y.columns, pd.MultiIndex) and "category" in Y.columns.names else Y.columns
+    def _is_export(label: object) -> bool:
+        folded = str(label).strip().casefold()
+        return "export" in folded or re.search(r"(^|[^a-z])exp([^a-z]|$)", folded) is not None
+    keep = np.asarray([not _is_export(label) for label in labels], dtype=bool)
+    values = Y.loc[:, keep].sum(axis=1).astype(float)
+    values.name = "y"
+    return values
 
+def derive_nonexport_final_demand_from_Y(Y: pd.DataFrame) -> pd.Series:
+    """Derive the established non-export final-demand vector from a complete ``Y`` table."""
+    if not isinstance(Y, pd.DataFrame):
+        raise TypeError("Y must be a pandas DataFrame.")
+    labels = Y.columns.get_level_values("category") if isinstance(Y.columns, pd.MultiIndex) and "category" in Y.columns.names else Y.columns
+    def _is_export(label: object) -> bool:
+        folded = str(label).strip().casefold()
+        return "export" in folded or re.search(r"(^|[^a-z])exp([^a-z]|$)", folded) is not None
+    keep = np.asarray([not _is_export(label) for label in labels], dtype=bool)
+    values = Y.loc[:, keep].sum(axis=1).astype(float)
+    values.name = "y"
+    return values
 
+def derive_nonexport_final_demand_from_Y(Y: pd.DataFrame) -> pd.Series:
+    """Derive the established non-export final-demand vector from a complete ``Y`` table."""
+    if not isinstance(Y, pd.DataFrame):
+        raise TypeError("Y must be a pandas DataFrame.")
+    labels = Y.columns.get_level_values("category") if isinstance(Y.columns, pd.MultiIndex) and "category" in Y.columns.names else Y.columns
+    def _is_export(label: object) -> bool:
+        folded = str(label).strip().casefold()
+        return "export" in folded or re.search(r"(^|[^a-z])exp([^a-z]|$)", folded) is not None
+    keep = np.asarray([not _is_export(label) for label in labels], dtype=bool)
+    values = Y.loc[:, keep].sum(axis=1).astype(float)
+    values.name = "y"
+    return values
 
 def _normalize_exiobase_doi(doi: str | None = None) -> str:
     """Return a bare DOI token, accepting either a DOI or a doi.org URL."""
@@ -874,10 +699,10 @@ def load_mrio(
     exio_full_cache: str = "none",
     exio_save_text_cache: bool = False,
     exio_system: str = "pxp",
-) -> Tuple[pymrio.IOSystem, pd.Series]:
+) -> pymrio.IOSystem:
     """
     Load MRIO data using native pymrio download and parsing capabilities.
-    Returns the mrio system and the calculated final demand vector y.
+    Returns the requested full pymrio IOSystem.
 
     Parameters
     ----------
@@ -899,13 +724,12 @@ def load_mrio(
     - keep the source zip locally for reproducibility and sparse/direct reads,
     - do not write/read fast pickle caches,
     - do not write/read large parsed text-cache directories,
-    - use `load_mrio_matrices()` for compact sparse A/x/y loading from the zip.
+    - use `load_mrio_iot_matrices()` for selective primitive Z/x/Y loading.
     """
     if dataset == "test":
         if verbose:
             print("Loading internal pymrio test dataset (no download)...")
         mrio = pymrio.load_test()
-        y_full = mrio.Y.sum(axis=1)
 
     elif dataset == "oecd":
         # OECD 2018 edition covers 2005-2015.
@@ -948,8 +772,6 @@ def load_mrio(
         # Filter for Y columns that are not exports (if needed, or just sum)
         # OECD columns usually: "AUS_HFCE", etc.
         # Exports might be "AUS_EXP".
-        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-        y_full = mrio.Y[y_cols].sum(axis=1)
 
     elif dataset == "wiod16":
         root = Path(data_root) if data_root is not None else default_data_root()
@@ -959,7 +781,7 @@ def load_mrio(
             zip_path = data_dir / "WIOTS_in_STATA.zip"
             if not cache_dir.exists() and not zip_path.exists():
                 raise FileNotFoundError(f"WIOD16 cache missing for year={year} and downloads are disabled: {data_dir}")
-        parsed = load_wiod16(
+        return load_wiod16(
             year=year,
             data_dir=data_dir,
             force_download=force_download,
@@ -967,7 +789,6 @@ def load_mrio(
             include_ghosh=include_ghosh,
             verbose=verbose,
         )
-        return parsed.mrio, parsed.y_full
 
     elif dataset == "wiod":
         if year < 1995 or year > 2011:
@@ -985,13 +806,11 @@ def load_mrio(
         cache_path = data_dir / f"mrio_system_{year}.pkl"
         if cache_path.exists():
             mrio = pymrio.load(cache_path)
-            y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-            y_full = mrio.Y[y_cols].sum(axis=1)
             if calc_all and getattr(mrio, "G", None) is None:
                 if verbose:
                     print("Computing MRIO derived matrices (calc_all)...")
                 mrio.calc_all(include_ghosh=include_ghosh)
-            return mrio, y_full
+            return mrio
 
         yy = str(year)[-2:]
 
@@ -1049,14 +868,11 @@ def load_mrio(
         mrio = pymrio.parse_wiod(path=wiot_path, year=year)
         mrio.save(cache_path)
 
-        y_cols = [c for c in mrio.Y.columns if "EXP" not in c]
-        y_full = mrio.Y[y_cols].sum(axis=1)
-
     else:
         raise RuntimeError(
             "Full EXIOBASE IOSystem loading via load_mrio(dataset='exiobase') is disabled. "
-            "Use load_mrio_matrices() / eigenmode sparse loaders so only the source zip is cached "
-            "and A/x/Y are streamed directly from the zip."
+            "Use load_mrio_iot_matrices() / eigenmode sparse loaders so only the source zip is cached "
+            "and primitive Z/x/Y accounts are streamed directly from the zip."
         )
 
     # Ensure Ghosh is calculated
@@ -1065,126 +881,40 @@ def load_mrio(
             print("Computing MRIO derived matrices (calc_all)...")
         mrio.calc_all(include_ghosh=include_ghosh)
 
-    return mrio, y_full
+    return mrio
+
+def _normalize_iot_matrix_requests(matrices: Sequence[str]) -> tuple[str, ...]:
+    requested = tuple(str(name).strip() for name in matrices)
+    if not requested:
+        raise ValueError("matrices must request at least one of 'Z', 'x', or 'Y'.")
+    if len(set(requested)) != len(requested):
+        raise ValueError("matrices must not contain duplicate requests.")
+    invalid = [name for name in requested if name not in {"Z", "x", "Y"}]
+    if invalid:
+        raise ValueError(f"Unsupported IOT matrix request(s): {invalid!r}; allowed: 'Z', 'x', 'Y'.")
+    return requested
 
 
-def _normalize_exio_matrix_request(matrix: str) -> str:
-    matrix_norm = str(matrix).strip().lower()
-    if matrix_norm in {"a", "technical", "technical_coefficients"}:
-        return "A"
-    if matrix_norm in {"z", "transactions", "intermediate"}:
-        return "Z"
-    if matrix_norm in {"both", "a+z", "z+a"}:
-        return "both"
-    if matrix_norm == "none":
-        return "none"
-    raise ValueError("matrix must be one of: 'A', 'Z', 'both', or 'none'.")
+def _validate_same_iot_basis(reference: pd.MultiIndex | None, candidate: pd.MultiIndex, *, source: str) -> pd.MultiIndex:
+    if not isinstance(candidate, pd.MultiIndex) or candidate.nlevels != 2:
+        raise TypeError(f"{source} must expose a 2-level region-sector basis.")
+    if list(candidate.names) != ["region", "sector"]:
+        candidate = candidate.set_names(["region", "sector"])
+    if not candidate.is_unique:
+        raise ValueError(f"{source} basis contains duplicate region-sector rows.")
+    if reference is not None and not candidate.equals(reference):
+        raise ValueError(f"{source} basis does not exactly match the other requested IOT source accounts.")
+    return candidate if reference is None else reference
 
 
-def _normalize_final_demand_request(final_demand: str) -> str:
-    final_demand_norm = str(final_demand).strip().lower()
-    if final_demand_norm in {"summed", "sum", "vector", "y"}:
-        return "summed"
-    if final_demand_norm in {"matrix", "full", "Y".lower()}:
-        return "matrix"
-    if final_demand_norm in {"none", "skip", "no"}:
-        return "none"
-    raise ValueError("final_demand must be one of: 'summed', 'matrix', or 'none'.")
-
-
-def _load_exio_matrix_result_direct_from_zip(
-    zip_path: Path,
-    *,
-    year: int,
-    system: str,
-    doi: str,
-    matrix: str,
-    final_demand: str,
-) -> MrioMatrixResult:
-    matrix_request = _normalize_exio_matrix_request(matrix)
-    final_demand_request = _normalize_final_demand_request(final_demand)
-
-    x, basis_index = _read_exio_x_from_zip(zip_path)
-    Z_work: csr_matrix | None = None
-    z_nnz: int | None = None
-    if matrix_request != "none":
-        Z_work = _read_exio_Z_sparse_from_zip(zip_path, basis_index=basis_index)
-        z_nnz = int(Z_work.nnz)
-
-    A_result: csr_matrix | None = None
-    Z_result: csr_matrix | None = None
-    if matrix_request in {"A", "both"}:
-        if Z_work is None:
-            raise RuntimeError("internal EXIO matrix request lost required Z storage")
-        # ``_derive_A_from_Z_and_x`` scales sparse storage in-place to avoid a
-        # duplicate Z peak for the legacy A-only path.  When the caller explicitly
-        # asks for both matrices, copy once so Z remains the transaction matrix.
-        z_for_a = Z_work.copy() if matrix_request == "both" else Z_work
-        A_result = _derive_A_from_Z_and_x(z_for_a, x, basis_index=basis_index)
-    if matrix_request in {"Z", "both"}:
-        if Z_work is None:
-            raise RuntimeError("internal EXIO matrix request lost required Z storage")
-        Z_result = Z_work
-
-    if final_demand_request == "summed":
-        y_result: pd.Series | pd.DataFrame | None = _read_exio_y_direct_from_zip(zip_path, basis_index=basis_index)
-    elif final_demand_request == "matrix":
-        y_result = _read_exio_Y_matrix_direct_from_zip(zip_path, basis_index=basis_index)
-    else:
-        y_result = None
-
-    density_denominator = float(len(basis_index) * len(basis_index)) if len(basis_index) else 0.0
-    metadata: dict[str, Any] = {
-        "cache_kind": "exiobase_zip_stream_matrix_result",
-        "cache_status": "streamed_direct_from_zip",
-        "dataset": "exiobase",
-        "system": str(system),
-        "year": int(year),
-        "exio_doi": _normalize_exiobase_doi(doi),
-        "source_zip": str(zip_path),
-        "zip_only_cache": True,
-        "source_zip_retained": True,
-        "cache_matrices": False,
-        "matrix_request": matrix_request,
-        "final_demand": final_demand_request,
-        "has_A": A_result is not None,
-        "has_Z": Z_result is not None,
-        "has_y": y_result is not None,
-        "matrix_shape": [int(len(basis_index)), int(len(basis_index))],
-        "z_nnz": z_nnz,
-        "a_nnz": int(A_result.nnz) if A_result is not None else None,
-        "z_density": (
-            float(z_nnz) / density_denominator
-            if z_nnz is not None and density_denominator
-            else None
-        ),
-        "index_columns": ["region", "sector"],
-        "stored_objects": [],
-        "not_stored_objects": ["full_pymrio_iosystem", "fast_pickle", "text_cache_dir", "matrix_npz_cache"],
-    }
-    return MrioMatrixResult(
-        year=int(year),
-        dataset="exiobase",
-        system=str(system),
-        source_zip=zip_path,
-        A=A_result,
-        Z=Z_result,
-        x=x,
-        y=y_result,
-        basis_index=basis_index,
-        metadata=metadata,
-    )
-
-
-def load_mrio_matrix_result(
+def load_mrio_iot_matrices(
+    dataset: str,
     year: int,
     *,
-    dataset: str = "exiobase",
-    matrix: str = "A",
-    final_demand: str = "summed",
+    matrices: Sequence[str],
     force_download: bool = False,
     data_root: str | Path | None = None,
-    calc_all: bool = False,
+    wiod_wiot_file: str | Path | None = None,
     verbose: bool = False,
     allow_download_missing: bool = True,
     resume_downloads: bool = True,
@@ -1193,76 +923,137 @@ def load_mrio_matrix_result(
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
     doi: str = DEFAULT_EXIOBASE3_DOI,
-    delete_source_zip_after_parse: bool = False,
     exio_system: str = "pxp",
-    cache_matrices: bool = False,
-    read_existing_cache: bool = False,
-) -> MrioMatrixResult:
-    """Load an explicit EXIOBASE matrix-result object from the DOI-checked source zip.
+) -> tuple[dict[str, csr_matrix | pd.Series | pd.DataFrame], pd.MultiIndex, dict[str, Any]]:
+    """Load only requested primitive square-IOT source accounts ``Z``, ``x`` and/or ``Y``.
 
-    Phase 3 intentionally keeps this provider-specific and backward-compatible:
-    callers can request ``matrix='A'``, ``'Z'``, ``'both'``, or ``'none'`` and
-    ``final_demand='summed'``, ``'matrix'``, or ``'none'``.  ``matrix='none'`` is
-    the low-memory path for callers that need only ``x`` and final demand. The legacy
-    ``load_mrio_matrices`` tuple API delegates here with ``A`` plus summed
-    final demand.
+    The public loader never returns or derives ``A`` or summed ``y``. EXIOBASE reads
+    only the requested source ZIP members. Other supported providers currently use
+    their existing full-object parser internally and expose the same primitive result contract.
     """
+    requested = _normalize_iot_matrix_requests(matrices)
     dataset_norm = str(dataset).strip().lower()
-    if dataset_norm not in {"exiobase", "exiobase3"}:
-        raise NotImplementedError("load_mrio_matrix_result currently supports only dataset='exiobase'.")
-    system = str(exio_system).strip().lower()
-    if system not in {"pxp", "ixi"}:
-        raise ValueError(f"Unsupported exiobase system '{exio_system}'. Use 'pxp' or 'ixi'.")
-    _ = read_existing_cache  # deprecated no-op: zip-stream loading never reads derived matrix caches.
-    if cache_matrices:
-        raise ValueError("EXIOBASE matrix cache writes are disabled; only the source zip may be cached.")
-    if delete_source_zip_after_parse:
-        raise ValueError("delete_source_zip_after_parse=True is disabled; the EXIOBASE source zip must be retained.")
+    result: dict[str, csr_matrix | pd.Series | pd.DataFrame] = {}
+    basis: pd.MultiIndex | None = None
+    metadata: dict[str, Any]
 
-    matrix_request = _normalize_exio_matrix_request(matrix)
-    final_demand_request = _normalize_final_demand_request(final_demand)
-    paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
-    data_dir = paths["data_dir"]
-    data_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = ensure_exiobase_year_zip(
-        year=int(year),
-        data_dir=data_dir,
-        system=system,
-        force_download=force_download,
-        allow_download_missing=allow_download_missing,
-        resume_downloads=resume_downloads,
-        show_download_progress=show_download_progress,
-        download_chunk_mb=download_chunk_mb,
-        download_timeout_seconds=download_timeout_seconds,
-        download_retries=download_retries,
-        doi=str(doi),
-        verbose=verbose,
-    )
-
-    if verbose:
-        print(
-            f"Streaming EXIOBASE matrix result from {zip_path} "
-            f"(matrix={matrix_request}, final_demand={final_demand_request}; zip-only, no derived cache writes) ..."
+    if dataset_norm in {"exiobase", "exiobase3"}:
+        system = str(exio_system).strip().lower()
+        if system not in {"pxp", "ixi"}:
+            raise ValueError(f"Unsupported exiobase system {exio_system!r}. Use 'pxp' or 'ixi'.")
+        paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
+        data_dir = paths["data_dir"]
+        data_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = ensure_exiobase_year_zip(
+            year=int(year), data_dir=data_dir, system=system,
+            force_download=force_download, allow_download_missing=allow_download_missing,
+            resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+            download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+            download_retries=download_retries, doi=str(doi), verbose=verbose,
         )
-    result = _load_exio_matrix_result_direct_from_zip(
-        zip_path,
-        year=int(year),
-        system=system,
-        doi=str(doi),
-        matrix=matrix_request,
-        final_demand=final_demand_request,
+        for name in requested:
+            if name == "Z":
+                Z, candidate = _read_exio_Z_sparse_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Z.txt")
+                result["Z"] = Z
+            elif name == "x":
+                x, candidate = _read_exio_x_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="x.txt")
+                result["x"] = x
+            else:
+                Y, candidate = _read_exio_Y_matrix_direct_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Y.txt")
+                result["Y"] = Y
+        assert basis is not None
+        metadata = {
+            "dataset": "exiobase",
+            "year": int(year),
+            "system": system,
+            "source_zip": str(zip_path),
+            "exio_doi": _normalize_exiobase_doi(doi),
+            "requested_matrices": list(requested),
+            "cache_kind": "exiobase_zip_stream_iot",
+            "zip_only_cache": True,
+            "source_zip_retained": True,
+            "index_columns": ["region", "sector"],
+        }
+        return result, basis, metadata
+
+    mrio = load_mrio(
+        dataset_norm, int(year), force_download=force_download, data_root=data_root,
+        wiod_wiot_file=wiod_wiot_file, calc_all=False, include_ghosh=False,
+        verbose=verbose, allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
     )
-    if calc_all and verbose:
-        print("calc_all is ignored for load_mrio_matrix_result(); requested sparse/direct objects are returned.")
-    return result
+    source_index: pd.Index | None = None
+    if "Z" in requested:
+        Z_df = pd.DataFrame(mrio.Z)
+        candidate = pd.MultiIndex.from_tuples(list(Z_df.index), names=["region", "sector"]) if not isinstance(Z_df.index, pd.MultiIndex) else Z_df.index.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Z")
+        if not Z_df.columns.equals(Z_df.index):
+            raise ValueError(f"{dataset_norm} Z must be square with identical row/column basis.")
+        result["Z"] = csr_matrix(Z_df.to_numpy(dtype=float))
+        source_index = Z_df.index
+    if "x" in requested:
+        x_obj = mrio.x
+        x_series = x_obj.iloc[:, 0] if isinstance(x_obj, pd.DataFrame) else pd.Series(x_obj)
+        candidate = x_series.index if isinstance(x_series.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(x_series.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.x")
+        result["x"] = pd.Series(pd.to_numeric(x_series, errors="raise").to_numpy(dtype=float), index=candidate, name="x")
+        source_index = x_series.index
+    if "Y" in requested:
+        Y_df = pd.DataFrame(mrio.Y)
+        candidate = Y_df.index if isinstance(Y_df.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(Y_df.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Y")
+        Y_df.index = candidate
+        result["Y"] = Y_df.astype(float)
+        source_index = Y_df.index
+    if basis is None or source_index is None:
+        raise RuntimeError("requested IOT matrices did not establish a basis")
+    metadata = {
+        "dataset": dataset_norm,
+        "year": int(year),
+        "requested_matrices": list(requested),
+        "loader": "pymrio_full_object_adapter",
+        "index_columns": ["region", "sector"],
+    }
+    return result, basis, metadata
+def _normalize_iot_matrix_requests(matrices: Sequence[str]) -> tuple[str, ...]:
+    requested = tuple(str(name).strip() for name in matrices)
+    if not requested:
+        raise ValueError("matrices must request at least one of 'Z', 'x', or 'Y'.")
+    if len(set(requested)) != len(requested):
+        raise ValueError("matrices must not contain duplicate requests.")
+    invalid = [name for name in requested if name not in {"Z", "x", "Y"}]
+    if invalid:
+        raise ValueError(f"Unsupported IOT matrix request(s): {invalid!r}; allowed: 'Z', 'x', 'Y'.")
+    return requested
 
 
-def load_mrio_matrices(
+def _validate_same_iot_basis(reference: pd.MultiIndex | None, candidate: pd.MultiIndex, *, source: str) -> pd.MultiIndex:
+    if not isinstance(candidate, pd.MultiIndex) or candidate.nlevels != 2:
+        raise TypeError(f"{source} must expose a 2-level region-sector basis.")
+    if list(candidate.names) != ["region", "sector"]:
+        candidate = candidate.set_names(["region", "sector"])
+    if not candidate.is_unique:
+        raise ValueError(f"{source} basis contains duplicate region-sector rows.")
+    if reference is not None and not candidate.equals(reference):
+        raise ValueError(f"{source} basis does not exactly match the other requested IOT source accounts.")
+    return candidate if reference is None else reference
+
+
+def load_mrio_iot_matrices(
+    dataset: str,
     year: int,
     *,
+    matrices: Sequence[str],
     force_download: bool = False,
     data_root: str | Path | None = None,
-    calc_all: bool = False,
+    wiod_wiot_file: str | Path | None = None,
     verbose: bool = False,
     allow_download_missing: bool = True,
     resume_downloads: bool = True,
@@ -1271,35 +1062,380 @@ def load_mrio_matrices(
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
     doi: str = DEFAULT_EXIOBASE3_DOI,
-    delete_source_zip_after_parse: bool = False,
     exio_system: str = "pxp",
-    cache_matrices: bool = False,
-    read_existing_cache: bool = False,
-) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Backward-compatible tuple wrapper returning A/x/summed-y/index/metadata."""
-    result = load_mrio_matrix_result(
-        year=int(year),
-        dataset="exiobase",
-        matrix="A",
-        final_demand="summed",
-        force_download=force_download,
-        data_root=data_root,
-        calc_all=calc_all,
-        verbose=verbose,
-        allow_download_missing=allow_download_missing,
-        resume_downloads=resume_downloads,
-        show_download_progress=show_download_progress,
-        download_chunk_mb=download_chunk_mb,
-        download_timeout_seconds=download_timeout_seconds,
+) -> tuple[dict[str, csr_matrix | pd.Series | pd.DataFrame], pd.MultiIndex, dict[str, Any]]:
+    """Load only requested primitive square-IOT source accounts ``Z``, ``x`` and/or ``Y``.
+
+    The public loader never returns or derives ``A`` or summed ``y``. EXIOBASE reads
+    only the requested source ZIP members. Other supported providers currently use
+    their existing full-object parser internally and expose the same primitive result contract.
+    """
+    requested = _normalize_iot_matrix_requests(matrices)
+    dataset_norm = str(dataset).strip().lower()
+    result: dict[str, csr_matrix | pd.Series | pd.DataFrame] = {}
+    basis: pd.MultiIndex | None = None
+    metadata: dict[str, Any]
+
+    if dataset_norm in {"exiobase", "exiobase3"}:
+        system = str(exio_system).strip().lower()
+        if system not in {"pxp", "ixi"}:
+            raise ValueError(f"Unsupported exiobase system {exio_system!r}. Use 'pxp' or 'ixi'.")
+        paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
+        data_dir = paths["data_dir"]
+        data_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = ensure_exiobase_year_zip(
+            year=int(year), data_dir=data_dir, system=system,
+            force_download=force_download, allow_download_missing=allow_download_missing,
+            resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+            download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+            download_retries=download_retries, doi=str(doi), verbose=verbose,
+        )
+        for name in requested:
+            if name == "Z":
+                Z, candidate = _read_exio_Z_sparse_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Z.txt")
+                result["Z"] = Z
+            elif name == "x":
+                x, candidate = _read_exio_x_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="x.txt")
+                result["x"] = x
+            else:
+                Y, candidate = _read_exio_Y_matrix_direct_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Y.txt")
+                result["Y"] = Y
+        assert basis is not None
+        metadata = {
+            "dataset": "exiobase",
+            "year": int(year),
+            "system": system,
+            "source_zip": str(zip_path),
+            "exio_doi": _normalize_exiobase_doi(doi),
+            "requested_matrices": list(requested),
+            "cache_kind": "exiobase_zip_stream_iot",
+            "zip_only_cache": True,
+            "source_zip_retained": True,
+            "index_columns": ["region", "sector"],
+        }
+        return result, basis, metadata
+
+    mrio = load_mrio(
+        dataset_norm, int(year), force_download=force_download, data_root=data_root,
+        wiod_wiot_file=wiod_wiot_file, calc_all=False, include_ghosh=False,
+        verbose=verbose, allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
         download_retries=download_retries,
-        doi=str(doi),
-        delete_source_zip_after_parse=delete_source_zip_after_parse,
-        exio_system=exio_system,
-        cache_matrices=cache_matrices,
-        read_existing_cache=read_existing_cache,
     )
-    if result.A is None:
-        raise RuntimeError("Internal error: legacy load_mrio_matrices expected A but result.A is None.")
-    if not isinstance(result.y, pd.Series):
-        raise RuntimeError("Internal error: legacy load_mrio_matrices expected summed final-demand Series.")
-    return result.A, result.x, result.y, result.basis_index, dict(result.metadata)
+    source_index: pd.Index | None = None
+    if "Z" in requested:
+        Z_df = pd.DataFrame(mrio.Z)
+        candidate = pd.MultiIndex.from_tuples(list(Z_df.index), names=["region", "sector"]) if not isinstance(Z_df.index, pd.MultiIndex) else Z_df.index.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Z")
+        if not Z_df.columns.equals(Z_df.index):
+            raise ValueError(f"{dataset_norm} Z must be square with identical row/column basis.")
+        result["Z"] = csr_matrix(Z_df.to_numpy(dtype=float))
+        source_index = Z_df.index
+    if "x" in requested:
+        x_obj = mrio.x
+        x_series = x_obj.iloc[:, 0] if isinstance(x_obj, pd.DataFrame) else pd.Series(x_obj)
+        candidate = x_series.index if isinstance(x_series.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(x_series.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.x")
+        result["x"] = pd.Series(pd.to_numeric(x_series, errors="raise").to_numpy(dtype=float), index=candidate, name="x")
+        source_index = x_series.index
+    if "Y" in requested:
+        Y_df = pd.DataFrame(mrio.Y)
+        candidate = Y_df.index if isinstance(Y_df.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(Y_df.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Y")
+        Y_df.index = candidate
+        result["Y"] = Y_df.astype(float)
+        source_index = Y_df.index
+    if basis is None or source_index is None:
+        raise RuntimeError("requested IOT matrices did not establish a basis")
+    metadata = {
+        "dataset": dataset_norm,
+        "year": int(year),
+        "requested_matrices": list(requested),
+        "loader": "pymrio_full_object_adapter",
+        "index_columns": ["region", "sector"],
+    }
+    return result, basis, metadata
+def _normalize_iot_matrix_requests(matrices: Sequence[str]) -> tuple[str, ...]:
+    requested = tuple(str(name).strip() for name in matrices)
+    if not requested:
+        raise ValueError("matrices must request at least one of 'Z', 'x', or 'Y'.")
+    if len(set(requested)) != len(requested):
+        raise ValueError("matrices must not contain duplicate requests.")
+    invalid = [name for name in requested if name not in {"Z", "x", "Y"}]
+    if invalid:
+        raise ValueError(f"Unsupported IOT matrix request(s): {invalid!r}; allowed: 'Z', 'x', 'Y'.")
+    return requested
+
+
+def _validate_same_iot_basis(reference: pd.MultiIndex | None, candidate: pd.MultiIndex, *, source: str) -> pd.MultiIndex:
+    if not isinstance(candidate, pd.MultiIndex) or candidate.nlevels != 2:
+        raise TypeError(f"{source} must expose a 2-level region-sector basis.")
+    if list(candidate.names) != ["region", "sector"]:
+        candidate = candidate.set_names(["region", "sector"])
+    if not candidate.is_unique:
+        raise ValueError(f"{source} basis contains duplicate region-sector rows.")
+    if reference is not None and not candidate.equals(reference):
+        raise ValueError(f"{source} basis does not exactly match the other requested IOT source accounts.")
+    return candidate if reference is None else reference
+
+
+def load_mrio_iot_matrices(
+    dataset: str,
+    year: int,
+    *,
+    matrices: Sequence[str],
+    force_download: bool = False,
+    data_root: str | Path | None = None,
+    wiod_wiot_file: str | Path | None = None,
+    verbose: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
+    exio_system: str = "pxp",
+) -> tuple[dict[str, csr_matrix | pd.Series | pd.DataFrame], pd.MultiIndex, dict[str, Any]]:
+    """Load only requested primitive square-IOT source accounts ``Z``, ``x`` and/or ``Y``.
+
+    The public loader never returns or derives ``A`` or summed ``y``. EXIOBASE reads
+    only the requested source ZIP members. Other supported providers currently use
+    their existing full-object parser internally and expose the same primitive result contract.
+    """
+    requested = _normalize_iot_matrix_requests(matrices)
+    dataset_norm = str(dataset).strip().lower()
+    result: dict[str, csr_matrix | pd.Series | pd.DataFrame] = {}
+    basis: pd.MultiIndex | None = None
+    metadata: dict[str, Any]
+
+    if dataset_norm in {"exiobase", "exiobase3"}:
+        system = str(exio_system).strip().lower()
+        if system not in {"pxp", "ixi"}:
+            raise ValueError(f"Unsupported exiobase system {exio_system!r}. Use 'pxp' or 'ixi'.")
+        paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
+        data_dir = paths["data_dir"]
+        data_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = ensure_exiobase_year_zip(
+            year=int(year), data_dir=data_dir, system=system,
+            force_download=force_download, allow_download_missing=allow_download_missing,
+            resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+            download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+            download_retries=download_retries, doi=str(doi), verbose=verbose,
+        )
+        for name in requested:
+            if name == "Z":
+                Z, candidate = _read_exio_Z_sparse_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Z.txt")
+                result["Z"] = Z
+            elif name == "x":
+                x, candidate = _read_exio_x_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="x.txt")
+                result["x"] = x
+            else:
+                Y, candidate = _read_exio_Y_matrix_direct_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Y.txt")
+                result["Y"] = Y
+        assert basis is not None
+        metadata = {
+            "dataset": "exiobase",
+            "year": int(year),
+            "system": system,
+            "source_zip": str(zip_path),
+            "exio_doi": _normalize_exiobase_doi(doi),
+            "requested_matrices": list(requested),
+            "cache_kind": "exiobase_zip_stream_iot",
+            "zip_only_cache": True,
+            "source_zip_retained": True,
+            "index_columns": ["region", "sector"],
+        }
+        return result, basis, metadata
+
+    mrio = load_mrio(
+        dataset_norm, int(year), force_download=force_download, data_root=data_root,
+        wiod_wiot_file=wiod_wiot_file, calc_all=False, include_ghosh=False,
+        verbose=verbose, allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+    )
+    source_index: pd.Index | None = None
+    if "Z" in requested:
+        Z_df = pd.DataFrame(mrio.Z)
+        candidate = pd.MultiIndex.from_tuples(list(Z_df.index), names=["region", "sector"]) if not isinstance(Z_df.index, pd.MultiIndex) else Z_df.index.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Z")
+        if not Z_df.columns.equals(Z_df.index):
+            raise ValueError(f"{dataset_norm} Z must be square with identical row/column basis.")
+        result["Z"] = csr_matrix(Z_df.to_numpy(dtype=float))
+        source_index = Z_df.index
+    if "x" in requested:
+        x_obj = mrio.x
+        x_series = x_obj.iloc[:, 0] if isinstance(x_obj, pd.DataFrame) else pd.Series(x_obj)
+        candidate = x_series.index if isinstance(x_series.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(x_series.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.x")
+        result["x"] = pd.Series(pd.to_numeric(x_series, errors="raise").to_numpy(dtype=float), index=candidate, name="x")
+        source_index = x_series.index
+    if "Y" in requested:
+        Y_df = pd.DataFrame(mrio.Y)
+        candidate = Y_df.index if isinstance(Y_df.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(Y_df.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Y")
+        Y_df.index = candidate
+        result["Y"] = Y_df.astype(float)
+        source_index = Y_df.index
+    if basis is None or source_index is None:
+        raise RuntimeError("requested IOT matrices did not establish a basis")
+    metadata = {
+        "dataset": dataset_norm,
+        "year": int(year),
+        "requested_matrices": list(requested),
+        "loader": "pymrio_full_object_adapter",
+        "index_columns": ["region", "sector"],
+    }
+    return result, basis, metadata
+def _normalize_iot_matrix_requests(matrices: Sequence[str]) -> tuple[str, ...]:
+    requested = tuple(str(name).strip() for name in matrices)
+    if not requested:
+        raise ValueError("matrices must request at least one of 'Z', 'x', or 'Y'.")
+    if len(set(requested)) != len(requested):
+        raise ValueError("matrices must not contain duplicate requests.")
+    invalid = [name for name in requested if name not in {"Z", "x", "Y"}]
+    if invalid:
+        raise ValueError(f"Unsupported IOT matrix request(s): {invalid!r}; allowed: 'Z', 'x', 'Y'.")
+    return requested
+
+
+def _validate_same_iot_basis(reference: pd.MultiIndex | None, candidate: pd.MultiIndex, *, source: str) -> pd.MultiIndex:
+    if not isinstance(candidate, pd.MultiIndex) or candidate.nlevels != 2:
+        raise TypeError(f"{source} must expose a 2-level region-sector basis.")
+    if list(candidate.names) != ["region", "sector"]:
+        candidate = candidate.set_names(["region", "sector"])
+    if not candidate.is_unique:
+        raise ValueError(f"{source} basis contains duplicate region-sector rows.")
+    if reference is not None and not candidate.equals(reference):
+        raise ValueError(f"{source} basis does not exactly match the other requested IOT source accounts.")
+    return candidate if reference is None else reference
+
+
+def load_mrio_iot_matrices(
+    dataset: str,
+    year: int,
+    *,
+    matrices: Sequence[str],
+    force_download: bool = False,
+    data_root: str | Path | None = None,
+    wiod_wiot_file: str | Path | None = None,
+    verbose: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str = DEFAULT_EXIOBASE3_DOI,
+    exio_system: str = "pxp",
+) -> tuple[dict[str, csr_matrix | pd.Series | pd.DataFrame], pd.MultiIndex, dict[str, Any]]:
+    """Load only requested primitive square-IOT source accounts ``Z``, ``x`` and/or ``Y``.
+
+    The public loader never returns or derives ``A`` or summed ``y``. EXIOBASE reads
+    only the requested source ZIP members. Other supported providers currently use
+    their existing full-object parser internally and expose the same primitive result contract.
+    """
+    requested = _normalize_iot_matrix_requests(matrices)
+    dataset_norm = str(dataset).strip().lower()
+    result: dict[str, csr_matrix | pd.Series | pd.DataFrame] = {}
+    basis: pd.MultiIndex | None = None
+    metadata: dict[str, Any]
+
+    if dataset_norm in {"exiobase", "exiobase3"}:
+        system = str(exio_system).strip().lower()
+        if system not in {"pxp", "ixi"}:
+            raise ValueError(f"Unsupported exiobase system {exio_system!r}. Use 'pxp' or 'ixi'.")
+        paths = resolve_exiobase_cache_paths(int(year), system=system, data_root=data_root)
+        data_dir = paths["data_dir"]
+        data_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = ensure_exiobase_year_zip(
+            year=int(year), data_dir=data_dir, system=system,
+            force_download=force_download, allow_download_missing=allow_download_missing,
+            resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+            download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+            download_retries=download_retries, doi=str(doi), verbose=verbose,
+        )
+        for name in requested:
+            if name == "Z":
+                Z, candidate = _read_exio_Z_sparse_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Z.txt")
+                result["Z"] = Z
+            elif name == "x":
+                x, candidate = _read_exio_x_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="x.txt")
+                result["x"] = x
+            else:
+                Y, candidate = _read_exio_Y_matrix_direct_from_zip(zip_path)
+                basis = _validate_same_iot_basis(basis, candidate, source="Y.txt")
+                result["Y"] = Y
+        assert basis is not None
+        metadata = {
+            "dataset": "exiobase",
+            "year": int(year),
+            "system": system,
+            "source_zip": str(zip_path),
+            "exio_doi": _normalize_exiobase_doi(doi),
+            "requested_matrices": list(requested),
+            "cache_kind": "exiobase_zip_stream_iot",
+            "zip_only_cache": True,
+            "source_zip_retained": True,
+            "index_columns": ["region", "sector"],
+        }
+        return result, basis, metadata
+
+    mrio = load_mrio(
+        dataset_norm, int(year), force_download=force_download, data_root=data_root,
+        wiod_wiot_file=wiod_wiot_file, calc_all=False, include_ghosh=False,
+        verbose=verbose, allow_download_missing=allow_download_missing,
+        resume_downloads=resume_downloads, show_download_progress=show_download_progress,
+        download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
+        download_retries=download_retries,
+    )
+    source_index: pd.Index | None = None
+    if "Z" in requested:
+        Z_df = pd.DataFrame(mrio.Z)
+        candidate = pd.MultiIndex.from_tuples(list(Z_df.index), names=["region", "sector"]) if not isinstance(Z_df.index, pd.MultiIndex) else Z_df.index.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Z")
+        if not Z_df.columns.equals(Z_df.index):
+            raise ValueError(f"{dataset_norm} Z must be square with identical row/column basis.")
+        result["Z"] = csr_matrix(Z_df.to_numpy(dtype=float))
+        source_index = Z_df.index
+    if "x" in requested:
+        x_obj = mrio.x
+        x_series = x_obj.iloc[:, 0] if isinstance(x_obj, pd.DataFrame) else pd.Series(x_obj)
+        candidate = x_series.index if isinstance(x_series.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(x_series.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.x")
+        result["x"] = pd.Series(pd.to_numeric(x_series, errors="raise").to_numpy(dtype=float), index=candidate, name="x")
+        source_index = x_series.index
+    if "Y" in requested:
+        Y_df = pd.DataFrame(mrio.Y)
+        candidate = Y_df.index if isinstance(Y_df.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(Y_df.index), names=["region", "sector"])
+        candidate = candidate.set_names(["region", "sector"])
+        basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Y")
+        Y_df.index = candidate
+        result["Y"] = Y_df.astype(float)
+        source_index = Y_df.index
+    if basis is None or source_index is None:
+        raise RuntimeError("requested IOT matrices did not establish a basis")
+    metadata = {
+        "dataset": dataset_norm,
+        "year": int(year),
+        "requested_matrices": list(requested),
+        "loader": "pymrio_full_object_adapter",
+        "index_columns": ["region", "sector"],
+    }
+    return result, basis, metadata

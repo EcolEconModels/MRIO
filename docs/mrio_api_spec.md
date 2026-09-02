@@ -24,8 +24,8 @@ contexts remain proposed until their later source-and-test patches are merged.
 
 Until an implementation patch changes them with tests, the current public
 contracts remain authoritative. In particular, the existing
-`load_mrio_matrices(...)`, `load_mrio_matrix_result(...)`,
-`load_exiobase3_region_slice(...)`, and exported `MrioMatrixResult` shape must be
+`load_mrio_iot_matrices(...) `, `load_mrio_iot_matrices(...) + explicit derivation helpers`,
+`load_exiobase3_region_slice(...)`, and exported `primitive Z/x/Y result dictionary` shape must be
 preserved. Region aggregation is introduced additively; any later deprecation or
 breaking result-object migration requires separate review.
 
@@ -140,7 +140,7 @@ matrix workflows.
 ### Backward-compatible sparse matrix tuple
 
 ~~~python
-load_mrio_matrices(...) -> tuple[A, x, y, basis_index, metadata]
+load_mrio_iot_matrices(...)  -> tuple[Z, x, Y, basis_index, metadata]
 ~~~
 
 This compatibility API retains sparse `A`, `x`, summed `y`, basis index, and
@@ -153,7 +153,7 @@ The currently implemented structured result remains:
 
 ~~~python
 @dataclass(frozen=True)
-class MrioMatrixResult:
+class primitive Z/x/Y result dictionary:
     year: int
     dataset: str
     system: str
@@ -166,7 +166,7 @@ class MrioMatrixResult:
     metadata: dict[str, Any]
 ~~~
 
-`load_mrio_matrix_result(...)` uses this object today. Matrix selection accepts
+`load_mrio_iot_matrices(...) + explicit derivation helpers` uses this object today. Matrix selection accepts
 `"A"`, `"Z"`, `"both"`, or `"none"`; final-demand selection accepts
 `"summed"`, `"matrix"`, or `"none"`. Matrix-shaped final demand is carried
 by the existing `y` field.
@@ -183,7 +183,7 @@ class MrioExtensionResult:
     F_Y: pd.DataFrame | None
     unit: pd.DataFrame | None
 
-# Proposed additive extension to the existing MrioMatrixResult:
+# Proposed additive extension to the existing primitive Z/x/Y result dictionary:
 extensions: Mapping[str, MrioExtensionResult] | None = None
 ~~~
 
@@ -205,9 +205,9 @@ def compile_region_aggregation(
     """Validate many-to-one aggregation for one or more disjoint scopes."""
 
 def aggregate_mrio_regions(
-    result: MrioMatrixResult,
+    result: primitive Z/x/Y result dictionary,
     plan: RegionAggregationPlan,
-) -> MrioMatrixResult:
+) -> primitive Z/x/Y result dictionary:
     """Aggregate extensive core and extension accounts; then recalculate coefficients."""
 ~~~
 
@@ -492,3 +492,5 @@ stale slice.
    `scope_production`; new multi-boundary callers use the generic schema.
 5. Delete flow-specific DOM/IMP/TOTAL extension branches after they delegate to
    the boundary-aware account builder.
+
+> **Current loader contract:** `load_mrio_iot_matrices(dataset, year, matrices=(...))` loads only requested primitive square-IOT accounts `Z`, `x`, and `Y`. `A` and non-export `y` are explicit derivations; obsolete compatibility APIs were deleted.

@@ -4,8 +4,14 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import inspect
+import pytest
 
-from ecolecon_mrio.data import load_mrio_matrices
+from ecolecon_mrio.data import (
+    derive_A_from_Z_and_x,
+    derive_nonexport_final_demand_from_Y,
+    load_mrio_iot_matrices,
+)
 
 
 def _write_tiny_exio_zip(root: Path, year: int) -> Path:
@@ -43,17 +49,22 @@ def _write_tiny_exio_zip(root: Path, year: int) -> Path:
     return zip_path
 
 
-def test_load_mrio_matrices_derives_sparse_A_from_Z_without_A_txt(tmp_path):
+def test_load_mrio_iot_matrices_derives_sparse_A_from_Z_without_A_txt(tmp_path):
     year = 2099
     _write_tiny_exio_zip(tmp_path, year)
 
-    A, x, y, basis_index, metadata = load_mrio_matrices(
+    matrices, basis_index, metadata = load_mrio_iot_matrices(
+        "exiobase",
         year,
         data_root=tmp_path,
+        matrices=("Z", "x", "Y"),
         allow_download_missing=False,
-        cache_matrices=False,
-        read_existing_cache=False,
     )
+    Z = matrices["Z"]
+    x = matrices["x"]
+    Y = matrices["Y"]
+    A = derive_A_from_Z_and_x(Z, x, basis_index=basis_index)
+    y = derive_nonexport_final_demand_from_Y(Y)
 
     assert list(basis_index.tolist()) == [("R1", "s1"), ("R1", "s2")]
     np.testing.assert_allclose(x.to_numpy(dtype=float), [10.0, 20.0])
@@ -67,21 +78,18 @@ def test_load_mrio_matrices_derives_sparse_A_from_Z_without_A_txt(tmp_path):
             ]
         ),
     )
-    assert metadata.get("matrix_source", "Z.txt/x.txt") == "Z.txt/x.txt"
-    assert "A.txt" not in " ".join(map(str, metadata.values()))
+    assert metadata["requested_matrices"] == ["Z", "x", "Y"]
+    assert "A" not in matrices
 
 
-def test_delete_source_zip_after_parse_is_rejected_for_zip_stream(tmp_path):
-    year = 2098
-    _write_tiny_exio_zip(tmp_path, year)
-    try:
-        load_mrio_matrices(
-            year,
+def test_iot_loader_does_not_accept_delete_source_zip_compatibility_kwarg(tmp_path):
+    assert "delete_source_zip_after_parse" not in inspect.signature(
+        load_mrio_iot_matrices
+    ).parameters
+    with pytest.raises(TypeError, match="delete_source_zip_after_parse"):
+        load_mrio_iot_matrices(
+            "exiobase", 2098, matrices=("x",),
             data_root=tmp_path,
             allow_download_missing=False,
             delete_source_zip_after_parse=True,
         )
-    except ValueError as exc:
-        assert "source zip must be retained" in str(exc)
-    else:  # pragma: no cover
-        raise AssertionError("delete_source_zip_after_parse=True should be rejected")

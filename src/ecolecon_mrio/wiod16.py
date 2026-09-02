@@ -3,21 +3,14 @@ from __future__ import annotations
 import json
 import time
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import pandas as pd
 import pymrio
 
 
 WIOD16_WIOTS_STATA_DATAVERSE_URL = "https://dataverse.nl/api/access/datafile/199103"
-
-
-@dataclass(frozen=True)
-class WIOD16Parsed:
-    mrio: pymrio.IOSystem
-    y_full: pd.Series
 
 
 def _write_download_log(path: Path, *, note: str, files: Sequence[Path]) -> None:
@@ -229,7 +222,7 @@ def load_wiod16(
     calc_all: bool = True,
     include_ghosh: bool = True,
     verbose: bool = False,
-) -> WIOD16Parsed:
+) -> pymrio.IOSystem:
     """
     Load WIOD 2016 release WIOT for a specific year (2000–2014) from the STATA zip.
     """
@@ -264,10 +257,9 @@ def load_wiod16(
             ts = int(time.time())
             mrio_cache_dir.rename(data_dir / f"mrio_system_wiod16_{year}.invalid.{ts}")
         else:
-            y_full = mrio.Y.sum(axis=1)
             if calc_all and getattr(mrio, "G", None) is None:
                 mrio.calc_all(include_ghosh=include_ghosh)
-            return WIOD16Parsed(mrio=mrio, y_full=y_full)
+            return mrio
 
     zip_path = ensure_wiod16_wiots_stata_zip(data_dir, force_download=force_download, verbose=verbose)
 
@@ -303,10 +295,8 @@ def load_wiod16(
         ts = int(time.time())
         mrio_cache_dir.rename(data_dir / f"mrio_system_wiod16_{year}.stale.{ts}")
     mrio.save(mrio_cache_dir)
-
-    y_full = mrio.Y.sum(axis=1)
     if calc_all and getattr(mrio, "G", None) is None:
         if verbose:
             print("Computing MRIO derived matrices (calc_all)...")
         mrio.calc_all(include_ghosh=include_ghosh)
-    return WIOD16Parsed(mrio=mrio, y_full=y_full)
+    return mrio

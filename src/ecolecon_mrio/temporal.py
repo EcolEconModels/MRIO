@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from types import SimpleNamespace
 import io
 import time
+from typing import cast
 import zipfile
 
 import numpy as np
@@ -17,7 +18,7 @@ from scipy.sparse import csr_matrix, eye as sparse_eye, issparse
 from scipy.sparse.linalg import spsolve
 
 from .constraints import build_constraints_with_context
-from .data import load_mrio, load_mrio_matrices
+from .data import derive_A_from_Z_and_x, derive_nonexport_final_demand_from_Y, load_mrio, load_mrio_iot_matrices
 from .diagnostics import (
     aggregate_diagnostics_from_pf_vectors,
     calc_boundary_slack,
@@ -475,16 +476,21 @@ def load_mrio_panel(
     delete_source_zip_after_parse: bool = False,
 ) -> dict[int, tuple[Any, pd.Series]]:
     panel: dict[int, tuple[Any, pd.Series]] = {}
+    if exio_full_cache != "none":
+        raise ValueError("exio_full_cache is obsolete; derived full-object EXIO caches are not supported.")
+    if delete_source_zip_after_parse:
+        raise ValueError("delete_source_zip_after_parse=True is disabled; source archives are retained.")
     for i, year in enumerate(years, start=1):
         t0 = time.time()
         if verbose:
             print(f"[MRIO] loading {dataset} year={year} ({i}/{len(years)})...", flush=True)
         if str(dataset).strip().lower() == "exiobase":
-            A, x, y, basis_index, metadata = load_mrio_matrices(
+            matrices, basis_index, metadata = load_mrio_iot_matrices(
+                "exiobase",
                 int(year),
+                matrices=("Z", "x", "Y"),
                 force_download=force_download,
                 data_root=data_root,
-                calc_all=False,
                 verbose=verbose,
                 allow_download_missing=allow_download_missing,
                 resume_downloads=resume_downloads,
@@ -492,13 +498,17 @@ def load_mrio_panel(
                 download_chunk_mb=download_chunk_mb,
                 download_timeout_seconds=download_timeout_seconds,
                 download_retries=download_retries,
-                delete_source_zip_after_parse=False,
                 exio_system="pxp",
             )
+            Z = cast(csr_matrix, matrices["Z"])
+            x = cast(pd.Series, matrices["x"])
+            Y = cast(pd.DataFrame, matrices["Y"])
+            A = derive_A_from_Z_and_x(Z, x, basis_index=basis_index, copy=False)
+            y = derive_nonexport_final_demand_from_Y(Y)
             mrio = _make_sparse_exio_mrio_like(A=A, x=x, y=y, basis_index=basis_index, metadata=metadata)
             panel[int(year)] = (mrio, _series_from_any(y))
         else:
-            mrio, y_full = load_mrio(
+            mrio = load_mrio(
                 dataset=dataset,
                 year=year,
                 force_download=force_download,
@@ -512,14 +522,12 @@ def load_mrio_panel(
                 download_chunk_mb=download_chunk_mb,
                 download_timeout_seconds=download_timeout_seconds,
                 download_retries=download_retries,
-                delete_source_zip_after_parse=delete_source_zip_after_parse,
-                exio_full_cache=exio_full_cache,
             )
+            y_full = derive_nonexport_final_demand_from_Y(pd.DataFrame(mrio.Y))
             panel[int(year)] = (mrio, _series_from_any(y_full))
         if verbose:
             print(f"[MRIO] loaded {dataset} year={year} ({i}/{len(years)}) in {time.time()-t0:.1f}s", flush=True)
     return panel
-
 
 def compute_viability_panel(
     panel: Mapping[int, tuple[Any, pd.Series]],

@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
 
-from .data import load_mrio, load_mrio_matrices
+from .data import derive_A_from_Z_and_x, derive_nonexport_final_demand_from_Y, load_mrio, load_mrio_iot_matrices
 
 ValidatorFn = Callable[[int, Any, pd.Series], Mapping[str, Any]]
 
@@ -77,34 +77,37 @@ def _normalize_validator_result(raw: Mapping[str, Any] | None) -> tuple[str, str
 
 
 def _coverage_load_mrio(dataset: str, year: int, **kwargs):
-    """Coverage loader dispatch. EXIOBASE uses the zip-stream matrix API, not full pymrio."""
+    """Coverage loader dispatch with explicit primitive-account derivations for EXIOBASE."""
     if str(dataset).strip().lower() == "exiobase":
+        if bool(kwargs.get("delete_source_zip_after_parse", False)):
+            raise ValueError("delete_source_zip_after_parse=True is disabled; the EXIOBASE source zip must be retained.")
         matrix_kwargs = {
             key: kwargs[key]
             for key in [
-                "force_download",
-                "data_root",
-                "verbose",
-                "allow_download_missing",
-                "resume_downloads",
-                "show_download_progress",
-                "download_chunk_mb",
-                "download_timeout_seconds",
-                "download_retries",
-                "delete_source_zip_after_parse",
+                "force_download", "data_root", "verbose", "allow_download_missing",
+                "resume_downloads", "show_download_progress", "download_chunk_mb",
+                "download_timeout_seconds", "download_retries",
             ]
             if key in kwargs
         }
-        A, x, y, basis_index, metadata = load_mrio_matrices(int(year), calc_all=False, exio_system="pxp", **matrix_kwargs)
+        matrices, basis_index, metadata = load_mrio_iot_matrices(
+            "exiobase", int(year), matrices=("Z", "x", "Y"), exio_system="pxp", **matrix_kwargs
+        )
+        Z = matrices["Z"]
+        x = matrices["x"]
+        Y = matrices["Y"]
+        A = derive_A_from_Z_and_x(Z, x, basis_index=basis_index, copy=False)
+        y = derive_nonexport_final_demand_from_Y(Y)
         mrio = SimpleNamespace(
             A=A,
             x=pd.Series(x).reindex(basis_index),
-            Y=pd.DataFrame({"final_demand": pd.Series(y).reindex(basis_index)}, index=basis_index),
+            Y=pd.DataFrame(Y).reindex(index=basis_index),
             y=pd.Series(y).reindex(basis_index),
             metadata=dict(metadata),
         )
         return mrio, mrio.y
-    return load_mrio(dataset=dataset, year=int(year), **kwargs)
+    mrio = load_mrio(dataset=dataset, year=int(year), **kwargs)
+    return mrio, derive_nonexport_final_demand_from_Y(pd.DataFrame(mrio.Y))
 
 def attempt_mrio_year(
     dataset: str,

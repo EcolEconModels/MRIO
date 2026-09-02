@@ -72,7 +72,7 @@ def _load_fallback_extension_table(
     from ecolecon_mrio.data import load_mrio
 
     root_arg = str(data_root).strip() or None
-    mrio_ref, _y_ref = load_mrio(
+    mrio_ref = load_mrio(
         dataset_id,
         int(ref_year),
         data_root=root_arg,

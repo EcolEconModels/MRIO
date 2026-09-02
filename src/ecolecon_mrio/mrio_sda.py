@@ -2,8 +2,8 @@
 """Strict, MultiIndex-preserving MRIO SDA pair utilities.
 
 This module is intentionally small.  It does not load EXIOBASE, parse pymrio
-objects, or manage caches.  Existing loaders such as ``load_mrio_matrices``
-already provide sparse ``A`` matrices and aligned ``x``/``y`` vectors.  The role
+objects, or manage caches.  The primitive ``load_mrio_iot_matrices`` boundary provides source ``Z``/``x``/``Y`` accounts;
+this module explicitly derives sparse ``A`` and the established non-export ``y`` vector.  The role
 of this module is to compute one scientifically auditable SDA pair result from
 those inputs while preserving the canonical ``MultiIndex(region, sector)`` used
 throughout the EcolEconModels MRIO workflow.
@@ -153,7 +153,7 @@ def _ensure_finite_array(values: np.ndarray, *, name: str) -> np.ndarray:
 def _strict_float_series(values: pd.Series, *, index: pd.MultiIndex, name: str) -> pd.Series:
     """Validate and coerce one vector without hiding index or data errors.
 
-    ``load_mrio_matrices`` returns pandas Series already indexed by the canonical
+    the primitive MRIO loader returns pandas objects already indexed by the canonical
     EXIO basis.  Reindexing or filling missing values inside the strict SDA
     function would hide a scientific error, so this helper requires exact label
     equality and finite numeric entries before returning a float Series.
@@ -394,13 +394,13 @@ def _load_sda_year_matrices(
     doi: str | None = None,
     verbose: bool = False,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load one EXIOBASE year as sparse A plus checked x/y vectors for SDA.
+    """Load primitive EXIOBASE IOT accounts and derive the SDA state explicitly."""
 
-    The helper still streams from the source zip through ``load_mrio_matrices``
-    and keeps derived cache reads/writes disabled.
-    """
-
-    from ecolecon_mrio.data import load_mrio_matrices
+    from ecolecon_mrio.data import (
+        derive_A_from_Z_and_x,
+        derive_nonexport_final_demand_from_Y,
+        load_mrio_iot_matrices,
+    )
 
     load_kwargs: dict[str, Any] = {
         "data_root": data_root,
@@ -408,24 +408,25 @@ def _load_sda_year_matrices(
         "force_download": bool(force_download),
         "exio_system": str(system),
         "verbose": bool(verbose),
-        "cache_matrices": False,
-        "read_existing_cache": False,
-        "delete_source_zip_after_parse": False,
     }
     if doi is not None and str(doi).strip():
         load_kwargs["doi"] = str(doi).strip()
-    A, x, y, index, metadata = load_mrio_matrices(int(year), **load_kwargs)
+    matrices, index, metadata = load_mrio_iot_matrices(
+        "exiobase", int(year), matrices=("Z", "x", "Y"), **load_kwargs
+    )
     idx = require_region_sector_multiindex(index)
-    x_series = x if isinstance(x, pd.Series) else pd.Series(x, index=idx)
-    y_series = y if isinstance(y, pd.Series) else pd.Series(y, index=idx)
+    Z = cast(csr_matrix, matrices["Z"])
+    x = cast(pd.Series, matrices["x"])
+    Y = cast(pd.DataFrame, matrices["Y"])
+    A = derive_A_from_Z_and_x(Z, x, basis_index=idx, copy=False)
+    y = derive_nonexport_final_demand_from_Y(Y)
     return (
         _strict_csr_matrix(A, index=idx, name=f"A_{int(year)}"),
-        _strict_float_series(x_series, index=idx, name=f"x_{int(year)}"),
-        _strict_float_series(y_series, index=idx, name=f"y_{int(year)}"),
+        _strict_float_series(x, index=idx, name=f"x_{int(year)}"),
+        _strict_float_series(y, index=idx, name=f"y_{int(year)}"),
         idx,
         dict(metadata or {}),
     )
-
 
 def _build_output_sda_result(
     *,

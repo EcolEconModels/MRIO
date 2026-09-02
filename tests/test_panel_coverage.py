@@ -13,18 +13,20 @@ class _DummyMrio:
     def __init__(self):
         self.A = pd.DataFrame([[0.1, 0.0], [0.0, 0.2]], index=["a", "b"], columns=["a", "b"])
         self.x = pd.Series([10.0, 5.0], index=["a", "b"])
+        self.Y = pd.DataFrame({"final_demand": [1.0, 2.0]}, index=["a", "b"])
 
 
 def test_attempt_mrio_year_success_and_validator(monkeypatch):
-    def _fake_load_mrio(*, dataset, year, **kwargs):
-        return _DummyMrio(), pd.Series([1.0, 2.0], index=["a", "b"])
+    def _fake_coverage_load_mrio(*, dataset, year, **kwargs):
+        mrio = _DummyMrio()
+        return mrio, mrio.Y.sum(axis=1)
 
     def _validator(year, mrio, y_full):
         return {"status": "ok", "reason": "ready", "payload": {"n": int(len(y_full)), "year": year}}
 
     import ecolecon_mrio.panel_coverage as pc
 
-    monkeypatch.setattr(pc, "_coverage_load_mrio", _fake_load_mrio)
+    monkeypatch.setattr(pc, "_coverage_load_mrio", _fake_coverage_load_mrio)
     rec = attempt_mrio_year("exiobase", 2020, validators={"ready": _validator})
     assert rec.load_status == "ok"
     assert rec.calc_all_status == "ok"
@@ -48,7 +50,7 @@ def test_attempt_mrio_year_failure_records_error(monkeypatch):
 
 def test_build_year_coverage_manifest_flattens_validators(monkeypatch):
     def _fake_load_mrio(*, dataset, year, **kwargs):
-        return _DummyMrio(), pd.Series([1.0, 2.0], index=["a", "b"])
+        return _DummyMrio()
 
     def _validator(year, mrio, y_full):
         return {"status": "warn", "reason": "partial", "payload": {"labels": list(y_full.index)}}

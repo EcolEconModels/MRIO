@@ -11,15 +11,14 @@ from .constraints import BetaResult, build_constraints, build_constraints_with_c
 from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import (
     load_mrio,
-    load_mrio_matrices,
-    load_mrio_matrix_result,
-    MrioMatrixResult,
+    load_mrio_iot_matrices,
+    derive_A_from_Z_and_x,
+    derive_nonexport_final_demand_from_Y,
     ensure_exiobase_year_zip,
     resolve_exiobase_year_dir,
     resolve_exiobase_cache_paths,
 )
 from .data import exiobase3_monetary_unit
-load_MRIO_matrices = load_mrio_matrices
 from .decomposition import decompose_slack_change
 from .diagnostics import (
     SafeJustResult,
@@ -190,10 +189,9 @@ from .energy_balance_pxp import (
 
 __all__ = [
     "load_mrio",
-    "load_mrio_matrices",
-    "load_mrio_matrix_result",
-    "MrioMatrixResult",
-    "load_MRIO_matrices",
+    "load_mrio_iot_matrices",
+    "derive_A_from_Z_and_x",
+    "derive_nonexport_final_demand_from_Y",
     "ensure_exiobase_year_zip",
     "resolve_exiobase_year_dir",
     "resolve_exiobase_cache_paths",

@@ -46,14 +46,23 @@ def test_load_mrio_panel_defaults_to_non_writing_exio_cache(monkeypatch):
 
     idx = pd.MultiIndex.from_tuples([("AT", "a")], names=["region", "sector"])
     x = pd.Series([1.0], index=idx, name="x")
-    y = pd.Series([1.0], index=idx, name="y")
+    Y_columns = pd.MultiIndex.from_tuples(
+        [("AT", "Final consumption expenditure by households")],
+        names=["region", "category"],
+    )
+    Y = pd.DataFrame([[1.0]], index=idx, columns=Y_columns)
     captured: dict[str, object] = {}
 
-    def _fake_load_mrio_matrices(year: int, **kwargs):
+    def _fake_load_mrio_iot_matrices(dataset, year, *, matrices, **kwargs):
         captured.update(kwargs)
-        return csr_matrix([[0.1]], dtype=float), x, y, idx, {"cache_kind": "exiobase_zip_stream"}
+        captured["dataset"] = str(dataset)
+        captured["year"] = int(year)
+        captured["matrices"] = tuple(matrices)
+        return {"Z": csr_matrix([[0.1]], dtype=float), "x": x, "Y": Y}, idx, {
+            "cache_kind": "exiobase_zip_stream_iot",
+        }
 
-    monkeypatch.setattr(temporal_mod, "load_mrio_matrices", _fake_load_mrio_matrices)
+    monkeypatch.setattr(temporal_mod, "load_mrio_iot_matrices", _fake_load_mrio_iot_matrices)
     monkeypatch.setattr(
         temporal_mod,
         "load_mrio",
@@ -66,7 +75,9 @@ def test_load_mrio_panel_defaults_to_non_writing_exio_cache(monkeypatch):
     mrio, y_full = panel[2020]
     assert getattr(mrio, "A").shape == (1, 1)
     assert isinstance(y_full, pd.Series)
-    assert captured["delete_source_zip_after_parse"] is False
+    assert captured["dataset"] == "exiobase"
+    assert captured["matrices"] == ("Z", "x", "Y")
+    assert "delete_source_zip_after_parse" not in captured
     assert captured["exio_system"] == "pxp"
 
 

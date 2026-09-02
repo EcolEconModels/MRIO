@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import zipfile
 
-import numpy as np
-import pandas as pd
 import pytest
 
 
@@ -32,63 +30,17 @@ def _fake_zip_z_only(tmp_path: Path, year: int, *, swapped_z_rows: bool = False,
     return zip_path
 
 
-def test_load_mrio_matrices_computes_sparse_A_from_Z_without_A_txt(monkeypatch, tmp_path):
-    import ecolecon_mrio.data as data_mod
-
-    year = 2090
-    zip_path = _fake_zip_z_only(tmp_path, year)
-    monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
-    monkeypatch.setattr(
-        data_mod.pymrio,
-        "parse_exiobase3",
-        lambda _path: (_ for _ in ()).throw(AssertionError("full pymrio parse must not run")),
-    )
-
-    A, x, y, index, metadata = data_mod.load_mrio_matrices(
-        year,
-        data_root=tmp_path,
-        allow_download_missing=False,
-        verbose=False,
-    )
-
-    expected_index = pd.MultiIndex.from_tuples([("AT", "a"), ("AT", "b")], names=["region", "sector"])
-    pd.testing.assert_index_equal(index, expected_index)
-    pd.testing.assert_series_equal(x, pd.Series([10.0, 20.0], index=expected_index, name="x"))
-    pd.testing.assert_series_equal(y, pd.Series([7.0, 8.0], index=expected_index, name="y"))
-    assert A.shape == (2, 2)
-    assert A.nnz == 4
-    np.testing.assert_allclose(A.toarray(), [[0.1, 0.1], [0.3, 0.2]])
-    assert metadata.get("matrix_source", "Z.txt/x.txt") in {"Z.txt/x.txt", "Z.txt divided by x.txt column outputs"}
-    assert metadata.get("A_formula", "A_ij = Z_ij / x_j") == "A_ij = Z_ij / x_j"
-    assert metadata["zip_only_cache"] is True
-    assert not (tmp_path / f"exiobase3_{year}" / f"matrix_cache_{year}_pxp").exists()
 
 
-def test_load_mrio_matrices_accepts_nested_zip_members(monkeypatch, tmp_path):
-    import ecolecon_mrio.data as data_mod
-
-    year = 2088
-    zip_path = _fake_zip_z_only(tmp_path, year, nested=True)
-    monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
-    A, x, y, index, metadata = data_mod.load_mrio_matrices(
-        year,
-        data_root=tmp_path,
-        allow_download_missing=False,
-        verbose=False,
-    )
-    np.testing.assert_allclose(A.toarray(), [[0.1, 0.1], [0.3, 0.2]])
-    assert metadata.get("A_computed_from", ["Z.txt", "x.txt"]) == ["Z.txt", "x.txt"]
-
-
-def test_load_mrio_matrices_validates_Z_row_order(monkeypatch, tmp_path):
+def test_load_mrio_iot_matrices_validates_Z_row_order(monkeypatch, tmp_path):
     import ecolecon_mrio.data as data_mod
 
     year = 2089
     zip_path = _fake_zip_z_only(tmp_path, year, swapped_z_rows=True)
     monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
     with pytest.raises(ValueError, match="Z.txt row labels do not match"):
-        data_mod.load_mrio_matrices(
-            year,
+        data_mod.load_mrio_iot_matrices(
+            "exiobase", year, matrices=("Z", "x", "Y"),
             data_root=tmp_path,
             allow_download_missing=False,
             verbose=False,
@@ -102,15 +54,16 @@ def test_load_mrio_exiobase_full_iosystem_path_is_disabled():
         load_mrio("exiobase", 2012, allow_download_missing=False)
 
 
-def test_exiobase_delete_source_zip_after_parse_is_rejected(monkeypatch, tmp_path):
+def test_exiobase_iot_loader_has_no_delete_source_zip_compatibility_kwarg(tmp_path):
+    import inspect
     import ecolecon_mrio.data as data_mod
 
-    year = 2087
-    zip_path = _fake_zip_z_only(tmp_path, year)
-    monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
-    with pytest.raises(ValueError, match="delete_source_zip_after_parse"):
-        data_mod.load_mrio_matrices(
-            year,
+    assert "delete_source_zip_after_parse" not in inspect.signature(
+        data_mod.load_mrio_iot_matrices
+    ).parameters
+    with pytest.raises(TypeError, match="delete_source_zip_after_parse"):
+        data_mod.load_mrio_iot_matrices(
+            "exiobase", 2087, matrices=("x",),
             data_root=tmp_path,
             allow_download_missing=False,
             delete_source_zip_after_parse=True,
@@ -155,7 +108,7 @@ def test_zip_stream_rejects_blank_x_instead_of_zero(monkeypatch, tmp_path: Path)
     zip_path = _write_integrity_core_zip(tmp_path, year, x_value="")
     monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
     with pytest.raises(ValueError, match="x.txt contains blank"):
-        data_mod.load_mrio_matrices(year, data_root=tmp_path, allow_download_missing=False)
+        data_mod.load_mrio_iot_matrices("exiobase", year, matrices=("Z", "x", "Y"), data_root=tmp_path, allow_download_missing=False)
 
 
 def test_zip_stream_rejects_nonfinite_Z(monkeypatch, tmp_path: Path) -> None:
@@ -166,7 +119,7 @@ def test_zip_stream_rejects_nonfinite_Z(monkeypatch, tmp_path: Path) -> None:
     zip_path = _write_integrity_core_zip(tmp_path, year, z_value="nan")
     monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
     with pytest.raises(ValueError, match="Z.txt contains non-finite"):
-        data_mod.load_mrio_matrices(year, data_root=tmp_path, allow_download_missing=False)
+        data_mod.load_mrio_iot_matrices("exiobase", year, matrices=("Z", "x", "Y"), data_root=tmp_path, allow_download_missing=False)
 
 
 def test_zip_stream_rejects_truncated_Y_row(monkeypatch, tmp_path: Path) -> None:
@@ -177,4 +130,4 @@ def test_zip_stream_rejects_truncated_Y_row(monkeypatch, tmp_path: Path) -> None
     zip_path = _write_integrity_core_zip(tmp_path, year, y_values="7")
     monkeypatch.setattr(data_mod, "ensure_exiobase_year_zip", lambda **kwargs: zip_path)
     with pytest.raises(ValueError, match="Y.txt row width mismatch"):
-        data_mod.load_mrio_matrices(year, data_root=tmp_path, allow_download_missing=False)
+        data_mod.load_mrio_iot_matrices("exiobase", year, matrices=("Z", "x", "Y"), data_root=tmp_path, allow_download_missing=False)

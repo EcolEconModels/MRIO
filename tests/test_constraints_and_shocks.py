@@ -142,7 +142,7 @@ def test_build_constraints_extension_row_fallback_reference_year(monkeypatch):
     def _fake_load_mrio(dataset, year, **kwargs):
         assert dataset == "exiobase"
         assert year == 2010
-        return mrio_ref, pd.Series([0.0, 0.0], index=["a", "b"], dtype=float)
+        return mrio_ref
 
     monkeypatch.setattr(data_mod, "load_mrio", _fake_load_mrio)
     cmod._load_fallback_extension_table.cache_clear()

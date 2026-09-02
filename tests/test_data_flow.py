@@ -3,13 +3,11 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 import tempfile
 import pandas as pd
-import sys
-import os
 
 from ecolecon_mrio.data import load_mrio
 
 class TestDataFlow(unittest.TestCase):
-    
+
     @patch("ecolecon_mrio.data.pymrio")
     def test_load_test_data(self, mock_pymrio):
         """Test that test dataset is loaded without download checks."""
@@ -18,12 +16,13 @@ class TestDataFlow(unittest.TestCase):
         # Ensure G access return None initially to trigger calc_all
         mock_system.G = None
         mock_pymrio.load_test.return_value = mock_system
-        
-        mrio, y = load_mrio("test", 2018)
-        
+
+        mrio = load_mrio("test", 2018)
+
         mock_pymrio.load_test.assert_called_once()
         mock_pymrio.download_oecd.assert_not_called()
-        self.assertTrue(y is not None)
+        self.assertIs(mrio, mock_system)
+        self.assertIsNotNone(mrio.Y)
         # Verify calc_all triggered
         mock_system.calc_all.assert_called_with(include_ghosh=True)
 

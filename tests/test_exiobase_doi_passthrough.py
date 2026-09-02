@@ -20,7 +20,7 @@ def test_default_exiobase_doi_is_new_zenodo_record() -> None:
         == DEFAULT_EXIOBASE3_DOI
     )
     assert (
-        inspect.signature(data.load_mrio_matrices).parameters["doi"].default
+        inspect.signature(data.load_mrio_iot_matrices).parameters["doi"].default
         == DEFAULT_EXIOBASE3_DOI
     )
 

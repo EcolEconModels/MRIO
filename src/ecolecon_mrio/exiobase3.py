@@ -776,45 +776,6 @@ def build_exio_region_use_slice_from_mrio(
     )
 
 
-def load_exiobase3(
-    year: int,
-    *,
-    system: str = "pxp",
-    force_download: bool = False,
-    cache_root: str | Path | None = None,
-    calc_all: bool = True,
-    verbose: bool = False,
-):
-    """
-    Load EXIOBASE 3 using the repo pymrio-based caching loader.
-
-    Notes
-    - This loads the full EXIO MRIO into memory. For disaggregation tasks that only
-      need one region block, prefer `load_exiobase3_region_slice`, which caches the slice.
-    """
-    if pymrio is None:
-        raise ImportError("pymrio is required to load EXIOBASE 3.")
-
-    from ecolecon_mrio.data import load_mrio
-
-    try:
-        mrio, _ = load_mrio(
-            "exiobase",
-            year,
-            force_download=force_download,
-            data_root=cache_root,
-            calc_all=calc_all,
-            verbose=verbose,
-            exio_system=system,
-        )
-        return mrio
-    except Exception as e:
-        local = list_local_exiobase3_years(data_root=cache_root)
-        hint = f"Local cached years: {local}" if local else "No local EXIOBASE cache found under data/."
-        raise RuntimeError(f"Failed to load EXIOBASE 3 for year={year}. {hint}") from e
-
-
-
 def load_exiobase3_scope_slice(
     *,
     year: int,
@@ -1072,29 +1033,3 @@ def build_split_profiles_from_exio_domestic_block(
         subsector_to_exio_sectors=subsector_to_exio,
     )
     return profiles, matched
-
-
-def load_exiobase(
-    *,
-    year: int,
-    regions: Sequence[str] | None = None,
-    system: str = "pxp",
-    force_download: bool = False,
-    force_rebuild_slice: bool = False,
-    cache_root: str | Path = "data",
-):
-    """
-    Convenience wrapper:
-    - If `regions` is None: returns the full `pymrio.IOSystem`.
-    - Else: returns a dict mapping region -> `ExioRegionSlice` (cached on disk).
-    """
-    if regions is None:
-        return load_exiobase3(year, system=system, force_download=force_download)
-    return load_exiobase3_region_slices(
-        year=year,
-        regions=regions,
-        system=system,
-        force_download=force_download,
-        force_rebuild_slice=force_rebuild_slice,
-        cache_root=cache_root,
-    )

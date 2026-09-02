@@ -15,9 +15,9 @@ alignment.
 
 ## Loader boundary
 
-`load_mrio_matrices(...)` remains the low-RAM EXIOBASE source-zip loader for
+`load_mrio_iot_matrices(...) ` remains the low-RAM EXIOBASE source-zip loader for
 SDA inputs. It streams `x.txt`, `Z.txt`, and `Y.txt`, derives sparse technical
-coefficients `A`, and returns `A, x, y, basis_index, metadata`. It does not write
+coefficients `A`, and returns `Z, x, Y, basis_index, metadata`. It does not write
 derived matrix caches or return raw `Z`.
 
 The current SDA average uses `A`, `x`, and `y`. A raw-`Z` return mode should be

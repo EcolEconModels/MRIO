@@ -67,11 +67,6 @@ def test_region_slice_streams_domestic_block_without_cache_or_full_mrio(
 ) -> None:
     cache_root = _prepare_cache_root(tmp_path)
 
-    def fail_full_mrio(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("load_exiobase3/full MRIO loader must not be called")
-
-    monkeypatch.setattr(exiobase3, "load_exiobase3", fail_full_mrio)
-
     out = exiobase3.load_exiobase3_region_slice(
         year=2020,
         region="AT",

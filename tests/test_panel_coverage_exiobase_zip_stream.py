@@ -8,16 +8,23 @@ def test_attempt_mrio_year_uses_zip_stream_matrix_loader_for_exiobase(monkeypatc
     import ecolecon_mrio.panel_coverage as coverage
 
     idx = pd.MultiIndex.from_tuples([("AT", "a"), ("AT", "b")], names=["region", "sector"])
-    A = csr_matrix([[0.1, 0.0], [0.2, 0.1]], dtype=float)
+    Z = csr_matrix([[1.0, 0.0], [2.0, 2.0]], dtype=float)
     x = pd.Series([10.0, 20.0], index=idx, name="x")
-    y = pd.Series([7.0, 8.0], index=idx, name="y")
+    Y_columns = pd.MultiIndex.from_tuples(
+        [("AT", "Final consumption expenditure by households")],
+        names=["region", "category"],
+    )
+    Y = pd.DataFrame([[7.0], [8.0]], index=idx, columns=Y_columns)
     calls = []
 
-    def fake_matrices(year: int, **kwargs):
-        calls.append((int(year), dict(kwargs)))
-        return A, x, y, idx, {"cache_kind": "exiobase_zip_stream", "source_zip": "fake.zip"}
+    def fake_matrices(dataset, year, *, matrices, **kwargs):
+        calls.append((str(dataset), int(year), tuple(matrices), dict(kwargs)))
+        return {"Z": Z, "x": x, "Y": Y}, idx, {
+            "cache_kind": "exiobase_zip_stream_iot",
+            "source_zip": "fake.zip",
+        }
 
-    monkeypatch.setattr(coverage, "load_mrio_matrices", fake_matrices)
+    monkeypatch.setattr(coverage, "load_mrio_iot_matrices", fake_matrices)
     monkeypatch.setattr(
         coverage,
         "load_mrio",
@@ -38,5 +45,5 @@ def test_attempt_mrio_year_uses_zip_stream_matrix_loader_for_exiobase(monkeypatc
     assert rec.metadata["mrio_type"] == "SimpleNamespace"
     assert rec.metadata["has_A"] is True
     assert rec.metadata["has_x"] is True
-    assert calls and calls[0][0] == 2012
-    assert calls[0][1]["allow_download_missing"] is False
+    assert calls and calls[0][0:3] == ("exiobase", 2012, ("Z", "x", "Y"))
+    assert calls[0][3]["allow_download_missing"] is False
