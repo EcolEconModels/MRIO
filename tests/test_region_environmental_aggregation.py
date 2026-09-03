@@ -320,3 +320,74 @@ def test_wp3_public_functions_are_unique_and_final_demand_has_no_product_project
         for name in expected
     }
     assert counts == {name: 1 for name in expected}
+
+def test_target_supply_sidecar_combiner_preserves_unavailable_zero_mass() -> None:
+    from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+
+    dom = pd.DataFrame(
+        {
+            "sector": ["a", "b"],
+            "boundary": ["scope_production"] * 2,
+            "denominator_role": ["target_domestic_output"] * 2,
+            "extension": ["air"] * 2,
+            "stressor": ["CO2"] * 2,
+            "unit": ["kg"] * 2,
+            "value": [20.0, np.nan],
+            "monetary_output": [10.0, 0.0],
+            "intensity": [2.0, np.nan],
+        }
+    )
+    imp = pd.DataFrame(
+        {
+            "sector": ["a", "b"],
+            "boundary": ["external_imports_direct"] * 2,
+            "denominator_role": ["target_import_supply"] * 2,
+            "extension": ["air"] * 2,
+            "stressor": ["CO2"] * 2,
+            "unit": ["kg"] * 2,
+            "value": [15.0, np.nan],
+            "monetary_output": [5.0, 0.0],
+            "intensity": [3.0, np.nan],
+        }
+    )
+    total = _combine_target_supply_extension_sidecars_direct(
+        dom,
+        imp,
+        target_domestic_output=pd.Series([10.0, 0.0], index=["a", "b"]),
+        target_import_supply=pd.Series([5.0, 0.0], index=["a", "b"]),
+    )
+    row_a = total.set_index("sector").loc["a"]
+    assert float(row_a["value"]) == pytest.approx(35.0)
+    assert float(row_a["monetary_output"]) == pytest.approx(15.0)
+    row_b = total.set_index("sector").loc["b"]
+    assert pd.isna(row_b["value"])
+    assert pd.isna(row_b["intensity"])
+    assert float(row_b["monetary_output"]) == 0.0
+
+
+def test_target_supply_sidecar_combiner_rejects_missing_positive_evidence() -> None:
+    from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+
+    dom = pd.DataFrame(
+        {
+            "sector": ["a"], "boundary": ["scope_production"],
+            "denominator_role": ["target_domestic_output"], "extension": ["air"],
+            "stressor": ["CO2"], "unit": ["kg"], "value": [np.nan],
+            "monetary_output": [1.0], "intensity": [np.nan],
+        }
+    )
+    imp = pd.DataFrame(
+        {
+            "sector": ["a"], "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_supply"], "extension": ["air"],
+            "stressor": ["CO2"], "unit": ["kg"], "value": [0.0],
+            "monetary_output": [0.0], "intensity": [np.nan],
+        }
+    )
+    with pytest.raises(ValueError, match="unavailable for positive"):
+        _combine_target_supply_extension_sidecars_direct(
+            dom,
+            imp,
+            target_domestic_output=pd.Series([1.0], index=["a"]),
+            target_import_supply=pd.Series([0.0], index=["a"]),
+        )

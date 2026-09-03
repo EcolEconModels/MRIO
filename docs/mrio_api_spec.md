@@ -156,7 +156,7 @@ y_nonexport = derive_nonexport_final_demand_from_Y(matrices["Y"])
 ~~~
 
 `derive_A_from_Z_and_x` uses the column-output convention `A_ij = Z_ij / x_j`,
-requires exact basis alignment, maps zero-output columns to zero coefficients, and
+requires exact basis alignment, maps a zero-output column to zero coefficients only when that Z buyer column has zero intermediate-input mass; otherwise it fails, and
 does not mutate caller-owned `Z` by default. The non-export final-demand helper is
 a model boundary, not a source account; callers that need all final demand can use
 `Y.sum(axis=1)` explicitly.

@@ -32,7 +32,7 @@ def _synthetic_bundle() -> tuple[
     )
     Z = csr_matrix(np.arange(36, dtype="float64").reshape(6, 6))
     x = pd.Series(
-        [10.0, 0.0, 30.0, 0.0, 50.0, 60.0],
+        [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
         index=basis,
         name="x",
         dtype="float64",
@@ -129,9 +129,8 @@ def test_complete_region_aggregation_matches_explicit_extensive_operators() -> N
     pd.testing.assert_series_equal(source_x, x_before)
     pd.testing.assert_frame_equal(source_Y, Y_before)
     A = derive_A_from_Z_and_x(out_Z, out_x, basis_index=out_basis)
-    zero_output = out_x.to_numpy(dtype="float64") == 0.0
-    assert zero_output.any()
-    assert np.all(A.toarray()[:, zero_output] == 0.0)
+    expected_A = out_Z.toarray() / out_x.to_numpy(dtype="float64")[None, :]
+    np.testing.assert_allclose(A.toarray(), expected_A)
 
 
 def test_complete_region_aggregation_requires_complete_exact_primitive_bundle() -> None:

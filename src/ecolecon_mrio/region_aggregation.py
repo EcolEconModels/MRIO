@@ -390,8 +390,8 @@ def aggregate_mrio_regions(
         raise ValueError("Z contains non-finite monetary values.")
     x_numeric = cast(pd.Series, pd.to_numeric(x, errors="coerce"))
     x_values = x_numeric.to_numpy(dtype="float64")
-    if not np.isfinite(x_values).all():
-        raise ValueError("x contains missing, malformed, or non-finite monetary values.")
+    if not np.isfinite(x_values).all() or bool((x_values < 0.0).any()):
+        raise ValueError("x contains missing, malformed, non-finite, or negative monetary values.")
     Y_values = Y.to_numpy(dtype="float64", copy=False)
     if not np.isfinite(Y_values).all():
         raise ValueError("Y contains non-finite monetary values.")
@@ -987,6 +987,91 @@ def _validated_environmental_account_group(
     return labels, values, denominator, (identity[0], identity[1], identity[2])
 
 
+def _combine_total_supply_extension_arrays(
+    *,
+    axis_labels: tuple[str, ...],
+    production_values: np.ndarray,
+    production_denominator: np.ndarray,
+    import_values: np.ndarray,
+    import_denominator: np.ndarray,
+    target_domestic_output: pd.Series,
+    target_import_supply: pd.Series,
+    target_total_supply: pd.Series,
+    identity: tuple[str, str, str],
+    rtol: float,
+    atol: float,
+) -> pd.DataFrame:
+    """Apply direct domestic/import coefficients to authoritative target controls."""
+    if rtol < 0.0 or atol < 0.0:
+        raise ValueError("Total-supply identity tolerances must be non-negative.")
+    n = len(axis_labels)
+    prod_values = np.asarray(production_values, dtype="float64")
+    prod_den = np.asarray(production_denominator, dtype="float64")
+    imp_values = np.asarray(import_values, dtype="float64")
+    imp_den = np.asarray(import_denominator, dtype="float64")
+    for name, values in (
+        ("production_values", prod_values),
+        ("production_denominator", prod_den),
+        ("import_values", imp_values),
+        ("import_denominator", imp_den),
+    ):
+        if values.shape != (n,) or not np.isfinite(values).all():
+            raise ValueError(f"{name} must be a finite vector on the environmental target axis.")
+
+    def control(series: pd.Series, *, name: str) -> np.ndarray:
+        if not isinstance(series, pd.Series) or not series.index.is_unique:
+            raise ValueError(f"{name} must be a unique pandas Series.")
+        normalized = series.copy()
+        normalized.index = pd.Index([str(value).strip() for value in normalized.index])
+        if tuple(normalized.index) != axis_labels:
+            raise ValueError(f"{name} must exactly match the environmental target-product axis in order.")
+        numeric = cast(pd.Series, pd.to_numeric(normalized, errors="coerce"))
+        values = numeric.to_numpy(dtype="float64")
+        if not np.isfinite(values).all() or bool((values < 0.0).any()):
+            raise ValueError(f"{name} must be finite and non-negative.")
+        return values
+
+    domestic = control(target_domestic_output, name="target_domestic_output")
+    imports = control(target_import_supply, name="target_import_supply")
+    total = control(target_total_supply, name="target_total_supply")
+    if not np.allclose(domestic + imports, total, rtol=float(rtol), atol=float(atol)):
+        max_gap = float(np.max(np.abs((domestic + imports) - total))) if n else 0.0
+        raise ValueError(
+            "Target total-supply identity failed: domestic output + import supply must "
+            f"equal total supply; max_abs_gap={max_gap:.12g}."
+        )
+
+    prod_coeff = np.full(n, np.nan, dtype="float64")
+    imp_coeff = np.full(n, np.nan, dtype="float64")
+    np.divide(prod_values, prod_den, out=prod_coeff, where=prod_den != 0.0)
+    np.divide(imp_values, imp_den, out=imp_coeff, where=imp_den != 0.0)
+    missing_prod = (domestic > 0.0) & ~np.isfinite(prod_coeff)
+    missing_imp = (imports > 0.0) & ~np.isfinite(imp_coeff)
+    if bool(missing_prod.any()) or bool(missing_imp.any()):
+        bad_prod = [axis_labels[pos] for pos in np.flatnonzero(missing_prod)[:10]]
+        bad_imp = [axis_labels[pos] for pos in np.flatnonzero(missing_imp)[:10]]
+        raise ValueError(
+            "Target supply has positive monetary mass without the required direct "
+            f"environmental coefficient; domestic={bad_prod!r}, imports={bad_imp!r}."
+        )
+    physical = np.zeros(n, dtype="float64")
+    physical += np.where(domestic > 0.0, prod_coeff * domestic, 0.0)
+    physical += np.where(imports > 0.0, imp_coeff * imports, 0.0)
+    if not np.isfinite(physical).all():
+        raise RuntimeError("Total-supply environmental combination produced non-finite physical values.")
+    extension, stressor, unit = identity
+    return _environmental_account_frame(
+        axis_labels=axis_labels,
+        boundary="total_supply_direct",
+        denominator_role="target_total_supply",
+        extension=extension,
+        stressor=stressor,
+        unit=unit,
+        values=physical,
+        monetary_denominator=total,
+    )
+
+
 def combine_total_supply_extension_direct(
     *,
     production_account: pd.DataFrame,
@@ -998,8 +1083,6 @@ def combine_total_supply_extension_direct(
     atol: float = 1e-6,
 ) -> pd.DataFrame:
     """Combine direct domestic-production and import coefficients on target controls."""
-    if rtol < 0.0 or atol < 0.0:
-        raise ValueError("Total-supply identity tolerances must be non-negative.")
     prod_labels, prod_values, prod_den, prod_identity = _validated_environmental_account_group(
         production_account,
         expected_boundary="scope_production",
@@ -1014,61 +1097,172 @@ def combine_total_supply_extension_direct(
         raise ValueError("Production and import environmental accounts must use the same target-product axis.")
     if imp_identity != prod_identity:
         raise ValueError("Production and import environmental accounts must identify the same extension/stressor/unit.")
-
-    def control(series: pd.Series, *, name: str) -> np.ndarray:
-        if not isinstance(series, pd.Series):
-            raise TypeError(f"{name} must be a pandas Series.")
-        if not series.index.is_unique:
-            raise ValueError(f"{name} index must be unique.")
-        normalized = series.copy()
-        normalized.index = pd.Index([str(value).strip() for value in normalized.index])
-        if tuple(normalized.index) != prod_labels:
-            raise ValueError(f"{name} must exactly match the environmental target-product axis in order.")
-        numeric = cast(pd.Series, pd.to_numeric(normalized, errors="coerce"))
-        values = numeric.to_numpy(dtype="float64")
-        if not np.isfinite(values).all() or bool((values < 0.0).any()):
-            raise ValueError(f"{name} must be finite and non-negative.")
-        return values
-
-    domestic = control(target_domestic_output, name="target_domestic_output")
-    imports = control(target_import_supply, name="target_import_supply")
-    total = control(target_total_supply, name="target_total_supply")
-    if not np.allclose(domestic + imports, total, rtol=float(rtol), atol=float(atol)):
-        max_gap = float(np.max(np.abs((domestic + imports) - total))) if len(total) else 0.0
-        raise ValueError(
-            "Target total-supply identity failed: domestic output + import supply must "
-            f"equal total supply; max_abs_gap={max_gap:.12g}."
-        )
-
-    prod_coeff = np.full(len(prod_labels), np.nan, dtype="float64")
-    imp_coeff = np.full(len(prod_labels), np.nan, dtype="float64")
-    np.divide(prod_values, prod_den, out=prod_coeff, where=prod_den != 0.0)
-    np.divide(imp_values, imp_den, out=imp_coeff, where=imp_den != 0.0)
-    missing_prod = (domestic > 0.0) & ~np.isfinite(prod_coeff)
-    missing_imp = (imports > 0.0) & ~np.isfinite(imp_coeff)
-    if bool(missing_prod.any()) or bool(missing_imp.any()):
-        bad_prod = [prod_labels[pos] for pos in np.flatnonzero(missing_prod)[:10]]
-        bad_imp = [prod_labels[pos] for pos in np.flatnonzero(missing_imp)[:10]]
-        raise ValueError(
-            "Target supply has positive monetary mass without the required direct "
-            f"environmental coefficient; domestic={bad_prod!r}, imports={bad_imp!r}."
-        )
-    physical = np.zeros(len(prod_labels), dtype="float64")
-    physical += np.where(domestic > 0.0, prod_coeff * domestic, 0.0)
-    physical += np.where(imports > 0.0, imp_coeff * imports, 0.0)
-    if not np.isfinite(physical).all():
-        raise RuntimeError("Total-supply environmental combination produced non-finite physical values.")
-    extension, stressor, unit = prod_identity
-    return _environmental_account_frame(
+    return _combine_total_supply_extension_arrays(
         axis_labels=prod_labels,
-        boundary="total_supply_direct",
-        denominator_role="target_total_supply",
-        extension=extension,
-        stressor=stressor,
-        unit=unit,
-        values=physical,
-        monetary_denominator=total,
+        production_values=prod_values,
+        production_denominator=prod_den,
+        import_values=imp_values,
+        import_denominator=imp_den,
+        target_domestic_output=target_domestic_output,
+        target_import_supply=target_import_supply,
+        target_total_supply=target_total_supply,
+        identity=prod_identity,
+        rtol=float(rtol),
+        atol=float(atol),
     )
+
+
+def _combine_target_supply_extension_sidecars_direct(
+    production_sidecar: pd.DataFrame,
+    import_sidecar: pd.DataFrame,
+    *,
+    target_domestic_output: pd.Series,
+    target_import_supply: pd.Series,
+    rtol: float = 1e-9,
+    atol: float = 1e-6,
+) -> pd.DataFrame:
+    """Combine model-facing DOM/IMP target sidecars through the canonical numeric kernel."""
+    required = {
+        "sector", "boundary", "denominator_role", "extension", "stressor", "unit",
+        "value", "monetary_output", "intensity",
+    }
+    for label, frame, boundary, role in (
+        ("DOM", production_sidecar, "scope_production", "target_domestic_output"),
+        ("IMP", import_sidecar, "external_imports_direct", "target_import_supply"),
+    ):
+        missing = required - set(frame.columns)
+        if missing:
+            raise ValueError(f"{label} environmental sidecar missing columns: {sorted(missing)!r}")
+        if set(frame["boundary"].astype(str)) != {boundary}:
+            raise ValueError(f"{label} environmental sidecar has the wrong accounting boundary.")
+        if set(frame["denominator_role"].astype(str)) != {role}:
+            raise ValueError(f"{label} environmental sidecar has the wrong denominator role.")
+    labels = tuple(str(value).strip() for value in target_domestic_output.index)
+    if tuple(str(value).strip() for value in target_import_supply.index) != labels:
+        raise ValueError("DOM/IMP environmental target denominators must use one ordered sector axis.")
+    if len(set(labels)) != len(labels) or any(not label for label in labels):
+        raise ValueError("Environmental target sector axis must be unique and non-blank.")
+    target_total = target_domestic_output.astype("float64") + target_import_supply.astype("float64")
+    target_total.index = pd.Index(labels)
+    dom_target = target_domestic_output.astype("float64").copy()
+    imp_target = target_import_supply.astype("float64").copy()
+    dom_target.index = pd.Index(labels)
+    imp_target.index = pd.Index(labels)
+
+    keys = ["sector", "extension", "stressor", "unit"]
+    if production_sidecar.duplicated(keys).any() or import_sidecar.duplicated(keys).any():
+        raise ValueError("Environmental sidecar contains duplicate sector/stressor rows.")
+    groups = pd.concat(
+        [
+            production_sidecar[["extension", "stressor", "unit"]],
+            import_sidecar[["extension", "stressor", "unit"]],
+        ],
+        ignore_index=True,
+    ).drop_duplicates(ignore_index=True)
+
+    def arrays_for(
+        frame: pd.DataFrame,
+        *,
+        group_key: tuple[str, str, str],
+        target: pd.Series,
+        side: str,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        ext, stressor, unit = group_key
+        subset = frame.loc[
+            frame["extension"].astype(str).eq(ext)
+            & frame["stressor"].astype(str).eq(stressor)
+            & frame["unit"].astype(str).eq(unit)
+        ].copy()
+        subset["sector"] = subset["sector"].astype(str)
+        extra = sorted(set(subset["sector"]) - set(labels))
+        if extra:
+            raise ValueError(f"{side} environmental sidecar has sectors outside the target axis: {extra!r}")
+        by_sector = subset.set_index("sector")
+        values = np.zeros(len(labels), dtype="float64")
+        denominator = np.zeros(len(labels), dtype="float64")
+        available = np.zeros(len(labels), dtype=bool)
+        target_values = target.to_numpy(dtype="float64")
+        for pos, sector in enumerate(labels):
+            if sector not in by_sector.index:
+                if target_values[pos] > 0.0:
+                    raise ValueError(
+                        f"{side} environmental estimate missing for positive target denominator: "
+                        f"{(sector, ext, stressor, unit)!r}"
+                    )
+                continue
+            row = cast(pd.Series, by_sector.loc[sector])
+            observed_den = float(row["monetary_output"])
+            if not np.isfinite(observed_den) or not np.isclose(
+                observed_den, target_values[pos], rtol=float(rtol), atol=float(atol)
+            ):
+                raise ValueError(
+                    f"{side} environmental denominator mismatch for {(sector, ext, stressor, unit)!r}"
+                )
+            raw_value = cast(
+                pd.Series,
+                pd.to_numeric(pd.Series([row["value"]]), errors="coerce"),
+            ).iloc[0]
+            if pd.isna(raw_value):
+                if target_values[pos] > 0.0:
+                    raise ValueError(
+                        f"{side} environmental coefficient unavailable for positive target denominator: "
+                        f"{(sector, ext, stressor, unit)!r}"
+                    )
+                continue
+            value = float(raw_value)
+            if not np.isfinite(value):
+                raise ValueError(f"{side} environmental value must be finite when evidence is available.")
+            raw_intensity = cast(
+                pd.Series,
+                pd.to_numeric(pd.Series([row["intensity"]]), errors="coerce"),
+            ).iloc[0]
+            if observed_den == 0.0:
+                if pd.notna(raw_intensity) and np.isfinite(float(raw_intensity)):
+                    raise ValueError(f"{side} environmental intensity must be missing at zero denominator.")
+            else:
+                if pd.isna(raw_intensity) or not np.isclose(
+                    float(raw_intensity), value / observed_den, rtol=1e-12, atol=1e-12
+                ):
+                    raise ValueError(f"{side} environmental intensity disagrees with value/denominator.")
+            values[pos] = value
+            denominator[pos] = observed_den
+            available[pos] = True
+        return values, denominator, available
+
+    rows: list[pd.DataFrame] = []
+    for group in groups.itertuples(index=False):
+        group = cast(Any, group)
+        identity = (str(group.extension), str(group.stressor), str(group.unit))
+        prod_values, prod_den, prod_available = arrays_for(
+            production_sidecar,
+            group_key=identity,
+            target=dom_target,
+            side="DOM",
+        )
+        imp_values, imp_den, imp_available = arrays_for(
+            import_sidecar,
+            group_key=identity,
+            target=imp_target,
+            side="IMP",
+        )
+        account = _combine_total_supply_extension_arrays(
+            axis_labels=labels,
+            production_values=prod_values,
+            production_denominator=prod_den,
+            import_values=imp_values,
+            import_denominator=imp_den,
+            target_domestic_output=dom_target,
+            target_import_supply=imp_target,
+            target_total_supply=target_total,
+            identity=identity,
+            rtol=float(rtol),
+            atol=float(atol),
+        )
+        sidecar = _environmental_account_to_split_sidecar(account)
+        unsupported = (~prod_available) & (~imp_available) & (target_total.to_numpy(dtype="float64") == 0.0)
+        sidecar.loc[unsupported, ["value", "intensity"]] = np.nan
+        rows.append(sidecar)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
 def _retarget_direct_environmental_account(
@@ -1083,7 +1277,7 @@ def _retarget_direct_environmental_account(
         expected_boundary=str(account["boundary"].iloc[0]),
         expected_denominator_role=str(account["denominator_role"].iloc[0]),
     )
-    target = target_denominator.copy().astype("float64")
+    target = cast(pd.Series, target_denominator.copy().astype("float64"))
     target.index = pd.Index([str(v) for v in target.index])
     if tuple(target.index) != labels:
         raise ValueError("Target environmental denominator must exactly match the projected sector axis.")
@@ -1091,7 +1285,10 @@ def _retarget_direct_environmental_account(
         raise ValueError("Target environmental denominator must be finite.")
     if bool((target < 0.0).any()):
         raise ValueError("Target environmental denominator must be non-negative.")
-    coeff = pd.to_numeric(account["intensity"], errors="coerce").to_numpy(dtype="float64")
+    coeff = cast(
+        pd.Series,
+        pd.to_numeric(account["intensity"], errors="coerce"),
+    ).to_numpy(dtype="float64")
     target_values = target.to_numpy(dtype="float64")
     missing = (target_values > 0.0) & ~np.isfinite(coeff)
     if bool(missing.any()):

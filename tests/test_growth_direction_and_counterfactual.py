@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 
 from ecolecon_mrio.counterfactual import run_panel_scenarios
-from ecolecon_mrio.diagnostics import calc_tech_slack
+from ecolecon_mrio.diagnostics import calc_pf_eigenvectors, calc_tech_slack
 from ecolecon_mrio.growth_direction import principal_growth_direction, principal_growth_panel
 
 
@@ -39,6 +39,26 @@ def test_principal_direction_nonnegative_normalized():
     assert abs(res.p.sum() - 1.0) < 1e-10
     assert (res.q >= -1e-12).all()
     assert (res.p >= -1e-12).all()
+
+
+def test_pf_eigenvectors_preserve_multiindex_labels():
+    idx = pd.MultiIndex.from_tuples([("r1", "s1"), ("r1", "s2")], names=["region", "sector"])
+    A = pd.DataFrame([[0.2, 0.1], [0.05, 0.15]], index=idx, columns=idx, dtype=float)
+
+    p, q, _rho = calc_pf_eigenvectors(A)
+
+    assert q.index.equals(idx)
+    assert p.index.equals(idx)
+
+
+def test_principal_growth_direction_preserves_dense_multiindex_labels():
+    idx = pd.MultiIndex.from_tuples([("r1", "s1"), ("r1", "s2")], names=["region", "sector"])
+    A = pd.DataFrame([[0.2, 0.1], [0.05, 0.15]], index=idx, columns=idx, dtype=float)
+
+    result = principal_growth_direction(A)
+
+    assert result.q.index.equals(idx)
+    assert result.p.index.equals(idx)
 
 
 def test_vn_identity_case_b_eq_i_matches_pf():

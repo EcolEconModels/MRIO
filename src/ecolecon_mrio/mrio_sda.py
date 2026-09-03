@@ -233,12 +233,15 @@ def _solve_sparse_leontief_many(label: str, A: csr_matrix, rhs: np.ndarray) -> n
     else:
         raise ValueError(f"{label} RHS must be one- or two-dimensional, got shape {rhs_array.shape!r}")
     rhs_matrix = cast(np.ndarray, rhs_matrix)
-    if rhs_matrix.shape[0] != A.shape[0]:
-        raise ValueError(f"{label} RHS length {rhs_matrix.shape[0]} does not match matrix shape {A.shape!r}")
+    assert rhs_matrix is not None
+    rhs_shape = cast(tuple[int, ...], rhs_matrix.shape)
+    matrix_shape = cast(tuple[int, int], A.shape)
+    if rhs_shape[0] != matrix_shape[0]:
+        raise ValueError(f"{label} RHS length {rhs_shape[0]} does not match matrix shape {matrix_shape!r}")
     if not np.isfinite(rhs_matrix).all():
         raise ValueError(f"{label} RHS contains non-finite values")
 
-    system = sparse_eye(A.shape[0], format="csr", dtype=float) - A
+    system = sparse_eye(matrix_shape[0], format="csr", dtype=float) - A
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
@@ -393,9 +396,13 @@ def _load_sda_year_matrices(
     force_download: bool = False,
     doi: str | None = None,
     verbose: bool = False,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load primitive EXIOBASE IOT accounts and derive the SDA state explicitly."""
-
+    """Load primitive EXIOBASE IOT accounts and derive the strict SDA state."""
     from ecolecon_mrio.data import (
         derive_A_from_Z_and_x,
         derive_nonexport_final_demand_from_Y,
@@ -408,6 +415,11 @@ def _load_sda_year_matrices(
         "force_download": bool(force_download),
         "exio_system": str(system),
         "verbose": bool(verbose),
+        "resume_downloads": bool(resume_downloads),
+        "show_download_progress": bool(show_download_progress),
+        "download_chunk_mb": int(download_chunk_mb),
+        "download_timeout_seconds": download_timeout_seconds,
+        "download_retries": int(download_retries),
     }
     if doi is not None and str(doi).strip():
         load_kwargs["doi"] = str(doi).strip()
@@ -506,17 +518,15 @@ def load_mrio_year_state(
     force_download: bool = False,
     doi: str | None = None,
     verbose: bool = False,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
     monetary_unit: str | None = None,
     monetary_unit_source: str | None = None,
 ) -> MrioYearState:
-    """Load one MRIO year once as sparse ``A`` plus aligned ``x``/``y`` vectors.
-
-    This is the reusable state boundary for panel SDA runs.  It streams the
-    source zip through the existing sparse loader, derives ``A`` from ``Z`` and
-    ``x``, then returns a compact year state.  It does not form or store an
-    explicit Leontief inverse, factorization, raw ``Z`` matrix, or derived cache.
-    """
-
+    """Load one sparse, strictly validated MRIO year state for SDA/analysis reuse."""
     from ecolecon_mrio.data import exiobase3_monetary_unit
 
     unit = str(monetary_unit).strip() if monetary_unit is not None else ""
@@ -537,6 +547,11 @@ def load_mrio_year_state(
         force_download=bool(force_download),
         doi=doi,
         verbose=bool(verbose),
+        resume_downloads=bool(resume_downloads),
+        show_download_progress=bool(show_download_progress),
+        download_chunk_mb=int(download_chunk_mb),
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=int(download_retries),
     )
     return MrioYearState(
         year=int(year),

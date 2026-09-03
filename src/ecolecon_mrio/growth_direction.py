@@ -59,8 +59,8 @@ def principal_growth_direction(
     """
     if issparse(A):
         A_sparse = csr_matrix(A, dtype=float)
-        row_index = pd.Index(getattr(A, "index", pd.RangeIndex(A_sparse.shape[0])))
-        col_index = pd.Index(getattr(A, "columns", pd.RangeIndex(A_sparse.shape[1])))
+        row_index = getattr(A, "index", pd.RangeIndex(A_sparse.shape[0]))
+        col_index = getattr(A, "columns", pd.RangeIndex(A_sparse.shape[1]))
         if A_sparse.shape[0] != A_sparse.shape[1]:
             raise ValueError("A must be square.")
         if A_sparse.nnz and float(A_sparse.data.min()) < -1e-12:
@@ -68,8 +68,8 @@ def principal_growth_direction(
         A_mat = None
     else:
         A_mat = pd.DataFrame(A, copy=True)
-        row_index = pd.Index(A_mat.index)
-        col_index = pd.Index(A_mat.columns)
+        row_index = A_mat.index
+        col_index = A_mat.columns
         if A_mat.shape[0] != A_mat.shape[1]:
             raise ValueError("A must be square.")
         if np.any(A_mat.values < -1e-12):

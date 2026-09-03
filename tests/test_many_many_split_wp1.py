@@ -14,7 +14,6 @@ from ecolecon_mrio.exio_share_split import (
     _cap_inventory_withdrawals,
     _validate_emitted_children,
     _validate_split_reconstruction,
-    split_iot_using_exiobase_shares,
     split_iot_using_exiobase_split_profiles,
 )
 from ecolecon_mrio.region_aggregation import MrioScopeSlice, RegionScope
@@ -330,7 +329,6 @@ def test_wp1_rejects_child_collisions_and_removes_inactive_balancing_api() -> No
 
     for function in (
         split_iot_using_exiobase_split_profiles,
-        split_iot_using_exiobase_shares,
     ):
         parameters = inspect.signature(function).parameters
         assert {"balancing_scope", "ras_max_iter", "ras_tol"}.isdisjoint(parameters)

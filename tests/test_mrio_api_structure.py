@@ -7,6 +7,14 @@ import inspect
 
 import ecolecon_mrio.data as data
 import ecolecon_mrio.exiobase3 as exiobase3
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
+import ecolecon_mrio.exio_share_split as exio_share_split
 import ecolecon_mrio.region_aggregation as region_aggregation
 
 
@@ -141,3 +149,7 @@ def test_current_guidance_uses_canonical_iot_and_geography_api() -> None:
         "combine_total_supply_extension_direct",
     ):
         assert name in agents, name
+
+def test_redundant_split_share_wrapper_is_absent() -> None:
+    assert not hasattr(exio_share_split, "split_iot_using_exiobase_shares")
+    assert callable(exio_share_split.split_iot_using_exiobase_split_profiles)

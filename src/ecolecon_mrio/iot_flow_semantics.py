@@ -244,29 +244,77 @@ def flow_use_total(Z: pd.DataFrame, Y: pd.DataFrame) -> pd.Series:
     return use
 
 
-def technical_coefficients(Z: pd.DataFrame, output: pd.Series) -> pd.DataFrame:
-    missing = [
-        str(code) for code in Z.columns if str(code) not in set(map(str, output.index))
-    ]
-    if missing:
-        raise ValueError(f"Output vector is missing Z columns: {missing[:20]!r}")
-    denom = output.copy().astype("float64")
-    denom.index = denom.index.astype(str)
-    denom = denom.reindex(Z.columns.astype(str))
-    denom_index = cast(pd.Index, denom.index)
-    values = denom.to_numpy(dtype="float64")
+def _validated_nonnegative_output(
+    output: pd.Series,
+    *,
+    expected_index: pd.Index,
+    context: str,
+) -> np.ndarray:
+    """Return aligned finite non-negative gross output without repairing labels."""
+    if not isinstance(output, pd.Series):
+        raise TypeError(f"{context}: output must be a pandas Series.")
+    if not expected_index.is_unique or not output.index.is_unique:
+        raise ValueError(f"{context}: output and coefficient axes must be unique.")
+    if not output.index.equals(expected_index):
+        raise ValueError(f"{context}: output index must exactly match the coefficient column axis.")
+    try:
+        numeric = cast(pd.Series, pd.to_numeric(output, errors="raise"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{context}: output contains non-numeric values.") from exc
+    values = numeric.to_numpy(dtype="float64")
     if not np.isfinite(values).all():
-        bad = denom_index[~np.isfinite(values)].astype(str).tolist()
-        raise ValueError(f"Output vector contains non-finite values: {bad[:20]!r}")
-    if (values < 0.0).any():
-        bad = denom_index[values < 0.0].astype(str).tolist()
-        raise ValueError(f"Output vector contains negative values: {bad[:20]!r}")
-    z_col_mass = Z.astype("float64").abs().sum(axis=0).reindex(denom.index).fillna(0.0)
-    invalid_zero = (denom == 0.0) & (z_col_mass > 0.0)
-    if bool(invalid_zero.any()):
-        bad = denom_index[invalid_zero].astype(str).tolist()
+        bad = [str(expected_index[pos]) for pos in np.flatnonzero(~np.isfinite(values))[:20]]
+        raise ValueError(f"{context}: output contains non-finite values: {bad!r}")
+    if bool((values < 0.0).any()):
+        bad = [str(expected_index[pos]) for pos in np.flatnonzero(values < 0.0)[:20]]
+        raise ValueError(f"{context}: output contains negative values: {bad!r}")
+    return values
+
+
+def _validate_technical_coefficient_denominators(
+    output: pd.Series,
+    *,
+    expected_index: pd.Index,
+    column_absolute_mass: np.ndarray,
+    context: str,
+) -> np.ndarray:
+    """Validate x_j before forming A_ij=Z_ij/x_j on one buyer-sector axis."""
+    values = _validated_nonnegative_output(
+        output,
+        expected_index=expected_index,
+        context=context,
+    )
+    mass = np.asarray(column_absolute_mass, dtype="float64")
+    if mass.shape != values.shape:
         raise ValueError(
-            f"Zero output with non-zero intermediate inputs for sectors: {bad[:20]!r}"
+            f"{context}: intermediate-input column mass shape {mass.shape!r} "
+            f"does not match output shape {values.shape!r}."
         )
-    safe = denom.replace(0.0, np.nan)
-    return Z.astype("float64").divide(safe, axis="columns").fillna(0.0)
+    if not np.isfinite(mass).all() or bool((mass < 0.0).any()):
+        raise ValueError(f"{context}: intermediate-input column mass must be finite and non-negative.")
+    invalid_zero = (values == 0.0) & (mass > 0.0)
+    if bool(invalid_zero.any()):
+        bad = [str(expected_index[pos]) for pos in np.flatnonzero(invalid_zero)[:20]]
+        raise ValueError(
+            f"{context}: zero output with non-zero intermediate inputs for sectors: {bad!r}"
+        )
+    return values
+
+
+def technical_coefficients(Z: pd.DataFrame, output: pd.Series) -> pd.DataFrame:
+    """Return dense A=Z/x after the same fail-closed denominator checks as sparse A."""
+    Z_numeric = Z.astype("float64")
+    if not Z_numeric.columns.is_unique:
+        raise ValueError("Technical-coefficient Z columns must be unique.")
+    z_values = Z_numeric.to_numpy(dtype="float64", copy=False)
+    if not np.isfinite(z_values).all():
+        raise ValueError("Technical-coefficient Z contains non-finite monetary values.")
+    column_mass = np.abs(z_values).sum(axis=0)
+    values = _validate_technical_coefficient_denominators(
+        output,
+        expected_index=Z_numeric.columns,
+        column_absolute_mass=column_mass,
+        context="technical_coefficients",
+    )
+    safe = pd.Series(values, index=Z_numeric.columns, dtype="float64").replace(0.0, np.nan)
+    return Z_numeric.divide(safe, axis="columns").fillna(0.0)

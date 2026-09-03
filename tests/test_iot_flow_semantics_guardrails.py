@@ -72,7 +72,7 @@ def test_atomic_final_demand_rejects_inconsistent_complete_p5_detail_partition()
 
 def test_technical_coefficients_reject_zero_output_with_nonzero_inputs() -> None:
     Z = pd.DataFrame([[1.0]], index=pd.Index(["a"]), columns=pd.Index(["a"]))
-    with pytest.raises(ValueError, match="Zero output with non-zero intermediate inputs"):
+    with pytest.raises(ValueError, match=r"(?i)zero output with non-zero intermediate inputs"):
         technical_coefficients(Z, pd.Series([0.0], index=["a"]))
 
 

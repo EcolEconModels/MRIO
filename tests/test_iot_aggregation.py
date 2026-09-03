@@ -141,3 +141,24 @@ def test_aggregate_iot_preserves_m_exactly_including_zero_and_nan():
     pd.testing.assert_frame_equal(res.M, M)
     assert pd.isna(res.M.iloc[0, 0])
     assert res.M.iloc[0, 1] == 0.0
+
+def test_aggregate_iot_rejects_misaligned_output_instead_of_zero_filling() -> None:
+    import pytest
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+
+    Z = pd.DataFrame([[1.0, 0.0], [0.0, 1.0]], index=["A", "B"], columns=["A", "B"])
+    Y = pd.DataFrame({"P3": [1.0, 1.0]}, index=["A", "B"])
+    bad_output = pd.Series([2.0], index=["A"], name="x")
+    with pytest.raises(ValueError, match="exactly match"):
+        aggregate_iot(Z, Y, {}, output=bad_output, create_io_system=False)
+
+
+def test_aggregate_iot_rejects_extra_output_sector() -> None:
+    import pytest
+    from ecolecon_mrio.iot_aggregation import aggregate_iot
+
+    Z = pd.DataFrame([[1.0]], index=["A"], columns=["A"])
+    Y = pd.DataFrame({"P3": [1.0]}, index=["A"])
+    bad_output = pd.Series([2.0, 10.0], index=["A", "EXTRA"], name="x")
+    with pytest.raises(ValueError, match="exactly match"):
+        aggregate_iot(Z, Y, {}, output=bad_output, create_io_system=False)

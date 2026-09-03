@@ -16,7 +16,7 @@ import pandas as pd
 from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI, default_data_root, load_mrio_iot_matrices
 from ecolecon_mrio.exio_share_split import (
     load_local_iot,
-    split_iot_using_exiobase_shares,
+    split_iot_using_exiobase_split_profiles,
     write_split_report_xlsx,
     map_exio_value_per_physical_input,
     emitted_sector_to_exio_members_from_split_profiles,
@@ -1713,19 +1713,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                             f"Skipping output consistency check for {label} "
                             "because the stk_flow value is not one of DOM, IMP, or TOTAL.",
                         )
-                res = split_iot_using_exiobase_shares(
+                res = split_iot_using_exiobase_split_profiles(
                     eurostat_Z=parsed_variant.Z,
                     eurostat_Y=parsed_variant.Y,
                     eurostat_V=parsed_variant.V,
                     eurostat_M=parsed_variant.M,
-                    exio_year=args.exio_year,
-                    exio_region=args.exio_region,
                     exio_slice=exio_slice,
                     sector_to_exio_sectors=sector_to_exio_sectors,
                     sector_patterns=None
                     if sector_to_exio_sectors is not None
                     else sector_patterns,
-                    exio_cache_root=data_root,
                     eurostat_sector_mapping=flow_sector_mapping,
                     column_split_profiles=(
                         dom_column_profiles if exio_flow == "imports" else None
@@ -1757,7 +1754,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _vprint(
                     args.verbose,
-                    f"Returned: split_iot_using_exiobase_shares ({t.elapsed_s():.2f}s)",
+                    f"Returned: split_iot_using_exiobase_split_profiles ({t.elapsed_s():.2f}s)",
                 )
 
                 if str(flow) == "DOM":
@@ -2017,19 +2014,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             environmental_requests = {}
 
-    _vprint(args.verbose, "Calling: split_iot_using_exiobase_shares(...)")
+    _vprint(args.verbose, "Calling: split_iot_using_exiobase_split_profiles(...)")
     t = _Timer()
-    res = split_iot_using_exiobase_shares(
+    res = split_iot_using_exiobase_split_profiles(
         eurostat_Z=Z,
         eurostat_Y=Y,
         eurostat_V=parsed.V if parsed is not None else None,
         eurostat_M=parsed.M if parsed is not None else None,
-        exio_year=args.exio_year,
-        exio_region=args.exio_region,
         exio_slice=exio_slice_single,
         sector_to_exio_sectors=sector_to_exio_sectors,
         sector_patterns=None if sector_to_exio_sectors is not None else sector_patterns,
-        exio_cache_root=data_root,
         eurostat_sector_mapping=full_sector_mapping,
         coverage_expected_exio_sectors=coverage_expected_exio,
         coverage_tol=args.coverage_tol,

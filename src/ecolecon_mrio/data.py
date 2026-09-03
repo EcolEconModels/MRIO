@@ -18,6 +18,10 @@ from scipy.sparse import csr_matrix
 from pymrio.tools.iodownloader import EXIOBASE3_CONFIG, HEADERS, MRIOMetaData, _get_url_datafiles
 
 from ecolecon_mrio.download_utils import DownloadSpec, download_file_resumable, zip_contains_member
+from ecolecon_mrio.iot_flow_semantics import (
+    _validate_technical_coefficient_denominators,
+    _validated_nonnegative_output,
+)
 from ecolecon_mrio.wiod16 import load_wiod16
 from ecolecon_mrio.mrio_sda import UnitMetadata
 
@@ -246,28 +250,37 @@ def derive_A_from_Z_and_x(
     basis_index: pd.MultiIndex | None = None,
     copy: bool = True,
 ) -> csr_matrix:
-    """Derive sparse technical coefficients ``A_ij = Z_ij / x_j`` explicitly.
+    """Derive sparse ``A_ij = Z_ij / x_j`` without hiding invalid denominators.
 
-    ``A`` is not a source-loader product. Zero-output columns map to zero coefficients.
-    Set ``copy=False`` only when the caller deliberately permits reuse of ``Z`` sparse storage.
+    A zero-output buyer column is defined as zero only when the matching Z column
+    has zero intermediate-input mass. ``copy=False`` deliberately permits reuse of
+    Z sparse storage after all source-account validation is complete.
     """
     index = basis_index if basis_index is not None else x.index
     if not isinstance(index, pd.MultiIndex) or index.nlevels != 2:
         raise TypeError("A derivation requires a 2-level MRIO region-sector basis.")
     if Z.shape != (len(index), len(index)):
         raise ValueError(f"Z shape {Z.shape} does not match basis length {len(index)}.")
-    if not x.index.equals(index):
+    if not isinstance(x, pd.Series) or not x.index.equals(index):
         raise ValueError("x index must exactly match the Z basis for A derivation.")
-    x_numeric = cast(pd.Series, pd.to_numeric(x, errors="coerce"))
-    values = x_numeric.to_numpy(dtype=float)
-    if not np.isfinite(values).all():
-        raise ValueError("MRIO output vector is incomplete or non-finite on the Z basis.")
-    inv_x = np.zeros_like(values, dtype=float)
+    if Z.nnz and not np.isfinite(Z.data).all():
+        raise ValueError("Z contains non-finite monetary values.")
+    z_shape = cast(tuple[int, int], Z.shape)
+    column_mass = np.bincount(
+        Z.indices,
+        weights=np.abs(Z.data),
+        minlength=z_shape[1],
+    ).astype("float64", copy=False)
+    values = _validate_technical_coefficient_denominators(
+        x,
+        expected_index=index,
+        column_absolute_mass=column_mass,
+        context="derive_A_from_Z_and_x",
+    )
+    inv_x = np.zeros_like(values, dtype="float64")
     np.divide(1.0, values, out=inv_x, where=values != 0.0)
     A = Z.astype(float, copy=copy).tocsr(copy=False)
     if A.nnz:
-        if not np.isfinite(A.data).all():
-            raise ValueError("Z contains non-finite monetary values.")
         A.data *= inv_x[A.indices]
     A.eliminate_zeros()
     return A
@@ -296,7 +309,10 @@ def _read_exio_Y_matrix_direct_from_zip(zip_path: Path) -> tuple[pd.DataFrame, p
                     raise ValueError(f"EXIOBASE Y.txt contains non-finite monetary values at row {row_idx}.")
                 labels.append((str(region), str(sector)))
                 rows.append(vals)
-    basis_index = pd.MultiIndex.from_tuples(labels, names=["region", "sector"])
+    basis_index = cast(
+        pd.MultiIndex,
+        pd.MultiIndex.from_tuples(labels, names=["region", "sector"]),
+    )
     if not basis_index.is_unique:
         raise ValueError("EXIOBASE Y.txt contains duplicate producer region-sector rows.")
     data = np.vstack(rows) if rows else np.empty((0, len(columns)), dtype=float)
@@ -304,17 +320,32 @@ def _read_exio_Y_matrix_direct_from_zip(zip_path: Path) -> tuple[pd.DataFrame, p
 
 
 def derive_nonexport_final_demand_from_Y(Y: pd.DataFrame) -> pd.Series:
-    """Derive the established non-export final-demand vector from a complete ``Y`` table."""
+    """Derive summed non-export final demand, rejecting malformed or missing cells."""
     if not isinstance(Y, pd.DataFrame):
         raise TypeError("Y must be a pandas DataFrame.")
-    labels = Y.columns.get_level_values("category") if isinstance(Y.columns, pd.MultiIndex) and "category" in Y.columns.names else Y.columns
+    try:
+        numeric = Y.to_numpy(dtype="float64", copy=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Y contains non-numeric final-demand values.") from exc
+    if not np.isfinite(numeric).all():
+        raise ValueError("Y contains missing, malformed, or non-finite final-demand values.")
+    labels = (
+        Y.columns.get_level_values("category")
+        if isinstance(Y.columns, pd.MultiIndex) and "category" in Y.columns.names
+        else Y.columns
+    )
+
     def _is_export(label: object) -> bool:
         folded = str(label).strip().casefold()
         return "export" in folded or re.search(r"(^|[^a-z])exp([^a-z]|$)", folded) is not None
+
     keep = np.asarray([not _is_export(label) for label in labels], dtype=bool)
-    values = Y.loc[:, keep].sum(axis=1).astype(float)
-    values.name = "y"
-    return values
+    return pd.Series(
+        numeric[:, keep].sum(axis=1),
+        index=Y.index,
+        name="y",
+        dtype="float64",
+    )
 
 def _normalize_exiobase_doi(doi: str | None = None) -> str:
     """Return a bare DOI token, accepting either a DOI or a doi.org URL."""
@@ -855,7 +886,13 @@ def _normalize_iot_matrix_requests(matrices: Sequence[str]) -> tuple[str, ...]:
     return requested
 
 
-def _validate_same_iot_basis(reference: pd.MultiIndex | None, candidate: pd.MultiIndex, *, source: str) -> pd.MultiIndex:
+def _validate_same_iot_basis(
+    reference: pd.MultiIndex | None,
+    candidate: pd.MultiIndex,
+    *,
+    source: str,
+) -> pd.MultiIndex:
+    """Validate one canonical primitive producer basis."""
     if not isinstance(candidate, pd.MultiIndex) or candidate.nlevels != 2:
         raise TypeError(f"{source} must expose a 2-level region-sector basis.")
     if list(candidate.names) != ["region", "sector"]:
@@ -865,6 +902,46 @@ def _validate_same_iot_basis(reference: pd.MultiIndex | None, candidate: pd.Mult
     if reference is not None and not candidate.equals(reference):
         raise ValueError(f"{source} basis does not exactly match the other requested IOT source accounts.")
     return candidate if reference is None else reference
+
+
+def _validate_requested_iot_primitives(
+    result: dict[str, csr_matrix | pd.Series | pd.DataFrame],
+    basis: pd.MultiIndex,
+    *,
+    context: str,
+) -> None:
+    """Enforce one provider-independent primitive Z/x/Y result contract."""
+    if "Z" in result:
+        Z = result["Z"]
+        if not isinstance(Z, csr_matrix):
+            raise TypeError(f"{context}.Z must be scipy.sparse.csr_matrix.")
+        if Z.shape != (len(basis), len(basis)):
+            raise ValueError(f"{context}.Z shape does not match the canonical basis.")
+        if Z.nnz and not np.isfinite(Z.data).all():
+            raise ValueError(f"{context}.Z contains non-finite monetary values.")
+    if "x" in result:
+        x = result["x"]
+        if not isinstance(x, pd.Series):
+            raise TypeError(f"{context}.x must be a pandas Series.")
+        _validated_nonnegative_output(
+            x,
+            expected_index=basis,
+            context=f"{context}.x",
+        )
+    if "Y" in result:
+        Y = result["Y"]
+        if not isinstance(Y, pd.DataFrame):
+            raise TypeError(f"{context}.Y must be a pandas DataFrame.")
+        if not Y.index.equals(basis):
+            raise ValueError(f"{context}.Y row index must exactly match the canonical basis.")
+        if not Y.columns.is_unique:
+            raise ValueError(f"{context}.Y final-demand columns must be unique.")
+        try:
+            values = Y.to_numpy(dtype="float64", copy=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{context}.Y contains non-numeric final-demand values.") from exc
+        if not np.isfinite(values).all():
+            raise ValueError(f"{context}.Y contains non-finite final-demand values.")
 
 
 def load_mrio_iot_matrices(
@@ -937,6 +1014,17 @@ def load_mrio_iot_matrices(
             "source_zip_retained": True,
             "index_columns": ["region", "sector"],
         }
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
+        _validate_requested_iot_primitives(result, basis, context="exiobase")
         return result, basis, metadata
 
     mrio = load_mrio(
@@ -991,6 +1079,17 @@ def load_mrio_iot_matrices(
         source_index = Y_df.index
     if basis is None or source_index is None:
         raise RuntimeError("requested IOT matrices did not establish a basis")
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
+    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
     metadata = {
         "dataset": dataset_norm,
         "year": int(year),

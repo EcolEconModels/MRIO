@@ -15,6 +15,17 @@ from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot
 from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
 from ecolecon_mrio.iot_full_table_validation import validate_eurostat_iot_full_table
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
 from ecolecon_mrio.iot_flow_semantics import (
     enforce_final_demand_display_identities,
     flow_use_total,
@@ -719,6 +730,7 @@ def _read_generated_variants(
 
 
 def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
+    """Build TOTAL target-supply direct extensions through the canonical combiner."""
     dom_path = dirs["DOM"] / "environmental_extensions.csv"
     imp_path = dirs["IMP"] / "environmental_extensions.csv"
     if not dom_path.exists() and not imp_path.exists():
@@ -731,95 +743,17 @@ def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
     imp = pd.read_csv(imp_path)
     dom_use = _read_series(dirs["DOM"] / "use_total_split.csv")
     imp_use = _read_series(dirs["IMP"] / "use_total_split.csv")
-    if not dom_use.index.equals(imp_use.index):
-        raise ValueError("DOM/IMP environmental denominators do not share one sector axis.")
-    required = {
-        "sector", "boundary", "denominator_role", "extension", "stressor", "unit",
-        "value", "monetary_output", "intensity",
-    }
-    for label, frame, boundary in (
-        ("DOM", dom, "scope_production"),
-        ("IMP", imp, "external_imports_direct"),
-    ):
-        missing = required - set(frame.columns)
-        if missing:
-            raise ValueError(f"{label} environmental sidecar missing columns: {sorted(missing)!r}")
-        if set(frame["boundary"].astype(str)) != {boundary}:
-            raise ValueError(f"{label} environmental sidecar has the wrong accounting boundary.")
-    keys = ["sector", "extension", "stressor", "unit"]
-    if dom.duplicated(keys).any() or imp.duplicated(keys).any():
-        raise ValueError("Environmental sidecar contains duplicate sector/stressor rows.")
-    groups = pd.concat(
-        [dom[["extension", "stressor", "unit"]], imp[["extension", "stressor", "unit"]]],
-        ignore_index=True,
-    ).drop_duplicates(ignore_index=True)
-    rows: list[dict[str, object]] = []
-    dom_idx = dom.set_index(keys)
-    imp_idx = imp.set_index(keys)
-    for group in groups.itertuples(index=False):
-        ext, stressor, unit = map(str, group)
-        for sector in dom_use.index.astype(str):
-            key = (sector, ext, stressor, unit)
-            dden = float(dom_use.loc[sector])
-            iden = float(imp_use.loc[sector])
-            drow = dom_idx.loc[key] if key in dom_idx.index else None
-            irow = imp_idx.loc[key] if key in imp_idx.index else None
-            if dden > 0.0 and drow is None:
-                raise ValueError(f"DOM environmental estimate missing for positive target denominator: {key!r}")
-            if iden > 0.0 and irow is None:
-                raise ValueError(f"IMP environmental estimate missing for positive target denominator: {key!r}")
-            dvalue = 0.0 if drow is None else float(drow["value"])
-            ivalue = 0.0 if irow is None else float(irow["value"])
-            if drow is not None and not np.isclose(float(drow["monetary_output"]), dden, rtol=1e-9, atol=1e-6):
-                raise ValueError(f"DOM environmental denominator mismatch for {key!r}")
-            if irow is not None and not np.isclose(float(irow["monetary_output"]), iden, rtol=1e-9, atol=1e-6):
-                raise ValueError(f"IMP environmental denominator mismatch for {key!r}")
-            total_den = dden + iden
-            total_value = dvalue + ivalue
-            rows.append(
-                {
-                    "sector": sector,
-                    "boundary": "total_supply_direct",
-                    "denominator_role": "target_total_supply",
-                    "extension": ext,
-                    "stressor": stressor,
-                    "unit": unit,
-                    "value": total_value,
-                    "monetary_output": total_den,
-                    "intensity": np.nan if total_den == 0.0 else total_value / total_den,
-                }
-            )
-    pd.DataFrame(rows).to_csv(dirs["TOTAL"] / "environmental_extensions.csv", index=False)
+    total = _combine_target_supply_extension_sidecars_direct(
+        dom,
+        imp,
+        target_domestic_output=dom_use,
+        target_import_supply=imp_use,
+    )
+    total.to_csv(dirs["TOTAL"] / "environmental_extensions.csv", index=False)
+
     # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
-    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar above owns the total_supply_direct / target_total_supply boundary;
-    # downstream reaggregation must never infer a target boundary from this raw file.
+    # sidecar owns total_supply_direct / target_total_supply; downstream
+    # reaggregation must never infer a target boundary from the raw source file.
     raw_dom = dirs["DOM"] / "exio_environmental_extensions.csv"
     if raw_dom.exists():
         shutil.copy2(raw_dom, dirs["TOTAL"] / raw_dom.name)

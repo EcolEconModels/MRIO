@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, cast
 
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.iot_flow_semantics import flow_use_total, technical_coefficients
+from ecolecon_mrio.iot_flow_semantics import (
+    _validated_nonnegative_output,
+    flow_use_total,
+    technical_coefficients,
+)
 
 
 @dataclass(frozen=True)
@@ -348,13 +352,21 @@ def aggregate_iot(
     compute_sector_value_per_physical_input: bool = False,
     disaggregated_sector_value_per_physical_input: pd.DataFrame | None = None,
 ) -> AggregationResult:
-    """Aggregate one flow using an explicit, already validated output vector."""
+    """Aggregate one flow using an exact, validated source output vector."""
     if not Z.index.equals(Z.columns):
         raise ValueError("Z must be square with matching index/columns.")
     if not Y.index.equals(Z.index):
         raise ValueError("Y must have the same index as Z.")
     if output is None:
-        raise ValueError("aggregate_iot requires the canonical domestic output vector; implicit Z+Y output was removed.")
+        raise ValueError(
+            "aggregate_iot requires the canonical domestic output vector; implicit Z+Y output was removed."
+        )
+    output_values = _validated_nonnegative_output(
+        output,
+        expected_index=Z.index,
+        context="aggregate_iot output",
+    )
+    source_output = pd.Series(output_values, index=Z.index, name="x", dtype="float64")
     role = str(flow_role).upper()
     if role not in {"DOM", "IMP", "TOTAL"}:
         raise ValueError(f"Unknown flow_role={flow_role!r}")
@@ -362,10 +374,15 @@ def aggregate_iot(
     Y_agg = aggregate_Y(Y, mapping, level=level, keep_unmapped=keep_unmapped)
     if not Y_agg.index.equals(Z_agg.index):
         raise RuntimeError("Aggregation produced inconsistent Z/Y indices.")
-    output_df = output.astype("float64").to_frame("x")
-    output_agg_df = aggregate_Y(output_df, mapping, level=level, keep_unmapped=keep_unmapped)
-    x = output_agg_df["x"].reindex(Z_agg.index).fillna(0.0).astype("float64")
-    x.name = "x"
+    output_agg_df = aggregate_Y(
+        source_output.to_frame("x"),
+        mapping,
+        level=level,
+        keep_unmapped=keep_unmapped,
+    )
+    if not output_agg_df.index.equals(Z_agg.index):
+        raise RuntimeError("Aggregation produced an output axis inconsistent with Z/Y.")
+    x = cast(pd.Series, output_agg_df["x"].astype("float64")).rename("x")
     V_agg = aggregate_V(V, mapping, keep_unmapped=keep_unmapped) if V is not None else None
     M_agg = None if M is None else M.copy()
     A = technical_coefficients(Z_agg, x)
@@ -390,18 +407,27 @@ def aggregate_iot(
             )
         try:
             import pymrio  # type: ignore
+
             io_system = pymrio.IOSystem(Z=Z_agg, Y=Y_agg, x=x)
             io_system.calc_system()
         except Exception as exc:
             raise RuntimeError("pymrio aggregation construction failed") from exc
     agg_sector_values = None
-    if compute_sector_value_per_physical_input and disaggregated_sector_value_per_physical_input is not None:
+    if (
+        compute_sector_value_per_physical_input
+        and disaggregated_sector_value_per_physical_input is not None
+    ):
         agg_sector_values = compute_aggregated_sector_value_per_physical_input(
             disaggregated_sector_value_per_physical_input=disaggregated_sector_value_per_physical_input,
             aggregation_mapping=mapping,
         )
     return AggregationResult(
-        Z=Z_agg, Y=Y_agg, x=x, A=A, V=V_agg, M=M_agg,
+        Z=Z_agg,
+        Y=Y_agg,
+        x=x,
+        A=A,
+        V=V_agg,
+        M=M_agg,
         aggregated_sector_value_per_physical_input=agg_sector_values,
         io_system=io_system,
     )

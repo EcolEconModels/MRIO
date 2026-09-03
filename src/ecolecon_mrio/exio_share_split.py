@@ -9,9 +9,7 @@ import numpy as np
 import pandas as pd
 from ecolecon_mrio.region_aggregation import (
     MrioScopeSlice,
-    RegionScope,
     build_scope_target_environmental_extensions,
-    load_mrio_iot_scope_slice,
 )
 
 from ecolecon_mrio.disaggregation import SplitProfiles
@@ -2308,69 +2306,6 @@ def split_iot_using_exiobase_split_profiles(
     )
 
 
-def split_iot_using_exiobase_shares(
-    *,
-    eurostat_Z: pd.DataFrame,
-    eurostat_Y: pd.DataFrame,
-    eurostat_V: pd.DataFrame | None = None,
-    eurostat_M: pd.DataFrame | None = None,
-    exio_year: int,
-    exio_region: str,
-    exio_slice: MrioScopeSlice | None = None,
-    exio_system: str = "pxp",
-    exio_cache_root: str | Path | None = None,
-    sector_to_exio_sectors: (
-        Mapping[str, Sequence[str]] | Mapping[str, Mapping[str, Sequence[str]]] | None
-    ) = None,
-    sector_patterns: Mapping[str, Sequence[str]] | None = None,
-    eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
-    column_split_profiles: Mapping[str, SplitProfiles] | None = None,
-    column_eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None = None,
-    coverage_expected_exio_sectors: Mapping[str, Sequence[str]] | None = None,
-    coverage_tol: float = 0.0,
-    source_rounding_quantum: float | None = None,
-    extract_quantity_and_price: bool = False,
-    quantity_price_extensions: Sequence[str] | None = None,
-    quantity_price_stressor_keywords: Sequence[str] | None = None,
-    quantity_price_cache_dir: str | Path | None = None,
-    environmental_extension_requests: Mapping[str, Sequence[str]] | None = None,
-    environmental_source_output: pd.Series | None = None,
-    environmental_source_basis: pd.MultiIndex | None = None,
-    create_io_system: bool = True,
-) -> SplitResult:
-    """Convenience wrapper: load an EXIOBASE region slice if needed, then split+balance."""
-    if exio_slice is None:
-        exio_slice = load_mrio_iot_scope_slice(
-            "exiobase",
-            int(exio_year),
-            scope=RegionScope(code=str(exio_region), members=(str(exio_region),)),
-            exio_system=exio_system,
-            flow="total",
-            data_root=exio_cache_root,
-        )
-    return split_iot_using_exiobase_split_profiles(
-        eurostat_Z=eurostat_Z,
-        eurostat_Y=eurostat_Y,
-        eurostat_V=eurostat_V,
-        eurostat_M=eurostat_M,
-        exio_slice=exio_slice,
-        sector_to_exio_sectors=sector_to_exio_sectors,
-        sector_patterns=sector_patterns,
-        eurostat_sector_mapping=eurostat_sector_mapping,
-        column_split_profiles=column_split_profiles,
-        column_eurostat_sector_mapping=column_eurostat_sector_mapping,
-        coverage_expected_exio_sectors=coverage_expected_exio_sectors,
-        coverage_tol=coverage_tol,
-        source_rounding_quantum=source_rounding_quantum,
-        extract_quantity_and_price=extract_quantity_and_price,
-        quantity_price_extensions=quantity_price_extensions,
-        quantity_price_stressor_keywords=quantity_price_stressor_keywords,
-        quantity_price_cache_dir=quantity_price_cache_dir,
-        environmental_extension_requests=environmental_extension_requests,
-        environmental_source_output=environmental_source_output,
-        environmental_source_basis=environmental_source_basis,
-        create_io_system=create_io_system,
-    )
 
 
 def write_split_report_xlsx(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 import gc
 import warnings
 import time
@@ -62,9 +62,9 @@ def _matrix_to_csr_and_labels(matrix: Any, index: pd.Index | None = None) -> tup
         values = csr_matrix(matrix, dtype=float)
         row_index = index if index is not None else getattr(matrix, "index", pd.RangeIndex(values.shape[0]))
         col_index = index if index is not None else getattr(matrix, "columns", pd.RangeIndex(values.shape[1]))
-        return values, pd.Index(row_index), pd.Index(col_index)
+        return values, row_index, col_index
     frame = pd.DataFrame(matrix, copy=False)
-    return csr_matrix(frame.to_numpy(dtype=float, copy=False)), pd.Index(frame.index), pd.Index(frame.columns)
+    return csr_matrix(frame.to_numpy(dtype=float, copy=False)), frame.index, frame.columns
 
 def _spectral_radius_method_hint(values: np.ndarray) -> str:
     n = int(values.shape[0])

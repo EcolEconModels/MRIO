@@ -88,3 +88,10 @@ reloading extension rows or losing unit/stressor provenance. By default, that pa
 helper uses the stored `ExtensionIntensityState` objects directly; it recomputes
 from raw rows only when the caller explicitly overrides stabilization, tau, or the
 all-zero-row rejection policy.
+
+## MrioYearState source controls
+
+`load_mrio_year_state(...)` forwards the same resumable-download/progress/chunk,
+timeout and retry controls needed by low-memory source-ZIP callers. Downstream
+analysis should therefore reuse this strict compact state rather than reloading
+Z/x/Y and rebuilding A/y with local reindex or fill-zero logic.

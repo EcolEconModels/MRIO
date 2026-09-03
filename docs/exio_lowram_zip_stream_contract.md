@@ -66,3 +66,11 @@ Long loops should release large temporary matrices promptly and remain compatibl
 Optional development-only caches are permitted only behind explicit opt-in controls, under ignored scratch paths, with documented disk use and safe regeneration from the source zip. They must never become production source-of-truth artifacts.
 
 Never remove source zips during routine cleanup; they are the authoritative reproducibility cache and avoid unnecessary redownloads.
+
+### Provider-independent primitive result validation
+
+The public `load_mrio_iot_matrices(...)` boundary applies the same result checks
+after every provider adapter: requested Z/Y values are finite, x is aligned,
+finite and non-negative, and Y uses the declared producer basis. Provider-specific
+parsers may be heavier internally, but they may not weaken the public missingness
+or denominator semantics.
