@@ -311,11 +311,12 @@ def _spectral_radius_from_sparse(values: csr_matrix, *, tol: float = 1e-10) -> f
             return rho
         except ArpackNoConvergence as exc:
             vals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
-            if vals.size:
+            if vals.size and np.isfinite(vals).all():
                 rho = float(np.max(np.abs(vals)))
                 return rho
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ValueError("Large sparse spectral-radius solve failed.") from exc
+        raise ValueError("Large sparse spectral-radius solve produced no usable eigenvalue.")
     vals = linalg.eigvals(values.toarray())
     rho = float(np.max(np.abs(vals))) if vals.size else float("nan")
     return rho

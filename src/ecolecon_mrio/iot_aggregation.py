@@ -291,14 +291,10 @@ def aggregate_environmental_extensions(
         if target is not None:
             positive_sources_by_target.setdefault(str(target), set()).add(source_label)
     group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    all_positive_targets = set(positive_sources_by_target)
     for keys, group in frame.groupby(group_cols, dropna=False, sort=False):
         covered = set(group["sector"].astype(str))
-        represented_targets = {
-            str(mapping.get(source, source)) if keep_unmapped else str(mapping[source])
-            for source in covered
-            if keep_unmapped or source in mapping
-        }
-        for target in sorted(represented_targets):
+        for target in sorted(all_positive_targets):
             missing_positive = sorted(positive_sources_by_target.get(target, set()) - covered)
             if missing_positive:
                 raise ValueError(

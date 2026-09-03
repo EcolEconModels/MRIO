@@ -1048,6 +1048,8 @@ def load_mrio_iot_matrices(
         result["Z"] = csr_matrix(Z_df.to_numpy(dtype=float))
     if "x" in requested:
         x_obj = mrio.x
+        if isinstance(x_obj, pd.DataFrame) and x_obj.shape[1] != 1:
+            raise ValueError(f"{dataset_norm} x must have exactly one output column.")
         x_series = x_obj.iloc[:, 0] if isinstance(x_obj, pd.DataFrame) else pd.Series(x_obj)
         candidate = x_series.index if isinstance(x_series.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(x_series.index), names=["region", "sector"])
         candidate = candidate.set_names(["region", "sector"])
