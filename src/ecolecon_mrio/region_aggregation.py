@@ -654,6 +654,7 @@ def _environmental_account_frame(
     unit: str,
     values: np.ndarray,
     monetary_denominator: np.ndarray,
+    allow_unavailable_values: bool = False,
 ) -> pd.DataFrame:
     labels = tuple(str(value).strip() for value in axis_labels)
     if not labels or any(not value for value in labels) or len(set(labels)) != len(labels):
@@ -662,10 +663,16 @@ def _environmental_account_frame(
     denominator = np.asarray(monetary_denominator, dtype="float64")
     if physical.ndim != 1 or denominator.ndim != 1 or len(physical) != len(labels) or len(denominator) != len(labels):
         raise ValueError("Environmental account values and denominators must match the one-dimensional axis.")
-    if not np.isfinite(physical).all() or not np.isfinite(denominator).all():
-        raise ValueError("Environmental account values and monetary denominators must be finite.")
+    if not np.isfinite(denominator).all():
+        raise ValueError("Environmental account monetary denominators must be finite.")
+    if allow_unavailable_values:
+        if np.isinf(physical).any():
+            raise ValueError("Unavailable environmental account values may be NaN but never +/-Inf.")
+    elif not np.isfinite(physical).all():
+        raise ValueError("Environmental account values must be finite.")
     intensity = np.full(len(labels), np.nan, dtype="float64")
-    np.divide(physical, denominator, out=intensity, where=denominator != 0.0)
+    ratio_mask = (denominator != 0.0) & np.isfinite(physical)
+    np.divide(physical, denominator, out=intensity, where=ratio_mask)
     # Pandas accepts the heterogeneous column mapping at runtime; annotate the
     # constructor boundary explicitly so Pyright does not widen numeric columns.
     frame_data: dict[str, Any] = {
@@ -1123,7 +1130,13 @@ def _combine_target_supply_extension_sidecars_direct(
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> pd.DataFrame:
-    """Combine model-facing DOM/IMP target sidecars through the canonical numeric kernel."""
+    """Combine model-facing DOM/IMP sidecars while preserving unavailable evidence.
+
+    A positive-mass DOM or IMP component without a defined direct environmental
+    coefficient makes the corresponding TOTAL estimate unavailable (NaN); it is
+    never treated as physical zero. An unavailable zero-mass component does not
+    poison a supported positive-mass counterpart.
+    """
     required = {
         "sector", "boundary", "denominator_role", "extension", "stressor", "unit",
         "value", "monetary_output", "intensity",
@@ -1144,17 +1157,16 @@ def _combine_target_supply_extension_sidecars_direct(
         raise ValueError("DOM/IMP environmental target denominators must use one ordered sector axis.")
     if len(set(labels)) != len(labels) or any(not label for label in labels):
         raise ValueError("Environmental target sector axis must be unique and non-blank.")
+
     dom_target = target_domestic_output.astype("float64").copy()
     imp_target = target_import_supply.astype("float64").copy()
     dom_target.index = pd.Index(labels)
     imp_target.index = pd.Index(labels)
     dom_target = _normalize_nonnegative_accounting_control(
-        dom_target,
-        context="target_domestic_output",
+        dom_target, context="target_domestic_output"
     )
     imp_target = _normalize_nonnegative_accounting_control(
-        imp_target,
-        context="target_import_supply",
+        imp_target, context="target_import_supply"
     )
     target_total = (dom_target + imp_target).astype("float64")
     target_total.index = pd.Index(labels)
@@ -1176,7 +1188,7 @@ def _combine_target_supply_extension_sidecars_direct(
         group_key: tuple[str, str, str],
         target: pd.Series,
         side: str,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         ext, stressor, unit = group_key
         subset = frame.loc[
             frame["extension"].astype(str).eq(ext)
@@ -1186,91 +1198,154 @@ def _combine_target_supply_extension_sidecars_direct(
         subset["sector"] = subset["sector"].astype(str)
         extra = sorted(set(subset["sector"]) - set(labels))
         if extra:
-            raise ValueError(f"{side} environmental sidecar has sectors outside the target axis: {extra!r}")
+            raise ValueError(
+                f"{side} environmental sidecar has sectors outside the target axis: {extra!r}"
+            )
         by_sector = subset.set_index("sector")
-        values = np.zeros(len(labels), dtype="float64")
-        denominator = np.zeros(len(labels), dtype="float64")
+        values = np.full(len(labels), np.nan, dtype="float64")
         available = np.zeros(len(labels), dtype=bool)
         target_values = target.to_numpy(dtype="float64")
+
         for pos, sector in enumerate(labels):
             if sector not in by_sector.index:
                 if target_values[pos] > 0.0:
                     raise ValueError(
-                        f"{side} environmental estimate missing for positive target denominator: "
+                        f"{side} environmental sidecar is structurally missing a positive-mass row: "
                         f"{(sector, ext, stressor, unit)!r}"
                     )
                 continue
+
             row = cast(pd.Series, by_sector.loc[sector])
-            observed_den = float(row["monetary_output"])
+            try:
+                observed_den = float(row["monetary_output"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{side} environmental denominator must be numeric for "
+                    f"{(sector, ext, stressor, unit)!r}"
+                ) from exc
             if not np.isfinite(observed_den) or not np.isclose(
                 observed_den, target_values[pos], rtol=float(rtol), atol=float(atol)
             ):
                 raise ValueError(
-                    f"{side} environmental denominator mismatch for {(sector, ext, stressor, unit)!r}"
+                    f"{side} environmental denominator mismatch for "
+                    f"{(sector, ext, stressor, unit)!r}"
                 )
+
+            raw_value_object = row["value"]
             raw_value = cast(
                 pd.Series,
-                pd.to_numeric(pd.Series([row["value"]]), errors="coerce"),
+                pd.to_numeric(pd.Series([raw_value_object]), errors="coerce"),
             ).iloc[0]
-            if pd.isna(raw_value):
-                if target_values[pos] > 0.0:
-                    raise ValueError(
-                        f"{side} environmental coefficient unavailable for positive target denominator: "
-                        f"{(sector, ext, stressor, unit)!r}"
-                    )
-                continue
-            value = float(raw_value)
-            if not np.isfinite(value):
-                raise ValueError(f"{side} environmental value must be finite when evidence is available.")
+            if pd.notna(raw_value_object) and pd.isna(raw_value):
+                raise ValueError(
+                    f"{side} environmental value must be numeric or NA for "
+                    f"{(sector, ext, stressor, unit)!r}"
+                )
+
+            raw_intensity_object = row["intensity"]
             raw_intensity = cast(
                 pd.Series,
-                pd.to_numeric(pd.Series([row["intensity"]]), errors="coerce"),
+                pd.to_numeric(pd.Series([raw_intensity_object]), errors="coerce"),
             ).iloc[0]
+            if pd.notna(raw_intensity_object) and pd.isna(raw_intensity):
+                raise ValueError(
+                    f"{side} environmental intensity must be numeric or NA for "
+                    f"{(sector, ext, stressor, unit)!r}"
+                )
+
+            if pd.isna(raw_value):
+                if pd.notna(raw_intensity):
+                    raise ValueError(
+                        f"{side} unavailable environmental value requires unavailable intensity."
+                    )
+                continue
+
+            value = float(raw_value)
+            if not np.isfinite(value):
+                raise ValueError(
+                    f"{side} environmental value must be finite when evidence is available."
+                )
             if observed_den == 0.0:
-                if pd.notna(raw_intensity) and np.isfinite(float(raw_intensity)):
-                    raise ValueError(f"{side} environmental intensity must be missing at zero denominator.")
+                if value != 0.0:
+                    raise ValueError(
+                        f"{side} zero-denominator supported estimate must have value=0."
+                    )
+                if pd.notna(raw_intensity):
+                    raise ValueError(
+                        f"{side} environmental intensity must be missing at zero denominator."
+                    )
             else:
-                if pd.isna(raw_intensity) or not np.isclose(
-                    float(raw_intensity), value / observed_den, rtol=1e-12, atol=1e-12
+                if (
+                    pd.isna(raw_intensity)
+                    or not np.isfinite(float(raw_intensity))
+                    or not np.isclose(
+                        float(raw_intensity),
+                        value / observed_den,
+                        rtol=1e-12,
+                        atol=1e-12,
+                    )
                 ):
-                    raise ValueError(f"{side} environmental intensity disagrees with value/denominator.")
+                    raise ValueError(
+                        f"{side} environmental intensity disagrees with value/denominator."
+                    )
             values[pos] = value
-            denominator[pos] = observed_den
             available[pos] = True
-        return values, denominator, available
+        return values, available
 
     rows: list[pd.DataFrame] = []
+    dom_mass = dom_target.to_numpy(dtype="float64")
+    imp_mass = imp_target.to_numpy(dtype="float64")
+    total_mass = target_total.to_numpy(dtype="float64")
+
     for group in groups.itertuples(index=False):
         group = cast(Any, group)
         identity = (str(group.extension), str(group.stressor), str(group.unit))
-        prod_values, prod_den, prod_available = arrays_for(
-            production_sidecar,
-            group_key=identity,
-            target=dom_target,
-            side="DOM",
+        prod_values, prod_available = arrays_for(
+            production_sidecar, group_key=identity, target=dom_target, side="DOM"
         )
-        imp_values, imp_den, imp_available = arrays_for(
-            import_sidecar,
-            group_key=identity,
-            target=imp_target,
-            side="IMP",
+        imp_values, imp_available = arrays_for(
+            import_sidecar, group_key=identity, target=imp_target, side="IMP"
         )
-        account = _combine_total_supply_extension_arrays(
-            axis_labels=labels,
-            production_values=prod_values,
-            production_denominator=prod_den,
-            import_values=imp_values,
-            import_denominator=imp_den,
-            target_domestic_output=dom_target,
-            target_import_supply=imp_target,
-            target_total_supply=target_total,
-            identity=identity,
-            rtol=float(rtol),
-            atol=float(atol),
+
+        required_unavailable = (
+            ((dom_mass > 0.0) & ~prod_available)
+            | ((imp_mass > 0.0) & ~imp_available)
         )
-        sidecar = _environmental_account_to_split_sidecar(account)
-        unsupported = (~prod_available) & (~imp_available) & (target_total.to_numpy(dtype="float64") == 0.0)
-        sidecar.loc[unsupported, ["value", "intensity"]] = np.nan
+        unsupported_zero_mass = (
+            (total_mass == 0.0) & ~prod_available & ~imp_available
+        )
+        unavailable = required_unavailable | unsupported_zero_mass
+
+        physical = np.full(len(labels), np.nan, dtype="float64")
+        computable = ~unavailable
+        if bool(computable.any()):
+            prod_contribution = np.where(dom_mass > 0.0, prod_values, 0.0)
+            imp_contribution = np.where(imp_mass > 0.0, imp_values, 0.0)
+            computed = prod_contribution + imp_contribution
+            if not np.isfinite(computed[computable]).all():
+                raise RuntimeError(
+                    "Supported TOTAL environmental components produced non-finite physical values."
+                )
+            physical[computable] = computed[computable]
+
+        intensity = np.full(len(labels), np.nan, dtype="float64")
+        ratio_mask = computable & (total_mass > 0.0)
+        np.divide(physical, total_mass, out=intensity, where=ratio_mask)
+
+        extension, stressor, unit = identity
+        sidecar = pd.DataFrame(
+            {
+                "sector": labels,
+                "boundary": "total_supply_direct",
+                "denominator_role": "target_total_supply",
+                "extension": extension,
+                "stressor": stressor,
+                "unit": unit,
+                "value": physical,
+                "monetary_output": total_mass,
+                "intensity": intensity,
+            }
+        )
         rows.append(sidecar)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
@@ -1300,13 +1375,10 @@ def _retarget_direct_environmental_account(
         pd.to_numeric(account["intensity"], errors="coerce"),
     ).to_numpy(dtype="float64")
     target_values = target.to_numpy(dtype="float64")
-    missing = (target_values > 0.0) & ~np.isfinite(coeff)
-    if bool(missing.any()):
-        bad = [labels[pos] for pos in np.flatnonzero(missing)[:10]]
-        raise ValueError(
-            "Positive target monetary mass lacks a direct environmental coefficient: "
-            f"boundary={boundary!r}, sectors={bad!r}."
-        )
+    # A donor coefficient may be undefined even when the authoritative target
+    # monetary control is positive (for example, zero net mapped donor import use).
+    # This is unavailable environmental evidence, not physical zero. Preserve the
+    # target denominator and propagate NaN to value/intensity.
     physical = np.where(target_values > 0.0, coeff * target_values, 0.0)
     extension, stressor, unit = identity
     return _environmental_account_frame(
@@ -1318,6 +1390,7 @@ def _retarget_direct_environmental_account(
         unit=unit,
         values=physical,
         monetary_denominator=target_values,
+        allow_unavailable_values=True,
     )
 
 

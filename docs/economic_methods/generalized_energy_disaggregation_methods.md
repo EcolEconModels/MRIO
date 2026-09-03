@@ -612,6 +612,18 @@ Here \(a\) is on the transformed target product basis. The monetary sum must
 validate against the target total-supply control. EXIO domestic/import shares are
 only an explicit lower-quality fallback when those target components are absent.
 
+If all origin-level consistency checks pass but the collapsed donor coefficient
+\(e^{\mathrm{imp},G}_a\) is still undefined (for example because the mapped net
+import-use denominator is zero), a positive authoritative target import-supply
+control does not justify inventing a coefficient. The target-sector/stressor
+estimate is then unavailable evidence: retain its monetary denominator and store
+physical value and intensity as `NaN`, never zero and never the domestic coefficient.
+A TOTAL estimate is likewise unavailable whenever any positive-mass DOM or IMP
+component required for that TOTAL is unavailable. An unavailable component with
+zero target monetary mass does not invalidate a supported positive-mass counterpart.
+Subsequent sector reaggregation may form a finite ratio only from complete
+positive-denominator support; partial support remains a fail-closed condition.
+
 Direct final-demand extensions remain on their own axis:
 
 \[

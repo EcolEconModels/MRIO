@@ -149,39 +149,61 @@ def _check_ratio_file(
 def _validate_environmental_grid(
     *,
     environmental_path: Path,
-    raw_path: Path,
+    raw_path: Path | None,
     output: pd.Series,
     rtol: float,
     atol: float,
+    production_groups: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Validate the public production-group by final-sector storage contract."""
     errors: list[str] = []
     if not environmental_path.is_file():
         return {"ok": False, "errors": [f"Missing {environmental_path}"]}
-    if not raw_path.is_file():
-        return {"ok": False, "errors": [f"Missing paired raw sidecar {raw_path}"]}
 
     observed = pd.read_csv(environmental_path)
-    raw = pd.read_csv(raw_path)
-    raw_columns = [
-        "source_label",
-        "extension",
-        "kind",
-        "stressor",
-        "unit",
-        "value",
-        "monetary_denominator",
-        "intensity",
-    ]
-    if list(raw.columns) != raw_columns:
-        errors.append(f"raw schema={list(raw.columns)!r}")
+    raw: pd.DataFrame | None = None
+    if raw_path is not None and raw_path.is_file():
+        raw = pd.read_csv(raw_path)
+        raw_columns = [
+            "source_label",
+            "extension",
+            "kind",
+            "stressor",
+            "unit",
+            "value",
+            "monetary_denominator",
+            "intensity",
+        ]
+        if list(raw.columns) != raw_columns:
+            errors.append(f"raw schema={list(raw.columns)!r}")
+    elif production_groups is None:
+        return {
+            "ok": False,
+            "errors": [f"Missing raw sidecar and explicit production-group domain: {raw_path}"],
+        }
     if list(observed.columns) != _ENVIRONMENTAL_GRID_COLUMNS:
         errors.append(f"environmental schema={list(observed.columns)!r}")
         return {"ok": False, "errors": errors}
 
-    groups = _production_environmental_group_domain(
-        raw, target_environmental_extensions=observed
-    )
+    if production_groups is None:
+        assert raw is not None
+        groups = _production_environmental_group_domain(
+            raw, target_environmental_extensions=observed
+        )
+    else:
+        group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
+        missing_groups = set(group_cols) - set(production_groups.columns)
+        if missing_groups:
+            errors.append(
+                f"production-group domain missing columns={sorted(missing_groups)!r}"
+            )
+            groups = pd.DataFrame(columns=group_cols)
+        else:
+            groups = (
+                production_groups.loc[:, group_cols]
+                .copy()
+                .drop_duplicates(ignore_index=True)
+            )
     group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
     key_cols = ["sector", *group_cols]
     canonical = output.copy().astype("float64")
@@ -443,13 +465,21 @@ def validate_pipeline_outputs(
         split_environmental_path = split_dir / "environmental_extensions.csv"
         split_raw_environmental_path = split_dir / "exio_environmental_extensions.csv"
         if split_environmental_path.exists() or split_raw_environmental_path.exists():
+            target_exists = split_environmental_path.exists()
+            raw_exists = split_raw_environmental_path.exists()
+            raw_required = flow_role == "DOM"
             add_check(
                 "environmental_raw_provenance_paired",
-                split_raw_environmental_path.exists(),
+                raw_exists or not raw_required,
                 path=str(split_raw_environmental_path),
+                required=raw_required,
+                flow_role=flow_role,
             )
             expected_environmental = None
-            if split_environmental_path.exists():
+            group_cols = [
+                "boundary", "denominator_role", "extension", "stressor", "unit"
+            ]
+            if target_exists:
                 split_environmental = pd.read_csv(split_environmental_path)
                 expected_environmental = aggregate_environmental_extensions(
                     split_environmental,
@@ -459,24 +489,31 @@ def validate_pipeline_outputs(
                     rtol=rtol,
                     atol=atol,
                 )
-            if split_raw_environmental_path.exists() and split_environmental_path.exists():
-                production_groups = _production_environmental_group_domain(
-                    pd.read_csv(split_raw_environmental_path),
-                    target_environmental_extensions=pd.read_csv(split_environmental_path),
-                )
-            elif split_raw_environmental_path.exists():
+                if raw_exists:
+                    production_groups = _production_environmental_group_domain(
+                        pd.read_csv(split_raw_environmental_path),
+                        target_environmental_extensions=split_environmental,
+                    )
+                else:
+                    missing_group_cols = set(group_cols) - set(split_environmental.columns)
+                    if missing_group_cols:
+                        raise ValueError(
+                            "Target environmental sidecar is missing production-group columns: "
+                            f"{sorted(missing_group_cols)!r}"
+                        )
+                    production_groups = (
+                        split_environmental.loc[:, group_cols]
+                        .copy()
+                        .drop_duplicates(ignore_index=True)
+                    )
+            else:
                 add_check(
                     "environmental_target_sidecar_paired",
                     False,
                     path=str(split_environmental_path),
                 )
-                production_groups = pd.DataFrame(
-                    columns=["boundary", "denominator_role", "extension", "stressor", "unit"]
-                )
-            else:
-                production_groups = pd.DataFrame(
-                    columns=["boundary", "denominator_role", "extension", "stressor", "unit"]
-                )
+                production_groups = pd.DataFrame(columns=group_cols)
+
             observed_environmental_path = agg_dir / "environmental_extensions.csv"
             if production_groups.empty:
                 add_check(
@@ -495,7 +532,9 @@ def validate_pipeline_outputs(
                 scientific_rows = cast(
                     pd.DataFrame,
                     observed_environmental.loc[
-                        pd.to_numeric(observed_environmental["value"], errors="coerce").notna()
+                        pd.to_numeric(
+                            observed_environmental["value"], errors="coerce"
+                        ).notna()
                     ].copy(),
                 )
                 if expected_environmental is None:
@@ -511,10 +550,15 @@ def validate_pipeline_outputs(
                 )
                 grid = _validate_environmental_grid(
                     environmental_path=observed_environmental_path,
-                    raw_path=agg_dir / "exio_environmental_extensions.csv",
+                    raw_path=(
+                        agg_dir / "exio_environmental_extensions.csv"
+                        if (agg_dir / "exio_environmental_extensions.csv").is_file()
+                        else None
+                    ),
                     output=flow_use_total(recomputed.Z, recomputed.Y),
                     rtol=rtol,
                     atol=atol,
+                    production_groups=production_groups,
                 )
                 grid_extra = dict(grid)
                 grid_ok = bool(grid_extra.pop("ok", False))

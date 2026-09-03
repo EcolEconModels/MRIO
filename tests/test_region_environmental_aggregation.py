@@ -365,7 +365,8 @@ def test_target_supply_sidecar_combiner_preserves_unavailable_zero_mass() -> Non
     assert float(row_b["monetary_output"]) == 0.0
 
 
-def test_target_supply_sidecar_combiner_rejects_missing_positive_evidence() -> None:
+def test_target_supply_sidecar_combiner_propagates_missing_positive_evidence() -> None:
+    """Positive-mass unavailable donor evidence remains unavailable in TOTAL."""
     from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
 
     dom = pd.DataFrame(
@@ -384,10 +385,13 @@ def test_target_supply_sidecar_combiner_rejects_missing_positive_evidence() -> N
             "monetary_output": [0.0], "intensity": [np.nan],
         }
     )
-    with pytest.raises(ValueError, match="unavailable for positive"):
-        _combine_target_supply_extension_sidecars_direct(
-            dom,
-            imp,
-            target_domestic_output=pd.Series([1.0], index=["a"]),
-            target_import_supply=pd.Series([0.0], index=["a"]),
-        )
+    total = _combine_target_supply_extension_sidecars_direct(
+        dom,
+        imp,
+        target_domestic_output=pd.Series([1.0], index=["a"]),
+        target_import_supply=pd.Series([0.0], index=["a"]),
+    )
+    row = total.set_index("sector").loc["a"]
+    assert float(row["monetary_output"]) == 1.0
+    assert pd.isna(row["value"])
+    assert pd.isna(row["intensity"])

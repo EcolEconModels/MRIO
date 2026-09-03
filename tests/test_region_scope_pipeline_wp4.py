@@ -304,7 +304,6 @@ def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows
         mapping_csv=mapping_csv,
     )
     assert report["ok"], report
-
 def test_environmental_target_retarget_uses_accounting_nonnegative_tolerance() -> None:
     """Roundoff-scale negative supply is zero; a material negative still fails closed."""
     from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account
@@ -381,3 +380,176 @@ def test_total_sidecar_combiner_normalizes_components_before_total() -> None:
     assert float(total.loc[0, "monetary_output"]) == 5.0
     assert float(total.loc[0, "value"]) == 10.0
     assert float(total.loc[0, "intensity"]) == 2.0
+
+
+
+def test_environmental_target_retarget_preserves_unavailable_positive_mass() -> None:
+    """Undefined donor coefficient over positive target mass is NA evidence, not zero."""
+    from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account
+
+    donor = pd.DataFrame(
+        {
+            "axis_position": [1],
+            "axis_label": ["CPA_E36"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["scope_external_import_use"],
+            "extension": ["water"],
+            "stressor": ["Synthetic water stressor"],
+            "unit": ["kg"],
+            "value": [0.0],
+            "monetary_denominator": [0.0],
+            "intensity": [np.nan],
+        }
+    )
+    target = _retarget_direct_environmental_account(
+        donor,
+        target_denominator=pd.Series([5.0], index=pd.Index(["CPA_E36"])),
+        boundary="external_imports_direct",
+        denominator_role="target_import_supply",
+    )
+    assert float(target.loc[0, "monetary_denominator"]) == 5.0
+    assert pd.isna(target.loc[0, "value"])
+    assert pd.isna(target.loc[0, "intensity"])
+
+
+def test_total_sidecar_propagates_unavailable_positive_component_only() -> None:
+    """Positive unavailable IMP poisons TOTAL; unavailable zero-mass IMP does not."""
+    from ecolecon_mrio.region_aggregation import (
+        _combine_target_supply_extension_sidecars_direct,
+    )
+
+    dom = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "boundary": ["scope_production"],
+            "denominator_role": ["target_domestic_output"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [20.0],
+            "monetary_output": [10.0],
+            "intensity": [2.0],
+        }
+    )
+    imp_missing = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_supply"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [np.nan],
+            "monetary_output": [5.0],
+            "intensity": [np.nan],
+        }
+    )
+    unavailable_total = _combine_target_supply_extension_sidecars_direct(
+        dom,
+        imp_missing,
+        target_domestic_output=pd.Series([10.0], index=["a"]),
+        target_import_supply=pd.Series([5.0], index=["a"]),
+    )
+    assert float(unavailable_total.loc[0, "monetary_output"]) == 15.0
+    assert pd.isna(unavailable_total.loc[0, "value"])
+    assert pd.isna(unavailable_total.loc[0, "intensity"])
+
+    imp_zero_mass = imp_missing.copy()
+    imp_zero_mass["monetary_output"] = 0.0
+    supported_total = _combine_target_supply_extension_sidecars_direct(
+        dom,
+        imp_zero_mass,
+        target_domestic_output=pd.Series([10.0], index=["a"]),
+        target_import_supply=pd.Series([0.0], index=["a"]),
+    )
+    assert float(supported_total.loc[0, "monetary_output"]) == 10.0
+    assert float(supported_total.loc[0, "value"]) == 20.0
+    assert float(supported_total.loc[0, "intensity"]) == 2.0
+
+
+def test_total_sidecar_rejects_infinite_intensity_at_zero_denominator() -> None:
+    """Zero-denominator evidence must use NA intensity; +/-Inf is malformed."""
+    from ecolecon_mrio.region_aggregation import (
+        _combine_target_supply_extension_sidecars_direct,
+    )
+
+    zero = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "boundary": ["scope_production"],
+            "denominator_role": ["target_domestic_output"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [0.0],
+            "monetary_output": [0.0],
+            "intensity": [np.inf],
+        }
+    )
+    imp = zero.copy()
+    imp["boundary"] = "external_imports_direct"
+    imp["denominator_role"] = "target_import_supply"
+    with pytest.raises(ValueError, match="intensity must be missing at zero denominator"):
+        _combine_target_supply_extension_sidecars_direct(
+            zero,
+            imp,
+            target_domestic_output=pd.Series([0.0], index=["a"]),
+            target_import_supply=pd.Series([0.0], index=["a"]),
+        )
+
+
+def test_validator_accepts_imp_target_environmental_grid_without_raw_sidecar(
+    tmp_path: Path,
+) -> None:
+    """IMP target evidence is authoritative even though IMP has no raw F/F_Y sidecar."""
+    from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
+
+    split_dir = tmp_path / "split" / "stk_flow=IMP"
+    agg_dir = tmp_path / "agg" / "stk_flow=IMP"
+    split_dir.mkdir(parents=True)
+    agg_dir.mkdir(parents=True)
+    sectors = pd.Index(["S"])
+    Z = pd.DataFrame([[0.0]], index=sectors, columns=sectors)
+    Y = pd.DataFrame({"P3": [5.0]}, index=sectors)
+    x = pd.Series([10.0], index=sectors, name="x")
+    Z.to_csv(split_dir / "Z_split.csv")
+    Y.to_csv(split_dir / "Y_split.csv")
+    x.to_csv(split_dir / "x_split.csv")
+    Z.to_csv(agg_dir / "Z_agg.csv")
+    Y.to_csv(agg_dir / "Y_agg.csv")
+    x.to_csv(agg_dir / "x_agg.csv")
+
+    target = pd.DataFrame(
+        {
+            "sector": ["S"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_supply"],
+            "extension": ["water"],
+            "stressor": ["Synthetic water stressor"],
+            "unit": ["kg"],
+            "value": [np.nan],
+            "monetary_output": [5.0],
+            "intensity": [np.nan],
+        }
+    )
+    target.to_csv(split_dir / "environmental_extensions.csv", index=False)
+    completed = target.copy()
+    completed.insert(0, "sector_position", pd.Series([1], dtype="int64"))
+    completed.to_csv(agg_dir / "environmental_extensions.csv", index=False)
+
+    mapping_csv = tmp_path / "identity.csv"
+    pd.DataFrame(
+        {
+            "source_code": ["S"],
+            "target_code": ["S"],
+            "enabled": [True],
+            "notes": ["identity"],
+        }
+    ).to_csv(mapping_csv, index=False)
+
+    report = validate_pipeline_outputs(
+        split_dir=split_dir,
+        agg_dir=agg_dir,
+        mapping_csv=mapping_csv,
+    )
+    assert report["ok"], report
