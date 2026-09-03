@@ -8,13 +8,6 @@ import inspect
 import ecolecon_mrio.data as data
 import ecolecon_mrio.exiobase3 as exiobase3
 import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
-import ecolecon_mrio.exio_share_split as exio_share_split
 import ecolecon_mrio.region_aggregation as region_aggregation
 
 

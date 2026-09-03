@@ -1015,16 +1015,6 @@ def load_mrio_iot_matrices(
             "index_columns": ["region", "sector"],
         }
         _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
-        _validate_requested_iot_primitives(result, basis, context="exiobase")
         return result, basis, metadata
 
     mrio = load_mrio(
@@ -1049,7 +1039,6 @@ def load_mrio_iot_matrices(
             raise RuntimeError(
                 f"{dataset_norm} full-object adapter still has no output x after calc_system()."
             )
-    source_index: pd.Index | None = None
     if "Z" in requested:
         Z_df = pd.DataFrame(mrio.Z)
         candidate = pd.MultiIndex.from_tuples(list(Z_df.index), names=["region", "sector"]) if not isinstance(Z_df.index, pd.MultiIndex) else Z_df.index.set_names(["region", "sector"])
@@ -1057,7 +1046,6 @@ def load_mrio_iot_matrices(
         if not Z_df.columns.equals(Z_df.index):
             raise ValueError(f"{dataset_norm} Z must be square with identical row/column basis.")
         result["Z"] = csr_matrix(Z_df.to_numpy(dtype=float))
-        source_index = Z_df.index
     if "x" in requested:
         x_obj = mrio.x
         x_series = x_obj.iloc[:, 0] if isinstance(x_obj, pd.DataFrame) else pd.Series(x_obj)
@@ -1068,7 +1056,6 @@ def load_mrio_iot_matrices(
         result["x"] = pd.Series(
             x_numeric.to_numpy(dtype="float64"), index=candidate, name="x"
         )
-        source_index = x_series.index
     if "Y" in requested:
         Y_df = pd.DataFrame(mrio.Y)
         candidate = Y_df.index if isinstance(Y_df.index, pd.MultiIndex) else pd.MultiIndex.from_tuples(list(Y_df.index), names=["region", "sector"])
@@ -1076,19 +1063,8 @@ def load_mrio_iot_matrices(
         basis = _validate_same_iot_basis(basis, candidate, source=f"{dataset_norm}.Y")
         Y_df.index = candidate
         result["Y"] = Y_df.astype(float)
-        source_index = Y_df.index
-    if basis is None or source_index is None:
+    if basis is None:
         raise RuntimeError("requested IOT matrices did not establish a basis")
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
-    _validate_requested_iot_primitives(result, basis, context=dataset_norm)
     _validate_requested_iot_primitives(result, basis, context=dataset_norm)
     metadata = {
         "dataset": dataset_norm,
