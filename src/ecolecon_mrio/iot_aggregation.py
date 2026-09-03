@@ -1,4 +1,3 @@
-# pyright: reportAssignmentType=false, reportArgumentType=false, reportGeneralTypeIssues=false
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -146,8 +145,13 @@ def _compute_aggregated_sector_ratio_of_sums(
     if values.empty:
         return None
 
-    values[numerator_col] = pd.to_numeric(values[numerator_col], errors="coerce")
-    values[denominator_col] = pd.to_numeric(values[denominator_col], errors="coerce")
+    try:
+        values[numerator_col] = pd.to_numeric(values[numerator_col], errors="raise")
+        values[denominator_col] = pd.to_numeric(values[denominator_col], errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Aggregated ratio components must be numeric.") from exc
+    if not np.isfinite(values[numerator_col].to_numpy(dtype=float)).all() or not np.isfinite(values[denominator_col].to_numpy(dtype=float)).all():
+        raise ValueError("Aggregated ratio components must be finite.")
 
     rows: list[dict] = []
     grouped = values.groupby(
@@ -156,11 +160,9 @@ def _compute_aggregated_sector_ratio_of_sums(
     )
     for (agg_sector, ext, stressor, unit), group in grouped:
         total_den = float(group[denominator_col].sum())
-        if not np.isfinite(total_den) or total_den == 0:
+        if total_den == 0:
             continue
         total_num = float(group[numerator_col].sum())
-        if not np.isfinite(total_num):
-            continue
 
         row = {
             "aggregated_sector": agg_sector,

@@ -51,6 +51,7 @@ def principal_growth_direction(
     *,
     require_generalized: bool = False,
     year: int | None = None,
+    index: pd.Index | None = None,
 ) -> PrincipalDirectionResult:
     """Compute principal growth direction from generalized von Neumann eigenproblem.
 
@@ -59,26 +60,34 @@ def principal_growth_direction(
     """
     if issparse(A):
         A_sparse = csr_matrix(A, dtype=float)
-        row_index = getattr(A, "index", pd.RangeIndex(A_sparse.shape[0]))
-        col_index = getattr(A, "columns", pd.RangeIndex(A_sparse.shape[1]))
         if A_sparse.shape[0] != A_sparse.shape[1]:
             raise ValueError("A must be square.")
+        basis = index if index is not None else getattr(A, "index", pd.RangeIndex(A_sparse.shape[0]))
+        if len(basis) != A_sparse.shape[0] or not basis.is_unique:
+            raise ValueError("Sparse A index must be unique and match the matrix dimension.")
+        for attribute in ("index", "columns"):
+            labels = getattr(A, attribute, None)
+            if labels is not None and index is not None and not pd.Index(labels).equals(index):
+                raise ValueError("Explicit sparse A index must exactly match matrix label metadata.")
         if A_sparse.nnz and float(A_sparse.data.min()) < -1e-12:
             raise ValueError("A must be nonnegative for von Neumann/PF diagnostics.")
         A_mat = None
     else:
         A_mat = pd.DataFrame(A, copy=True)
-        row_index = A_mat.index
-        col_index = A_mat.columns
         if A_mat.shape[0] != A_mat.shape[1]:
             raise ValueError("A must be square.")
+        if not A_mat.index.equals(A_mat.columns):
+            raise ValueError("Dense A must have identical row and column axes.")
+        if index is not None and not A_mat.index.equals(index):
+            raise ValueError("Explicit index must exactly equal the dense A basis.")
+        basis = A_mat.index
         if np.any(A_mat.values < -1e-12):
             raise ValueError("A must be nonnegative for von Neumann/PF diagnostics.")
 
     if B is None:
         if require_generalized:
             raise ValueError("Generalized mode requested but B is missing.")
-        u, v, rho, pf_meta = calc_pf_eigenvectors(A_sparse if issparse(A) else A_mat, return_metadata=True, index=col_index)
+        u, v, rho, pf_meta = calc_pf_eigenvectors(A_sparse if issparse(A) else A_mat, return_metadata=True, index=basis)
         alpha = float(1.0 / rho) if rho > 0 else np.inf
         q = v / float(v.sum())
         p = u / float(u.sum()) if float(u.sum()) > 0 else u
@@ -94,8 +103,8 @@ def principal_growth_direction(
 
     if A_mat is None:
         raise ValueError("Generalized B/A eigensolve is not supported for sparse A; use B=None/PF fallback.")
-    B_mat = pd.DataFrame(B, copy=True).reindex(index=A_mat.index, columns=A_mat.columns)
-    if B_mat.isna().values.any():
+    B_mat = pd.DataFrame(B, copy=True)
+    if not B_mat.index.equals(A_mat.index) or not B_mat.columns.equals(A_mat.columns):
         raise ValueError("B must align with A indices/columns.")
     if np.any(B_mat.values < -1e-12):
         raise ValueError("B must be nonnegative for von Neumann diagnostics.")
@@ -175,20 +184,11 @@ def principal_growth_panel(
             B=B,
             require_generalized=require_generalized,
             year=year,
+            index=x_by_year[year].index,
         )
         basis_index = x_by_year[year].index
         if not res.q.index.equals(basis_index) or not res.p.index.equals(basis_index):
-            q = pd.to_numeric(res.q.reindex(basis_index), errors="coerce").fillna(0.0).astype(float)
-            p = pd.to_numeric(res.p.reindex(basis_index), errors="coerce").fillna(0.0).astype(float)
-            res = PrincipalDirectionResult(
-                year=res.year,
-                alpha=res.alpha,
-                q=q,
-                p=p,
-                method=res.method,
-                fallback_used=res.fallback_used,
-                pf_metadata=res.pf_metadata,
-            )
+            raise ValueError(f"PF basis does not match x basis for year {year}.")
         if year_result_callback is not None:
             year_result_callback(int(year), res)
         results[year] = res
@@ -212,7 +212,9 @@ def principal_growth_panel(
         res1 = results[year_to]
 
         q0 = res0.q
-        q1 = res1.q.reindex(q0.index).fillna(0.0)
+        q1 = res1.q
+        if not q1.index.equals(q0.index) or not x_by_year[year_to].index.equals(x_by_year[year_from].index):
+            raise ValueError(f"Pair basis mismatch between years {year_from} and {year_to}.")
         q0v = q0.to_numpy(dtype=float)
         q1v = q1.to_numpy(dtype=float)
         theta = np.nan
@@ -221,9 +223,9 @@ def principal_growth_panel(
             theta = float(np.arccos(np.clip(float(np.dot(q0v, q1v)) / q_denom, -1.0, 1.0)))
 
         x0 = x_by_year[year_from]
-        x1 = x_by_year[year_to].reindex(x0.index).fillna(0.0)
+        x1 = x_by_year[year_to]
         dx = (x1 - x0).to_numpy(dtype=float)
-        qv = res0.q.reindex(x0.index).fillna(0.0).to_numpy(dtype=float)
+        qv = res0.q.to_numpy(dtype=float)
         align = np.nan
         denom = float(np.linalg.norm(dx) * np.linalg.norm(qv))
         if denom > 0:

@@ -304,6 +304,8 @@ def _validate_technical_coefficient_denominators(
 def technical_coefficients(Z: pd.DataFrame, output: pd.Series) -> pd.DataFrame:
     """Return dense A=Z/x after the same fail-closed denominator checks as sparse A."""
     Z_numeric = Z.astype("float64")
+    if not Z_numeric.index.equals(Z_numeric.columns):
+        raise ValueError("Technical-coefficient Z must be square with identical row and column axes.")
     if not Z_numeric.columns.is_unique:
         raise ValueError("Technical-coefficient Z columns must be unique.")
     z_values = Z_numeric.to_numpy(dtype="float64", copy=False)

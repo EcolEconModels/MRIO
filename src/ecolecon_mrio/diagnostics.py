@@ -60,6 +60,15 @@ def _matrix_nonzero_stats(values: np.ndarray) -> tuple[int, float]:
 def _matrix_to_csr_and_labels(matrix: Any, index: pd.Index | None = None) -> tuple[csr_matrix, pd.Index, pd.Index]:
     if issparse(matrix):
         values = csr_matrix(matrix, dtype=float)
+        if index is not None and (len(index) != values.shape[0] or not index.is_unique):
+            raise ValueError("Explicit sparse matrix index must be unique and match its dimension.")
+        if values.shape[0] != values.shape[1]:
+            raise ValueError("PF matrix must be square.")
+        if index is not None:
+            for attribute in ("index", "columns"):
+                labels = getattr(matrix, attribute, None)
+                if labels is not None and not pd.Index(labels).equals(index):
+                    raise ValueError("Explicit index must exactly match sparse matrix labels.")
         row_index = index if index is not None else getattr(matrix, "index", pd.RangeIndex(values.shape[0]))
         col_index = index if index is not None else getattr(matrix, "columns", pd.RangeIndex(values.shape[1]))
         return values, row_index, col_index
@@ -372,6 +381,15 @@ def calc_pf_eigenvectors(
     block = values[block_idx][:, block_idx]
     n_block = int(block.shape[0])
     if n_block >= 256:
+        def sparse_pair(operator: LinearOperator) -> tuple[np.ndarray, np.ndarray]:
+            try:
+                eigenvalues, eigenvectors = eigs(operator, k=1, which="LM", tol=1e-6, maxiter=max(4000, 10 * n_block))
+            except ArpackNoConvergence as exc:
+                eigenvalues = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
+                eigenvectors = np.asarray(exc.eigenvectors) if exc.eigenvectors is not None else np.empty((n_block, 0))
+            if eigenvalues.size != 1 or eigenvectors.shape != (n_block, 1) or not np.isfinite(eigenvalues).all() or not np.isfinite(eigenvectors).all():
+                raise ValueError("Sparse PF eigensolve did not return a usable dominant eigenpair.")
+            return eigenvalues, eigenvectors
         try:
             _diag_print(
                 f"PF eigensolve start shape={block.shape} method=sparse_eigs_matrix_free rss={_rss_mb():.1f}MB"
@@ -379,41 +397,17 @@ def calc_pf_eigenvectors(
             t0 = time.time()
             op = _linear_operator_from_sparse(block)
             op_t = _linear_operator_from_sparse(block.T.tocsr())
-            eigvals_r, right_vecs = eigs(
-                op,
-                k=1,
-                which="LM",
-                tol=1e-6,
-                maxiter=max(4000, 10 * n_block),
-            )
-            eigvals_l, left_vecs = eigs(
-                op_t,
-                k=1,
-                which="LM",
-                tol=1e-6,
-                maxiter=max(4000, 10 * n_block),
-            )
+            eigvals_r, right_vecs = sparse_pair(op)
+            eigvals_l, left_vecs = sparse_pair(op_t)
+            if not np.isclose(abs(eigvals_r[0]), abs(eigvals_l[0]), rtol=1e-6, atol=tol):
+                raise ValueError("Sparse left/right PF eigenvalues are incompatible.")
             eigvals = np.asarray(eigvals_r)
             _diag_print(
                 f"PF eigensolve done shape={block.shape} method=sparse_eigs_matrix_free "
                 f"elapsed={time.time()-t0:.1f}s rss={_rss_mb():.1f}MB"
             )
-        except ArpackNoConvergence as exc:
-            _diag_print(
-                f"PF eigensolve partial convergence shape={block.shape} method=sparse_eigs_matrix_free "
-                f"rss={_rss_mb():.1f}MB"
-            )
-            eigvals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
-            right_vecs = (
-                np.asarray(exc.eigenvectors)
-                if exc.eigenvectors is not None
-                else np.empty((n_block, 0))
-            )
-            left_vecs = np.empty((n_block, 0))
-            if eigvals.size == 0 or right_vecs.size == 0:
-                eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
-        except Exception:
-            eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
+        except Exception as exc:
+            raise ValueError("Sparse PF eigensolve failed without a valid sparse eigenpair.") from exc
     else:
         eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
 
