@@ -484,47 +484,147 @@ def _read_region_exports_member_from_exio_zip(
     )
 
 
-def read_exiobase3_region_export_vector(*, source_zip: str | Path, region: str) -> pd.Series:
-    """Return product exports from ``region`` to all foreign intermediate/final users."""
-    zip_path = Path(source_zip)
-    z_exports = _read_region_exports_member_from_exio_zip(
-        zip_path=zip_path, member_name="Z.txt", region=region
+
+def _read_scope_exports_member_from_exio_zip(
+    *, zip_path: Path, member_name: str, scope: RegionScope
+) -> pd.Series:
+    """Sum products produced inside scope and used only by destinations outside it."""
+    members = set(_scope_members(scope))
+    with zipfile.ZipFile(zip_path) as zf:
+        with _open_exio_zip_text(zf, member_name) as fh:
+            destination_regions = next(fh).rstrip("\n\r").split("\t")[2:]
+            next(fh)
+            next(fh)
+            keep_positions = [
+                idx for idx, destination in enumerate(destination_regions)
+                if str(destination) not in members
+            ]
+            max_keep = max(keep_positions) if keep_positions else -1
+            values_by_sector: dict[str, float] = {}
+            order: list[str] = []
+            seen_by_origin: dict[str, set[str]] = {}
+            rows_by_origin: dict[str, list[str]] = {}
+            for row_idx, line in enumerate(fh):
+                try:
+                    row_region, row_sector, _rest = line.rstrip("\n\r").split("\t", 2)
+                except ValueError:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} malformed row at position {row_idx}"
+                    ) from None
+                origin = str(row_region)
+                sector = str(row_sector)
+                seen = seen_by_origin.setdefault(origin, set())
+                if sector in seen:
+                    raise ValueError(
+                        f"EXIOBASE {member_name} contains duplicate producer sector {sector!r} "
+                        f"for origin {origin!r}."
+                    )
+                seen.add(sector)
+                rows_by_origin.setdefault(origin, []).append(sector)
+                if origin not in members:
+                    continue
+                if keep_positions:
+                    numeric = _numeric_tail_from_exio_line(line)
+                    if numeric.size <= max_keep:
+                        raise ValueError(
+                            f"EXIOBASE {member_name} row width mismatch at row {row_idx}: "
+                            f"got {numeric.size}, need column {max_keep + 1}."
+                        )
+                    selected = numeric[keep_positions]
+                else:
+                    selected = np.zeros(0, dtype="float64")
+                if not np.isfinite(selected).all():
+                    raise ValueError(
+                        f"EXIOBASE {member_name} contains non-finite scope-export use at row {row_idx}."
+                    )
+                if sector not in values_by_sector:
+                    values_by_sector[sector] = 0.0
+                    order.append(sector)
+                values_by_sector[sector] += float(selected.sum())
+    reference: tuple[str, ...] | None = None
+    for member in scope.members:
+        rows = tuple(rows_by_origin.get(str(member), ()))
+        if not rows:
+            raise ValueError(f"EXIOBASE {member_name} has no producer rows for scope member {member!r}.")
+        if reference is None:
+            reference = rows
+        elif rows != reference:
+            raise ValueError(
+                f"EXIOBASE {member_name} producer sector basis differs across scope members; "
+                f"member={member!r}."
+            )
+    if reference is None:
+        raise ValueError(f"EXIOBASE {member_name} scope export basis is empty.")
+    if tuple(order) != reference:
+        raise RuntimeError("Scope export accumulator lost the validated producer-sector order.")
+    return pd.Series(
+        [values_by_sector[sector] for sector in order],
+        index=pd.Index(order, name="sector"),
+        dtype="float64",
+        name=f"{member_name}_scope_exports",
     )
-    y_exports = _read_region_exports_member_from_exio_zip(
-        zip_path=zip_path, member_name="Y.txt", region=region
+
+
+def read_exiobase3_scope_export_vector(
+    *, source_zip: str | Path, scope: RegionScope
+) -> pd.Series:
+    """Return exports from scope-member producers to destinations outside scope.
+
+    For a singleton scope this is exactly the historical region-export boundary.
+    For a grouped scope, intra-scope trade is excluded and therefore cannot be
+    misclassified as exports of the aggregate region.
+    """
+    zip_path = Path(source_zip)
+    z_exports = _read_scope_exports_member_from_exio_zip(
+        zip_path=zip_path, member_name="Z.txt", scope=scope
+    )
+    y_exports = _read_scope_exports_member_from_exio_zip(
+        zip_path=zip_path, member_name="Y.txt", scope=scope
     )
     sectors = z_exports.index.union(y_exports.index, sort=False)
     return z_exports.reindex(sectors, fill_value=0.0).add(
         y_exports.reindex(sectors, fill_value=0.0), fill_value=0.0
-    ).rename("exports")
+    ).rename("scope_exports")
 
-def read_exiobase3_destination_final_demand_totals(
-    *, source_zip: str | Path, region: str
+
+def read_exiobase3_scope_final_demand_totals(
+    *, source_zip: str | Path, scope: RegionScope
 ) -> pd.Series:
-    """Return one destination region's final demand by category across all origins.
-
-    ``F_Y`` is indexed by the destination final-demand category, not by producer
-    product.  Its monetary denominator must therefore sum ``Y.txt`` over every
-    producer origin supplying the requested destination region.  This helper
-    streams only that destination's Y columns from the source zip.
-    """
+    """Return all-origin final demand in a destination scope by EXIO category."""
     total_use = _read_scope_use_table_from_exio_zip(
         zip_path=Path(source_zip),
         member_name="Y.txt",
-        scope=RegionScope(code=str(region), members=(str(region),)),
+        scope=scope,
         flow="total",
     )
     totals = total_use.sum(axis=0).astype("float64")
     if not isinstance(totals, pd.Series):
-        raise TypeError("EXIO final-demand total reduction did not return a Series.")
+        raise TypeError("EXIO scope final-demand reduction did not return a Series.")
     totals.index = pd.Index(
-        [str(label) for label in totals.index], name="final_demand_category"
+        [str(value) for value in totals.index], name="final_demand_category"
     )
-    if not totals.index.is_unique:
-        raise ValueError("EXIO destination final-demand categories must be unique.")
-    if totals.isna().any() or not np.isfinite(totals.to_numpy(dtype="float64")).all():
-        raise ValueError("EXIO destination final-demand totals must be finite.")
-    return totals.rename("final_demand_total")
+    totals.name = "scope_final_demand"
+    return totals
+
+
+def read_exiobase3_region_export_vector(*, source_zip: str | Path, region: str) -> pd.Series:
+    """Return one region's exports through the generic singleton-scope boundary."""
+    return read_exiobase3_scope_export_vector(
+        source_zip=source_zip,
+        scope=RegionScope(code=str(region), members=(str(region),)),
+    ).rename("exports")
+
+
+
+def read_exiobase3_destination_final_demand_totals(
+    *, source_zip: str | Path, region: str
+) -> pd.Series:
+    """Return one destination region's all-origin final demand by category."""
+    return read_exiobase3_scope_final_demand_totals(
+        source_zip=source_zip,
+        scope=RegionScope(code=str(region), members=(str(region),)),
+    )
+
 
 def _load_exio_scope_slice_direct_from_zip(
     *,

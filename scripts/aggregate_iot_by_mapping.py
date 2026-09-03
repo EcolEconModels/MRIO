@@ -1506,104 +1506,50 @@ def _reorder_aggregation_result(
     )
 
 
+
+
 def _complete_environmental_extension_sector_grid(
     environmental_extensions: pd.DataFrame | None,
     *,
     output: pd.Series,
     production_groups: pd.DataFrame,
 ) -> pd.DataFrame | None:
-    """Bind supported production estimates to the complete final IOT sector axis.
-
-    Scientific projection and reaggregation produce rows only where a valid
-    donor coefficient exists.  This final model-interface transformation adds
-    explicit undefined rows without feeding them back into physical sums or
-    intensity calculations. Group order comes from selected raw production-F
-    metadata; sector order and monetary output come exclusively from the final
-    IOT vector.
-    """
-    group_cols = ["extension", "stressor", "unit"]
+    """Complete boundary-aware sector satellite groups onto the final IOT axis."""
+    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
     missing_group_columns = set(group_cols) - set(production_groups.columns)
     if missing_group_columns:
-        raise ValueError(
-            "Production environmental group domain is missing required columns: "
-            f"{sorted(missing_group_columns)!r}."
-        )
-    groups = production_groups.loc[:, group_cols].copy()
+        production_groups = production_groups.copy()
+        production_groups["boundary"] = "scope_production"
+        production_groups["denominator_role"] = "target_domestic_output"
+    groups = production_groups.loc[:, group_cols].copy().drop_duplicates(ignore_index=True)
     if groups.empty:
         return None
-    if bool(groups.isna().to_numpy().any()):
-        raise ValueError("Production environmental group metadata must not be missing.")
     for column in group_cols:
         groups[column] = groups[column].astype(str).str.strip()
     if bool(groups.eq("").to_numpy().any()):
-        raise ValueError("Production environmental group metadata must not be blank.")
-    groups = groups.drop_duplicates(ignore_index=True)
-
+        raise ValueError("Environmental group metadata must not be blank.")
     required = {
-        "sector",
-        "extension",
-        "stressor",
-        "unit",
-        "value",
-        "monetary_output",
-        "intensity",
+        "sector", "boundary", "denominator_role", "extension", "stressor", "unit",
+        "value", "monetary_output", "intensity",
     }
-    if environmental_extensions is None:
-        actual = pd.DataFrame(columns=list(required))
-    else:
-        missing = required - set(environmental_extensions.columns)
-        if missing:
-            raise ValueError(
-                "Aggregated environmental extensions are missing required columns: "
-                f"{sorted(missing)!r}."
-            )
-        actual = environmental_extensions.copy()
-    presentation_columns = {"sector_position", "available"}
-    collisions = presentation_columns.intersection(actual.columns)
-    if collisions:
-        raise ValueError(
-            "Scientific environmental rows already contain presentation columns: "
-            f"{sorted(collisions)!r}."
-        )
-
-    canonical_output = output.copy().astype("float64")
-    canonical_output.index = canonical_output.index.astype(str)
-    if not canonical_output.index.is_unique:
-        raise ValueError("Final environmental sector grid requires unique IOT sectors.")
-    if (
-        canonical_output.isna().any()
-        or not np.isfinite(canonical_output.to_numpy(dtype="float64")).all()
-        or bool((canonical_output < 0.0).any())
-    ):
-        raise ValueError(
-            "Final environmental sector grid requires finite non-negative IOT output."
-        )
-
-    key_cols = ["sector", "extension", "stressor", "unit"]
-    for column in key_cols:
-        actual[column] = actual[column].astype(str)
+    actual = pd.DataFrame(columns=list(required)) if environmental_extensions is None else environmental_extensions.copy()
+    if "boundary" not in actual.columns:
+        actual.insert(1, "boundary", "scope_production")
+    if "denominator_role" not in actual.columns:
+        actual.insert(2, "denominator_role", "target_domestic_output")
+    missing = required - set(actual.columns)
+    if missing:
+        raise ValueError(f"Aggregated environmental extensions are missing columns: {sorted(missing)!r}.")
+    denominator = output.copy().astype("float64")
+    denominator.index = denominator.index.astype(str)
+    if not denominator.index.is_unique or denominator.isna().any() or not np.isfinite(denominator.to_numpy()).all() or bool((denominator < 0.0).any()):
+        raise ValueError("Final environmental denominator requires a unique finite non-negative sector vector.")
+    key_cols = ["sector"] + group_cols
     if bool(actual.duplicated(key_cols).any()):
-        duplicates = actual.loc[actual.duplicated(key_cols, keep=False), key_cols]
-        raise ValueError(
-            "Aggregated environmental extensions contain duplicate sector/group rows: "
-            f"{duplicates.head(10).to_dict(orient='records')!r}."
-        )
-    unsupported_sectors = sorted(
-        set(cast(pd.Series, actual["sector"]).astype(str))
-        - set(canonical_output.index)
-    )
-    if unsupported_sectors:
-        raise ValueError(
-            "Environmental estimates contain sectors outside the final IOT axis: "
-            f"{unsupported_sectors[:20]!r}."
-        )
+        raise ValueError("Aggregated environmental extensions contain duplicate sector/group rows (including boundary identity).")
     actual_group_keys = actual.loc[:, group_cols].drop_duplicates(ignore_index=True)
     unknown_groups = actual_group_keys.merge(
-        groups,
-        on=group_cols,
-        how="left",
-        indicator=True,
-        validate="one_to_one",
+        groups, on=group_cols, how="left", indicator=True, validate="one_to_one"
     )
     unknown_groups = unknown_groups.loc[unknown_groups["_merge"].eq("left_only")]
     if not unknown_groups.empty:
@@ -1611,75 +1557,30 @@ def _complete_environmental_extension_sector_grid(
             "Scientific environmental estimates contain groups outside raw production F: "
             f"{unknown_groups[group_cols].head(10).to_dict(orient='records')!r}."
         )
-
-    # Supported rows must already carry the same canonical denominator; grid
-    # completion replaces no scientific number and never repairs a mismatch.
+    unsupported = sorted(set(actual["sector"].astype(str)) - set(denominator.index))
+    if unsupported:
+        raise ValueError(f"Environmental estimates contain sectors outside the final IOT axis: {unsupported[:20]!r}.")
     if not actual.empty:
-        observed_output = cast(
-            pd.Series, pd.to_numeric(actual["monetary_output"], errors="raise")
-        ).astype("float64")
-        expected_output = cast(pd.Series, actual["sector"]).map(canonical_output)
-        if not np.allclose(
-            observed_output.to_numpy(dtype="float64"),
-            expected_output.to_numpy(dtype="float64"),
-            rtol=1e-9,
-            atol=1e-6,
-            equal_nan=False,
-        ):
-            raise ValueError(
-                "Supported environmental monetary_output disagrees with final IOT output."
-            )
-        values = cast(pd.Series, pd.to_numeric(actual["value"], errors="raise"))
-        intensities = cast(
-            pd.Series, pd.to_numeric(actual["intensity"], errors="coerce")
-        )
-        if not np.isfinite(values.to_numpy(dtype="float64")).all():
-            raise ValueError("Supported environmental values must be finite.")
-        if not np.isfinite(intensities.dropna().to_numpy(dtype="float64")).all():
-            raise ValueError("Supported environmental intensities must be finite or NA.")
-        actual["value"] = values.astype("float64")
-        actual["intensity"] = intensities.astype("float64")
-
-    # Cross each observed scientific group with the authoritative final IOT
-    # order. A left join distinguishes absent evidence from a physical zero.
+        observed = pd.to_numeric(actual["monetary_output"], errors="raise").to_numpy(dtype="float64")
+        expected = actual["sector"].astype(str).map(denominator).to_numpy(dtype="float64")
+        if not np.allclose(observed, expected, rtol=1e-9, atol=1e-6, equal_nan=False):
+            raise ValueError("Supported environmental denominator disagrees with final IOT flow use/supply.")
     groups["__group_position"] = np.arange(len(groups), dtype="int64")
-    sectors = pd.DataFrame(
-        {
-            "sector_position": np.arange(1, len(canonical_output) + 1, dtype="int64"),
-            "sector": canonical_output.index.to_numpy(dtype=str),
-            "monetary_output": canonical_output.to_numpy(dtype="float64"),
-        }
-    )
+    sectors = pd.DataFrame({
+        "sector_position": np.arange(1, len(denominator)+1, dtype="int64"),
+        "sector": denominator.index.to_numpy(dtype=str),
+        "monetary_output": denominator.to_numpy(dtype="float64"),
+    })
     grid = groups.merge(sectors, how="cross", sort=False)
     supported = actual.loc[:, key_cols + ["value", "intensity"]].copy()
-    completed = grid.merge(
-        supported,
-        on=key_cols,
-        how="left",
-        sort=False,
-        validate="one_to_one",
-    )
-    completed = completed.sort_values(
-        ["__group_position", "sector_position"], kind="stable"
-    ).drop(columns="__group_position")
-    result = completed.loc[
-        :,
-        [
-            "sector_position",
-            "sector",
-            "extension",
-            "stressor",
-            "unit",
-            "value",
-            "monetary_output",
-            "intensity",
-        ],
-    ].reset_index(drop=True)
+    completed = grid.merge(supported, on=key_cols, how="left", sort=False, validate="one_to_one")
+    completed = completed.sort_values(["__group_position", "sector_position"], kind="stable").drop(columns="__group_position")
+    return completed.loc[:, [
+        "sector_position", "sector", "boundary", "denominator_role", "extension", "stressor", "unit",
+        "value", "monetary_output", "intensity",
+    ]].reset_index(drop=True)
 
-    expected_rows = len(groups) * len(canonical_output)
-    if len(result) != expected_rows or bool(result.duplicated(key_cols).any()):
-        raise RuntimeError("Final environmental sector grid is incomplete or duplicated.")
-    return result
+
 
 
 def _production_environmental_group_domain(
@@ -1688,8 +1589,9 @@ def _production_environmental_group_domain(
     """Return selected production-F groups in deterministic raw-source order.
 
     Raw physical values are provenance only here. The final model grid uses
-    these three metadata columns to retain even a stressor with no scientifically
-    supported target-sector estimate; direct-final-demand ``F_Y`` is excluded.
+    boundary metadata plus the extension identity to retain even a stressor with
+    no scientifically supported target-sector estimate; direct-final-demand
+    ``F_Y`` is excluded.
     """
     required = {"extension", "kind", "stressor", "unit"}
     missing = required - set(exio_environmental_extensions.columns)
@@ -1702,6 +1604,8 @@ def _production_environmental_group_domain(
         exio_environmental_extensions["kind"].astype(str).eq("F"),
         ["extension", "stressor", "unit"],
     ].copy()
+    raw.insert(0, "boundary", "scope_production")
+    raw.insert(1, "denominator_role", "target_domestic_output")
     return raw.drop_duplicates(ignore_index=True)
 
 
@@ -1777,45 +1681,32 @@ def _write_source_sector_contract(
     _write_rows_csv(pd.DataFrame(rows), out_path, verbose=verbose)
 
 
+
 def _legacy_co2_production_view(
     environmental_extensions: pd.DataFrame | None,
     *,
     sector_col: str,
 ) -> pd.DataFrame | None:
-    """Adapt the generic satellite table to the existing SFC CO2 presentation."""
+    """Adapt one boundary-aware CO2 sector satellite to the legacy workbook view."""
     if environmental_extensions is None or environmental_extensions.empty:
         return None
-    required = {"sector", "extension", "stressor", "unit", "value", "monetary_output", "intensity"}
+    required = {
+        "sector", "boundary", "extension", "stressor", "unit", "value", "monetary_output", "intensity"
+    }
     if not required.issubset(environmental_extensions.columns):
         return None
     selection = (
-        (environmental_extensions["extension"].astype(str) == "air_emissions")
-        & (
-            environmental_extensions["stressor"].astype(str).str.casefold()
-            == "CO2 - combustion - air".casefold()
-        )
+        environmental_extensions["extension"].astype(str).eq("air_emissions")
+        & environmental_extensions["stressor"].astype(str).str.casefold().eq("CO2 - combustion - air".casefold())
     )
     selected = cast(pd.DataFrame, environmental_extensions.loc[selection].copy())
     if selected.empty:
         return None
-    selected = selected.rename(
-        columns={
-            "sector": sector_col,
-            "value": "emission",
-            "intensity": "emission_intensity",
-        }
-    )
-    return selected[
-        [
-            sector_col,
-            "extension",
-            "stressor",
-            "unit",
-            "emission",
-            "monetary_output",
-            "emission_intensity",
-        ]
-    ]
+    selected = selected.rename(columns={"sector": sector_col, "value": "emission", "intensity": "emission_intensity"})
+    return selected.loc[:, [
+        sector_col, "extension", "stressor", "unit", "emission", "monetary_output", "emission_intensity"
+    ]]
+
 
 def _legacy_co2_final_demand_view(
     exio_environmental_extensions: pd.DataFrame | None,
@@ -2729,25 +2620,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         aggregated_environmental_extensions_actual = aggregate_environmental_extensions(
             environmental_extensions,
             mapping_for_run,
-            output=x_input,
+            output=flow_use_total(Z, Y),
             keep_unmapped=keep_unmapped,
         )
-        if environmental_extensions is not None and exio_environmental_extensions is None:
-            raise ValueError(
-                "Model-facing environmental completion requires the paired raw "
-                "exio_environmental_extensions.csv to define selected production groups."
-            )
         production_groups = (
-            None
-            if exio_environmental_extensions is None
-            else _production_environmental_group_domain(exio_environmental_extensions)
+            _production_environmental_group_domain(exio_environmental_extensions)
+            if exio_environmental_extensions is not None
+            else (
+                None
+                if environmental_extensions is None
+                else environmental_extensions.loc[:, ["boundary", "denominator_role", "extension", "stressor", "unit"]]
+                .drop_duplicates(ignore_index=True)
+            )
         )
         aggregated_environmental_extensions = (
             None
             if production_groups is None
             else _complete_environmental_extension_sector_grid(
                 aggregated_environmental_extensions_actual,
-                output=res.x,
+                output=flow_use_total(res.Z, res.Y),
                 production_groups=production_groups,
             )
         )

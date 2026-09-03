@@ -449,6 +449,105 @@ def load_exiobase3_extension_row(
         return out
 
 
+
+def load_exiobase3_extension_rows_with_units(
+    container: str | Path,
+    *,
+    extension: str,
+    kind: MatrixKind = "F",
+    keywords: Sequence[str] = (),
+    region: str | None = None,
+    system: str = "pxp",
+    basis_index: pd.MultiIndex | None = None,
+    require_unit: bool = True,
+) -> tuple[ExtensionRowResult, ...]:
+    """Stream every selected stressor row without materialising an extension matrix."""
+    ctype, cpath = _resolve_container(container)
+    rel = f"{extension}/{kind}.txt"
+    units = read_extension_units(container, extension=str(extension))
+    keys = tuple(str(value).casefold() for value in keywords if str(value).strip())
+
+    if ctype == "zip":
+        zf = zipfile.ZipFile(cpath, "r")
+        try:
+            fh = TextIOWrapper(zf.open(rel, "r"), encoding="utf-8", newline="")
+            owns_zip = True
+        except Exception:
+            zf.close()
+            raise
+    else:
+        fh = (cpath / rel).open("r", encoding="utf-8", newline="")
+        zf = None
+        owns_zip = False
+    results: list[ExtensionRowResult] = []
+    try:
+        h1, h2, _h3 = _read_header_lines(fh)
+        keep = [i for i in range(1, len(h1)) if region is None or h1[i] == region]
+        if not keep:
+            raise ValueError(f"No columns matched region={region!r} in {rel}")
+        reader = csv.reader(fh, delimiter="\t")
+        for row in reader:
+            if not row:
+                continue
+            stressor = str(row[0])
+            if keys and not any(key in stressor.casefold() for key in keys):
+                continue
+            values = np.asarray([float(row[i]) for i in keep], dtype="float64")
+            if not np.isfinite(values).all():
+                raise ValueError(
+                    f"Non-finite selected extension row: extension={extension!r}, "
+                    f"kind={kind!r}, stressor={stressor!r}."
+                )
+            level_name = _extension_column_label_level_name(kind)
+            index = pd.MultiIndex.from_arrays(
+                [[h1[i] for i in keep], [h2[i] for i in keep]],
+                names=["region", level_name],
+            )
+            series = pd.Series(values, index=index, dtype="float64", name=stressor)
+            if basis_index is not None:
+                if str(kind) != "F":
+                    raise ValueError("basis_index alignment is valid only for kind='F'.")
+                series = _align_production_extension_row_to_basis(
+                    series, basis_index, system=str(system)
+                )
+            unit_value = units.get(stressor)
+            if unit_value is None or not str(unit_value).strip():
+                if require_unit:
+                    raise ValueError(
+                        f"No unit metadata for extension={extension!r}, stressor={stressor!r}."
+                    )
+                unit = ""
+                unit_source = "missing_unit_allowed"
+            else:
+                unit = str(unit_value).strip()
+                unit_source = f"{extension}/unit.txt"
+            results.append(
+                ExtensionRowResult(
+                    year=None,
+                    values=series,
+                    stressor=stressor,
+                    unit=unit,
+                    unit_source=unit_source,
+                    extension=str(extension),
+                    kind=str(kind),
+                    metadata={
+                        "container": str(container),
+                        "region": region,
+                        "row_index_names": list(series.index.names),
+                    },
+                )
+            )
+    finally:
+        fh.close()
+        if owns_zip and zf is not None:
+            zf.close()
+    if not results:
+        raise ValueError(
+            f"No stressors matched extension={extension!r}, kind={kind!r}, "
+            f"keywords={list(keywords)!r}."
+        )
+    return tuple(results)
+
 def load_exiobase3_extension_row_for_year(
     year: int,
     *,

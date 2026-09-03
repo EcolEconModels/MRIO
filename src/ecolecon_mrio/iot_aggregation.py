@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, cast
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -228,24 +228,25 @@ def aggregate_environmental_extensions(
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> pd.DataFrame | None:
-    """Reaggregate physical totals against the canonical monetary output vector.
+    """Reaggregate boundary-aware target environmental totals by ratio of sums.
 
-    ``value`` is extensive and additive. ``monetary_output`` in the input
-    sidecar is an integrity copy of the current IOT output, not an independent
-    denominator: it must match ``output`` sector by sector. Reaggregation sums
-    physical values, independently aggregates canonical ``output``, and derives
-    intensity only afterwards.
+    ``output`` is the current flow's authoritative monetary denominator: DOM
+    output/use for ``scope_production``, IMP supply/use for
+    ``external_imports_direct``, or TOTAL supply for ``total_supply_direct``.
+    The historical argument name is retained because this function is internal to
+    the current pipeline, but its meaning is validated by ``denominator_role``.
     """
     if environmental_extensions is None or environmental_extensions.empty:
         return None
     required = {
-        "sector",
-        "extension",
-        "stressor",
-        "unit",
-        "value",
-        "monetary_output",
+        "sector", "boundary", "denominator_role", "extension", "stressor",
+        "unit", "value", "monetary_output",
     }
+    environmental_extensions = environmental_extensions.copy()
+    if "boundary" not in environmental_extensions.columns:
+        environmental_extensions.insert(1, "boundary", "scope_production")
+    if "denominator_role" not in environmental_extensions.columns:
+        environmental_extensions.insert(2, "denominator_role", "target_domestic_output")
     missing = required - set(environmental_extensions.columns)
     if missing:
         raise ValueError(
@@ -254,92 +255,64 @@ def aggregate_environmental_extensions(
         )
     if rtol < 0.0 or atol < 0.0:
         raise ValueError("Environmental extension tolerances must be non-negative.")
-
     frame = environmental_extensions.copy()
-    key_cols = ["sector", "extension", "stressor", "unit"]
+    key_cols = [
+        "sector", "boundary", "denominator_role", "extension", "stressor", "unit"
+    ]
     if frame.duplicated(key_cols).any():
         duplicate_rows = frame.loc[frame.duplicated(key_cols, keep=False), key_cols]
         raise ValueError(
-            "environmental_extensions must contain one row per sector/stressor; "
+            "environmental_extensions must contain one row per sector/boundary/stressor; "
             f"duplicates={duplicate_rows.head(10).to_dict(orient='records')!r}"
         )
-    frame["sector"] = frame["sector"].astype(str)
-    value = cast(pd.Series, pd.to_numeric(frame["value"], errors="raise"))
-    monetary_output = cast(
-        pd.Series, pd.to_numeric(frame["monetary_output"], errors="raise")
-    )
-    frame["value"] = value.astype("float64")
-    frame["monetary_output"] = monetary_output.astype("float64")
-    if not np.isfinite(frame["value"].to_numpy()).all():
+    for column in ("sector", "boundary", "denominator_role", "extension", "stressor", "unit"):
+        frame[column] = frame[column].astype(str)
+    frame["value"] = pd.to_numeric(frame["value"], errors="raise").astype("float64")
+    frame["monetary_output"] = pd.to_numeric(
+        frame["monetary_output"], errors="raise"
+    ).astype("float64")
+    if not np.isfinite(frame["value"].to_numpy(dtype="float64")).all():
         raise ValueError("Environmental extension values must be finite.")
 
     source_output = output.copy().astype("float64")
     source_output.index = source_output.index.astype(str)
     if not source_output.index.is_unique:
-        raise ValueError("Environmental extension output vector index must be unique.")
-    if (
-        source_output.isna().any()
-        or not np.isfinite(source_output.to_numpy()).all()
-        or bool((source_output < 0.0).any())
-    ):
-        raise ValueError("Environmental extension output vector must be finite and non-negative.")
+        raise ValueError("Environmental denominator vector index must be unique.")
+    if source_output.isna().any() or not np.isfinite(source_output.to_numpy()).all() or bool((source_output < 0.0).any()):
+        raise ValueError("Environmental denominator vector must be finite and non-negative.")
     positive_sources_by_target: dict[str, set[str]] = {}
     for source, output_value in source_output.items():
         source_label = str(source)
         if float(output_value) <= 0.0:
             continue
-        if source_label in mapping:
-            target = str(mapping[source_label])
-        elif keep_unmapped:
-            target = source_label
-        else:
-            continue
-        positive_sources_by_target.setdefault(target, set()).add(source_label)
-    for keys, group in frame.groupby(
-        ["extension", "stressor", "unit"], dropna=False, sort=False
-    ):
-        key_tuple = keys if isinstance(keys, tuple) else (keys,)
-        covered = set(cast(pd.Series, group["sector"]).astype(str))
-        represented_targets: set[str] = set()
-        for source in covered:
-            if source in mapping:
-                represented_targets.add(str(mapping[source]))
-            elif keep_unmapped:
-                represented_targets.add(source)
+        target = str(mapping.get(source_label, source_label)) if keep_unmapped else mapping.get(source_label)
+        if target is not None:
+            positive_sources_by_target.setdefault(str(target), set()).add(source_label)
+    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    for keys, group in frame.groupby(group_cols, dropna=False, sort=False):
+        covered = set(group["sector"].astype(str))
+        represented_targets = {
+            str(mapping.get(source, source)) if keep_unmapped else str(mapping[source])
+            for source in covered
+            if keep_unmapped or source in mapping
+        }
         for target in sorted(represented_targets):
-            missing_positive = sorted(
-                positive_sources_by_target.get(target, set()) - covered
-            )
+            missing_positive = sorted(positive_sources_by_target.get(target, set()) - covered)
             if missing_positive:
                 raise ValueError(
-                    "Positive-output environmental extension coverage is incomplete before "
-                    "reaggregation: "
-                    f"extension/stressor/unit={key_tuple!r}, target={target!r}, "
-                    f"sectors={missing_positive[:20]!r}."
+                    "Positive-output environmental extension coverage is incomplete before reaggregation: "
+                    f"group={keys!r}, target={target!r}, sectors={missing_positive[:20]!r}."
                 )
 
-    sidecar_output = frame["sector"].map(source_output)
-    if sidecar_output.isna().any():
-        missing_sectors = sorted(
-            frame.loc[sidecar_output.isna(), "sector"].astype(str).unique().tolist()
-        )
+    observed = frame["monetary_output"].to_numpy(dtype="float64")
+    expected_series = frame["sector"].map(source_output)
+    if expected_series.isna().any():
+        missing_sectors = sorted(frame.loc[expected_series.isna(), "sector"].unique())
+        raise ValueError(f"Environmental sectors are absent from the flow denominator: {missing_sectors!r}.")
+    expected = expected_series.to_numpy(dtype="float64")
+    if not np.allclose(observed, expected, rtol=float(rtol), atol=float(atol), equal_nan=False):
         raise ValueError(
-            "Environmental extension sectors are absent from canonical output: "
-            f"{missing_sectors!r}."
-        )
-    observed_output = frame["monetary_output"].to_numpy(dtype="float64")
-    expected_output = sidecar_output.to_numpy(dtype="float64")
-    if not np.allclose(
-        observed_output,
-        expected_output,
-        rtol=float(rtol),
-        atol=float(atol),
-        equal_nan=False,
-    ):
-        max_gap = float(np.max(np.abs(observed_output - expected_output)))
-        raise ValueError(
-            "Environmental extension monetary_output disagrees with canonical IOT output: "
-            f"max_abs_gap={max_gap:.12g}."
+            "Environmental monetary denominator disagrees with the current IOT flow use/supply."
         )
 
     if keep_unmapped:
@@ -352,28 +325,16 @@ def aggregate_environmental_extensions(
         frame["sector"] = frame["sector"].astype(str)
     if frame.empty:
         return None
-
     grouped = (
         frame.groupby(
-            ["sector", "extension", "stressor", "unit"],
+            ["sector", "boundary", "denominator_role", "extension", "stressor", "unit"],
             dropna=False,
             sort=False,
-        )[["value"]]
+        )[["value", "monetary_output"]]
         .sum()
         .reset_index()
     )
-    output_frame = aggregate_Y(
-        source_output.to_frame("monetary_output"),
-        mapping,
-        keep_unmapped=keep_unmapped,
-    )
-    aggregated_output = output_frame["monetary_output"].astype("float64")
-    grouped["monetary_output"] = grouped["sector"].map(aggregated_output)
-    if grouped["monetary_output"].isna().any():
-        raise RuntimeError("Environmental reaggregation lost canonical output coverage.")
-    grouped["intensity"] = grouped["value"] / grouped["monetary_output"].replace(
-        0.0, np.nan
-    )
+    grouped["intensity"] = grouped["value"] / grouped["monetary_output"].replace(0.0, np.nan)
     return grouped
 
 def aggregate_iot(

@@ -153,6 +153,8 @@ def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path
     pd.DataFrame(
         {
             "sector": ["p24.g", "p24.h"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["air_emissions", "air_emissions"],
             "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
             "unit": ["kg", "kg"],
@@ -190,6 +192,8 @@ def test_aggregate_cli_reaggregates_generic_environmental_sidecar(tmp_path: Path
     assert list(satellite.columns) == [
         "sector_position",
         "sector",
+        "boundary",
+        "denominator_role",
         "extension",
         "stressor",
         "unit",
@@ -240,6 +244,8 @@ def test_environmental_grid_distinguishes_undefined_estimates_from_zero_activity
     actual = pd.DataFrame(
         {
             "sector": ["A", "B"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["synthetic", "synthetic"],
             "stressor": ["Synthetic indicator", "Synthetic indicator"],
             "unit": ["synthetic unit", "synthetic unit"],
@@ -295,6 +301,8 @@ def test_environmental_grid_rejects_actual_group_outside_raw_production_domain()
     actual = pd.DataFrame(
         {
             "sector": ["A"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["unexpected"],
             "stressor": ["Indicator"],
             "unit": ["kg"],

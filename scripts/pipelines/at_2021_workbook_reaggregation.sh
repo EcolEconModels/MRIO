@@ -23,6 +23,7 @@ EUROSTAT_TIME="${EUROSTAT_TIME:-2021}"
 EUROSTAT_GEO="${EUROSTAT_GEO:-AT}"
 EXIO_YEAR="${EXIO_YEAR:-2021}"
 EXIO_REGION="${EXIO_REGION:-$EUROSTAT_GEO}"
+REGION_SCOPE_MAPPING_CSV="${REGION_SCOPE_MAPPING_CSV:-}"
 EXIO_DOI="${EXIO_DOI:-10.5281/zenodo.20051562}"
 MAPPING_CONSISTENCY_RTOL="${MAPPING_CONSISTENCY_RTOL:-0.2}"
 MAPPING_CONSISTENCY_ATOL="${MAPPING_CONSISTENCY_ATOL:-1e-6}"
@@ -77,9 +78,25 @@ CLOSED_REAGG_REVIEW_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed_review.csv
 CLOSED_REAGG_MANIFEST_JSON="$GENERATED_MAPPINGS_OUT/reaggregation_closed_manifest.json"
 
 TEMPLATE_XLSX="${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_${EUROSTAT_TIME}_Eurostat.xlsx}"
-if [[ ! -f "$TEMPLATE_XLSX" ]]; then
-  echo "ERROR: Template workbook not found: $TEMPLATE_XLSX" >&2
-  exit 1
+WRITE_SFC_WORKBOOK="${WRITE_SFC_WORKBOOK:-}"
+if [[ -z "$WRITE_SFC_WORKBOOK" ]]; then
+  if [[ -z "$REGION_SCOPE_MAPPING_CSV" && "$EUROSTAT_GEO" == "AT" ]]; then
+    WRITE_SFC_WORKBOOK=1
+  else
+    WRITE_SFC_WORKBOOK=0
+  fi
+fi
+SCOPE_ARGS=()
+QUANTITY_PRICE_ARGS=()
+if [[ -n "$REGION_SCOPE_MAPPING_CSV" ]]; then
+  [[ -f "$REGION_SCOPE_MAPPING_CSV" ]] || { echo "ERROR: region scope mapping not found: $REGION_SCOPE_MAPPING_CSV" >&2; exit 1; }
+  SCOPE_ARGS=(--region-scope-mapping-csv "$REGION_SCOPE_MAPPING_CSV")
+  QUANTITY_PRICE_ARGS=(--no-exio-quantity-price)
+fi
+SFC_ARGS=()
+if _is_true "$WRITE_SFC_WORKBOOK"; then
+  [[ -f "$TEMPLATE_XLSX" ]] || { echo "ERROR: Template workbook not found: $TEMPLATE_XLSX" >&2; exit 1; }
+  SFC_ARGS=(--write-sfc-workbook --sfc-template-xlsx "$TEMPLATE_XLSX")
 fi
 
 for mapping_csv in "$SPLIT_MAPPING_CSV" "$REAGG_MAPPING_CSV"; do
@@ -139,8 +156,10 @@ set -x
   --eurostat-stk-flows "$STK_FLOWS_JSON" \
   "${EUROSTAT_REFRESH_ARGS[@]}" \
   --exio-year "$EXIO_YEAR" --exio-region "$EXIO_REGION" \
+  "${SCOPE_ARGS[@]}" \
   --exio-doi "$EXIO_DOI" \
   "${ENVIRONMENTAL_ARGS[@]}" \
+  "${QUANTITY_PRICE_ARGS[@]}" \
   --exio-mapping-csv "$SPLIT_MAPPING_CSV" \
   --require-mapping-coverage --coverage-tol 0 \
   "${CONSISTENCY_ARGS[@]}" \
@@ -209,8 +228,7 @@ PY
   --indir "$OUT_SPLIT" \
   --outdir "$OUT_DISAGG" \
   --mapping-csv "$IDENTITY_MAPPING_CSV" \
-  --write-sfc-workbook \
-  --sfc-template-xlsx "$TEMPLATE_XLSX" \
+  "${SFC_ARGS[@]}" \
   --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_split.xlsx" \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
@@ -226,8 +244,7 @@ PY
   --mapping-csv "$CLOSED_REAGG_MAPPING_CSV" \
   --fail-on-unmapped-split-children \
   "${EXPECT_ARGS[@]}" \
-  --write-sfc-workbook \
-  --sfc-template-xlsx "$TEMPLATE_XLSX" \
+  "${SFC_ARGS[@]}" \
   --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_reaggregated.xlsx" \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \

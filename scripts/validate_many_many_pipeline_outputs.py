@@ -29,6 +29,8 @@ from scripts.aggregate_iot_by_mapping import (
 _ENVIRONMENTAL_GRID_COLUMNS = [
     "sector_position",
     "sector",
+    "boundary",
+    "denominator_role",
     "extension",
     "stressor",
     "unit",
@@ -177,7 +179,7 @@ def _validate_environmental_grid(
         return {"ok": False, "errors": errors}
 
     groups = _production_environmental_group_domain(raw)
-    group_cols = ["extension", "stressor", "unit"]
+    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
     key_cols = ["sector", *group_cols]
     canonical = output.copy().astype("float64")
     canonical.index = canonical.index.astype(str)
@@ -192,6 +194,8 @@ def _validate_environmental_grid(
             {
                 "sector_position": position,
                 "sector": sector,
+                "boundary": str(group.boundary),
+                "denominator_role": str(group.denominator_role),
                 "extension": str(group.extension),
                 "stressor": str(group.stressor),
                 "unit": str(group.unit),

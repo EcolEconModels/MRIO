@@ -834,6 +834,8 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
     actual = pd.DataFrame(
         {
             "sector": ["A", "B"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["air_emissions", "air_emissions"],
             "stressor": ["CO2", "CO2"],
             "unit": ["kg", "kg"],

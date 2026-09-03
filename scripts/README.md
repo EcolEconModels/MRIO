@@ -281,3 +281,15 @@ bash scripts/pipelines/run_at_2021_energy_balance_pxp_outputs.sh
 
 Do not use the known-bad earlier implementation commits on `main` for this pipeline. The clean implementation lives on
 `energy-balance-pxp-clean` and should replace `main` after validation.
+
+<!-- wp4-region-pipeline -->
+### Region-aware fuels/fuels-more production path
+
+WP4 wires the existing fuels/fuels-more sector mappings to the generic geography and
+environmental APIs. AT is a singleton donor scope and uses no region mapping CSV.
+`EU27_2020` is compiled from `scripts/pipelines/region_scopes/eu27_2020.csv` against
+the actual EXIO source-region basis; RoW is its complement. The target monetary EU
+IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of national
+Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
+and are reaggregated by summing physical numerators and their matching monetary
+denominators before deriving intensity. Aggregate exports exclude intra-scope trade.

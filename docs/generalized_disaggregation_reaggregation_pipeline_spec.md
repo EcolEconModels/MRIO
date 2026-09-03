@@ -848,3 +848,15 @@ describes the configured download locator and **must not be cited as byte-level
 provenance for the beta archive**. Do not invent a beta DOI. Until an official release
 identifier is available, record the local archive hash in analysis provenance and do
 not use EXIO force-download when the intention is to retain the manually supplied beta.
+
+<!-- wp4-region-pipeline -->
+### Region-aware fuels/fuels-more production path
+
+WP4 wires the existing fuels/fuels-more sector mappings to the generic geography and
+environmental APIs. AT is a singleton donor scope and uses no region mapping CSV.
+`EU27_2020` is compiled from `scripts/pipelines/region_scopes/eu27_2020.csv` against
+the actual EXIO source-region basis; RoW is its complement. The target monetary EU
+IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of national
+Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
+and are reaggregated by summing physical numerators and their matching monetary
+denominators before deriving intensity. Aggregate exports exclude intra-scope trade.

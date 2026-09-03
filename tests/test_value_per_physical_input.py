@@ -119,6 +119,8 @@ def test_aggregate_environmental_extensions_sums_totals_then_derives_intensity()
     disaggregated = pd.DataFrame(
         {
             "sector": ["A", "B"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["air_emissions", "air_emissions"],
             "stressor": ["CO2 - combustion - air", "CO2 - combustion - air"],
             "unit": ["kg", "kg"],
@@ -149,6 +151,8 @@ def test_aggregate_environmental_extensions_carries_unmapped_sector_identity():
     actual = pd.DataFrame(
         {
             "sector": ["A", "B", "C"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["synthetic"] * 3,
             "stressor": ["Synthetic indicator"] * 3,
             "unit": ["synthetic unit"] * 3,
@@ -286,6 +290,8 @@ def test_aggregate_environmental_extensions_fails_on_partial_positive_output_cov
     partial = pd.DataFrame(
         {
             "sector": ["A"],
+            "boundary": "scope_production",
+            "denominator_role": "target_domestic_output",
             "extension": ["air_emissions"],
             "stressor": ["CO2 - combustion - air"],
             "unit": ["kg"],

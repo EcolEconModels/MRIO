@@ -1070,6 +1070,261 @@ def combine_total_supply_extension_direct(
         monetary_denominator=total,
     )
 
+
+def _retarget_direct_environmental_account(
+    account: pd.DataFrame,
+    *,
+    target_denominator: pd.Series,
+    boundary: str,
+    denominator_role: str,
+) -> pd.DataFrame:
+    labels, _values, _denominator, identity = _validated_environmental_account_group(
+        account,
+        expected_boundary=str(account["boundary"].iloc[0]),
+        expected_denominator_role=str(account["denominator_role"].iloc[0]),
+    )
+    target = target_denominator.copy().astype("float64")
+    target.index = pd.Index([str(v) for v in target.index])
+    if tuple(target.index) != labels:
+        raise ValueError("Target environmental denominator must exactly match the projected sector axis.")
+    if target.isna().any() or not np.isfinite(target.to_numpy(dtype="float64")).all():
+        raise ValueError("Target environmental denominator must be finite.")
+    if bool((target < 0.0).any()):
+        raise ValueError("Target environmental denominator must be non-negative.")
+    coeff = pd.to_numeric(account["intensity"], errors="coerce").to_numpy(dtype="float64")
+    target_values = target.to_numpy(dtype="float64")
+    missing = (target_values > 0.0) & ~np.isfinite(coeff)
+    if bool(missing.any()):
+        bad = [labels[pos] for pos in np.flatnonzero(missing)[:10]]
+        raise ValueError(
+            "Positive target monetary mass lacks a direct environmental coefficient: "
+            f"boundary={boundary!r}, sectors={bad!r}."
+        )
+    physical = np.where(target_values > 0.0, coeff * target_values, 0.0)
+    extension, stressor, unit = identity
+    return _environmental_account_frame(
+        axis_labels=labels,
+        boundary=boundary,
+        denominator_role=denominator_role,
+        extension=extension,
+        stressor=stressor,
+        unit=unit,
+        values=physical,
+        monetary_denominator=target_values,
+    )
+
+
+def _environmental_account_to_split_sidecar(account: pd.DataFrame) -> pd.DataFrame:
+    """Convert canonical WP3 account rows to the current model-facing sector schema."""
+    required = set(_ENVIRONMENTAL_ACCOUNT_COLUMNS)
+    if set(account.columns) != required:
+        raise ValueError("Environmental account does not match the canonical WP3 schema.")
+    out = account.rename(
+        columns={"axis_label": "sector", "monetary_denominator": "monetary_output"}
+    ).copy()
+    return out.loc[
+        :,
+        [
+            "sector",
+            "boundary",
+            "denominator_role",
+            "extension",
+            "stressor",
+            "unit",
+            "value",
+            "monetary_output",
+            "intensity",
+        ],
+    ]
+
+
+def _environmental_account_to_raw_sidecar(
+    account: pd.DataFrame, *, kind: str
+) -> pd.DataFrame:
+    out = account.rename(columns={"axis_label": "source_label"}).copy()
+    out.insert(2, "kind", str(kind))
+    return out.loc[
+        :,
+        [
+            "source_label",
+            "extension",
+            "kind",
+            "stressor",
+            "unit",
+            "value",
+            "monetary_denominator",
+            "intensity",
+        ],
+    ]
+
+
+def build_scope_target_environmental_extensions(
+    *,
+    source_zip: str | Path,
+    scope: RegionScope,
+    flow: ScopeFlow,
+    source_output: pd.Series,
+    source_basis: pd.MultiIndex,
+    product_projection: pd.DataFrame,
+    target_denominator: pd.Series,
+    extension_requests: Mapping[str, Sequence[str]],
+    system: str = "pxp",
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Build target DOM/IMP environmental sidecars and optional scope F_Y evidence.
+
+    DOM uses scope-production coefficients; IMP uses origin-retaining direct import
+    coefficients. The coefficient is formed on EXIO evidence first and only then
+    applied to the authoritative Eurostat flow denominator. Direct F_Y is emitted
+    only for the internal/DOM call because it has no import-origin decomposition.
+    """
+    if flow not in {"internal", "external_imports"}:
+        raise ValueError("Target environmental split sidecars support only internal/DOM or external-import/IMP flows.")
+    if not extension_requests:
+        return pd.DataFrame(), None
+    from ecolecon_mrio.exiobase3 import (
+        read_exiobase3_scope_external_import_use_by_origin,
+        read_exiobase3_scope_final_demand_totals,
+    )
+    from ecolecon_mrio.exiobase3_extensions import load_exiobase3_extension_rows_with_units
+
+    if not isinstance(source_output.index, pd.MultiIndex) or not source_output.index.equals(source_basis):
+        raise ValueError("Environmental source output must exactly use the canonical EXIO region-sector basis.")
+    # Product projections in the fuels pipeline use EXIO codes while the primitive
+    # x/F basis may use official names. Translate the validated basis once, without
+    # changing geography or ordering.
+    from ecolecon_mrio.exiobase3 import _code_index, _exio_label_to_code_lookup
+    regions = source_basis.get_level_values("region").astype(str)
+    raw_sectors = pd.Index(source_basis.get_level_values("sector").astype(str))
+    projection_columns = set(map(str, product_projection.columns))
+    if set(raw_sectors).issubset(projection_columns):
+        coded_sectors = raw_sectors
+    else:
+        coded_sectors = _code_index(
+            raw_sectors, label_to_code=_exio_label_to_code_lookup(str(system))
+        )
+    coded_basis = pd.MultiIndex.from_arrays([regions, coded_sectors], names=["region", "sector"])
+    coded_output = pd.Series(
+        source_output.to_numpy(dtype="float64"), index=coded_basis, dtype="float64", name="x"
+    )
+    if list(map(str, product_projection.columns)) != list(dict.fromkeys(map(str, coded_sectors))):
+        raise ValueError("Environmental product projection columns must exactly match the EXIO source-sector order.")
+
+    import_use: pd.Series | None = None
+    if flow == "external_imports":
+        raw_import_use = read_exiobase3_scope_external_import_use_by_origin(
+            source_zip=source_zip, scope=scope
+        )
+        raw_use_regions = raw_import_use.index.get_level_values("region").astype(str)
+        raw_use_sectors = pd.Index(raw_import_use.index.get_level_values("sector").astype(str))
+        use_codes = _code_index(raw_use_sectors, label_to_code=_exio_label_to_code_lookup(str(system)))
+        import_use = pd.Series(
+            raw_import_use.to_numpy(dtype="float64"),
+            index=pd.MultiIndex.from_arrays([raw_use_regions, use_codes], names=["region", "sector"]),
+            dtype="float64",
+            name="scope_external_import_use",
+        )
+
+    target_rows: list[pd.DataFrame] = []
+    raw_rows: list[pd.DataFrame] = []
+    fy_denominator = (
+        read_exiobase3_scope_final_demand_totals(source_zip=source_zip, scope=scope)
+        if flow == "internal"
+        else None
+    )
+    for extension, keywords in extension_requests.items():
+        production_rows = load_exiobase3_extension_rows_with_units(
+            source_zip,
+            extension=str(extension),
+            kind="F",
+            keywords=tuple(keywords),
+            region=None,
+            system=str(system),
+            basis_index=source_basis,
+        )
+        for row in production_rows:
+            coded_values = pd.Series(
+                row.values.to_numpy(dtype="float64"),
+                index=coded_basis,
+                dtype="float64",
+                name=row.stressor,
+            )
+            scope_raw = aggregate_scope_production_extension(
+                coded_values,
+                coded_output,
+                scope=scope,
+                extension=row.extension,
+                stressor=row.stressor,
+                unit=row.unit,
+            )
+            if flow == "internal":
+                donor = aggregate_scope_production_extension(
+                    coded_values,
+                    coded_output,
+                    scope=scope,
+                    product_projection=product_projection,
+                    extension=row.extension,
+                    stressor=row.stressor,
+                    unit=row.unit,
+                )
+                target = _retarget_direct_environmental_account(
+                    donor,
+                    target_denominator=target_denominator,
+                    boundary="scope_production",
+                    denominator_role="target_domestic_output",
+                )
+                raw_rows.append(_environmental_account_to_raw_sidecar(scope_raw, kind="F"))
+            else:
+                assert import_use is not None
+                donor = aggregate_external_import_extension_direct(
+                    coded_values,
+                    coded_output,
+                    import_use,
+                    scope=scope,
+                    product_projection=product_projection,
+                    extension=row.extension,
+                    stressor=row.stressor,
+                    unit=row.unit,
+                )
+                target = _retarget_direct_environmental_account(
+                    donor,
+                    target_denominator=target_denominator,
+                    boundary="external_imports_direct",
+                    denominator_role="target_import_supply",
+                )
+            target_rows.append(_environmental_account_to_split_sidecar(target))
+
+        if flow == "internal":
+            assert fy_denominator is not None
+            try:
+                final_rows = load_exiobase3_extension_rows_with_units(
+                    source_zip,
+                    extension=str(extension),
+                    kind="F_Y",
+                    keywords=tuple(keywords),
+                    region=None,
+                    system=str(system),
+                )
+            except (FileNotFoundError, KeyError) as exc:
+                raise ValueError(
+                    f"No stressors matched extension={extension!r}, kind='F_Y'."
+                ) from exc
+            for row in final_rows:
+                fy_account = aggregate_scope_final_demand_extension(
+                    row.values,
+                    fy_denominator,
+                    scope=scope,
+                    extension=row.extension,
+                    stressor=row.stressor,
+                    unit=row.unit,
+                )
+                raw_rows.append(_environmental_account_to_raw_sidecar(fy_account, kind="F_Y"))
+
+    if not target_rows:
+        raise ValueError("Requested environmental extensions produced no target sector rows.")
+    target_table = pd.concat(target_rows, ignore_index=True)
+    raw_table = pd.concat(raw_rows, ignore_index=True) if raw_rows else None
+    return target_table, raw_table
+
 def load_mrio_iot_scope_slice(
     dataset: str,
     year: int,

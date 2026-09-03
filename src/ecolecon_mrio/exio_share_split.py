@@ -10,6 +10,7 @@ import pandas as pd
 from ecolecon_mrio.region_aggregation import (
     MrioScopeSlice,
     RegionScope,
+    build_scope_target_environmental_extensions,
     load_mrio_iot_scope_slice,
 )
 
@@ -17,11 +18,9 @@ from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exiobase3 import (
     _code_index,
     _exio_label_to_code_lookup,
-    read_exiobase3_destination_final_demand_totals,
-    read_exiobase3_region_export_vector,
+    read_exiobase3_scope_export_vector,
 )
 from ecolecon_mrio.exiobase3_extensions import (
-    extract_extension_values,
     extract_quantity_and_price as extract_exio_quantity_and_price,
 )
 from ecolecon_mrio.iot_flow_semantics import (
@@ -33,15 +32,17 @@ from ecolecon_mrio.iot_flow_semantics import (
 )
 
 
-def _scope_slice_single_region(exio_slice: MrioScopeSlice) -> str:
+
+
+
+def _quantity_price_single_region(exio_slice: MrioScopeSlice) -> str:
     members = tuple(map(str, exio_slice.scope.members))
     if len(members) != 1:
         raise ValueError(
-            "Sector-splitting donor extensions currently require a singleton source scope; "
-            f"got scope={exio_slice.scope.code!r}, members={members!r}."
+            "EXIO quantity/value proxy extraction is defined only for singleton donor scopes; "
+            "disable it for a mapping-backed multi-member scope."
         )
     return members[0]
-
 
 def _scope_slice_source_zip(exio_slice: MrioScopeSlice) -> Path:
     raw = exio_slice.metadata.get("source_zip")
@@ -1086,23 +1087,17 @@ def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
     return None
 
 
+
+
 def _project_export_donor_for_split(
     *,
     exio_slice: MrioScopeSlice,
     split_profiles: Mapping[str, SplitProfiles],
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
     emitted_labels: Sequence[str],
-    export_vector_loader: Callable[
-        ..., pd.Series
-    ] = read_exiobase3_region_export_vector,
+    export_vector_loader: Callable[..., pd.Series] = read_exiobase3_scope_export_vector,
 ) -> tuple[pd.Series, str]:
-    """Build child-level export donors for one primitive flow.
-
-    Domestic exports use actual Austrian-origin EXIO exports to foreign
-    intermediate and final users. Imported-product exports/re-exports are not
-    route-identifiable in a conventional MRIO, so IMP uses Austria's import-use
-    product composition as an explicit, reported proxy.
-    """
+    """Build child-level export donors on the same singleton/group scope boundary."""
     P = build_projection_matrix_for_split_profiles(
         split_profiles=split_profiles,
         eurostat_sector_mapping=eurostat_sector_mapping,
@@ -1110,26 +1105,28 @@ def _project_export_donor_for_split(
         emitted_labels=emitted_labels,
     )
     if exio_slice.flow == "internal":
-        raw = export_vector_loader(
-            source_zip=_scope_slice_source_zip(exio_slice),
-            region=_scope_slice_single_region(exio_slice),
-        )
-        method = "exio_origin_export_share"
+        try:
+            raw = export_vector_loader(
+                source_zip=_scope_slice_source_zip(exio_slice),
+                scope=exio_slice.scope,
+            )
+        except TypeError as exc:
+            if "scope" not in str(exc):
+                raise
+            raw = export_vector_loader(
+                source_zip=_scope_slice_source_zip(exio_slice),
+                region=str(exio_slice.scope.members[0]),
+            )
+        method = "exio_scope_export_share"
     elif exio_slice.flow == "external_imports":
         raw = (
             exio_slice.Z.sum(axis=1)
-            + exio_slice.Y.sum(axis=1)
-            .reindex(exio_slice.Z.index)
-            .fillna(0.0)
+            + exio_slice.Y.sum(axis=1).reindex(exio_slice.Z.index).fillna(0.0)
         ).astype("float64")
         method = "import_use_share_proxy_for_reexports"
     else:
-        raise ValueError(
-            "Canonical splitting supports only primitive DOM and IMP flows."
-        )
+        raise ValueError("Canonical splitting supports only primitive DOM and IMP flows.")
     raw.index = raw.index.astype(str)
-    # Raw EXIO zip rows carry product names, whereas every projected donor block
-    # uses canonical EXIO codes. Injected/test donors may already use those codes.
     if not set(map(str, P.columns)).issubset(set(raw.index)):
         raw.index = _code_index(
             raw.index,
@@ -1147,6 +1144,8 @@ def _project_export_donor_for_split(
     return projected, method
 
 
+
+
 def _split_iot_using_donor_blocks(
     *,
     eurostat_Z: pd.DataFrame,
@@ -1161,7 +1160,7 @@ def _split_iot_using_donor_blocks(
     create_io_system: bool,
     export_vector_loader: Callable[
         ..., pd.Series
-    ] = read_exiobase3_region_export_vector,
+    ] = read_exiobase3_scope_export_vector,
 ) -> SplitResult:
     Z = eurostat_Z.copy().astype("float64")
     Y = eurostat_Y.copy().astype("float64")
@@ -2043,6 +2042,8 @@ def map_exio_value_per_physical_input(
     )
 
 
+
+
 def _environmental_extension_tables_for_split(
     *,
     exio_slice: MrioScopeSlice,
@@ -2050,60 +2051,49 @@ def _environmental_extension_tables_for_split(
     eurostat_output: pd.Series,
     extension_requests: Mapping[str, Sequence[str]] | None,
     eurostat_sector_mapping: Mapping[str, Mapping[str, float]] | None,
+    source_output: pd.Series | None,
+    source_basis: pd.MultiIndex | None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
-    """Build raw EXIO evidence and Eurostat-side production satellite totals."""
+    """Build boundary-correct target environmental rows for singleton or group scopes."""
     if not extension_requests:
         return None, None
-    if str(exio_slice.flow) not in {"domestic", "internal"}:
-        raise ValueError(
-            "Production environmental extensions are currently supported only for "
-            "DOM flow; origin-weighted import extensions are not implemented."
+    if source_output is None or source_basis is None:
+        members = tuple(map(str, exio_slice.scope.members))
+        if exio_slice.flow != "internal" or len(members) != 1:
+            raise ValueError(
+                "Environmental splitting requires the canonical global EXIO x/basis so "
+                "scope-production and origin-retaining import coefficients share one denominator basis."
+            )
+        sectors = pd.Index(exio_slice.x_scope.index.astype(str), name="sector")
+        source_basis = pd.MultiIndex.from_product(
+            [[members[0]], sectors], names=["region", "sector"]
         )
-
-    raw_production = extract_extension_values(
-        container=_scope_slice_source_zip(exio_slice),
-        region=_scope_slice_single_region(exio_slice),
-        source_labels=list(map(str, exio_slice.Z.index)),
-        monetary_denominator=exio_slice.x_scope.astype("float64"),
-        extension_requests=extension_requests,
-        kind="F",
-        required=True,
-        cache_dir=None,
-    )
-    if raw_production is None or raw_production.empty:
-        raise ValueError("Requested environmental extensions produced no EXIO F rows.")
-
-    final_demand_denominator = read_exiobase3_destination_final_demand_totals(
-        source_zip=_scope_slice_source_zip(exio_slice),
-        region=_scope_slice_single_region(exio_slice),
-    )
-    raw_final_demand = extract_extension_values(
-        container=_scope_slice_source_zip(exio_slice),
-        region=_scope_slice_single_region(exio_slice),
-        source_labels=list(map(str, final_demand_denominator.index)),
-        monetary_denominator=final_demand_denominator,
-        extension_requests=extension_requests,
-        kind="F_Y",
-        required=True,
-        cache_dir=None,
-    )
-    if raw_final_demand is None or raw_final_demand.empty:
-        raise ValueError("Requested environmental extensions produced no EXIO F_Y rows.")
-    # F_Y remains category-level donor evidence. Only F passes through the sector
-    # projection below; concatenation keeps both source accounting boundaries in
-    # the provenance sidecar without inventing a sector x final-demand matrix.
-    raw = pd.concat([raw_production, raw_final_demand], ignore_index=True)
-    projected = project_environmental_extensions_to_split_sectors(
-        exio_extensions=raw_production,
+        source_output = pd.Series(
+            exio_slice.x_scope.to_numpy(dtype="float64"),
+            index=source_basis,
+            dtype="float64",
+            name="x",
+        )
+    P = build_projection_matrix_for_split_profiles(
         split_profiles=split_profiles,
-        eurostat_output=eurostat_output,
         eurostat_sector_mapping=eurostat_sector_mapping,
+        raw_exio_sectors=list(map(str, exio_slice.Z.index)),
+        emitted_labels=list(map(str, eurostat_output.index)),
     )
-    if projected is None or projected.empty:
-        raise ValueError(
-            "No requested environmental extension could be projected to emitted Eurostat sectors."
-        )
-    return raw, projected
+    target, raw = build_scope_target_environmental_extensions(
+        source_zip=_scope_slice_source_zip(exio_slice),
+        scope=exio_slice.scope,
+        flow=exio_slice.flow,
+        source_output=source_output,
+        source_basis=source_basis,
+        product_projection=P,
+        target_denominator=eurostat_output,
+        extension_requests=extension_requests,
+        system=str(exio_slice.metadata.get("system", "pxp")),
+    )
+    return raw, target
+
+
 
 def split_iot_using_exiobase_split_profiles(
     *,
@@ -2127,9 +2117,11 @@ def split_iot_using_exiobase_split_profiles(
     quantity_price_stressor_keywords: Sequence[str] | None = None,
     quantity_price_cache_dir: str | Path | None = None,
     environmental_extension_requests: Mapping[str, Sequence[str]] | None = None,
+    environmental_source_output: pd.Series | None = None,
+    environmental_source_basis: pd.MultiIndex | None = None,
     export_vector_loader: Callable[
         ..., pd.Series
-    ] = read_exiobase3_region_export_vector,
+    ] = read_exiobase3_scope_export_vector,
     create_io_system: bool = True,
 ) -> SplitResult:
     """
@@ -2273,7 +2265,7 @@ def split_iot_using_exiobase_split_profiles(
         ).astype("float64")
         exio_qp = extract_exio_quantity_and_price(
             container=_scope_slice_source_zip(exio_slice),
-            region=_scope_slice_single_region(exio_slice),
+            region=_quantity_price_single_region(exio_slice),
             sectors=exio_sectors,
             monetary_output=monetary_output,
             extensions=tuple(quantity_price_extensions),
@@ -2288,6 +2280,8 @@ def split_iot_using_exiobase_split_profiles(
             eurostat_output=res.use_total,
             extension_requests=environmental_extension_requests,
             eurostat_sector_mapping=eurostat_sector_mapping,
+            source_output=environmental_source_output,
+            source_basis=environmental_source_basis,
         )
     )
 
@@ -2338,6 +2332,8 @@ def split_iot_using_exiobase_shares(
     quantity_price_stressor_keywords: Sequence[str] | None = None,
     quantity_price_cache_dir: str | Path | None = None,
     environmental_extension_requests: Mapping[str, Sequence[str]] | None = None,
+    environmental_source_output: pd.Series | None = None,
+    environmental_source_basis: pd.MultiIndex | None = None,
     create_io_system: bool = True,
 ) -> SplitResult:
     """Convenience wrapper: load an EXIOBASE region slice if needed, then split+balance."""
@@ -2369,6 +2365,8 @@ def split_iot_using_exiobase_shares(
         quantity_price_stressor_keywords=quantity_price_stressor_keywords,
         quantity_price_cache_dir=quantity_price_cache_dir,
         environmental_extension_requests=environmental_extension_requests,
+        environmental_source_output=environmental_source_output,
+        environmental_source_basis=environmental_source_basis,
         create_io_system=create_io_system,
     )
 

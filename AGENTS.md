@@ -41,8 +41,6 @@ scientific authority rather than reasoning about the library in isolation.
 
 ## EXIO low-RAM zip-stream contract
 
-## EXIO low-RAM zip-stream contract
-
 > [!IMPORTANT]
 > EXIOBASE loaders and diagnostics must obey `docs/exio_lowram_zip_stream_contract.md` and `docs/exio_sparse_multiindex_contract.md`.
 
@@ -95,3 +93,21 @@ For MRIO index/SDA API rules, see `docs/mrio_index_and_sda_contract.md`. New
 vector-returning APIs must preserve `MultiIndex(region, sector)` labels and must
 not stringify sector keys. Strict SDA pair APIs must raise if a requested forward
 or backward polar solve fails.
+
+## Region-aware fuels/fuels-more pipeline
+
+The fuels/fuels-more target geography and EXIO donor geography are separate. A
+singleton target such as AT uses `RegionScope(code="AT", members=("AT",))` and
+requires no region mapping file. A multi-member donor scope such as `EU27_2020`
+must be compiled from `scripts/pipelines/region_scopes/eu27_2020.csv` against the
+actual EXIO release. RoW is always the source-release complement, never a hard-coded
+country list. The target EU IOT remains Eurostat's directly published `geo=EU27_2020`
+table.
+
+DOM donor flows are origins and destinations inside the scope. IMP/RoW donor flows
+are origins outside the scope into destinations inside it. Aggregate-scope exports
+are origins inside the scope to destinations outside it; intra-scope trade is not an
+export. Environmental DOM uses scope-production coefficients; IMP uses the WP3
+origin-retaining external-import coefficient; TOTAL is the exact target DOM+IMP
+extensive combination. Direct `F_Y` remains a final-demand-category account and is
+not given a RoW product decomposition.

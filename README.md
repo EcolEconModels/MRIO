@@ -152,3 +152,15 @@ bash scripts/pipelines/at_2021_energy_green_brown.sh
 ```
 
 The `TOTAL` flow run now keeps the EXIO-to-Eurostat mapping sanity check enabled for both 2020 and 2021. The hard failure criterion is total-scale consistency, while `mapped_output_consistency.csv` records the scaled sector-by-sector comparison for inspection.
+
+<!-- wp4-region-pipeline -->
+### Region-aware fuels/fuels-more production path
+
+WP4 wires the existing fuels/fuels-more sector mappings to the generic geography and
+environmental APIs. AT is a singleton donor scope and uses no region mapping CSV.
+`EU27_2020` is compiled from `scripts/pipelines/region_scopes/eu27_2020.csv` against
+the actual EXIO source-region basis; RoW is its complement. The target monetary EU
+IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of national
+Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
+and are reaggregated by summing physical numerators and their matching monetary
+denominators before deriving intensity. Aggregate exports exclude intra-scope trade.

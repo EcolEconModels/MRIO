@@ -497,3 +497,15 @@ The breaking API cleanup is complete for monetary loading and geography:
    consume the generic geography/satellite APIs rather than reimplement them.
 
 > **Current loader contract:** `load_mrio_iot_matrices(dataset, year, matrices=(...))` loads only requested primitive square-IOT accounts `Z`, `x`, and `Y`. `A` and non-export `y` are explicit derivations; obsolete compatibility APIs were deleted.
+
+<!-- wp4-region-pipeline -->
+### Region-aware fuels/fuels-more production path
+
+WP4 wires the existing fuels/fuels-more sector mappings to the generic geography and
+environmental APIs. AT is a singleton donor scope and uses no region mapping CSV.
+`EU27_2020` is compiled from `scripts/pipelines/region_scopes/eu27_2020.csv` against
+the actual EXIO source-region basis; RoW is its complement. The target monetary EU
+IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of national
+Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
+and are reaggregated by summing physical numerators and their matching monetary
+denominators before deriving intensity. Aggregate exports exclude intra-scope trade.
