@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, cast
+from typing import Any, Mapping, cast
 
 import numpy as np
 import pandas as pd
@@ -76,16 +76,16 @@ def aggregate_square_matrix(
         Z = Z.loc[keep_rows, keep_rows]
         Z.index = new_index
         Z.columns = new_index
-        Z = Z.groupby(level=list(range(Z.index.nlevels))).sum()
-        Z = Z.T.groupby(level=list(range(Z.columns.nlevels))).sum().T
+        Z = cast(pd.DataFrame, Z.groupby(level=list(range(Z.index.nlevels))).sum())
+        Z = cast(pd.DataFrame, Z.T.groupby(level=list(range(Z.columns.nlevels))).sum().T)
         return Z
 
     new_index, keep_rows = _map_index_values(Z.index, mapping, keep_unmapped=keep_unmapped)
     Z = Z.loc[keep_rows, keep_rows]
     Z.index = new_index
     Z.columns = new_index
-    Z = Z.groupby(level=0).sum()
-    Z = Z.T.groupby(level=0).sum().T
+    Z = cast(pd.DataFrame, Z.groupby(level=0).sum())
+    Z = cast(pd.DataFrame, Z.T.groupby(level=0).sum().T)
     return Z
 
 
@@ -104,13 +104,13 @@ def aggregate_Y(
         new_index, keep_rows = _map_multiindex(Y.index, mapping, level=level, keep_unmapped=keep_unmapped)
         Y = Y.loc[keep_rows, :]
         Y.index = new_index
-        Y = Y.groupby(level=list(range(Y.index.nlevels))).sum()
+        Y = cast(pd.DataFrame, Y.groupby(level=list(range(Y.index.nlevels))).sum())
         return Y
 
     new_index, keep_rows = _map_index_values(Y.index, mapping, keep_unmapped=keep_unmapped)
     Y = Y.loc[keep_rows, :]
     Y.index = new_index
-    Y = Y.groupby(level=0).sum()
+    Y = cast(pd.DataFrame, Y.groupby(level=0).sum())
     return Y
 
 
@@ -140,8 +140,8 @@ def _compute_aggregated_sector_ratio_of_sums(
 ) -> pd.DataFrame | None:
     """Aggregate a disaggregated metric to aggregated sectors via ratio-of-sums."""
     values = values.copy()
-    values["aggregated_sector"] = values["disaggregated_sector"].map(aggregation_mapping)
-    values = values[values["aggregated_sector"].notna()].copy()
+    values["aggregated_sector"] = cast(pd.Series, values["disaggregated_sector"]).map(aggregation_mapping)
+    values = cast(pd.DataFrame, values[cast(pd.Series, values["aggregated_sector"]).notna()].copy())
     if values.empty:
         return None
 
@@ -158,7 +158,8 @@ def _compute_aggregated_sector_ratio_of_sums(
         ["aggregated_sector", "extension", "stressor", "unit"],
         dropna=False,
     )
-    for (agg_sector, ext, stressor, unit), group in grouped:
+    for group_key, group in grouped:
+        agg_sector, ext, stressor, unit = cast(tuple[Any, Any, Any, Any], group_key)
         total_den = float(group[denominator_col].sum())
         if total_den == 0:
             continue
@@ -225,6 +226,13 @@ def compute_aggregated_sector_value_per_physical_input(
         out_ratio_col="value_per_physical_input",
     )
 
+
+
+
+
+
+
+
 def aggregate_environmental_extensions(
     environmental_extensions: pd.DataFrame | None,
     mapping: Mapping[str, str],
@@ -234,13 +242,13 @@ def aggregate_environmental_extensions(
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> pd.DataFrame | None:
-    """Reaggregate boundary-aware target environmental totals by ratio of sums.
+    """Reaggregate only supported environmental estimates by ratio of sums.
 
-    ``output`` is the current flow's authoritative monetary denominator: DOM
-    output/use for ``scope_production``, IMP supply/use for
-    ``external_imports_direct``, or TOTAL supply for ``total_supply_direct``.
-    The historical argument name is retained because this function is internal to
-    the current pipeline, but its meaning is validated by ``denominator_role``.
+    A target represented by at least one supported source estimate must contain
+    every positive-denominator source contributing to that target.  A target with
+    no supported estimate at all is *unavailable evidence*, not physical zero; it
+    is deliberately omitted here and completed to ``NaN`` only by the downstream
+    model-axis grid completion step.
     """
     if environmental_extensions is None or environmental_extensions.empty:
         return None
@@ -248,7 +256,6 @@ def aggregate_environmental_extensions(
         "sector", "boundary", "denominator_role", "extension", "stressor",
         "unit", "value", "monetary_output",
     }
-    environmental_extensions = environmental_extensions.copy()
     missing = required - set(environmental_extensions.columns)
     if missing:
         raise ValueError(
@@ -257,10 +264,9 @@ def aggregate_environmental_extensions(
         )
     if rtol < 0.0 or atol < 0.0:
         raise ValueError("Environmental extension tolerances must be non-negative.")
+
     frame = environmental_extensions.copy()
-    key_cols = [
-        "sector", "boundary", "denominator_role", "extension", "stressor", "unit"
-    ]
+    key_cols = ["sector", "boundary", "denominator_role", "extension", "stressor", "unit"]
     if frame.duplicated(key_cols).any():
         duplicate_rows = frame.loc[frame.duplicated(key_cols, keep=False), key_cols]
         raise ValueError(
@@ -269,41 +275,30 @@ def aggregate_environmental_extensions(
         )
     for column in ("sector", "boundary", "denominator_role", "extension", "stressor", "unit"):
         frame[column] = frame[column].astype(str)
-    frame["value"] = np.asarray(pd.to_numeric(frame["value"], errors="raise"), dtype="float64")
-    frame["monetary_output"] = np.asarray(
-        pd.to_numeric(frame["monetary_output"], errors="raise"), dtype="float64"
-    )
-    if not np.isfinite(frame["value"].to_numpy(dtype="float64")).all():
-        raise ValueError("Environmental extension values must be finite.")
+    try:
+        frame["value"] = cast(pd.Series, pd.to_numeric(cast(pd.Series, frame["value"]), errors="raise")).astype("float64")
+        frame["monetary_output"] = cast(pd.Series, pd.to_numeric(
+            cast(pd.Series, frame["monetary_output"]), errors="raise"
+        )).astype("float64")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Environmental extension values and denominators must be numeric.") from exc
+    if bool(np.isinf(frame["value"].to_numpy(dtype="float64")).any()):
+        raise ValueError("Environmental extension values must not contain +/-Inf.")
+    observed = frame["monetary_output"].to_numpy(dtype="float64")
+    if not np.isfinite(observed).all() or bool((observed < 0.0).any()):
+        raise ValueError("Environmental monetary denominators must be finite and non-negative.")
 
-    source_output = output.copy().astype("float64")
+    try:
+        source_output = cast(pd.Series, pd.to_numeric(output.copy(), errors="raise")).astype("float64")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Environmental denominator vector must be numeric.") from exc
     source_output.index = source_output.index.astype(str)
     if not source_output.index.is_unique:
         raise ValueError("Environmental denominator vector index must be unique.")
     if source_output.isna().any() or not np.isfinite(source_output.to_numpy()).all() or bool((source_output < 0.0).any()):
         raise ValueError("Environmental denominator vector must be finite and non-negative.")
-    positive_sources_by_target: dict[str, set[str]] = {}
-    for source, output_value in source_output.items():
-        source_label = str(source)
-        if float(output_value) <= 0.0:
-            continue
-        target = str(mapping.get(source_label, source_label)) if keep_unmapped else mapping.get(source_label)
-        if target is not None:
-            positive_sources_by_target.setdefault(str(target), set()).add(source_label)
-    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
-    all_positive_targets = set(positive_sources_by_target)
-    for keys, group in frame.groupby(group_cols, dropna=False, sort=False):
-        covered = set(group["sector"].astype(str))
-        for target in sorted(all_positive_targets):
-            missing_positive = sorted(positive_sources_by_target.get(target, set()) - covered)
-            if missing_positive:
-                raise ValueError(
-                    "Positive-output environmental extension coverage is incomplete before reaggregation: "
-                    f"group={keys!r}, target={target!r}, sectors={missing_positive[:20]!r}."
-                )
 
-    observed = frame["monetary_output"].to_numpy(dtype="float64")
-    expected_series = frame["sector"].map(source_output)
+    expected_series = cast(pd.Series, frame["sector"]).map(source_output)
     if expected_series.isna().any():
         missing_sectors = sorted(frame.loc[expected_series.isna(), "sector"].unique())
         raise ValueError(f"Environmental sectors are absent from the flow denominator: {missing_sectors!r}.")
@@ -313,16 +308,58 @@ def aggregate_environmental_extensions(
             "Environmental monetary denominator disagrees with the current IOT flow use/supply."
         )
 
-    if keep_unmapped:
-        frame["sector"] = frame["sector"].map(
-            lambda sector: str(mapping.get(str(sector), str(sector)))
+    supported = frame["value"].notna()
+    supported_values = frame["value"].fillna(0.0).to_numpy(dtype="float64")
+    impossible_zero = supported.to_numpy(dtype=bool) & (expected == 0.0) & (supported_values != 0.0)
+    if bool(impossible_zero.any()):
+        bad = frame.loc[impossible_zero, "sector"].astype(str).head(20).tolist()
+        raise ValueError(
+            "Supported environmental estimates on a zero monetary denominator must have value=0; "
+            f"sectors={bad!r}."
         )
+
+    positive_sources_by_target: dict[str, set[str]] = {}
+    for source, output_value in source_output.items():
+        if float(output_value) <= 0.0:
+            continue
+        source_label = str(source)
+        target = str(mapping.get(source_label, source_label)) if keep_unmapped else mapping.get(source_label)
+        if target is not None:
+            positive_sources_by_target.setdefault(str(target), set()).add(source_label)
+
+    # Closure is target-local.  Entirely unsupported targets remain unavailable;
+    # partially supported targets are invalid because their physical numerator
+    # would otherwise be divided by a complete monetary denominator.
+    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    for keys, group in frame.groupby(group_cols, dropna=False, sort=False):
+        supported_group = group.loc[group["value"].notna()]
+        supported_sources = set(supported_group["sector"].astype(str))
+        represented_targets = {
+            str(mapping.get(source, source)) if keep_unmapped else str(mapping[source])
+            for source in supported_sources
+            if keep_unmapped or source in mapping
+        }
+        for target in sorted(represented_targets):
+            missing_positive = sorted(positive_sources_by_target.get(target, set()) - supported_sources)
+            if missing_positive:
+                raise ValueError(
+                    "Positive-output environmental extension coverage is incomplete before reaggregation: "
+                    f"group={keys!r}, target={target!r}, sectors={missing_positive[:20]!r}."
+                )
+
+    # Missing values are unavailable evidence and must not enter physical sums.
+    frame = frame.loc[supported].copy()
+    if frame.empty:
+        return None
+    if keep_unmapped:
+        frame["sector"] = frame["sector"].map(lambda sector: str(mapping.get(str(sector), str(sector))))
     else:
         frame["sector"] = frame["sector"].map(mapping)
         frame = frame[frame["sector"].notna()].copy()
         frame["sector"] = frame["sector"].astype(str)
     if frame.empty:
         return None
+
     grouped = (
         frame.groupby(
             ["sector", "boundary", "denominator_role", "extension", "stressor", "unit"],
@@ -334,6 +371,7 @@ def aggregate_environmental_extensions(
     )
     grouped["intensity"] = grouped["value"] / grouped["monetary_output"].replace(0.0, np.nan)
     return grouped
+
 
 def aggregate_iot(
     Z: pd.DataFrame,

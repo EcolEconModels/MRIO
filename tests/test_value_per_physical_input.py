@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import numpy as np
 import pytest
 
 
@@ -309,4 +310,86 @@ def test_aggregate_environmental_extensions_fails_on_partial_positive_output_cov
             partial,
             {"A": "X", "B": "X"},
             output=pd.Series({"A": 50.0, "B": 25.0}, dtype="float64"),
+        )
+
+
+# --- Stage-2 environmental availability regressions ---
+def _environmental_row(sector: str, value: float, output: float) -> dict[str, object]:
+    return {
+        "sector": sector,
+        "boundary": "scope_production",
+        "denominator_role": "target_domestic_output",
+        "extension": "synthetic",
+        "stressor": "Synthetic indicator",
+        "unit": "kg",
+        "value": value,
+        "monetary_output": output,
+        "intensity": np.nan if output == 0 else value / output,
+    }
+
+
+def test_environmental_reaggregation_allows_wholly_unavailable_target() -> None:
+    """A target with no supported estimate remains unavailable; it is not a partial numerator."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    actual = pd.DataFrame([_environmental_row("A", 10.0, 5.0)])
+    result = aggregate_environmental_extensions(
+        actual,
+        {},
+        output=pd.Series({"A": 5.0, "B": 7.0}, dtype=float),
+    )
+    assert result is not None
+    assert result["sector"].tolist() == ["A"]
+
+
+def test_environmental_reaggregation_ignores_missing_zero_mass_source() -> None:
+    """Unavailable zero-activity evidence contributes neither a numerator nor denominator."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    actual = pd.DataFrame(
+        [
+            _environmental_row("A", 10.0, 5.0),
+            _environmental_row("B", np.nan, 0.0),
+        ]
+    )
+    result = aggregate_environmental_extensions(
+        actual,
+        {"A": "X", "B": "X"},
+        output=pd.Series({"A": 5.0, "B": 0.0}, dtype=float),
+    )
+    assert result is not None
+    row = result.iloc[0]
+    assert row["sector"] == "X"
+    assert float(row["value"]) == pytest.approx(10.0)
+    assert float(row["monetary_output"]) == pytest.approx(5.0)
+
+
+def test_environmental_reaggregation_rejects_partial_positive_mass_support() -> None:
+    """A represented aggregate cannot divide a partial physical sum by a complete denominator."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    actual = pd.DataFrame(
+        [
+            _environmental_row("A", 10.0, 5.0),
+            _environmental_row("B", np.nan, 7.0),
+        ]
+    )
+    with pytest.raises(ValueError, match=r"target='X'.*sectors=\['B'\]"):
+        aggregate_environmental_extensions(
+            actual,
+            {"A": "X", "B": "X"},
+            output=pd.Series({"A": 5.0, "B": 7.0}, dtype=float),
+        )
+
+
+def test_environmental_reaggregation_rejects_nonzero_value_at_zero_denominator() -> None:
+    """Supported zero-activity evidence may be physical zero, never a positive physical total."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    actual = pd.DataFrame([_environmental_row("A", 1.0, 0.0)])
+    with pytest.raises(ValueError, match="zero monetary denominator"):
+        aggregate_environmental_extensions(
+            actual,
+            {},
+            output=pd.Series({"A": 0.0}, dtype=float),
         )

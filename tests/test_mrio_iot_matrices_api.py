@@ -125,3 +125,14 @@ def test_non_exio_adapter_rejects_nonfinite_Y(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(data, "load_mrio", lambda *_a, **_k: fake)
     with pytest.raises(ValueError, match="non-finite final-demand"):
         data.load_mrio_iot_matrices("test", 2010, matrices=("Y",))
+
+
+# --- Stage-2 non-EXIO x-shape regression ---
+def test_non_exio_adapter_rejects_multicolumn_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A provider cannot silently choose the first of several incompatible output columns."""
+    idx = pd.MultiIndex.from_tuples([("AT", "a")], names=["region", "sector"])
+    fake: Any = type("FakeMrio", (), {})()
+    fake.x = pd.DataFrame([[1.0, 2.0]], index=idx, columns=pd.Index(["x1", "x2"]))
+    monkeypatch.setattr(data, "load_mrio", lambda *_a, **_k: fake)
+    with pytest.raises(ValueError, match="exactly one output column"):
+        data.load_mrio_iot_matrices("test", 2010, matrices=("x",))

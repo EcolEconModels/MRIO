@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 import gc
 import warnings
 import time
@@ -57,23 +57,81 @@ def _matrix_nonzero_stats(values: np.ndarray) -> tuple[int, float]:
 
 
 
-def _matrix_to_csr_and_labels(matrix: Any, index: pd.Index | None = None) -> tuple[csr_matrix, pd.Index, pd.Index]:
+
+
+
+
+
+
+
+def _matrix_to_csr_and_labels(
+    matrix: Any,
+    index: pd.Index | None = None,
+) -> tuple[csr_matrix, pd.Index, pd.Index]:
+    """Return one finite square PF matrix and its exact ordered economic basis."""
     if issparse(matrix):
         values = csr_matrix(matrix, dtype=float)
-        if index is not None and (len(index) != values.shape[0] or not index.is_unique):
-            raise ValueError("Explicit sparse matrix index must be unique and match its dimension.")
-        if values.shape[0] != values.shape[1]:
+        n_rows, n_cols = cast(tuple[int, int], values.shape)
+        if n_rows != n_cols:
             raise ValueError("PF matrix must be square.")
+        if values.nnz and not np.isfinite(values.data).all():
+            raise ValueError("PF matrix must contain only finite coefficients.")
+
         if index is not None:
+            if len(index) != n_rows or not index.is_unique:
+                raise ValueError("Explicit sparse matrix index must be unique and match its dimension.")
+            row_index = index.copy()
+            col_index = index.copy()
+            # A labelled sparse wrapper may expose its own metadata.  If so, an
+            # explicit economic basis is a validation claim, not permission to relabel.
             for attribute in ("index", "columns"):
                 labels = getattr(matrix, attribute, None)
-                if labels is not None and not pd.Index(labels).equals(index):
-                    raise ValueError("Explicit index must exactly match sparse matrix labels.")
-        row_index = index if index is not None else getattr(matrix, "index", pd.RangeIndex(values.shape[0]))
-        col_index = index if index is not None else getattr(matrix, "columns", pd.RangeIndex(values.shape[1]))
+                if labels is not None:
+                    labels_index = labels.copy() if isinstance(labels, pd.Index) else pd.Index(labels)
+                    if not labels_index.equals(index):
+                        raise ValueError("Explicit index must exactly match sparse matrix labels.")
+        else:
+            row_labels = getattr(matrix, "index", None)
+            col_labels = getattr(matrix, "columns", None)
+            row_index = (
+                row_labels.copy()
+                if isinstance(row_labels, pd.Index)
+                else pd.RangeIndex(n_rows)
+                if row_labels is None
+                else pd.Index(row_labels)
+            )
+            col_index = (
+                col_labels.copy()
+                if isinstance(col_labels, pd.Index)
+                else pd.RangeIndex(n_cols)
+                if col_labels is None
+                else pd.Index(col_labels)
+            )
+        if len(row_index) != n_rows or len(col_index) != n_cols:
+            raise ValueError("PF matrix labels must match the matrix dimensions.")
+        if not row_index.is_unique or not col_index.is_unique:
+            raise ValueError("PF matrix row and column labels must be unique.")
+        if not row_index.equals(col_index):
+            raise ValueError("PF matrix row and column axes must be identical and ordered equally.")
         return values, row_index, col_index
-    frame = pd.DataFrame(matrix, copy=False)
-    return csr_matrix(frame.to_numpy(dtype=float, copy=False)), frame.index, frame.columns
+
+    try:
+        frame = pd.DataFrame(matrix, copy=False).astype(float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("PF matrix must be numeric.") from exc
+    if frame.shape[0] != frame.shape[1]:
+        raise ValueError("PF matrix must be square.")
+    if not frame.index.equals(frame.columns):
+        raise ValueError("PF matrix row and column axes must be identical and ordered equally.")
+    if not frame.index.is_unique:
+        raise ValueError("PF matrix basis must be unique.")
+    if index is not None and not frame.index.equals(index):
+        raise ValueError("Explicit index must exactly match the dense PF matrix basis.")
+    array = frame.to_numpy(dtype=float, copy=False)
+    if not np.isfinite(array).all():
+        raise ValueError("PF matrix must contain only finite coefficients.")
+    return csr_matrix(array), frame.index.copy(), frame.columns.copy()
+
 
 def _spectral_radius_method_hint(values: np.ndarray) -> str:
     n = int(values.shape[0])
@@ -91,7 +149,7 @@ def _spectral_radius_from_values(values: np.ndarray, *, tol: float = 1e-10) -> t
     sparse_threshold = 256
     if n >= sparse_threshold:
         try:
-            vals = eigs(
+            vals_raw = cast(Any, eigs)(
                 csr_matrix(values),
                 k=1,
                 which="LM",
@@ -99,16 +157,20 @@ def _spectral_radius_from_values(values: np.ndarray, *, tol: float = 1e-10) -> t
                 maxiter=max(4000, 10 * n),
                 return_eigenvectors=False,
             )
+            vals = np.asarray(cast(Any, vals_raw))
             rho = float(np.max(np.abs(vals)))
             return rho, f"sparse_eigs nnz={nnz} density={density:.4f}"
         except ArpackNoConvergence as exc:
-            vals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
+            if exc.eigenvalues is None:
+                vals = np.array([])
+            else:
+                vals = np.asarray(exc.eigenvalues)
             if vals.size:
                 rho = float(np.max(np.abs(vals)))
                 return rho, f"sparse_eigs_partial nnz={nnz} density={density:.4f}"
         except Exception:
             pass
-    vals = linalg.eigvals(values)
+    vals = np.asarray(cast(Any, linalg.eigvals(values)))
     rho = float(np.max(np.abs(vals))) if vals.size else float("nan")
     return rho, f"dense_eigvals nnz={nnz} density={density:.4f}"
 
@@ -116,7 +178,8 @@ def _spectral_radius_from_values(values: np.ndarray, *, tol: float = 1e-10) -> t
 def calc_spectral_radius(matrix: Any) -> float:
     values, _row_index, _col_index = _matrix_to_csr_and_labels(matrix)
     nnz = int(values.nnz)
-    density = float(nnz / (values.shape[0] * values.shape[1])) if values.shape[0] and values.shape[1] else float("nan")
+    n_rows, n_cols = cast(tuple[int, int], values.shape)
+    density = float(nnz / (n_rows * n_cols)) if n_rows and n_cols else float("nan")
     method = f"sparse_csr nnz={nnz} density={density:.4f}"
     _diag_print(f"spectral radius start shape={values.shape} method={method} rss={_rss_mb():.1f}MB")
     t0 = time.time()
@@ -149,7 +212,8 @@ def calc_coefficient_diagnostics(
     """Compute local coefficient diagnostics without densifying sparse EXIO matrices."""
     if issparse(matrix):
         A = csr_matrix(matrix, dtype=float)
-        n_total = int(A.shape[0] * A.shape[1])
+        n_rows, n_cols = cast(tuple[int, int], A.shape)
+        n_total = int(n_rows * n_cols)
         if n_total == 0:
             return {
                 "a_min": np.nan,
@@ -174,8 +238,8 @@ def calc_coefficient_diagnostics(
             "share_gt_upper": float(np.count_nonzero(data > (float(upper_bound) + tol)) / n_total) if n_total else np.nan,
             "share_zero_or_near_zero": float((implicit_zeros + near_zero_data) / n_total) if n_total else np.nan,
             "upper_margin_min": float(float(upper_bound) - a_max),
-            "col_sum_max": float(np.asarray(A.sum(axis=0)).reshape(-1).max()) if A.shape[1] else np.nan,
-            "row_sum_max": float(np.asarray(A.sum(axis=1)).reshape(-1).max()) if A.shape[0] else np.nan,
+            "col_sum_max": float(np.asarray(A.sum(axis=0)).reshape(-1).max()) if n_cols else np.nan,
+            "row_sum_max": float(np.asarray(A.sum(axis=1)).reshape(-1).max()) if n_rows else np.nan,
         }
     A = pd.DataFrame(matrix, copy=True).astype(float)
     values = A.to_numpy(dtype=float)
@@ -235,6 +299,13 @@ def _allocate_role_quotas(working_set_n: int, role_mix: Mapping[str, float]) -> 
     return quotas
 
 
+
+
+
+
+
+
+
 def _select_lp_working_set_index(
     x: pd.Series,
     *,
@@ -243,23 +314,40 @@ def _select_lp_working_set_index(
     role_masks: Mapping[str, pd.Series] | None = None,
     role_mix: Mapping[str, float] | None = None,
 ) -> pd.Index:
-    index = pd.Index(x.index)
+    """Select an LP working set from one finite nonnegative gross-output vector."""
+    if not isinstance(x, pd.Series) or not x.index.is_unique:
+        raise ValueError("LP working-set gross output must be a unique pandas Series.")
+    try:
+        x_vals = cast(pd.Series, pd.to_numeric(x, errors="raise")).astype(float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LP working-set gross output must be numeric.") from exc
+    x_array = x_vals.to_numpy(dtype=float)
+    if not np.isfinite(x_array).all() or bool((x_array < 0.0).any()):
+        raise ValueError("LP working-set gross output must be finite and nonnegative.")
+    index = x_vals.index.copy()
     if working_set_n is None:
         return index
     n_work = int(working_set_n)
     if n_work <= 0 or n_work >= len(index):
         return index
+
     mode_norm = str(mode or "output_weighted").strip().lower()
-    x_vals = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).astype(float).reindex(index).fillna(0.0)
     if mode_norm in {"stratified_transition_roles", "transition_role_mix", "stratified_roles"} and role_masks:
         mix = role_mix or {"expand": 0.3, "contract": 0.3, "neutral": 0.4}
         quotas = _allocate_role_quotas(n_work, mix)
         used = pd.Series(False, index=index, dtype=bool)
         selected_parts: list[pd.Index] = []
-        role_priority = ["expand", "contract", "neutral"]
         score = x_vals.abs()
-        for role in role_priority:
-            mask = pd.Series(role_masks.get(role, pd.Series(False, index=index)), index=index).fillna(False).astype(bool)
+        for role in ("expand", "contract", "neutral"):
+            raw_mask = role_masks.get(role)
+            if raw_mask is None:
+                mask = pd.Series(False, index=index, dtype=bool)
+            else:
+                if not isinstance(raw_mask, pd.Series) or not raw_mask.index.equals(index):
+                    raise ValueError(f"LP role mask {role!r} must exactly match the gross-output basis.")
+                if raw_mask.isna().any():
+                    raise ValueError(f"LP role mask {role!r} must not contain missing values.")
+                mask = raw_mask.astype(bool)
             mask = mask & (~used)
             if not mask.any():
                 continue
@@ -267,31 +355,30 @@ def _select_lp_working_set_index(
             if take_n <= 0:
                 continue
             chosen = score.loc[mask].sort_values(ascending=False, kind="mergesort").head(take_n).index
-            selected_parts.append(pd.Index(chosen, dtype=object))
+            selected_parts.append(chosen)
             used.loc[chosen] = True
         selected = pd.Index([], dtype=object)
         if selected_parts:
-            selected = pd.Index(np.concatenate([part.to_numpy(dtype=object) for part in selected_parts]), dtype=object)
+            selected = selected_parts[0]
+            for part in selected_parts[1:]:
+                selected = selected.append(part)
         if len(selected) < n_work:
             leftover = score.loc[~used].sort_values(ascending=False, kind="mergesort").head(n_work - len(selected)).index
-            selected = pd.Index(np.concatenate([selected.to_numpy(dtype=object), leftover.to_numpy(dtype=object)]), dtype=object)
+            selected = selected.append(leftover)
         if len(selected) > n_work:
             selected = selected[:n_work]
-        return pd.Index(index[index.isin(selected)], dtype=object)
-    if mode_norm in {"output_weighted", "output_share", "output"}:
+        return pd.Index(index[index.isin(selected)])
+    if mode_norm in {"output_weighted", "output_share", "output", "absolute_output", "abs_output"}:
         scores = x_vals.abs()
     elif mode_norm in {"positive_output", "output_positive"}:
-        scores = x_vals.clip(lower=0.0)
-    elif mode_norm in {"absolute_output", "abs_output"}:
-        scores = x_vals.abs()
+        scores = x_vals
     else:
         scores = pd.Series(np.arange(len(index), 0, -1, dtype=float), index=index)
-    selected = scores.sort_values(ascending=False, kind="mergesort").head(n_work).index
-    return pd.Index(selected, dtype=object)
+    return scores.sort_values(ascending=False, kind="mergesort").head(n_work).index
 
 
 def _spectral_radius_from_sparse(values: csr_matrix, *, tol: float = 1e-10) -> float:
-    n = int(values.shape[0])
+    n, _n_cols = cast(tuple[int, int], values.shape)
     if n == 0:
         return float("nan")
     nnz = int(values.nnz)
@@ -299,7 +386,7 @@ def _spectral_radius_from_sparse(values: csr_matrix, *, tol: float = 1e-10) -> f
     sparse_threshold = 256
     if n >= sparse_threshold:
         try:
-            vals = eigs(
+            vals_raw = cast(Any, eigs)(
                 values,
                 k=1,
                 which="LM",
@@ -307,10 +394,14 @@ def _spectral_radius_from_sparse(values: csr_matrix, *, tol: float = 1e-10) -> f
                 maxiter=max(4000, 10 * n),
                 return_eigenvectors=False,
             )
+            vals = np.asarray(cast(Any, vals_raw))
             rho = float(np.max(np.abs(vals)))
             return rho
         except ArpackNoConvergence as exc:
-            vals = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
+            if exc.eigenvalues is None:
+                vals = np.array([])
+            else:
+                vals = np.asarray(exc.eigenvalues)
             if vals.size and np.isfinite(vals).all():
                 rho = float(np.max(np.abs(vals)))
                 return rho
@@ -323,8 +414,8 @@ def _spectral_radius_from_sparse(values: csr_matrix, *, tol: float = 1e-10) -> f
 
 
 def _linear_operator_from_sparse(values: csr_matrix) -> LinearOperator:
-    n = int(values.shape[0])
-    return LinearOperator(
+    n, _n_cols = cast(tuple[int, int], values.shape)
+    return cast(Any, LinearOperator)(
         shape=(n, n),
         matvec=lambda x: values.dot(x),
         rmatvec=lambda x: values.T.dot(x),
@@ -341,11 +432,11 @@ def _dominant_block_indices(values: csr_matrix, tol: float) -> tuple[np.ndarray,
     meta: dict[str, Any] = {
         "reducible": bool(n_comp > 1),
         "n_strong_components": int(n_comp),
-        "dominant_block_size": int(values.shape[0]),
+        "dominant_block_size": int(cast(tuple[int, int], values.shape)[0]),
         "dominant_block_id": 0,
     }
     if n_comp <= 1:
-        return np.arange(values.shape[0]), meta
+        return np.arange(cast(tuple[int, int], values.shape)[0]), meta
 
     comp_ids = np.unique(labels)
     comp_rhos: list[tuple[int, float, int]] = []
@@ -384,7 +475,8 @@ def calc_pf_eigenvectors(
     if n_block >= 256:
         def sparse_pair(operator: LinearOperator) -> tuple[np.ndarray, np.ndarray]:
             try:
-                eigenvalues, eigenvectors = eigs(operator, k=1, which="LM", tol=1e-6, maxiter=max(4000, 10 * n_block))
+                result_raw = cast(Any, eigs)(operator, k=1, which="LM", tol=1e-6, maxiter=max(4000, 10 * n_block))
+                eigenvalues, eigenvectors = cast(tuple[Any, Any], result_raw)
             except ArpackNoConvergence as exc:
                 eigenvalues = np.asarray(exc.eigenvalues) if exc.eigenvalues is not None else np.array([])
                 eigenvectors = np.asarray(exc.eigenvectors) if exc.eigenvectors is not None else np.empty((n_block, 0))
@@ -410,7 +502,8 @@ def calc_pf_eigenvectors(
         except Exception as exc:
             raise ValueError("Sparse PF eigensolve failed without a valid sparse eigenpair.") from exc
     else:
-        eigvals, left_vecs, right_vecs = linalg.eig(block.toarray(), left=True, right=True)
+        eig_result = linalg.eig(block.toarray(), left=True, right=True)
+        eigvals, left_vecs, right_vecs = cast(tuple[np.ndarray, np.ndarray, np.ndarray], eig_result)
 
     absvals = np.abs(eigvals)
     dom_abs = float(np.max(absvals))
@@ -460,10 +553,10 @@ def calc_pf_eigenvectors(
 def calc_pf_sensitivities(matrix: pd.DataFrame, *, strict: bool = True) -> pd.DataFrame:
     _diag_print(f"pf sensitivities start shape={matrix.shape} rss={_rss_mb():.1f}MB")
     t0 = time.time()
-    u, v, rho, meta = calc_pf_eigenvectors(matrix, return_metadata=True)
+    u, v, rho, meta = cast(tuple[pd.Series, pd.Series, float, dict[str, Any]], calc_pf_eigenvectors(matrix, return_metadata=True))
     if strict and (meta["degenerate_dominant_eigenvalue"] or meta["complex_dominant"]):
         raise ValueError(f"PF sensitivities ill-defined for degenerate/complex dominant eigenvalue: {meta}")
-    outer = np.outer(u.values, v.values)
+    outer = np.outer(u.to_numpy(dtype=float), v.to_numpy(dtype=float))
     sensitivities = pd.DataFrame(outer, index=matrix.index, columns=matrix.columns)
     _diag_print(
         f"pf sensitivities done shape={matrix.shape} rho={rho:.6g} "
@@ -482,8 +575,9 @@ def aggregate_diagnostics_from_pf_vectors(
     epsilon: float = 1e-6,
 ) -> pd.Series:
     """Compute the composite diagnostic score without materializing the PF outer product."""
-    right = pd.to_numeric(pf_right.reindex(pf_right.index), errors="coerce").fillna(0.0).astype(float)
-    left_sum = float(pd.to_numeric(pf_left.reindex(pf_left.index), errors="coerce").fillna(0.0).sum())
+    right = cast(pd.Series, pd.to_numeric(pf_right.reindex(pf_right.index), errors="coerce")).fillna(0.0).astype(float)
+    left_values = cast(pd.Series, pd.to_numeric(pf_left.reindex(pf_left.index), errors="coerce")).fillna(0.0)
+    left_sum = float(left_values.sum())
     column_sensitivity = pd.Series(right.to_numpy(dtype=float) * left_sum, index=right.index, dtype=float)
     pressure = pd.Series(0.0, index=column_sensitivity.index)
     if not eco_slack.empty:
@@ -588,8 +682,8 @@ def solve_safe_just_lp(
     x_index = pd.Index(x.index)
     n = int(len(x_index))
     A_sparse_full = _align_lp_A_sparse(A, x_index)
-    x = pd.to_numeric(pd.Series(x), errors="coerce").fillna(0.0).astype(float).reindex(x_index).fillna(0.0)
-    y = pd.to_numeric(pd.Series(y), errors="coerce").fillna(0.0).astype(float).reindex(x_index).fillna(0.0)
+    x = cast(pd.Series, pd.to_numeric(pd.Series(x), errors="coerce")).fillna(0.0).astype(float).reindex(x_index).fillna(0.0)
+    y = cast(pd.Series, pd.to_numeric(pd.Series(y), errors="coerce")).fillna(0.0).astype(float).reindex(x_index).fillna(0.0)
     x_base = x.copy()
     active_index = _select_lp_working_set_index(
         x_base,
@@ -626,7 +720,7 @@ def solve_safe_just_lp(
         # Inequality constraints
         # 1) x_new - A x_new >= y  <=>  (A - I) x_new <= -y
         ineq1 = hstack([A_sparse - eye(n, format="csr"), csr_matrix((n, n_vars - n))], format="csr")
-        b1 = -y.reindex(x.index).values
+        b1 = -cast(pd.Series, y.reindex(x.index)).to_numpy(dtype=float)
         # 2) Ecological ceilings: E x_new <= e_bar
         eco_block = csr_matrix(E.reindex(columns=x.index).values)
         if allow_violation:
@@ -635,7 +729,7 @@ def solve_safe_just_lp(
             ineq2 = hstack([eco_block, csr_matrix((me, 2 * n)), eco_slack, eco_tail], format="csr")
         else:
             ineq2 = hstack([eco_block, csr_matrix((me, n_vars - n))], format="csr")
-        b2 = e_bar.reindex(E.index).values
+        b2 = cast(pd.Series, e_bar.reindex(E.index)).to_numpy(dtype=float)
         # 3) Social floors: -S x_new <= -s_floor
         soc_block = csr_matrix(-S.reindex(columns=x.index).values)
         if allow_violation:
@@ -643,7 +737,7 @@ def solve_safe_just_lp(
             ineq3 = hstack([soc_block, csr_matrix((ms, 2 * n + me)), soc_tail], format="csr")
         else:
             ineq3 = hstack([soc_block, csr_matrix((ms, n_vars - n))], format="csr")
-        b3 = -s_floor.reindex(S.index).values
+        b3 = -cast(pd.Series, s_floor.reindex(S.index)).to_numpy(dtype=float)
         A_ub = vstack([ineq1, ineq2, ineq3], format="csr")
         b_ub = np.concatenate([b1, b2, b3])
         # Equality constraints to link delta vars
@@ -704,7 +798,8 @@ def solve_safe_just_lp(
         base_soc_rhs = -s_floor.reindex(S.index).fillna(0.0).to_numpy(dtype=float) + S_sparse.dot(
             x_base.to_numpy(dtype=float)
         )
-        active_A = A_sparse[:, active_pos] - eye(n, format="csr")[:, active_pos]
+        identity = cast(csr_matrix, eye(n, format="csr")).tocsr()
+        active_A = cast(csr_matrix, A_sparse[:, active_pos]).tocsr() - cast(csr_matrix, identity[:, active_pos]).tocsr()
         active_E = E_sparse[:, active_pos]
         active_S = S_sparse[:, active_pos]
         base_objective = np.concatenate(
