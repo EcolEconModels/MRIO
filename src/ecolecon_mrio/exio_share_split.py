@@ -1111,8 +1111,10 @@ def _project_export_donor_for_split(
                 scope=exio_slice.scope,
             )
         except TypeError as exc:
-            if "scope" not in str(exc):
+            if "scope" not in str(exc) or len(exio_slice.scope.members) != 1:
                 raise
+            # Legacy injected test/callbacks may still accept only region= for a
+            # singleton. A grouped scope must never collapse to members[0].
             raw = export_vector_loader(
                 source_zip=_scope_slice_source_zip(exio_slice),
                 region=str(exio_slice.scope.members[0]),

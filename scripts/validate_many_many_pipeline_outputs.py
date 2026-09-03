@@ -18,6 +18,7 @@ for _extra_path in (_REPO_ROOT, _REPO_ROOT / "src"):
         sys.path.insert(0, _extra_text)
 
 from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions, aggregate_iot
+from ecolecon_mrio.iot_flow_semantics import flow_use_total
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 from scripts.aggregate_iot_by_mapping import (
     _augment_mapping_from_split_child_edges,
@@ -178,7 +179,9 @@ def _validate_environmental_grid(
         errors.append(f"environmental schema={list(observed.columns)!r}")
         return {"ok": False, "errors": errors}
 
-    groups = _production_environmental_group_domain(raw)
+    groups = _production_environmental_group_domain(
+        raw, target_environmental_extensions=observed
+    )
     group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
     key_cols = ["sector", *group_cols]
     canonical = output.copy().astype("float64")
@@ -342,6 +345,9 @@ def validate_pipeline_outputs(
     x_observed = x_df.iloc[:, 0].astype("float64")
     x_observed.index = x_observed.index.astype(str)
     add_check("split_x_present", True, path=str(x_path))
+    # Environmental direct accounts use the current DOM/IMP/TOTAL flow use/supply,
+    # whereas aggregate_iot still uses the shared domestic activity x.
+    split_flow_denominator = flow_use_total(Z, Y)
 
     for ratio in (
         _check_ratio_file(
@@ -448,18 +454,29 @@ def validate_pipeline_outputs(
                 expected_environmental = aggregate_environmental_extensions(
                     split_environmental,
                     mapping,
-                    output=x_observed,
+                    output=split_flow_denominator,
                     keep_unmapped=True,
                     rtol=rtol,
                     atol=atol,
                 )
-            production_groups = (
-                _production_environmental_group_domain(
-                    pd.read_csv(split_raw_environmental_path)
+            if split_raw_environmental_path.exists() and split_environmental_path.exists():
+                production_groups = _production_environmental_group_domain(
+                    pd.read_csv(split_raw_environmental_path),
+                    target_environmental_extensions=pd.read_csv(split_environmental_path),
                 )
-                if split_raw_environmental_path.exists()
-                else pd.DataFrame(columns=["extension", "stressor", "unit"])
-            )
+            elif split_raw_environmental_path.exists():
+                add_check(
+                    "environmental_target_sidecar_paired",
+                    False,
+                    path=str(split_environmental_path),
+                )
+                production_groups = pd.DataFrame(
+                    columns=["boundary", "denominator_role", "extension", "stressor", "unit"]
+                )
+            else:
+                production_groups = pd.DataFrame(
+                    columns=["boundary", "denominator_role", "extension", "stressor", "unit"]
+                )
             observed_environmental_path = agg_dir / "environmental_extensions.csv"
             if production_groups.empty:
                 add_check(
@@ -495,7 +512,7 @@ def validate_pipeline_outputs(
                 grid = _validate_environmental_grid(
                     environmental_path=observed_environmental_path,
                     raw_path=agg_dir / "exio_environmental_extensions.csv",
-                    output=recomputed.x,
+                    output=flow_use_total(recomputed.Z, recomputed.Y),
                     rtol=rtol,
                     atol=atol,
                 )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import re
@@ -67,20 +68,21 @@ DEFAULT_ELECTRICITY_BY_SOURCE_PATTERNS: tuple[str, ...] = (
 def _load_exio_scope_slice(
     *,
     year: int,
-    region: str,
+    scope: RegionScope,
     flow: str,
     data_root: Path,
     doi: str,
     force_download: bool,
     verbose: bool,
 ) -> MrioScopeSlice:
+    """Load one already-resolved singleton or grouped EXIO donor scope."""
     scope_flow = {"domestic": "internal", "imports": "external_imports", "total": "total"}.get(
         str(flow), str(flow)
     )
     return load_mrio_iot_scope_slice(
         "exiobase",
         int(year),
-        scope=RegionScope(code=str(region), members=(str(region),)),
+        scope=scope,
         exio_system="pxp",
         flow=cast(ScopeFlow, scope_flow),
         data_root=data_root,
@@ -115,6 +117,15 @@ def _resolve_pipeline_scope(
         raise RuntimeError("Region mapping did not compile exactly the requested donor scope.")
     return plan.scopes[0]
 
+
+
+def _sha256_file(path: str | Path) -> str:
+    """Return the SHA-256 digest of the exact local input bytes used by a run."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 def _vprint(enabled: bool, msg: str) -> None:
     if enabled:
@@ -1344,145 +1355,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Pass --no-exio-quantity-price; this does not affect monetary IOT splitting or environmental extensions."
         )
 
-    environmental_source_output: pd.Series | None = None
-    environmental_source_basis: pd.MultiIndex | None = None
-    source_regions: tuple[str, ...] | None = None
-    need_global_x = (
-        bool(args.region_scope_mapping_csv)
-        or bool(environmental_requests)
-        or bool(args.environmental_all_extensions)
+    region_scope_mapping_sha256 = (
+        _sha256_file(args.region_scope_mapping_csv)
+        if args.region_scope_mapping_csv is not None
+        else None
     )
-    if need_global_x:
-        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-            "exiobase",
-            int(args.exio_year),
-            matrices=("x",),
-            data_root=data_root,
-            doi=args.exio_doi,
-            exio_system="pxp",
-            force_download=False,
-            verbose=args.verbose,
-        )
-        environmental_source_output = cast(pd.Series, source_matrices["x"])
-        environmental_source_basis = source_basis
-        source_regions = tuple(dict.fromkeys(
-            map(str, source_basis.get_level_values("region"))
-        ))
-    exio_scope = _resolve_pipeline_scope(
-        scope_code=args.exio_region,
-        mapping_csv=args.region_scope_mapping_csv,
-        source_regions=source_regions,
+    exio_split_mapping_sha256 = (
+        _sha256_file(args.exio_mapping_csv)
+        if args.exio_mapping_csv is not None
+        else None
     )
-    if len(exio_scope.members) > 1 and extract_qp:
-        raise SystemExit(
-            "Grouped EXIO donor scopes do not yet define the optional quantity/value proxy sidecar. "
-            "Pass --no-exio-quantity-price; this does not affect monetary IOT splitting or environmental extensions."
-        )
+    exio_to_eurostat_mapping_sha256 = (
+        _sha256_file(args.exio_to_eurostat_mapping_csv)
+        if args.exio_to_eurostat_mapping_csv is not None
+        else None
+    )
 
-    environmental_source_output: pd.Series | None = None
-    environmental_source_basis: pd.MultiIndex | None = None
-    source_regions: tuple[str, ...] | None = None
-    need_global_x = (
-        bool(args.region_scope_mapping_csv)
-        or bool(environmental_requests)
-        or bool(args.environmental_all_extensions)
-    )
-    if need_global_x:
-        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-            "exiobase",
-            int(args.exio_year),
-            matrices=("x",),
-            data_root=data_root,
-            doi=args.exio_doi,
-            exio_system="pxp",
-            force_download=False,
-            verbose=args.verbose,
-        )
-        environmental_source_output = cast(pd.Series, source_matrices["x"])
-        environmental_source_basis = source_basis
-        source_regions = tuple(dict.fromkeys(
-            map(str, source_basis.get_level_values("region"))
-        ))
-    exio_scope = _resolve_pipeline_scope(
-        scope_code=args.exio_region,
-        mapping_csv=args.region_scope_mapping_csv,
-        source_regions=source_regions,
-    )
-    if len(exio_scope.members) > 1 and extract_qp:
-        raise SystemExit(
-            "Grouped EXIO donor scopes do not yet define the optional quantity/value proxy sidecar. "
-            "Pass --no-exio-quantity-price; this does not affect monetary IOT splitting or environmental extensions."
-        )
-
-    environmental_source_output: pd.Series | None = None
-    environmental_source_basis: pd.MultiIndex | None = None
-    source_regions: tuple[str, ...] | None = None
-    need_global_x = (
-        bool(args.region_scope_mapping_csv)
-        or bool(environmental_requests)
-        or bool(args.environmental_all_extensions)
-    )
-    if need_global_x:
-        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-            "exiobase",
-            int(args.exio_year),
-            matrices=("x",),
-            data_root=data_root,
-            doi=args.exio_doi,
-            exio_system="pxp",
-            force_download=False,
-            verbose=args.verbose,
-        )
-        environmental_source_output = cast(pd.Series, source_matrices["x"])
-        environmental_source_basis = source_basis
-        source_regions = tuple(dict.fromkeys(
-            map(str, source_basis.get_level_values("region"))
-        ))
-    exio_scope = _resolve_pipeline_scope(
-        scope_code=args.exio_region,
-        mapping_csv=args.region_scope_mapping_csv,
-        source_regions=source_regions,
-    )
-    if len(exio_scope.members) > 1 and extract_qp:
-        raise SystemExit(
-            "Grouped EXIO donor scopes do not yet define the optional quantity/value proxy sidecar. "
-            "Pass --no-exio-quantity-price; this does not affect monetary IOT splitting or environmental extensions."
-        )
-
-    environmental_source_output: pd.Series | None = None
-    environmental_source_basis: pd.MultiIndex | None = None
-    source_regions: tuple[str, ...] | None = None
-    need_global_x = (
-        bool(args.region_scope_mapping_csv)
-        or bool(environmental_requests)
-        or bool(args.environmental_all_extensions)
-    )
-    if need_global_x:
-        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-            "exiobase",
-            int(args.exio_year),
-            matrices=("x",),
-            data_root=data_root,
-            doi=args.exio_doi,
-            exio_system="pxp",
-            force_download=False,
-            verbose=args.verbose,
-        )
-        environmental_source_output = cast(pd.Series, source_matrices["x"])
-        environmental_source_basis = source_basis
-        source_regions = tuple(dict.fromkeys(
-            map(str, source_basis.get_level_values("region"))
-        ))
-    exio_scope = _resolve_pipeline_scope(
-        scope_code=args.exio_region,
-        mapping_csv=args.region_scope_mapping_csv,
-        source_regions=source_regions,
-    )
-    if len(exio_scope.members) > 1 and extract_qp:
-        raise SystemExit(
-            "Grouped EXIO donor scopes do not yet define the optional quantity/value proxy sidecar. "
-            "Pass --no-exio-quantity-price; this does not affect monetary IOT splitting or environmental extensions."
-        )
     qp_cache_dir = (
         data_root
         / f"exiobase3_{args.exio_year}"
@@ -1698,45 +1586,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                         + ", ".join(environmental_requests),
                     )
                     if environmental_source_output is None or environmental_source_basis is None:
-                        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-                            "exiobase", int(args.exio_year), matrices=("x",),
-                            data_root=data_root, doi=args.exio_doi, exio_system="pxp",
-                            force_download=False, verbose=args.verbose,
+                        raise RuntimeError(
+                            "Archive-driven environmental selection requires the already-loaded "
+                            "global EXIO x/basis context."
                         )
-                        environmental_source_output = cast(pd.Series, source_matrices["x"])
-                        environmental_source_basis = source_basis
-                    if environmental_source_output is None or environmental_source_basis is None:
-                        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-                            "exiobase", int(args.exio_year), matrices=("x",),
-                            data_root=data_root, doi=args.exio_doi, exio_system="pxp",
-                            force_download=False, verbose=args.verbose,
-                        )
-                        environmental_source_output = cast(pd.Series, source_matrices["x"])
-                        environmental_source_basis = source_basis
-                    if environmental_source_output is None or environmental_source_basis is None:
-                        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-                            "exiobase", int(args.exio_year), matrices=("x",),
-                            data_root=data_root, doi=args.exio_doi, exio_system="pxp",
-                            force_download=False, verbose=args.verbose,
-                        )
-                        environmental_source_output = cast(pd.Series, source_matrices["x"])
-                        environmental_source_basis = source_basis
-                    if environmental_source_output is None or environmental_source_basis is None:
-                        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-                            "exiobase", int(args.exio_year), matrices=("x",),
-                            data_root=data_root, doi=args.exio_doi, exio_system="pxp",
-                            force_download=False, verbose=args.verbose,
-                        )
-                        environmental_source_output = cast(pd.Series, source_matrices["x"])
-                        environmental_source_basis = source_basis
-                    if environmental_source_output is None or environmental_source_basis is None:
-                        source_matrices, source_basis, _source_meta = load_mrio_iot_matrices(
-                            "exiobase", int(args.exio_year), matrices=("x",),
-                            data_root=data_root, doi=args.exio_doi, exio_system="pxp",
-                            force_download=False, verbose=args.verbose,
-                        )
-                        environmental_source_output = cast(pd.Series, source_matrices["x"])
-                        environmental_source_basis = source_basis
+
+            source_zip_paths = {
+                Path(str(scope_slice.metadata["source_zip"]))
+                for scope_slice in exio_slices.values()
+            }
+            if len(source_zip_paths) != 1:
+                raise RuntimeError(
+                    "All EXIO donor-flow slices must originate from one source archive; "
+                    f"got {sorted(map(str, source_zip_paths))!r}."
+                )
+            exio_source_zip = next(iter(source_zip_paths))
+            exio_source_zip_sha256 = _sha256_file(exio_source_zip)
 
             assert outdir is not None
             flow_identity_totals: dict[str, dict[str, float]] = {}
@@ -1907,10 +1772,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "variant_dim": args.eurostat_stk_flow_dim,
                         "variant_value": flow,
                         "exio_doi": args.exio_doi,
+                        "exio_source_zip": str(exio_source_zip),
+                        "exio_source_zip_sha256": exio_source_zip_sha256,
                         "output_share_basis": "EXIO_scope_producer_output",
                         "exio_scope_code": exio_scope.code,
                         "exio_scope_members": list(exio_scope.members),
                         "region_scope_mapping_csv": args.region_scope_mapping_csv,
+                        "region_scope_mapping_sha256": region_scope_mapping_sha256,
+                        "exio_split_mapping_csv": args.exio_mapping_csv,
+                        "exio_split_mapping_sha256": exio_split_mapping_sha256,
+                        "exio_to_eurostat_mapping_csv": args.exio_to_eurostat_mapping_csv,
+                        "exio_to_eurostat_mapping_sha256": exio_to_eurostat_mapping_sha256,
                     },
                 )
 
@@ -2129,6 +2001,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             force_download=False,
             verbose=args.verbose,
         )
+    exio_source_zip_single = Path(str(exio_slice_single.metadata["source_zip"]))
+    exio_source_zip_single_sha256 = _sha256_file(exio_source_zip_single)
+
     if args.environmental_all_extensions:
         if exio_flow_single in {"domestic", "imports"}:
             environmental_requests = _environmental_extension_requests_from_archive(
@@ -2151,15 +2026,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         eurostat_M=parsed.M if parsed is not None else None,
         exio_year=args.exio_year,
         exio_region=args.exio_region,
-        exio_slice=_load_exio_scope_slice(
-            year=args.exio_year,
-            scope=exio_scope,
-            flow=exio_flow_single,
-            data_root=data_root,
-            doi=args.exio_doi,
-            force_download=False,
-            verbose=args.verbose,
-        ),
+        exio_slice=exio_slice_single,
         sector_to_exio_sectors=sector_to_exio_sectors,
         sector_patterns=None if sector_to_exio_sectors is not None else sector_patterns,
         exio_cache_root=data_root,
@@ -2198,7 +2065,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         verbose=args.verbose,
         extra_info={
             "exio_doi": args.exio_doi,
-            "output_share_basis": "EXIO_x_region_producer_output",
+            "exio_source_zip": str(exio_source_zip_single),
+            "exio_source_zip_sha256": exio_source_zip_single_sha256,
+            "output_share_basis": "EXIO_scope_producer_output",
+            "exio_scope_code": exio_scope.code,
+            "exio_scope_members": list(exio_scope.members),
+            "region_scope_mapping_csv": args.region_scope_mapping_csv,
+            "region_scope_mapping_sha256": region_scope_mapping_sha256,
+            "exio_split_mapping_csv": args.exio_mapping_csv,
+            "exio_split_mapping_sha256": exio_split_mapping_sha256,
+            "exio_to_eurostat_mapping_csv": args.exio_to_eurostat_mapping_csv,
+            "exio_to_eurostat_mapping_sha256": exio_to_eurostat_mapping_sha256,
         },
     )
 

@@ -51,3 +51,13 @@ def test_fuels_wrapper_defaults_to_reviewed_official_direct_concordance() -> Non
     assert "scripts/mappings/exio_to_eurostat_cpa_products.csv" not in fuels
     assert "scripts/mappings/exio_to_eurostat_cpa_products.csv" in green_brown
     assert REVIEWED_OFFICIAL_DIRECT_CPA65 not in green_brown
+
+
+def test_non_at_workbook_requires_explicit_template() -> None:
+    """EU/group workbook export cannot silently reuse the Austrian default template."""
+    text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'TEMPLATE_XLSX_EXPLICIT="${TEMPLATE_XLSX:-}"' in text
+    assert '"$EUROSTAT_GEO" != "AT"' in text
+    assert "Explicit TEMPLATE_XLSX is required" in text

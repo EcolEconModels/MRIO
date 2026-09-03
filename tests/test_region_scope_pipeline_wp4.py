@@ -3,7 +3,6 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -107,3 +106,198 @@ def test_boundary_reaggregation_rejects_domestic_x_as_import_denominator() -> No
         aggregate_environmental_extensions(
             frame, {"a": "A"}, output=pd.Series({"a": 99.0})
         )
+
+
+def test_scope_loader_forwards_resolved_group_scope(tmp_path: Path, monkeypatch) -> None:
+    """A mapping-backed donor scope must reach the provider unchanged, not as members[0]."""
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice
+    from scripts import split_eurostat_energy_by_exiobase as split_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_loader(dataset, year, *, scope, flow, **kwargs):
+        captured.update(dataset=dataset, year=year, scope=scope, flow=flow)
+        sectors = pd.Index(["S"], name="sector")
+        return MrioScopeSlice(
+            scope=scope,
+            Z=pd.DataFrame([[1.0]], index=sectors, columns=sectors),
+            Y=pd.DataFrame([[2.0]], index=sectors, columns=pd.Index(["HH"])),
+            x_scope=pd.Series([3.0], index=sectors, name="x_scope"),
+            flow=flow,
+            metadata={"source_zip": str(tmp_path / "iot.zip")},
+        )
+
+    monkeypatch.setattr(split_mod, "load_mrio_iot_scope_slice", fake_loader)
+    scope = RegionScope(code="EU_TEST", members=("AT", "DE"))
+    result = split_mod._load_exio_scope_slice(
+        year=2021,
+        scope=scope,
+        flow="domestic",
+        data_root=tmp_path,
+        doi="10.5281/zenodo.20051562",
+        force_download=False,
+        verbose=False,
+    )
+
+    assert captured["scope"] == scope
+    assert captured["flow"] == "internal"
+    assert result.scope == scope
+
+
+def test_group_scope_export_callback_cannot_fallback_to_first_member(tmp_path: Path) -> None:
+    """A legacy region-only callback must fail for a grouped scope instead of using member 0."""
+    from ecolecon_mrio.disaggregation import SplitProfiles
+    from ecolecon_mrio.exio_share_split import _project_export_donor_for_split
+    from ecolecon_mrio.region_aggregation import MrioScopeSlice
+
+    sectors = pd.Index(["S"], name="sector")
+    exio_slice = MrioScopeSlice(
+        scope=RegionScope(code="EU_TEST", members=("AT", "DE")),
+        Z=pd.DataFrame([[1.0]], index=sectors, columns=sectors),
+        Y=pd.DataFrame([[1.0]], index=sectors, columns=pd.Index(["HH"])),
+        x_scope=pd.Series([2.0], index=sectors, name="x_scope"),
+        flow="internal",
+        metadata={"source_zip": str(tmp_path / "iot.zip"), "system": "pxp"},
+    )
+    share = pd.Series([1.0], index=sectors, dtype="float64")
+    profiles = {
+        "CPA_X": SplitProfiles(
+            aggregate_sector="CPA_X",
+            subsectors=("S",),
+            output_share=share.copy(),
+            intermediate_sales_share=share.copy(),
+            intermediate_input_share=share.copy(),
+            final_demand_share=share.copy(),
+            subsector_to_exio_sectors={"S": ["S"]},
+        )
+    }
+
+    def region_only_loader(*, source_zip, region):
+        return pd.Series([1.0], index=sectors, dtype="float64")
+
+    with pytest.raises(TypeError, match="scope"):
+        _project_export_donor_for_split(
+            exio_slice=exio_slice,
+            split_profiles=profiles,
+            eurostat_sector_mapping={"CPA_X": {"S": 1.0}},
+            emitted_labels=["S"],
+            export_vector_loader=region_only_loader,
+        )
+
+
+def test_environmental_reaggregation_requires_explicit_boundary_metadata() -> None:
+    """A stale sidecar without boundary identity must fail rather than become DOM."""
+    frame = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [2.0],
+            "monetary_output": [10.0],
+            "intensity": [0.2],
+        }
+    )
+    with pytest.raises(ValueError, match="boundary|denominator_role"):
+        aggregate_environmental_extensions(
+            frame, {"a": "A"}, output=pd.Series({"a": 10.0})
+        )
+
+
+def test_split_cli_initializes_global_scope_context_once() -> None:
+    """WP4 orchestration must not duplicate expensive global-x or scope-resolution setup."""
+    source = Path("scripts/split_eurostat_energy_by_exiobase.py").read_text(
+        encoding="utf-8"
+    )
+    assert source.count("environmental_source_output: pd.Series | None = None") == 1
+    assert source.count(
+        "Archive-driven environmental selection requires the already-loaded "
+    ) == 1
+    assert source.count("exio_slice=exio_slice_single") >= 1
+
+
+def test_split_provenance_hashes_exact_bytes(tmp_path: Path) -> None:
+    """Byte-level provenance must change whenever the exact local source bytes change."""
+    import hashlib
+    from scripts.split_eurostat_energy_by_exiobase import _sha256_file
+
+    path = tmp_path / "input.bin"
+    path.write_bytes(b"abc\x00def")
+    assert _sha256_file(path) == hashlib.sha256(b"abc\x00def").hexdigest()
+    first = _sha256_file(path)
+    path.write_bytes(b"abc\x00deg")
+    assert _sha256_file(path) != first
+
+
+def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows(
+    tmp_path: Path,
+) -> None:
+    """TOTAL environmental validation uses Z+Y supply even when shared domestic x differs."""
+    from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
+
+    split_dir = tmp_path / "split" / "stk_flow=TOTAL"
+    agg_dir = tmp_path / "agg" / "stk_flow=TOTAL"
+    split_dir.mkdir(parents=True)
+    agg_dir.mkdir(parents=True)
+    sectors = pd.Index(["S"])
+    Z = pd.DataFrame([[20.0]], index=sectors, columns=sectors)
+    Y = pd.DataFrame([[10.0]], index=sectors, columns=pd.Index(["P3"]))
+    x = pd.Series([100.0], index=sectors, name="x")
+    Z.to_csv(split_dir / "Z_split.csv")
+    Y.to_csv(split_dir / "Y_split.csv")
+    x.to_csv(split_dir / "x_split.csv")
+    Z.to_csv(agg_dir / "Z_agg.csv")
+    Y.to_csv(agg_dir / "Y_agg.csv")
+    x.to_csv(agg_dir / "x_agg.csv")
+
+    target = pd.DataFrame(
+        {
+            "sector": ["S"],
+            "boundary": ["total_supply_direct"],
+            "denominator_role": ["target_total_supply"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [6.0],
+            "monetary_output": [30.0],
+            "intensity": [0.2],
+        }
+    )
+    target.to_csv(split_dir / "environmental_extensions.csv", index=False)
+    completed = target.copy()
+    completed.insert(0, "sector_position", pd.Series([1], dtype="int64"))
+    completed.to_csv(agg_dir / "environmental_extensions.csv", index=False)
+
+    # This copied raw F provenance deliberately looks like DOM source evidence;
+    # target TOTAL boundary identity must still come from the target sidecar.
+    raw = pd.DataFrame(
+        {
+            "source_label": ["S"],
+            "extension": ["air"],
+            "kind": ["F"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [4.0],
+            "monetary_denominator": [20.0],
+            "intensity": [0.2],
+        }
+    )
+    raw.to_csv(split_dir / "exio_environmental_extensions.csv", index=False)
+    raw.to_csv(agg_dir / "exio_environmental_extensions.csv", index=False)
+
+    mapping_csv = tmp_path / "identity.csv"
+    pd.DataFrame(
+        {
+            "source_code": ["S"],
+            "target_code": ["S"],
+            "enabled": [True],
+            "notes": ["identity"],
+        }
+    ).to_csv(mapping_csv, index=False)
+
+    report = validate_pipeline_outputs(
+        split_dir=split_dir,
+        agg_dir=agg_dir,
+        mapping_csv=mapping_csv,
+    )
+    assert report["ok"], report

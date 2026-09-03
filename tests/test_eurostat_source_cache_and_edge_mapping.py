@@ -516,6 +516,8 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     environmental = pd.DataFrame(
         [
             {
+                "boundary": "scope_production",
+                "denominator_role": "target_domestic_output",
                 "sector": "S@CPA_C20",
                 "extension": "air_emissions",
                 "stressor": "CO2",
@@ -525,6 +527,8 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
                 "intensity": 0.5,
             },
             {
+                "boundary": "scope_production",
+                "denominator_role": "target_domestic_output",
                 "sector": "A",
                 "extension": "air_emissions",
                 "stressor": "CO2",
@@ -628,7 +632,10 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
         production_groups=raw_environmental.loc[
             raw_environmental["kind"].eq("F"),
             ["extension", "stressor", "unit"],
-        ],
+        ].assign(
+            boundary="scope_production",
+            denominator_role="target_domestic_output",
+        ),
     )
     assert completed_environmental is not None
     completed_environmental.to_csv(
@@ -872,8 +879,12 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
         actual,
         output=output,
         production_groups=raw.loc[
-            raw["kind"].eq("F"), ["extension", "stressor", "unit"]
-        ],
+            raw["kind"].eq("F"),
+            ["extension", "stressor", "unit"],
+        ].assign(
+            boundary="scope_production",
+            denominator_role="target_domestic_output",
+        ),
     )
     assert completed is not None
     grid_path = tmp_path / "environmental_extensions.csv"

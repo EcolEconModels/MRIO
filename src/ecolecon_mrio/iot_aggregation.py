@@ -243,10 +243,6 @@ def aggregate_environmental_extensions(
         "unit", "value", "monetary_output",
     }
     environmental_extensions = environmental_extensions.copy()
-    if "boundary" not in environmental_extensions.columns:
-        environmental_extensions.insert(1, "boundary", "scope_production")
-    if "denominator_role" not in environmental_extensions.columns:
-        environmental_extensions.insert(2, "denominator_role", "target_domestic_output")
     missing = required - set(environmental_extensions.columns)
     if missing:
         raise ValueError(
@@ -267,10 +263,10 @@ def aggregate_environmental_extensions(
         )
     for column in ("sector", "boundary", "denominator_role", "extension", "stressor", "unit"):
         frame[column] = frame[column].astype(str)
-    frame["value"] = pd.to_numeric(frame["value"], errors="raise").astype("float64")
-    frame["monetary_output"] = pd.to_numeric(
-        frame["monetary_output"], errors="raise"
-    ).astype("float64")
+    frame["value"] = np.asarray(pd.to_numeric(frame["value"], errors="raise"), dtype="float64")
+    frame["monetary_output"] = np.asarray(
+        pd.to_numeric(frame["monetary_output"], errors="raise"), dtype="float64"
+    )
     if not np.isfinite(frame["value"].to_numpy(dtype="float64")).all():
         raise ValueError("Environmental extension values must be finite.")
 

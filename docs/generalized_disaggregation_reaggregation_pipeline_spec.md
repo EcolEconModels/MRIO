@@ -859,4 +859,9 @@ the actual EXIO source-region basis; RoW is its complement. The target monetary 
 IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of national
 Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
 and are reaggregated by summing physical numerators and their matching monetary
-denominators before deriving intensity. Aggregate exports exclude intra-scope trade.
+denominators before deriving intensity. Raw EXIO `F`/`F_Y` sidecars are source
+provenance and stressor-selection evidence only; they never define a target DOM/IMP/TOTAL
+boundary. Each split `split_info.json` records the exact EXIO source ZIP SHA-256 and,
+when present, SHA-256 digests for the region-scope, split, and EXIO-to-Eurostat mapping
+CSVs. The configured DOI remains a source locator rather than byte-level provenance.
+Aggregate exports exclude intra-scope trade.

@@ -155,7 +155,7 @@ The wrapper passes through extra CLI arguments as well, so you can still append 
 
 | File | Meaning |
 | --- | --- |
-| `split_info.json` | Donor-block reconstruction method, fallback count, and validation status. No RAS/GRAS balancing is applied. |
+| `split_info.json` | Donor-block reconstruction method, fallback count, resolved donor scope, and exact SHA-256 provenance for the EXIO source ZIP plus any region/split/concordance mapping CSVs used. The configured DOI is retained as a locator, not substituted for the byte hash. No RAS/GRAS balancing is applied. |
 | `energy_split_report.xlsx` | Human-readable workbook summarizing the split profiles and reconstruction diagnostics. |
 | `mapped_output_consistency.csv` | Written for `DOM`, `IMP`, and `TOTAL` flows when the EXIO-to-Eurostat output sanity check is evaluated. Contains the Eurostat `Z + non-export final demand` output reference, mapped EXIO flow output, scalar normalization factor, and scaled differences by CPA sector. |
 | `mapped_output_flow_identity.csv` | Hard internal accounting check that `DOM + IMP` matches `TOTAL` for Eurostat and mapped-EXIO destination-use totals, using strict flow-identity tolerances independent of cross-dataset mapping-consistency diagnostics. |
@@ -172,6 +172,8 @@ cd /home/agilra/EcolEconModels/MRIO
 TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx \
 bash scripts/pipelines/at_2021_fuels.sh
 ```
+
+For a non-AT target, enabling `WRITE_SFC_WORKBOOK=1` requires an explicit `TEMPLATE_XLSX`; the Austrian default template is never reused for another geography.
 
 This writes three families under `outputs/`:
 

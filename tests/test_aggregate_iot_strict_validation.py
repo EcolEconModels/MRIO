@@ -267,7 +267,9 @@ def test_environmental_grid_distinguishes_undefined_estimates_from_zero_activity
     completed = _complete_environmental_extension_sector_grid(
         actual,
         output=output,
-        production_groups=_production_environmental_group_domain(production_groups),
+        production_groups=_production_environmental_group_domain(
+            production_groups, target_environmental_extensions=actual
+        ),
     )
 
     assert completed is not None
@@ -312,7 +314,13 @@ def test_environmental_grid_rejects_actual_group_outside_raw_production_domain()
         }
     )
     groups = pd.DataFrame(
-        {"extension": ["selected"], "stressor": ["Indicator"], "unit": ["kg"]}
+        {
+            "boundary": ["scope_production"],
+            "denominator_role": ["target_domestic_output"],
+            "extension": ["selected"],
+            "stressor": ["Indicator"],
+            "unit": ["kg"],
+        }
     )
 
     with pytest.raises(ValueError, match="outside raw production F"):
@@ -370,3 +378,18 @@ def test_row_contract_writers_do_not_serialize_range_indices(tmp_path: Path) -> 
         "source_position",
         "parent_sector_id",
     ]
+
+
+def test_environmental_grid_requires_explicit_group_boundary_metadata() -> None:
+    """Grid completion must not manufacture a DOM boundary for incomplete metadata."""
+    from scripts.aggregate_iot_by_mapping import _complete_environmental_extension_sector_grid
+
+    groups = pd.DataFrame(
+        {"extension": ["air"], "stressor": ["CO2"], "unit": ["kg"]}
+    )
+    with pytest.raises(ValueError, match="explicit boundary metadata"):
+        _complete_environmental_extension_sector_grid(
+            None,
+            output=pd.Series({"S": 10.0}),
+            production_groups=groups,
+        )

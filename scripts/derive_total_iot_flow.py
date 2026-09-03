@@ -790,6 +790,36 @@ def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
                 }
             )
     pd.DataFrame(rows).to_csv(dirs["TOTAL"] / "environmental_extensions.csv", index=False)
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
+    # Carry source F/F_Y identities forward as provenance only. The TOTAL target
+    # sidecar above owns the total_supply_direct / target_total_supply boundary;
+    # downstream reaggregation must never infer a target boundary from this raw file.
     raw_dom = dirs["DOM"] / "exio_environmental_extensions.csv"
     if raw_dom.exists():
         shutil.copy2(raw_dom, dirs["TOTAL"] / raw_dom.name)
