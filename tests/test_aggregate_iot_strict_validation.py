@@ -393,3 +393,70 @@ def test_environmental_grid_requires_explicit_group_boundary_metadata() -> None:
             output=pd.Series({"S": 10.0}),
             production_groups=groups,
         )
+
+def test_environmental_grid_uses_accounting_nonnegative_tolerance() -> None:
+    from scripts.aggregate_iot_by_mapping import _complete_environmental_extension_sector_grid
+
+    actual = pd.DataFrame(
+        {
+            "sector": ["A"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_supply"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [0.0],
+            "monetary_output": [0.0],
+            "intensity": [float("nan")],
+        }
+    )
+    groups = actual.loc[
+        :, ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    ].drop_duplicates(ignore_index=True)
+    completed = _complete_environmental_extension_sector_grid(
+        actual,
+        output=pd.Series([-5e-7], index=pd.Index(["A"])),
+        production_groups=groups,
+    )
+    assert completed is not None
+    assert float(completed.loc[0, "monetary_output"]) == 0.0
+
+    with pytest.raises(ValueError, match="materially negative"):
+        _complete_environmental_extension_sector_grid(
+            actual,
+            output=pd.Series([-2e-6], index=pd.Index(["A"])),
+            production_groups=groups,
+        )
+
+
+def test_environmental_reaggregation_uses_accounting_nonnegative_tolerance() -> None:
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    frame = pd.DataFrame(
+        {
+            "sector": ["A"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_supply"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [0.0],
+            "monetary_output": [0.0],
+            "intensity": [float("nan")],
+        }
+    )
+    out = aggregate_environmental_extensions(
+        frame,
+        {},
+        output=pd.Series([-5e-7], index=pd.Index(["A"])),
+    )
+    assert out is not None
+    assert float(out.loc[0, "monetary_output"]) == 0.0
+    assert pd.isna(out.loc[0, "intensity"])
+
+    with pytest.raises(ValueError, match="materially negative"):
+        aggregate_environmental_extensions(
+            frame,
+            {},
+            output=pd.Series([-2e-6], index=pd.Index(["A"])),
+        )

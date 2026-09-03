@@ -12,6 +12,46 @@ _ACCOUNTING_RTOL = 1e-9
 _ACCOUNTING_ATOL = 1e-6
 
 
+def _normalize_nonnegative_accounting_control(
+    values: pd.Series,
+    *,
+    context: str,
+) -> pd.Series:
+    """Normalize only tolerance-scale negative noise on gross use/supply controls.
+
+    Eurostat generated-table policy treats values below ``-1e-6`` M.EUR as
+    genuinely negative while allowing roundoff-scale residuals near zero.
+    Environmental target denominators use the same fixed boundary: values in
+    ``[-1e-6, 0)`` are numerical zero, whereas a material negative remains an
+    accounting failure.
+    """
+    if not isinstance(values, pd.Series) or not values.index.is_unique:
+        raise ValueError(f"{context}: accounting control must be a unique pandas Series.")
+    try:
+        numeric = cast(pd.Series, pd.to_numeric(values, errors="raise")).astype("float64")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{context}: accounting control must be numeric.") from exc
+    array = numeric.to_numpy(dtype="float64")
+    if not np.isfinite(array).all():
+        bad = [str(numeric.index[pos]) for pos in np.flatnonzero(~np.isfinite(array))[:20]]
+        raise ValueError(f"{context}: accounting control contains non-finite values: {bad!r}")
+    material_negative = array < -_ACCOUNTING_ATOL
+    if bool(material_negative.any()):
+        bad = {
+            str(numeric.index[pos]): float(array[pos])
+            for pos in np.flatnonzero(material_negative)[:20]
+        }
+        raise ValueError(
+            f"{context}: non-negative accounting control is materially negative "
+            f"below tolerance {_ACCOUNTING_ATOL:.12g}: {bad!r}"
+        )
+    out = numeric.copy()
+    roundoff_negative = (array < 0.0) & ~material_negative
+    if bool(roundoff_negative.any()):
+        out.iloc[np.flatnonzero(roundoff_negative)] = 0.0
+    return out
+
+
 def rounded_source_control_diagnostic(
     *,
     identity: str,

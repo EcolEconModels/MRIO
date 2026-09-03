@@ -159,7 +159,8 @@ The wrapper passes through extra CLI arguments as well, so you can still append 
 | `energy_split_report.xlsx` | Human-readable workbook summarizing the split profiles and reconstruction diagnostics. |
 | `mapped_output_consistency.csv` | Written for `DOM`, `IMP`, and `TOTAL` flows when the EXIO-to-Eurostat output sanity check is evaluated. Contains the Eurostat `Z + non-export final demand` output reference, mapped EXIO flow output, scalar normalization factor, and scaled differences by CPA sector. |
 | `mapped_output_flow_identity.csv` | Hard internal accounting check that `DOM + IMP` matches `TOTAL` for Eurostat and mapped-EXIO destination-use totals, using strict flow-identity tolerances independent of cross-dataset mapping-consistency diagnostics. |
-| `eurostat_sector_co2_intensity.csv` | EXIO direct-emissions intensities reaggregated to Eurostat sectors using `exio_to_eurostat_cpa.csv`. |
+| `exio_environmental_extensions.csv` | Raw EXIO production `F` and direct-final-demand `F_Y` evidence with source units and denominators. `F_Y` stays on its final-demand-category axis. |
+| `environmental_extensions.csv` | Boundary-aware target-sector direct environmental estimates. DOM uses scope-production coefficients, IMP uses origin-retaining import coefficients, and TOTAL is derived from the target DOM+IMP components. |
 
 `mapped_output_consistency.csv` is diagnostic by default, not an additional balancing target. Cross-dataset level gaps between mapped EXIO destination-use totals and Eurostat non-export product-use totals are written for inspection because the EXIO-to-CPA bridge is approximate by construction. The hard gate is the internal flow identity in `mapped_output_flow_identity.csv`: `DOM + IMP = TOTAL`, checked with strict flow-identity tolerances. Use `--strict-mapping-consistency-check` only when you intentionally want EXIO-vs-Eurostat level gaps to fail the run.
 
@@ -190,7 +191,7 @@ Parent products follow the official template order, while split children follow 
 ## Notes on Reproducibility
 
 - The checked-in helper CSVs under `scripts/pipelines/` are the source of truth for split and reaggregation pipeline runs. If you manually tweak them, rerun the affected pipelines directly rather than regenerating them as part of the workflow.
-- The IO split step uses destination-side use slices for split profiles and mapped-output diagnostics. Domestic-flow EXIO extension intensities remain region-sector proxies; import-flow CO2/value proxy files are suppressed until origin-weighted import intensities are implemented.
+- The IO split step uses destination-side use slices for split profiles and mapped-output diagnostics. Boundary-aware environmental sidecars use scope-production coefficients for DOM and origin-retaining direct import coefficients for IMP; TOTAL is derived from the target DOM+IMP components. The optional quantity/value proxy remains a separate singleton-scope feature and is disabled for grouped donor scopes.
 - The PostGrowth model consumes the exported workbooks directly; it no longer redoes the brown/green split inside R.
 
 ### Eurostat Energy Balance dictionary

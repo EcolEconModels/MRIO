@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
 
+from ecolecon_mrio.iot_flow_semantics import _normalize_nonnegative_accounting_control
+
 
 ScopeFlow = Literal["internal", "external_imports", "total"]
 _REGION_MAPPING_COLUMNS = (
@@ -1025,11 +1027,11 @@ def _combine_total_supply_extension_arrays(
         normalized.index = pd.Index([str(value).strip() for value in normalized.index])
         if tuple(normalized.index) != axis_labels:
             raise ValueError(f"{name} must exactly match the environmental target-product axis in order.")
-        numeric = cast(pd.Series, pd.to_numeric(normalized, errors="coerce"))
-        values = numeric.to_numpy(dtype="float64")
-        if not np.isfinite(values).all() or bool((values < 0.0).any()):
-            raise ValueError(f"{name} must be finite and non-negative.")
-        return values
+        normalized = _normalize_nonnegative_accounting_control(
+            normalized,
+            context=name,
+        )
+        return normalized.to_numpy(dtype="float64")
 
     domestic = control(target_domestic_output, name="target_domestic_output")
     imports = control(target_import_supply, name="target_import_supply")
@@ -1142,12 +1144,20 @@ def _combine_target_supply_extension_sidecars_direct(
         raise ValueError("DOM/IMP environmental target denominators must use one ordered sector axis.")
     if len(set(labels)) != len(labels) or any(not label for label in labels):
         raise ValueError("Environmental target sector axis must be unique and non-blank.")
-    target_total = target_domestic_output.astype("float64") + target_import_supply.astype("float64")
-    target_total.index = pd.Index(labels)
     dom_target = target_domestic_output.astype("float64").copy()
     imp_target = target_import_supply.astype("float64").copy()
     dom_target.index = pd.Index(labels)
     imp_target.index = pd.Index(labels)
+    dom_target = _normalize_nonnegative_accounting_control(
+        dom_target,
+        context="target_domestic_output",
+    )
+    imp_target = _normalize_nonnegative_accounting_control(
+        imp_target,
+        context="target_import_supply",
+    )
+    target_total = (dom_target + imp_target).astype("float64")
+    target_total.index = pd.Index(labels)
 
     keys = ["sector", "extension", "stressor", "unit"]
     if production_sidecar.duplicated(keys).any() or import_sidecar.duplicated(keys).any():
@@ -1281,10 +1291,10 @@ def _retarget_direct_environmental_account(
     target.index = pd.Index([str(v) for v in target.index])
     if tuple(target.index) != labels:
         raise ValueError("Target environmental denominator must exactly match the projected sector axis.")
-    if target.isna().any() or not np.isfinite(target.to_numpy(dtype="float64")).all():
-        raise ValueError("Target environmental denominator must be finite.")
-    if bool((target < 0.0).any()):
-        raise ValueError("Target environmental denominator must be non-negative.")
+    target = _normalize_nonnegative_accounting_control(
+        target,
+        context=f"Target environmental denominator ({boundary})",
+    )
     coeff = cast(
         pd.Series,
         pd.to_numeric(account["intensity"], errors="coerce"),

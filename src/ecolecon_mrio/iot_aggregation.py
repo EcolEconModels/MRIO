@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.iot_flow_semantics import (
+    _normalize_nonnegative_accounting_control,
     _validated_nonnegative_output,
     flow_use_total,
     technical_coefficients,
@@ -293,10 +294,10 @@ def aggregate_environmental_extensions(
     except (TypeError, ValueError) as exc:
         raise ValueError("Environmental denominator vector must be numeric.") from exc
     source_output.index = source_output.index.astype(str)
-    if not source_output.index.is_unique:
-        raise ValueError("Environmental denominator vector index must be unique.")
-    if source_output.isna().any() or not np.isfinite(source_output.to_numpy()).all() or bool((source_output < 0.0).any()):
-        raise ValueError("Environmental denominator vector must be finite and non-negative.")
+    source_output = _normalize_nonnegative_accounting_control(
+        source_output,
+        context="Environmental denominator vector",
+    )
 
     expected_series = cast(pd.Series, frame["sector"]).map(source_output)
     if expected_series.isna().any():

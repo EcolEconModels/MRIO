@@ -20,7 +20,11 @@ from ecolecon_mrio.iot_aggregation import (
 )
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
-from ecolecon_mrio.iot_flow_semantics import atomic_final_demand, flow_use_total
+from ecolecon_mrio.iot_flow_semantics import (
+    _normalize_nonnegative_accounting_control,
+    atomic_final_demand,
+    flow_use_total,
+)
 from ecolecon_mrio.iot_identities import (
     normalise_supplementary_row_label,
 )
@@ -1544,15 +1548,10 @@ def _complete_environmental_extension_sector_grid(
         )
     denominator = output.copy().astype("float64")
     denominator.index = denominator.index.astype(str)
-    if (
-        not denominator.index.is_unique
-        or denominator.isna().any()
-        or not np.isfinite(denominator.to_numpy()).all()
-        or bool((denominator < 0.0).any())
-    ):
-        raise ValueError(
-            "Final environmental denominator requires a unique finite non-negative sector vector."
-        )
+    denominator = _normalize_nonnegative_accounting_control(
+        denominator,
+        context="Final environmental denominator",
+    )
     key_cols = ["sector"] + group_cols
     if bool(actual.duplicated(key_cols).any()):
         raise ValueError(

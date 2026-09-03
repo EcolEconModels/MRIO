@@ -1384,7 +1384,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.dump_exio_sectors_csv is not None
         or args.write_mapping_template_csv is not None
     ):
-        _vprint(args.verbose, "Calling: load_exiobase3_region_slice(...)")
+        _vprint(args.verbose, "Calling: load_mrio_iot_scope_slice(...)")
         t = _Timer()
         exio_slice = _load_exio_scope_slice(
             year=args.exio_year,
@@ -1397,7 +1397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _vprint(
             args.verbose,
-            f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)",
+            f"Returned: load_mrio_iot_scope_slice ({t.elapsed_s():.2f}s)",
         )
 
         if args.dump_exio_sectors_csv is not None:
@@ -1550,7 +1550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     continue
                 _vprint(
                     args.verbose,
-                    f"Calling: load_exiobase3_region_slice(..., flow={exio_flow})",
+                    f"Calling: load_mrio_iot_scope_slice(..., flow={exio_flow})",
                 )
                 t = _Timer()
                 exio_slices[exio_flow] = _load_exio_scope_slice(
@@ -1564,7 +1564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
                 _vprint(
                     args.verbose,
-                    f"Returned: load_exiobase3_region_slice ({t.elapsed_s():.2f}s)",
+                    f"Returned: load_mrio_iot_scope_slice ({t.elapsed_s():.2f}s)",
                 )
 
             if args.environmental_all_extensions:

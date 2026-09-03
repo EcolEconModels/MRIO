@@ -59,5 +59,6 @@ def test_non_at_workbook_requires_explicit_template() -> None:
         encoding="utf-8"
     )
     assert 'TEMPLATE_XLSX_EXPLICIT="${TEMPLATE_XLSX:-}"' in text
+    assert text.count('TEMPLATE_XLSX_EXPLICIT="${TEMPLATE_XLSX:-}"') == 1
     assert '"$EUROSTAT_GEO" != "AT"' in text
     assert "Explicit TEMPLATE_XLSX is required" in text

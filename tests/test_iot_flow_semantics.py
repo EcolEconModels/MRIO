@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from ecolecon_mrio.iot_flow_semantics import (
+    _normalize_nonnegative_accounting_control,
     atomic_final_demand_columns,
     flow_use_total,
     technical_coefficients,
@@ -29,3 +31,18 @@ def test_output_and_coefficients_use_atomic_final_demand() -> None:
     pd.testing.assert_series_equal(output, expected.rename("use_total"))
     A = technical_coefficients(Z, output)
     np.testing.assert_allclose(A.to_numpy(), Z.divide(output, axis="columns").to_numpy())
+
+def test_accounting_control_normalizes_only_tolerance_scale_negative_noise() -> None:
+    values = pd.Series([10.0, -5e-7], index=pd.Index(["a", "b"]))
+    normalized = _normalize_nonnegative_accounting_control(
+        values,
+        context="test supply",
+    )
+    assert normalized.to_dict() == {"a": 10.0, "b": 0.0}
+
+    with pytest.raises(ValueError, match="materially negative") as excinfo:
+        _normalize_nonnegative_accounting_control(
+            pd.Series([10.0, -2e-6], index=pd.Index(["a", "b"])),
+            context="test supply",
+        )
+    assert "'b': -2e-06" in str(excinfo.value)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -214,6 +215,8 @@ def test_split_cli_initializes_global_scope_context_once() -> None:
         "Archive-driven environmental selection requires the already-loaded "
     ) == 1
     assert source.count("exio_slice=exio_slice_single") >= 1
+    assert "Calling: load_exiobase3_region_slice" not in source
+    assert "Returned: load_exiobase3_region_slice" not in source
 
 
 def test_split_provenance_hashes_exact_bytes(tmp_path: Path) -> None:
@@ -301,3 +304,80 @@ def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows
         mapping_csv=mapping_csv,
     )
     assert report["ok"], report
+
+def test_environmental_target_retarget_uses_accounting_nonnegative_tolerance() -> None:
+    """Roundoff-scale negative supply is zero; a material negative still fails closed."""
+    from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account
+
+    account = pd.DataFrame(
+        {
+            "axis_position": [1],
+            "axis_label": ["a"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["scope_external_import_use"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [2.0],
+            "monetary_denominator": [10.0],
+            "intensity": [0.2],
+        }
+    )
+    normalized = _retarget_direct_environmental_account(
+        account,
+        target_denominator=pd.Series([-5e-7], index=pd.Index(["a"])),
+        boundary="external_imports_direct",
+        denominator_role="target_import_supply",
+    )
+    assert float(normalized.loc[0, "monetary_denominator"]) == 0.0
+    assert float(normalized.loc[0, "value"]) == 0.0
+    assert pd.isna(normalized.loc[0, "intensity"])
+
+    with pytest.raises(ValueError, match="materially negative"):
+        _retarget_direct_environmental_account(
+            account,
+            target_denominator=pd.Series([-2e-6], index=pd.Index(["a"])),
+            boundary="external_imports_direct",
+            denominator_role="target_import_supply",
+        )
+
+
+def test_total_sidecar_combiner_normalizes_components_before_total() -> None:
+    """TOTAL must be formed from normalized DOM/IMP controls, not noisy raw components."""
+    from ecolecon_mrio.region_aggregation import _combine_target_supply_extension_sidecars_direct
+
+    dom = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "boundary": ["scope_production"],
+            "denominator_role": ["target_domestic_output"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [0.0],
+            "monetary_output": [0.0],
+            "intensity": [np.nan],
+        }
+    )
+    imp = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_supply"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [10.0],
+            "monetary_output": [5.0],
+            "intensity": [2.0],
+        }
+    )
+    total = _combine_target_supply_extension_sidecars_direct(
+        dom,
+        imp,
+        target_domestic_output=pd.Series([-5e-7], index=pd.Index(["a"])),
+        target_import_supply=pd.Series([5.0], index=pd.Index(["a"])),
+    )
+    assert float(total.loc[0, "monetary_output"]) == 5.0
+    assert float(total.loc[0, "value"]) == 10.0
+    assert float(total.loc[0, "intensity"]) == 2.0
