@@ -976,16 +976,32 @@ def _validated_environmental_account_group(
     denominator = denominator_numeric.to_numpy(dtype="float64")
     if not np.isfinite(values).all() or not np.isfinite(denominator).all():
         raise ValueError("Environmental account values and denominators must be finite.")
+    inconsistent_zero = (denominator == 0.0) & (values != 0.0)
+    if bool(inconsistent_zero.any()):
+        bad = [labels[pos] for pos in np.flatnonzero(inconsistent_zero)[:10]]
+        raise ValueError(
+            "Environmental account has nonzero physical value at zero monetary denominator: "
+            f"labels={bad!r}."
+        )
     implied = np.full(len(labels), np.nan, dtype="float64")
     np.divide(values, denominator, out=implied, where=denominator != 0.0)
+    raw_reported = cast(pd.Series, account["intensity"])
     reported_numeric = cast(
-        pd.Series, pd.to_numeric(cast(pd.Series, account["intensity"]), errors="coerce")
+        pd.Series, pd.to_numeric(raw_reported, errors="coerce")
     )
+    invalid_reported = raw_reported.notna() & reported_numeric.isna()
+    if bool(invalid_reported.any()):
+        raise ValueError("Environmental account intensity must be numeric or missing.")
     reported = reported_numeric.to_numpy(dtype="float64")
-    finite = denominator != 0.0
-    if not np.allclose(reported[finite], implied[finite], rtol=1e-12, atol=1e-12):
+    nonzero_denominator = denominator != 0.0
+    if not np.allclose(
+        reported[nonzero_denominator],
+        implied[nonzero_denominator],
+        rtol=1e-12,
+        atol=1e-12,
+    ):
         raise ValueError("Environmental account intensity disagrees with value/denominator.")
-    if bool(np.isfinite(reported[~finite]).any()):
+    if bool((~np.isnan(reported[~nonzero_denominator])).any()):
         raise ValueError("Environmental account intensity must be missing at zero denominator.")
     identity: list[str] = []
     for column in ("extension", "stressor", "unit"):
@@ -1010,7 +1026,7 @@ def _combine_total_supply_extension_arrays(
     rtol: float,
     atol: float,
 ) -> pd.DataFrame:
-    """Apply direct domestic/import coefficients to authoritative target controls."""
+    """Apply direct DOM/IMP coefficients while preserving unavailable evidence."""
     if rtol < 0.0 or atol < 0.0:
         raise ValueError("Total-supply identity tolerances must be non-negative.")
     n = len(axis_labels)
@@ -1033,7 +1049,9 @@ def _combine_total_supply_extension_arrays(
         normalized = series.copy()
         normalized.index = pd.Index([str(value).strip() for value in normalized.index])
         if tuple(normalized.index) != axis_labels:
-            raise ValueError(f"{name} must exactly match the environmental target-product axis in order.")
+            raise ValueError(
+                f"{name} must exactly match the environmental target-product axis in order."
+            )
         normalized = _normalize_nonnegative_accounting_control(
             normalized,
             context=name,
@@ -1054,20 +1072,26 @@ def _combine_total_supply_extension_arrays(
     imp_coeff = np.full(n, np.nan, dtype="float64")
     np.divide(prod_values, prod_den, out=prod_coeff, where=prod_den != 0.0)
     np.divide(imp_values, imp_den, out=imp_coeff, where=imp_den != 0.0)
-    missing_prod = (domestic > 0.0) & ~np.isfinite(prod_coeff)
-    missing_imp = (imports > 0.0) & ~np.isfinite(imp_coeff)
-    if bool(missing_prod.any()) or bool(missing_imp.any()):
-        bad_prod = [axis_labels[pos] for pos in np.flatnonzero(missing_prod)[:10]]
-        bad_imp = [axis_labels[pos] for pos in np.flatnonzero(missing_imp)[:10]]
-        raise ValueError(
-            "Target supply has positive monetary mass without the required direct "
-            f"environmental coefficient; domestic={bad_prod!r}, imports={bad_imp!r}."
-        )
-    physical = np.zeros(n, dtype="float64")
-    physical += np.where(domestic > 0.0, prod_coeff * domestic, 0.0)
-    physical += np.where(imports > 0.0, imp_coeff * imports, 0.0)
-    if not np.isfinite(physical).all():
-        raise RuntimeError("Total-supply environmental combination produced non-finite physical values.")
+    prod_available = np.isfinite(prod_coeff)
+    imp_available = np.isfinite(imp_coeff)
+    unavailable = (
+        ((domestic > 0.0) & ~prod_available)
+        | ((imports > 0.0) & ~imp_available)
+        | ((total == 0.0) & ~prod_available & ~imp_available)
+    )
+
+    physical = np.full(n, np.nan, dtype="float64")
+    computable = ~unavailable
+    if bool(computable.any()):
+        prod_contribution = np.where(domestic > 0.0, prod_coeff * domestic, 0.0)
+        imp_contribution = np.where(imports > 0.0, imp_coeff * imports, 0.0)
+        combined = prod_contribution + imp_contribution
+        if not np.isfinite(combined[computable]).all():
+            raise RuntimeError(
+                "Supported total-supply environmental combination produced non-finite values."
+            )
+        physical[computable] = combined[computable]
+
     extension, stressor, unit = identity
     return _environmental_account_frame(
         axis_labels=axis_labels,
@@ -1078,6 +1102,7 @@ def _combine_total_supply_extension_arrays(
         unit=unit,
         values=physical,
         monetary_denominator=total,
+        allow_unavailable_values=True,
     )
 
 
@@ -1236,7 +1261,7 @@ def _combine_target_supply_extension_sidecars_direct(
                 pd.Series,
                 pd.to_numeric(pd.Series([raw_value_object]), errors="coerce"),
             ).iloc[0]
-            if pd.notna(raw_value_object) and pd.isna(raw_value):
+            if cast(bool, pd.notna(raw_value_object)) and cast(bool, pd.isna(raw_value)):
                 raise ValueError(
                     f"{side} environmental value must be numeric or NA for "
                     f"{(sector, ext, stressor, unit)!r}"
@@ -1247,7 +1272,7 @@ def _combine_target_supply_extension_sidecars_direct(
                 pd.Series,
                 pd.to_numeric(pd.Series([raw_intensity_object]), errors="coerce"),
             ).iloc[0]
-            if pd.notna(raw_intensity_object) and pd.isna(raw_intensity):
+            if cast(bool, pd.notna(raw_intensity_object)) and cast(bool, pd.isna(raw_intensity)):
                 raise ValueError(
                     f"{side} environmental intensity must be numeric or NA for "
                     f"{(sector, ext, stressor, unit)!r}"

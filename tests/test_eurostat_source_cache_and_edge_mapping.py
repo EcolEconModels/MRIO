@@ -610,12 +610,13 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
         keep_unmapped=True,
         create_io_system=False,
     )
-    expected.Z.to_csv(agg_dir / "Z_agg.csv")
-    expected.Y.to_csv(agg_dir / "Y_agg.csv")
-    expected.x.to_csv(agg_dir / "x_agg.csv")
+    emitted_order = pd.Index(list(reversed(expected.Z.index.astype(str).tolist())))
+    expected.Z.loc[emitted_order, emitted_order].to_csv(agg_dir / "Z_agg.csv")
+    expected.Y.loc[emitted_order, :].to_csv(agg_dir / "Y_agg.csv")
+    expected.x.reindex(emitted_order).to_csv(agg_dir / "x_agg.csv")
     assert expected.V is not None
     assert expected.M is not None
-    expected.V.to_csv(agg_dir / "V_agg.csv")
+    expected.V.loc[:, emitted_order].to_csv(agg_dir / "V_agg.csv")
     expected.M.to_csv(agg_dir / "M_agg.csv")
     audit.to_csv(agg_dir / "aggregation_edge_mapping_audit.csv", index=False)
 
@@ -628,7 +629,7 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     assert expected_environmental is not None
     completed_environmental = _complete_environmental_extension_sector_grid(
         expected_environmental,
-        output=expected.x,
+        output=expected.x.reindex(emitted_order),
         production_groups=raw_environmental.loc[
             raw_environmental["kind"].eq("F"),
             ["extension", "stressor", "unit"],
@@ -969,6 +970,83 @@ def _tiny_complete_eurostat_iot_payload() -> dict[str, object]:
         "value": {"0": 1.0, "1": 0.0, "2": 2.0, "3": 3.0, "4": 4.0, "5": 5.0},
     }
 
+
+def _tiny_export_residual_eurostat_iot_payload() -> dict[str, object]:
+    """Build two product rows so one residual cell can be sparse while its column exists."""
+    use_codes = [
+        "CPA_A", "CPA_B", "P6", "P6_B0", "P6_D0", "P6_U2", "P6_U3"
+    ]
+    values: dict[str, float] = {}
+    rows = {
+        "CPA_A": [1.0, 0.0, 10.0, 6.0, 4.0, 2.0, 4.0],
+        "CPA_B": [0.0, 1.0, 20.0, 12.0, 8.0, 5.0, 7.0],
+    }
+    for row_pos, row in enumerate(("CPA_A", "CPA_B")):
+        for col_pos, value in enumerate(rows[row]):
+            values[str(row_pos * len(use_codes) + col_pos)] = value
+    return {
+        "id": ["geo", "prd_ava", "prd_use"],
+        "size": [1, 2, len(use_codes)],
+        "dimension": {
+            "geo": {"category": {"index": {"EU27_2020": 0}}},
+            "prd_ava": {
+                "category": {"index": {"CPA_A": 0, "CPA_B": 1}}
+            },
+            "prd_use": {
+                "category": {"index": {code: pos for pos, code in enumerate(use_codes)}}
+            },
+        },
+        "value": values,
+    }
+
+
+def test_parse_eurostat_iot_derives_only_missing_export_display_residual_cells() -> None:
+    from ecolecon_mrio.eurostat_iot import parse_eurostat_iot
+
+    payload = _tiny_export_residual_eurostat_iot_payload()
+    values_obj = payload["value"]
+    assert isinstance(values_obj, dict)
+    values = dict(values_obj)
+    # CPA_A P6_U3 is absent but P6_B0 and P6_U2 are explicit: 6 - 2 = 4.
+    del values["6"]
+    # CPA_B P6_D0 is absent but P6 and P6_B0 are explicit: 20 - 12 = 8.
+    del values["11"]
+    payload["value"] = values
+    parsed = parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
+
+    assert float(parsed.Y.loc["CPA_A", "P6_U3"]) == 4.0
+    assert float(parsed.Y.loc["CPA_B", "P6_D0"]) == 8.0
+    assert parsed.meta["derived_final_demand_residual_cells"] == [
+        {"row": "CPA_B", "column": "P6_D0", "formula": "P6 - P6_B0"},
+        {"row": "CPA_A", "column": "P6_U3", "formula": "P6_B0 - P6_U2"},
+    ]
+
+
+def test_parse_eurostat_iot_does_not_invent_missing_residual_operands() -> None:
+    from ecolecon_mrio.eurostat_iot import EurostatParseError, parse_eurostat_iot
+
+    payload = _tiny_export_residual_eurostat_iot_payload()
+    values_obj = payload["value"]
+    assert isinstance(values_obj, dict)
+    values = dict(values_obj)
+    del values["6"]  # CPA_A P6_U3 residual
+    del values["5"]  # CPA_A P6_U2 required operand
+    payload["value"] = values
+    with pytest.raises(EurostatParseError, match="absent SDMX observations"):
+        parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
+
+
+def test_parse_eurostat_iot_still_rejects_missing_nonresidual_final_demand() -> None:
+    from ecolecon_mrio.eurostat_iot import EurostatParseError, parse_eurostat_iot
+
+    payload = _tiny_export_residual_eurostat_iot_payload()
+    values_obj = payload["value"]
+    assert isinstance(values_obj, dict)
+    values = dict(values_obj)
+    del values["3"]  # CPA_A P6_B0 is a published control, not a residual.
+    payload["value"] = values
+    with pytest.raises(EurostatParseError, match="absent SDMX observations"):
+        parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
 
 def test_parse_eurostat_iot_preserves_explicit_zero_in_complete_core() -> None:
     """An explicit SDMX zero remains zero when every actual Z/Y core cell is observed."""

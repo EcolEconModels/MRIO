@@ -62,3 +62,20 @@ def test_non_at_workbook_requires_explicit_template() -> None:
     assert text.count('TEMPLATE_XLSX_EXPLICIT="${TEMPLATE_XLSX:-}"') == 1
     assert '"$EUROSTAT_GEO" != "AT"' in text
     assert "Explicit TEMPLATE_XLSX is required" in text
+
+
+
+def test_fuels_wrapper_distinguishes_environmental_run_outputs_and_validates_final_artifact() -> None:
+    text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'RUN_OUTPUT_SUFFIX="${RUN_OUTPUT_SUFFIX:-}"' in text
+    assert 'RUN_OUTPUT_SUFFIX="${OUTPUT_SUFFIX}_all_extensions"' in text
+    assert "custom_extensions_${ENVIRONMENTAL_SELECTION_HASH}" in text
+    assert '${RUN_OUTPUT_SUFFIX}_split_flows' in text
+    assert '${RUN_OUTPUT_SUFFIX}_disaggregated_flows' in text
+    assert '${RUN_OUTPUT_SUFFIX}_reaggregated_flows' in text
+    assert "validate_many_many_pipeline_outputs.py" in text
+    assert 'production_validation.json' in text
+    # Environmental selection must not fork the mapping source-of-truth directory.
+    assert '${OUTPUT_SUFFIX}_generated_mappings' in text

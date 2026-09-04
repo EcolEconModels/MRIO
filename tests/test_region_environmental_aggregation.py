@@ -395,3 +395,82 @@ def test_target_supply_sidecar_combiner_propagates_missing_positive_evidence() -
     assert float(row["monetary_output"]) == 1.0
     assert pd.isna(row["value"])
     assert pd.isna(row["intensity"])
+
+
+
+def test_public_total_supply_propagates_unavailable_positive_import_evidence() -> None:
+    """The public API must match target-sidecar NaN semantics for missing coefficients."""
+    production = pd.DataFrame(
+        {
+            "axis_position": [1, 2],
+            "axis_label": ["a", "b"],
+            "boundary": ["scope_production", "scope_production"],
+            "denominator_role": ["scope_production_output", "scope_production_output"],
+            "extension": ["air", "air"],
+            "stressor": ["CO2", "CO2"],
+            "unit": ["kg", "kg"],
+            "value": [10.0, 20.0],
+            "monetary_denominator": [10.0, 10.0],
+            "intensity": [1.0, 2.0],
+        }
+    )
+    imports = production.copy()
+    imports["boundary"] = "external_imports_direct"
+    imports["denominator_role"] = "scope_external_import_use"
+    imports.loc[0, ["value", "monetary_denominator", "intensity"]] = [0.0, 0.0, np.nan]
+    imports.loc[1, ["value", "monetary_denominator", "intensity"]] = [5.0, 10.0, 0.5]
+
+    out = combine_total_supply_extension_direct(
+        production_account=production,
+        import_account=imports,
+        target_domestic_output=pd.Series([100.0, 100.0], index=["a", "b"]),
+        target_import_supply=pd.Series([20.0, 20.0], index=["a", "b"]),
+        target_total_supply=pd.Series([120.0, 120.0], index=["a", "b"]),
+    )
+    row_a = out.set_index("axis_label").loc["a"]
+    row_b = out.set_index("axis_label").loc["b"]
+    assert float(row_a["monetary_denominator"]) == 120.0
+    assert pd.isna(row_a["value"])
+    assert pd.isna(row_a["intensity"])
+    assert float(row_b["value"]) == 210.0
+    assert float(row_b["intensity"]) == 1.75
+
+
+def test_public_environmental_account_rejects_infinite_zero_denominator_intensity() -> None:
+    production = pd.DataFrame(
+        {
+            "axis_position": [1],
+            "axis_label": ["a"],
+            "boundary": ["scope_production"],
+            "denominator_role": ["scope_production_output"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [0.0],
+            "monetary_denominator": [0.0],
+            "intensity": [np.inf],
+        }
+    )
+    imports = production.copy()
+    imports["boundary"] = "external_imports_direct"
+    imports["denominator_role"] = "scope_external_import_use"
+    imports["intensity"] = np.nan
+    with pytest.raises(ValueError, match="intensity must be missing at zero denominator"):
+        combine_total_supply_extension_direct(
+            production_account=production,
+            import_account=imports,
+            target_domestic_output=pd.Series([0.0], index=["a"]),
+            target_import_supply=pd.Series([0.0], index=["a"]),
+            target_total_supply=pd.Series([0.0], index=["a"]),
+        )
+
+    production["intensity"] = np.nan
+    production["value"] = 1.0
+    with pytest.raises(ValueError, match="nonzero physical value at zero monetary denominator"):
+        combine_total_supply_extension_direct(
+            production_account=production,
+            import_account=imports,
+            target_domestic_output=pd.Series([0.0], index=["a"]),
+            target_import_supply=pd.Series([0.0], index=["a"]),
+            target_total_supply=pd.Series([0.0], index=["a"]),
+        )

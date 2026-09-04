@@ -64,15 +64,31 @@ def _numeric_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _max_abs_frame_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
-    if not actual.index.astype(str).equals(expected.index.astype(str)):
+    actual_norm = actual.copy()
+    expected_norm = expected.copy()
+    actual_norm.index = actual_norm.index.astype(str)
+    actual_norm.columns = actual_norm.columns.astype(str)
+    expected_norm.index = expected_norm.index.astype(str)
+    expected_norm.columns = expected_norm.columns.astype(str)
+    if (
+        not actual_norm.index.is_unique
+        or not actual_norm.columns.is_unique
+        or not expected_norm.index.is_unique
+        or not expected_norm.columns.is_unique
+    ):
         return float("inf")
-    if not actual.columns.astype(str).equals(expected.columns.astype(str)):
+    if set(actual_norm.index) != set(expected_norm.index):
         return float("inf")
-    actual_values = actual.astype("float64").to_numpy(dtype="float64")
-    expected_values = expected.astype("float64").to_numpy(dtype="float64")
+    if set(actual_norm.columns) != set(expected_norm.columns):
+        return float("inf")
+    expected_aligned = expected_norm.reindex(
+        index=actual_norm.index, columns=actual_norm.columns
+    )
+    actual_values = actual_norm.astype("float64").to_numpy(dtype="float64")
+    expected_values = expected_aligned.astype("float64").to_numpy(dtype="float64")
     if np.any(np.isnan(actual_values) != np.isnan(expected_values)):
         return float("inf")
-    diff = actual.astype("float64") - expected.astype("float64")
+    diff = actual_norm.astype("float64") - expected_aligned.astype("float64")
     if diff.empty:
         return 0.0
     values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
@@ -80,13 +96,20 @@ def _max_abs_frame_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
 
 
 def _max_abs_series_gap(actual: pd.Series, expected: pd.Series) -> float:
-    if not actual.index.astype(str).equals(expected.index.astype(str)):
+    actual_norm = actual.copy()
+    expected_norm = expected.copy()
+    actual_norm.index = actual_norm.index.astype(str)
+    expected_norm.index = expected_norm.index.astype(str)
+    if not actual_norm.index.is_unique or not expected_norm.index.is_unique:
         return float("inf")
-    actual_values = actual.astype("float64").to_numpy(dtype="float64")
-    expected_values = expected.astype("float64").to_numpy(dtype="float64")
+    if set(actual_norm.index) != set(expected_norm.index):
+        return float("inf")
+    expected_aligned = expected_norm.reindex(actual_norm.index)
+    actual_values = actual_norm.astype("float64").to_numpy(dtype="float64")
+    expected_values = expected_aligned.astype("float64").to_numpy(dtype="float64")
     if np.any(np.isnan(actual_values) != np.isnan(expected_values)):
         return float("inf")
-    diff = actual.astype("float64") - expected.astype("float64")
+    diff = actual_norm.astype("float64") - expected_aligned.astype("float64")
     if diff.empty:
         return 0.0
     values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
@@ -462,6 +485,15 @@ def validate_pipeline_outputs(
                 gap = _max_abs_frame_gap(_numeric_frame(observed_df), expected.astype("float64"))
             add_check(f"{name}_matches_recomputed_reaggregation", np.isclose(gap, 0.0, rtol=rtol, atol=atol), max_abs_gap=gap)
 
+        emitted_flow_output = flow_use_total(recomputed.Z, recomputed.Y)
+        emitted_z_path = agg_dir / "Z_agg.csv"
+        emitted_y_path = agg_dir / "Y_agg.csv"
+        if emitted_z_path.is_file() and emitted_y_path.is_file():
+            emitted_flow_output = flow_use_total(
+                _numeric_frame(_read_frame(emitted_z_path)),
+                _numeric_frame(_read_frame(emitted_y_path)),
+            )
+
         split_environmental_path = split_dir / "environmental_extensions.csv"
         split_raw_environmental_path = split_dir / "exio_environmental_extensions.csv"
         if split_environmental_path.exists() or split_raw_environmental_path.exists():
@@ -555,7 +587,7 @@ def validate_pipeline_outputs(
                         if (agg_dir / "exio_environmental_extensions.csv").is_file()
                         else None
                     ),
-                    output=flow_use_total(recomputed.Z, recomputed.Y),
+                    output=emitted_flow_output,
                     rtol=rtol,
                     atol=atol,
                     production_groups=production_groups,

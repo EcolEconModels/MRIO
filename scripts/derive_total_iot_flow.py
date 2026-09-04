@@ -209,6 +209,27 @@ def _validate_rounded_series(
     return diagnostics
 
 
+def _derived_final_demand_residual_rows(
+    reference: ParsedEurostatIOT, *, identity: str
+) -> set[str]:
+    """Return source rows whose display residual was reconstructed during parsing."""
+    raw = reference.meta.get("derived_final_demand_residual_cells", [])
+    if raw is None:
+        return set()
+    if not isinstance(raw, list):
+        raise ValueError("derived_final_demand_residual_cells metadata must be a list.")
+    rows: set[str] = set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise ValueError("derived final-demand residual metadata entries must be mappings.")
+        if str(item.get("column", "")) != str(identity):
+            continue
+        row = str(item.get("row", "")).strip()
+        if not row:
+            raise ValueError("derived final-demand residual metadata contains a blank row.")
+        rows.add(row)
+    return rows
+
 def _validate_y_source_reconstruction(
     *,
     flow: str,
@@ -222,7 +243,9 @@ def _validate_y_source_reconstruction(
         code for code in _ROUNDED_Y_CONTROLS
         if code in reference.Y.columns and code in reconstructed.columns
     ]
-    ordinary_columns = [code for code in reference.Y.columns if str(code) not in set(common_controls)]
+    ordinary_columns = [
+        code for code in reference.Y.columns if str(code) not in set(common_controls)
+    ]
     _assert_close(
         f"{flow} ordinary Y reconstruction",
         reconstructed.loc[:, ordinary_columns],
@@ -240,18 +263,27 @@ def _validate_y_source_reconstruction(
             rtol=rtol,
             atol=atol,
         )
-        diagnostics.extend(
-            _validate_rounded_series(
-                flow=flow,
-                identity=identity,
-                published=reference.Y.loc[:, identity].astype("float64"),
-                derived=derived,
-                component_counts=counts,
-                source_rounding_quantum=source_rounding_quantum,
-                rtol=rtol,
-                atol=atol,
-            )
+        parser_derived_rows = _derived_final_demand_residual_rows(
+            reference, identity=identity
         )
+        published_rows = [
+            str(code)
+            for code in reference.Y.index.astype(str)
+            if str(code) not in parser_derived_rows
+        ]
+        if published_rows:
+            diagnostics.extend(
+                _validate_rounded_series(
+                    flow=flow,
+                    identity=identity,
+                    published=reference.Y.loc[published_rows, identity].astype("float64"),
+                    derived=derived.loc[published_rows],
+                    component_counts=counts.loc[published_rows],
+                    source_rounding_quantum=source_rounding_quantum,
+                    rtol=rtol,
+                    atol=atol,
+                )
+            )
     return diagnostics
 
 

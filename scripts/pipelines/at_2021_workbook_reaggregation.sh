@@ -62,10 +62,25 @@ if _is_true "$EUROSTAT_FORCE_DOWNLOAD"; then
   EUROSTAT_REFRESH_ARGS=(--eurostat-force-download)
 fi
 
+RUN_OUTPUT_SUFFIX="${RUN_OUTPUT_SUFFIX:-}"
+if [[ -z "$RUN_OUTPUT_SUFFIX" ]]; then
+  if _is_true "$ENVIRONMENTAL_ALL_EXTENSIONS"; then
+    RUN_OUTPUT_SUFFIX="${OUTPUT_SUFFIX}_all_extensions"
+  elif [[ -n "${ENVIRONMENTAL_EXTENSIONS_JSON:-}" ]]; then
+    ENVIRONMENTAL_SELECTION_HASH="$(printf '%s' "$ENVIRONMENTAL_EXTENSIONS_JSON" | sha256sum | cut -c1-12)"
+    RUN_OUTPUT_SUFFIX="${OUTPUT_SUFFIX}_custom_extensions_${ENVIRONMENTAL_SELECTION_HASH}"
+  elif [[ "$ENVIRONMENTAL_PRESET" == "combustion-co2" ]]; then
+    RUN_OUTPUT_SUFFIX="$OUTPUT_SUFFIX"
+  else
+    SAFE_ENVIRONMENTAL_PRESET="${ENVIRONMENTAL_PRESET//[^[:alnum:]_-]/_}"
+    RUN_OUTPUT_SUFFIX="${OUTPUT_SUFFIX}_${SAFE_ENVIRONMENTAL_PRESET}"
+  fi
+fi
+
 GENERATED_MAPPINGS_OUT="${GENERATED_MAPPINGS_OUT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_generated_mappings}"
-OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_split_flows}"
-OUT_DISAGG="${OUT_DISAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_disaggregated_flows}"
-OUT_REAGG="${OUT_REAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${OUTPUT_SUFFIX}_reaggregated_flows}"
+OUT_SPLIT="${OUT_SPLIT:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${RUN_OUTPUT_SUFFIX}_split_flows}"
+OUT_DISAGG="${OUT_DISAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${RUN_OUTPUT_SUFFIX}_disaggregated_flows}"
+OUT_REAGG="${OUT_REAGG:-$ROOT_DIR/outputs/${EUROSTAT_GEO}_${EUROSTAT_TIME}_${RUN_OUTPUT_SUFFIX}_reaggregated_flows}"
 
 IDENTITY_MAPPING_CSV="$(mktemp)"
 
@@ -234,7 +249,7 @@ PY
   --outdir "$OUT_DISAGG" \
   --mapping-csv "$IDENTITY_MAPPING_CSV" \
   "${SFC_ARGS[@]}" \
-  --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_split.xlsx" \
+  --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${RUN_OUTPUT_SUFFIX}_split.xlsx" \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
   --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
@@ -250,7 +265,7 @@ PY
   --fail-on-unmapped-split-children \
   "${EXPECT_ARGS[@]}" \
   "${SFC_ARGS[@]}" \
-  --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${OUTPUT_SUFFIX}_reaggregated.xlsx" \
+  --sfc-outname "IOT_${EUROSTAT_GEO}_${EUROSTAT_TIME}_{variant}_${RUN_OUTPUT_SUFFIX}_reaggregated.xlsx" \
   --eurostat-dataset naio_10_cp1700 \
   --eurostat-filters "$EUROSTAT_FILTERS_JSON" \
   --eurostat-row-dim prd_ava --eurostat-col-dim prd_use
@@ -258,6 +273,14 @@ PY
 "$PY" "$ROOT_DIR/scripts/derive_total_iot_flow.py" \
   --outdir "$OUT_REAGG" --validate-only agg \
   --rtol "$FLOW_IDENTITY_RTOL" --atol "$FLOW_IDENTITY_ATOL"
+
+"$PY" "$ROOT_DIR/scripts/validate_many_many_pipeline_outputs.py" \
+  --split-dir "$OUT_SPLIT" \
+  --agg-dir "$OUT_REAGG" \
+  --mapping-csv "$CLOSED_REAGG_MAPPING_CSV" \
+  --out-json "$OUT_REAGG/production_validation.json" \
+  --rtol "$FLOW_IDENTITY_RTOL" \
+  --atol "$FLOW_IDENTITY_ATOL"
 
 if [[ -n "$CAPITAL_STOCK_SOURCE_CSV" ]]; then
   "$PY" "$ROOT_DIR/scripts/export_product_initialization.py" \

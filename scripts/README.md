@@ -176,11 +176,22 @@ bash scripts/pipelines/at_2021_fuels.sh
 
 For a non-AT target, enabling `WRITE_SFC_WORKBOOK=1` requires an explicit `TEMPLATE_XLSX`; the Austrian default template is never reused for another geography.
 
-This writes three families under `outputs/`:
+The wrapper materializes three storage stages but only two scientific sector
+resolutions. `*_split_flows` is the working/provenance representation produced by
+the donor-guided split. `*_disaggregated_flows` applies a generated identity mapping
+to the same split topology so the standard exporter can impose canonical order,
+sector contracts, environmental grid completion, reports, and optional workbooks.
+`*_reaggregated_flows` is the genuinely reaggregated scientific resolution. The
+actual reaggregation reads the working split artifacts directly; the identity pass
+is an export/validation branch, not an additional economic transformation.
 
-- split flow tables plus disaggregated TOTAL / DOM / IMP workbooks with `_fuels_split` in the filename
-- reaggregated TOTAL / DOM / IMP workbooks with `_fuels_reaggregated` in the filename
-- a temporary identity CSV that is generated from the split-stage `exio_selected_sectors.json` files and deleted automatically when the wrapper exits
+Environmental selection is part of output provenance. Archive-wide runs use
+`*_all_extensions_*` output names, non-default presets carry their preset tag, and
+explicit custom extension JSON receives a stable selection hash unless
+`RUN_OUTPUT_SUFFIX` is supplied explicitly. The generated mapping directory remains
+shared because sector mappings do not depend on environmental selection. The final
+reaggregated directory contains `production_validation.json`; its independent
+many-many/environmental validation is a blocking wrapper gate.
 
 The fuels pipeline no longer needs a workbook to author mapping CSVs. The split pass is driven by the committed split CSV, and the identity mapping is synthesized from split-stage artifacts at runtime so the workbook export stays reproducible without checking in an extra identity CSV.
 

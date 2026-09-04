@@ -232,6 +232,14 @@ rounded source controls cross. They are not atomic final demand and must not be
 clamped or used to alter `P6`. Published partition discrepancies are checked with
 the source-rounding envelope; the generated residual identities are exact.
 
+A sparse SDMX source may omit an individual `P6_D0` or `P6_U3` display cell even
+when both operands needed for the corresponding identity are explicit. In that
+narrow case the parser may reconstruct only the missing residual cell, must record
+its row/column/formula provenance, and must not treat the reconstructed value as an
+independently published rounded control. Missing operands, missing atomic/control
+cells such as `P6`, `P6_B0`, or `P6_U2`, and all other missing core `Z`/`Y` cells
+remain hard source-evidence failures.
+
 The additive final-use set `F` must contain exactly one representation of each
 included family. Controls such as total final use and total use are never part
 of `F`.

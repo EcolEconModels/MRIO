@@ -903,3 +903,22 @@ def test_clear_managed_aggregation_outputs_removes_only_stage_files(tmp_path: Pa
 
     assert all(not (tmp_path / name).exists() for name in stale)
     assert unrelated.read_text(encoding="utf-8") == "keep\\n"
+
+
+
+def test_production_based_intensity_preserves_unavailable_emissions() -> None:
+    from scripts.aggregate_iot_by_mapping import _compute_production_based_intensity
+
+    frame = pd.DataFrame(
+        {
+            "disaggregated_sector": ["supported", "unavailable"],
+            "emission": [4.0, float("nan")],
+            "monetary_output": [2.0, 3.0],
+            "unit": ["kg", "kg"],
+        }
+    )
+    output, intensity, unit = _compute_production_based_intensity(frame)
+    assert unit == "kg"
+    assert float(output.loc["unavailable"]) == 3.0
+    assert pd.isna(intensity.loc["unavailable"])
+    assert float(intensity.loc["supported"]) == 2.0

@@ -338,7 +338,9 @@ def _compute_production_based_intensity(
         label="disaggregated_sector_emission_intensity",
     )
     emis_df = disaggregated_sector_emission_intensity.copy()
-    sums = emis_df.groupby("disaggregated_sector")[["emission", "monetary_output"]].sum()
+    sums = emis_df.groupby("disaggregated_sector")[["emission", "monetary_output"]].sum(
+        min_count=1
+    )
     out_by_sector = sums["monetary_output"]
     intensity_by_sector = sums["emission"] / sums["monetary_output"]
     unit_vals = emis_df["unit"].dropna().unique().tolist()

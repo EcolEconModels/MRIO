@@ -411,6 +411,42 @@ def build_eurostat_intermediate_use_reference_from_rows(
     return reference
 
 
+_EXPORT_DISPLAY_RESIDUAL_FORMULAS: dict[str, tuple[str, str, str]] = {
+    "P6_D0": ("P6", "P6_B0", "P6 - P6_B0"),
+    "P6_U3": ("P6_B0", "P6_U2", "P6_B0 - P6_U2"),
+}
+
+
+def _complete_derivable_export_display_residuals(
+    frame: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[dict[str, str]]]:
+    """Derive only missing Eurostat export display residuals from explicit operands.
+
+    Sparse SDMX absence remains missing evidence in general.  The sole exception is
+    an absent cell in a residual display column whose two authoritative operands are
+    explicitly observed on the same row.  Published residual cells are never
+    overwritten, and a residual with either operand missing remains NaN so the normal
+    core-completeness gate still fails closed.
+    """
+    out = frame.copy()
+    derived: list[dict[str, str]] = []
+    for residual, (left, right, formula) in _EXPORT_DISPLAY_RESIDUAL_FORMULAS.items():
+        if residual not in out.columns or left not in out.columns or right not in out.columns:
+            continue
+        residual_missing = out[residual].isna()
+        derivable = residual_missing & out[left].notna() & out[right].notna()
+        if not bool(derivable.any()):
+            continue
+        out.loc[derivable, residual] = (
+            out.loc[derivable, left].astype("float64")
+            - out.loc[derivable, right].astype("float64")
+        )
+        for row in out.index[derivable]:
+            derived.append(
+                {"row": str(row), "column": residual, "formula": formula}
+            )
+    return out, derived
+
 def _require_complete_iot_core_block(
     frame: pd.DataFrame, *, label: str
 ) -> pd.DataFrame:
@@ -502,8 +538,11 @@ def parse_eurostat_iot(
     Z = _require_complete_iot_core_block(
         df.loc[ind_cols, ind_cols], label="Eurostat intermediate-use block Z"
     )
+    y_source, derived_final_demand_residual_cells = (
+        _complete_derivable_export_display_residuals(df.loc[ind_cols, fd_cols])
+    )
     Y = _require_complete_iot_core_block(
-        df.loc[ind_cols, fd_cols], label="Eurostat final-demand block Y"
+        y_source, label="Eurostat final-demand block Y"
     )
     lower_rows = [r for r in industries if r not in set(ind_cols)]
     V = df.loc[lower_rows, ind_cols].astype("float64").fillna(0.0) if lower_rows else None
@@ -523,6 +562,7 @@ def parse_eurostat_iot(
         "row_codes_not_in_intermediate_columns": sorted(row_codes - set(ind_cols)),
         "intermediate_columns_not_in_rows": sorted(set(ind_cols) - row_codes),
         "identified_supplementary_rows": lower_rows,
+        "derived_final_demand_residual_cells": derived_final_demand_residual_cells,
         "source_rounding_quantum": infer_source_rounding_quantum(payload, value_key=value_key),
     }
     return ParsedEurostatIOT(Z=Z, Y=Y, meta=meta, V=V, M=M)
