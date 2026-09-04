@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
+from ecolecon_mrio.eurostat_target_product_schema import CPA65_CODES
 from scripts.split_eurostat_energy_by_exiobase import (
     _eurostat_non_export_use_reference_from_parsed,
     _mapping_weights_frame,
@@ -45,10 +46,10 @@ def _canonical_base(kind: str) -> dict[str, str]:
 
 def _write_weighted_mapping(path: Path) -> None:
     rows = []
-    for order, target in enumerate(["CPA_C20", "CPA_C21"], start=1):
+    for order, target in enumerate(CPA65_CODES, start=1):
         row = _canonical_base("weighted")
-        row["source_code"] = "p24.d"
-        row["source_label"] = "Chemicals nec"
+        row["source_code"] = "p24.d" if target in {"CPA_C20", "CPA_C21"} else f"source_{target}"
+        row["source_label"] = "Chemicals nec" if target in {"CPA_C20", "CPA_C21"} else target
         row["target_code"] = target
         row["target_label"] = target
         row["order"] = str(order)
@@ -57,16 +58,16 @@ def _write_weighted_mapping(path: Path) -> None:
 
 
 def _parsed_iot(*, c20_non_export_y: float, c21_non_export_y: float) -> ParsedEurostatIOT:
-    codes = ["CPA_C20", "CPA_C21"]
+    codes = pd.Index(CPA65_CODES)
     z = pd.DataFrame(
-        [[0.0, 0.0], [0.0, 0.0]],
+        0.0,
         index=codes,
         columns=codes,
     )
     y = pd.DataFrame(
         {
-            "P3": [c20_non_export_y, c21_non_export_y],
-            "P6": [9999.0, 9999.0],
+            "P3": [c20_non_export_y if code == "CPA_C20" else c21_non_export_y if code == "CPA_C21" else 0.0 for code in codes],
+            "P6": [9999.0] * len(codes),
         },
         index=codes,
     )

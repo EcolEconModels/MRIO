@@ -41,7 +41,14 @@ from ecolecon_mrio.mapping_csv import (
     load_weighted_mapping_frame,
     read_split_mapping,
     read_weighted_mapping,
+    resolve_weighted_mapping_frame,
     validate_mapping_weights,
+)
+from ecolecon_mrio.eurostat_target_product_schema import (
+    CPA65_CODES,
+    TargetProductSchema,
+    detect_target_product_schema,
+    project_reviewed_cpa65_to_cpa64,
 )
 
 
@@ -416,11 +423,49 @@ def _resolve_exio_to_eurostat_mapping_for_parsed(
     path: str | Path,
     parsed: ParsedEurostatIOT,
 ) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
-    """Resolve EXIO-to-Eurostat weights from this flow's Eurostat use reference."""
-    return _read_exio_to_eurostat_mapping_with_notes(
-        path,
-        target_output_by_code=_eurostat_non_export_use_reference_from_parsed(parsed),
+    """Resolve a reviewed concordance in canonical space, then return source keys.
+
+    Eurostat matrices remain on their published source axis.  Only the target-side
+    reference and concordance use the validated canonical schema, which lets the
+    consolidated 64-product ``CPA_L68B`` carrier resolve the CPA64 ``CPA_L68``
+    target without relabelling any monetary or environmental matrix.
+    """
+    schema = detect_target_product_schema(parsed.Z.index)
+    canonical_reference = schema.canonicalize_reference(
+        _eurostat_non_export_use_reference_from_parsed(parsed)
     )
+    frame = load_weighted_mapping_frame(path)
+    mapping_targets = set(frame["target_code"].astype(str).str.strip())
+    if mapping_targets == set(CPA65_CODES):
+        if schema.schema_id == "EUROSTAT_CONSOLIDATED_CPA64":
+            frame = project_reviewed_cpa65_to_cpa64(frame)
+    elif mapping_targets != set(schema.canonical_codes):
+        raise ValueError(
+            f"Concordance target domain {sorted(mapping_targets)!r} is incompatible "
+            f"with validated schema {schema.schema_id!r}."
+        )
+
+    resolved_frame = resolve_weighted_mapping_frame(
+        frame,
+        target_output_by_code=canonical_reference,
+    )
+    source_mapping: dict[str, dict[str, float]] = {}
+    for _row_index, row in resolved_frame.iterrows():
+        source_target = schema.source_target(str(row["target_code"]))
+        source_mapping.setdefault(source_target, {})[str(row["source_code"])] = float(row["weight"])
+    validate_mapping_weights(source_mapping)
+    notes_by_target: dict[str, list[str]] = {}
+    if "notes" in frame.columns:
+        for _row_index, row in frame.iterrows():
+            target = str(row["target_code"]).strip()
+            note = str(row["notes"]).strip()
+            if note:
+                notes_by_target.setdefault(target, []).append(note)
+    notes = {
+        schema.source_target(target): " | ".join(dict.fromkeys(values))
+        for target, values in notes_by_target.items()
+    }
+    return source_mapping, notes
 
 
 def _mapping_weights_frame(
@@ -430,11 +475,17 @@ def _mapping_weights_frame(
     variant_value: str | None = None,
     exio_flow: str | None = None,
     reference_basis: str = "eurostat_Z_plus_non_export_Y",
+    target_schema: TargetProductSchema | None = None,
 ) -> pd.DataFrame:
     """Flatten resolved weights for reproducibility diagnostics."""
     rows: list[dict[str, object]] = []
     for target_code, source_weights in sector_mapping.items():
         for source_code, weight in source_weights.items():
+            canonical_target = (
+                target_schema.source_to_canonical[str(target_code)]
+                if target_schema is not None
+                else str(target_code)
+            )
             rows.append(
                 {
                     "variant_dim": variant_dim or "",
@@ -442,6 +493,10 @@ def _mapping_weights_frame(
                     "exio_flow": exio_flow or "",
                     "source_code": str(source_code),
                     "target_code": str(target_code),
+                    "canonical_target_code": canonical_target,
+                    "target_product_schema": ""
+                    if target_schema is None
+                    else target_schema.schema_id,
                     "weight": float(weight),
                     "reference_basis": reference_basis,
                 }
@@ -454,6 +509,8 @@ def _mapping_weights_frame(
             "exio_flow",
             "source_code",
             "target_code",
+            "canonical_target_code",
+            "target_product_schema",
             "weight",
             "reference_basis",
         ]),
@@ -1660,6 +1717,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             variant_dim=args.eurostat_stk_flow_dim,
                             variant_value=str(flow),
                             exio_flow=exio_flow,
+                            target_schema=detect_target_product_schema(parsed_variant.Z.index),
                         ),
                         out,
                         verbose=args.verbose,
@@ -1974,7 +2032,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if outdir is not None:
             out = outdir / "flow_specific_exio_to_eurostat_weights.csv"
             _write_rows_csv(
-                _mapping_weights_frame(full_sector_mapping, exio_flow=exio_flow_single),
+                _mapping_weights_frame(
+                    full_sector_mapping,
+                    exio_flow=exio_flow_single,
+                    target_schema=detect_target_product_schema(parsed_for_mapping.Z.index),
+                ),
                 out,
                 verbose=args.verbose,
             )

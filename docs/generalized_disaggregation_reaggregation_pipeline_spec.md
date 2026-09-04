@@ -471,6 +471,20 @@ pair of `SplitResult` fields rather than adding environment-specific fields.
 Reaggregation stays outside the monetary `AggregationResult` and is handled by one
 total-first satellite operator.
 
+#### Eurostat target-product schema boundary
+
+The parsed Eurostat source axis is never renamed.  Concordance resolution first
+recognises an exact ordered target-product domain: national CPA65 keeps
+`CPA_L68A`/`CPA_L68B`, while the exact consolidated 64-product domain uses the
+published `CPA_L68B` source carrier for canonical `CPA_L68`.  The use reference
+and concordance are resolved in that canonical target space, then the resolved
+target is translated back to the source carrier before the original `Z`, `Y`, or
+environmental-extension path is used.  An arbitrary short or missing-product
+axis is not a schema and fails before concordance resolution.  The reviewed CPA65
+map is deterministically projected for the consolidated domain, preserving its
+reviewed `p23.3`, `p24.*`, and `p33` corrections rather than substituting the raw
+official-direct CPA64 map.
+
 #### Geography-aware satellite boundaries
 
 The generic satellite operator carries extensive physical values and monetary
