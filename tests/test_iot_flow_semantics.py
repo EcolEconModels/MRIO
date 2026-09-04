@@ -11,6 +11,11 @@ from ecolecon_mrio.iot_flow_semantics import (
     flow_use_total,
     technical_coefficients,
 )
+from ecolecon_mrio.eurostat_iot import (
+    ParsedEurostatIOT,
+    build_eurostat_product_use_reference,
+    select_eurostat_atomic_final_demand_columns,
+)
 
 
 def test_atomic_final_demand_excludes_overlapping_aggregates_and_summaries() -> None:
@@ -31,6 +36,18 @@ def test_output_and_coefficients_use_atomic_final_demand() -> None:
     pd.testing.assert_series_equal(output, expected.rename("use_total"))
     A = technical_coefficients(Z, output)
     np.testing.assert_allclose(A.to_numpy(), Z.divide(output, axis="columns").to_numpy())
+
+
+def test_eurostat_atomic_wrapper_uses_nested_p5_without_double_counting() -> None:
+    """The source wrapper shares the P51G/P5M basis used by TFU and TU controls."""
+    idx = pd.Index(["a"])
+    parsed = ParsedEurostatIOT(
+        Z=pd.DataFrame([[2.0]], index=idx, columns=idx),
+        Y=pd.DataFrame({"P51G": [3.0], "P5M": [5.0], "P5": [8.0], "P6": [7.0]}, index=idx),
+        meta={},
+    )
+    assert select_eurostat_atomic_final_demand_columns(parsed) == ["P51G", "P5M", "P6"]
+    assert float(build_eurostat_product_use_reference(parsed).loc["a"]) == 17.0
 
 def test_accounting_control_normalizes_only_tolerance_scale_negative_noise() -> None:
     values = pd.Series([10.0, -5e-7], index=pd.Index(["a", "b"]))

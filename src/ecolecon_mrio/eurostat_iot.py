@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
+from ecolecon_mrio.iot_flow_semantics import atomic_final_demand_columns
 
 
 EUROSTAT_API_BASE = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
@@ -336,28 +337,15 @@ def select_eurostat_atomic_final_demand_columns(
     *,
     include_exports: bool = True,
 ) -> list[str]:
-    cols = [str(col) for col in parsed.Y.columns]
-    selected: list[str] = []
-
-    p3_detail = [code for code in ("P3_S13", "P3_S14", "P3_S15") if code in cols]
-    if p3_detail:
-        selected.extend(p3_detail)
-    elif "P3" in cols:
-        selected.append("P3")
-
-    p5_detail = [code for code in ("P51G", "P52", "P53") if code in cols]
-    if p5_detail:
-        selected.extend(p5_detail)
-    elif "P5" in cols:
-        selected.append("P5")
-
-    if include_exports:
-        if "P6" in cols:
-            selected.append("P6")
-        else:
-            selected.extend(sorted(code for code in cols if code.startswith("P6_")))
-
-    return selected
+    try:
+        selected = atomic_final_demand_columns(parsed.Y.columns)
+    except ValueError as exc:
+        if "no recognised non-overlapping final-demand columns" not in str(exc):
+            raise
+        # Generic local-IOT fixtures may use caller-defined final-demand labels;
+        # preserve the historic empty Eurostat-specific selection for that case.
+        selected = []
+    return [code for code in selected if include_exports or not code.startswith("P6")]
 
 
 def build_eurostat_atomic_final_demand(

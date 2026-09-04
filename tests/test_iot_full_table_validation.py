@@ -166,6 +166,27 @@ def test_missing_atomic_column_is_structural_diagnostic_not_key_error() -> None:
     assert "P53" in checks["full.atomic.total"].affected_labels
 
 
+def test_complete_nested_p5_triplet_uses_p51g_plus_p5m_without_flat_controls() -> None:
+    """A valid nested investment family is not rejected as missing P52/P53."""
+    variants = _triplet()
+    for flow, parsed in tuple(variants.items()):
+        variants[flow] = ParsedEurostatIOT(
+            parsed.Z,
+            parsed.Y.drop(columns=["P52", "P53"]),
+            parsed.meta,
+            parsed.V,
+            parsed.M.drop(columns=["P52", "P53"]) if parsed.M is not None else None,
+        )
+    report = validate_eurostat_iot_full_table(
+        variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY
+    )
+    checks = _checks(report)
+    assert report.ok
+    assert checks["full.y3.p5_nested.total"].status == "pass"
+    assert checks["full.y2.p5m.total"].status == "not_tested"
+    assert checks["full.y4.p5_flat.total"].status == "not_tested"
+
+
 def test_source_rounding_gap_passes_but_generated_gap_fails() -> None:
     variants = _triplet()
     variants["TOTAL"].Y.loc["a", "P3"] += 0.1

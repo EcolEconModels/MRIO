@@ -139,11 +139,36 @@ def _choose_p6_family(columns: set[str]) -> list[str]:
     return []
 
 
+def _choose_p5_family(columns: set[str]) -> list[str]:
+    """Choose one recognised non-overlapping investment hierarchy.
+
+    ``P51G/P52/P53`` is the preferred flat basis.  Some valid Eurostat tables
+    instead publish the nested ``P51G/P5M`` basis; in that representation P5M is
+    already the inventories-plus-valuables primitive and neither P52 nor P53 may
+    be invented.  Any partial detail is ambiguous even when a published P5
+    aggregate exists, so it fails rather than silently discarding evidence.
+    """
+    flat_present = [code for code in _P5_DETAIL if code in columns]
+    nested_present = [code for code in ("P51G", "P5M") if code in columns]
+    if len(flat_present) == len(_P5_DETAIL):
+        return flat_present
+    if len(nested_present) == 2 and flat_present == ["P51G"]:
+        return nested_present
+    if not flat_present and not nested_present and "P5" in columns:
+        return ["P5"]
+    if flat_present or nested_present:
+        raise ValueError(
+            "Incomplete P5 investment partition: "
+            f"flat_present={flat_present!r}, nested_present={nested_present!r}."
+        )
+    return []
+
+
 def atomic_final_demand_columns(columns: pd.Index | list[str]) -> list[str]:
     """Return one complete, non-overlapping Eurostat final-demand basis."""
     cols = set(map(str, columns))
     selected = _choose_family(cols, aggregate="P3", detail=_P3_DETAIL)
-    selected.extend(_choose_family(cols, aggregate="P5", detail=_P5_DETAIL))
+    selected.extend(_choose_p5_family(cols))
     selected.extend(_choose_p6_family(cols))
     if not selected:
         raise ValueError(
@@ -184,8 +209,13 @@ def _validate_partition_identity(
 def atomic_final_demand(Y: pd.DataFrame) -> pd.DataFrame:
     Y_ord = Y.copy().astype("float64")
     Y_ord.columns = Y_ord.columns.astype(str)
-    for aggregate, detail in (("P3", _P3_DETAIL), ("P5", _P5_DETAIL)):
-        _validate_partition_identity(Y_ord, aggregate=aggregate, detail=detail)
+    _validate_partition_identity(Y_ord, aggregate="P3", detail=_P3_DETAIL)
+    p5_basis = _choose_p5_family(set(Y_ord.columns))
+    if p5_basis == list(_P5_DETAIL):
+        _validate_partition_identity(Y_ord, aggregate="P5M", detail=_P5M_DETAIL)
+        _validate_partition_identity(Y_ord, aggregate="P5", detail=_P5_DETAIL)
+    elif p5_basis == ["P51G", "P5M"]:
+        _validate_partition_identity(Y_ord, aggregate="P5", detail=("P51G", "P5M"))
     cols = atomic_final_demand_columns(Y_ord.columns)
     return Y_ord.loc[:, cols].copy()
 
@@ -211,7 +241,9 @@ def derived_final_demand_control_columns(columns: pd.Index | list[str]) -> list[
         derived.append("P3")
     if "P5M" in cols and set(_P5M_DETAIL).issubset(cols):
         derived.append("P5M")
-    if "P5" in cols and set(_P5_DETAIL).issubset(cols):
+    if "P5" in cols and (
+        set(_P5_DETAIL).issubset(cols) or {"P51G", "P5M"}.issubset(cols)
+    ):
         derived.append("P5")
     if {"P6", "P6_B0", "P6_D0"}.issubset(cols):
         derived.append("P6_D0")
@@ -244,7 +276,7 @@ def enforce_final_demand_display_identities(
         out.loc[:, "P3"] = out.loc[:, list(_P3_DETAIL)].sum(axis=1).astype("float64")
     if set(_P5M_DETAIL).issubset(out.columns):
         out.loc[:, "P5M"] = out.loc[:, list(_P5M_DETAIL)].sum(axis=1).astype("float64")
-    if set(_P5_DETAIL).issubset(out.columns):
+    if {"P51G", "P5M"}.issubset(out.columns):
         out.loc[:, "P5"] = (
             out.loc[:, "P51G"].add(out.loc[:, "P5M"], fill_value=0.0).astype("float64")
         )

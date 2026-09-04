@@ -986,10 +986,15 @@ def _validate_split_reconstruction(
 
     # Published aggregate controls may be independently rounded in the source.
     # Generated controls must, however, equal their generated components strictly.
+    p5_source_detail = (
+        ("P51G", "P52", "P53")
+        if {"P51G", "P52", "P53"}.issubset(Y_expected.columns)
+        else ("P51G", "P5M")
+    )
     for aggregate, source_detail, generated_detail in (
         ("P3", ("P3_S13", "P3_S14", "P3_S15"), ("P3_S13", "P3_S14", "P3_S15")),
         ("P5M", ("P52", "P53"), ("P52", "P53")),
-        ("P5", ("P51G", "P52", "P53"), ("P51G", "P5M")),
+        ("P5", p5_source_detail, ("P51G", "P5M")),
         ("P6", ("P6_B0", "P6_D0"), ("P6_B0", "P6_D0")),
         ("P6_B0", ("P6_U2", "P6_U3"), ("P6_U2", "P6_U3")),
     ):
@@ -1080,6 +1085,8 @@ def _fd_category_keys_for_eurostat_code(fd_code: str) -> list[str] | None:
         return ["inventories"]
     if code == "P53":
         return ["valuables"]
+    if code == "P5M":
+        return ["inventories", "valuables"]
     if code in {"P6", "P6_B0", "P6_D0", "P6_U2", "P6_U3"}:
         return ["exports"]
     return None

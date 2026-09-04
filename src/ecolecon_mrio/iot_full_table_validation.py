@@ -14,7 +14,10 @@ import pandas as pd
 
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.eurostat_iot_source_policy import EurostatIOTAccountingPolicy
-from ecolecon_mrio.iot_flow_semantics import rounded_source_control_diagnostic
+from ecolecon_mrio.iot_flow_semantics import (
+    rounded_source_control_diagnostic,
+    source_atomic_final_demand,
+)
 from ecolecon_mrio.iot_validation import (
     FlowRole,
     InvariantCheck,
@@ -27,6 +30,16 @@ ValidationMode = Literal["source", "generated"]
 _FLOWS: tuple[FlowRole, ...] = ("DOM", "IMP", "TOTAL")
 _RTOL = 1e-9
 _ATOL = 1e-6
+
+
+def _p5_partition_ids(atomic_columns: Sequence[str]) -> set[str]:
+    """Return only the P5 identities applicable to the selected atomic basis."""
+    selected = set(map(str, atomic_columns))
+    if {"P51G", "P52", "P53"}.issubset(selected):
+        return {"full.y2.p5m", "full.y3.p5_nested", "full.y4.p5_flat"}
+    if {"P51G", "P5M"}.issubset(selected):
+        return {"full.y3.p5_nested"}
+    return set()
 
 
 def _check(
@@ -457,7 +470,31 @@ def _structural_checks(
                 ),
             )
         )
-        missing_columns = [code for code in policy.required_final_demand_columns if code not in parsed.Y.columns]
+        try:
+            selected_atomic = source_atomic_final_demand(parsed.Y)
+        except ValueError as exc:
+            selected_atomic = None
+            atomic_error = str(exc)
+            atomic_affected = tuple(
+                code
+                for code in ("P51G", "P52", "P53", "P5M")
+                if code not in parsed.Y.columns
+            )
+        else:
+            atomic_error = None
+            atomic_affected = ()
+        nested_p5 = (
+            selected_atomic is not None
+            and {"P51G", "P5M"}.issubset(selected_atomic.columns)
+            and "P52" not in selected_atomic.columns
+            and "P53" not in selected_atomic.columns
+        )
+        permitted_missing_p5 = {"P52", "P53"} if nested_p5 else set()
+        missing_columns = [
+            code
+            for code in policy.required_final_demand_columns
+            if code not in parsed.Y.columns and code not in permitted_missing_p5
+        ]
         checks.append(
             _check(
                 f"full.schema.y.{flow.lower()}",
@@ -490,20 +527,27 @@ def _structural_checks(
                 explanation="The selected naio_10_cp1700 policy requires its declared supplementary controls in V and M.",
             )
         )
-        missing_atomic = [code for code in policy.atomic_final_demand_columns if code not in parsed.Y.columns]
         checks.append(
             _check(
                 f"full.atomic.{flow.lower()}",
-                status="pass" if not missing_atomic else "fail",
+                status="pass" if selected_atomic is not None and not missing_columns else "fail",
                 severity="error",
                 flow=flow,
                 block="Y",
-                affected=missing_atomic,
-                explanation="The complete declared non-overlapping final-demand basis is mandatory for this policy.",
+                affected=(
+                    atomic_affected
+                    if atomic_error is not None
+                    else tuple(
+                        code
+                        for code in policy.atomic_final_demand_columns
+                        if code not in parsed.Y.columns and code not in permitted_missing_p5
+                    )
+                ),
+                explanation="A complete recognised non-overlapping final-demand basis is mandatory for this policy.",
             )
         )
-        if not missing_atomic:
-            atomic[flow] = parsed.Y.loc[:, list(policy.atomic_final_demand_columns)].astype("float64")
+        if selected_atomic is not None:
+            atomic[flow] = selected_atomic
 
         # Intermediate transactions and declared use/supply controls are gross
         # monetary flows. Signed stock changes, taxes and residual income rows
@@ -693,8 +737,22 @@ def validate_eurostat_iot_full_table(
                 ]
             )
             continue
+        active_p5_partitions = _p5_partition_ids(
+            () if flow not in atomic else tuple(map(str, atomic[flow].columns))
+        )
         for partition in policy.final_demand_partitions:
             check_id = f"{partition.check_id}.{flow.lower()}"
+            if partition.check_id.startswith("full.y2.p5") or partition.check_id.startswith("full.y3.p5") or partition.check_id.startswith("full.y4.p5"):
+                if partition.check_id not in active_p5_partitions:
+                    checks.append(
+                        _not_tested(
+                            check_id,
+                            flow=flow,
+                            block="Y",
+                            explanation="This displayed P5 identity is outside the selected non-overlapping investment basis.",
+                        )
+                    )
+                    continue
             aggregate = _safe_column(parsed.Y, partition.aggregate, flow=flow, checks=checks, check_id=check_id)
             components = [
                 _safe_column(parsed.Y, item, flow=flow, checks=checks, check_id=check_id)
@@ -719,7 +777,7 @@ def validate_eurostat_iot_full_table(
             "Y",
             tfu,
             None if atomic_y is None else atomic_y.sum(axis=1),
-            len(policy.atomic_final_demand_columns),
+            0 if atomic_y is None else len(atomic_y.columns),
             "TFU must equal the declared atomic non-overlapping final-demand basis.",
         )
         tu_id = f"full.y13.tu.{flow.lower()}"
@@ -730,10 +788,10 @@ def validate_eurostat_iot_full_table(
             "Z|Y",
             tu,
             None if atomic_y is None else parsed.Z.sum(axis=1).add(atomic_y.sum(axis=1)),
-            len(parsed.Z.columns) + len(policy.atomic_final_demand_columns),
+            len(parsed.Z.columns) + (0 if atomic_y is None else len(atomic_y.columns)),
             "TU must equal intermediate use plus the declared atomic final-demand basis.",
         )
-    atomic_set = set(policy.atomic_final_demand_columns)
+    atomic_set = set().union(*(set(frame.columns) for frame in atomic.values()))
     checks.append(
         _check(
             "full.y10.atomic_excludes_tfu",
@@ -807,7 +865,7 @@ def validate_eurostat_iot_full_table(
                             ),
                             False,
                         )
-                        for partition in ("full.y1.p3", "full.y2.p5m", "full.y3.p5_nested", "full.y4.p5_flat")
+                        for partition in ("full.y1.p3", *_p5_partition_ids(tuple(map(str, atomic.get(flow, pd.DataFrame()).columns))))
                     )
                     else "not_tested"
                 ),
@@ -907,17 +965,17 @@ def validate_eurostat_iot_full_table(
     # R1--R5 and imports controls use the declared flow orientations.
     if total is not None and dom is not None and "DOM" in atomic:
         p1_total = _safe_row(total.V, "P1", flow="TOTAL", block="V", checks=checks, check_id="full.r1.domestic_output")
-        compare("full.r1.domestic_output", "TOTAL", "V_TOTAL|Z_DOM|Y_DOM", p1_total, dom.Z.sum(axis=1).add(atomic["DOM"].sum(axis=1)), len(dom.Z.columns) + len(policy.atomic_final_demand_columns), "TOTAL P1 must bridge domestic row uses.")
+        compare("full.r1.domestic_output", "TOTAL", "V_TOTAL|Z_DOM|Y_DOM", p1_total, dom.Z.sum(axis=1).add(atomic["DOM"].sum(axis=1)), len(dom.Z.columns) + len(atomic["DOM"].columns), "TOTAL P1 must bridge domestic row uses.")
     else:
         checks.append(_not_tested("full.r1.domestic_output", flow="TOTAL", block="V_TOTAL|Z_DOM|Y_DOM", explanation="DOM/TOTAL flows and atomic Y are required."))
     if total is not None and imp is not None and "IMP" in atomic:
         p7_total = _safe_row(total.V, "P7", flow="TOTAL", block="V", checks=checks, check_id="full.r2.imports_supply")
-        compare("full.r2.imports_supply", "TOTAL", "V_TOTAL|Z_IMP|Y_IMP", p7_total, imp.Z.sum(axis=1).add(atomic["IMP"].sum(axis=1)), len(imp.Z.columns) + len(policy.atomic_final_demand_columns), "TOTAL P7 must bridge complete imported row uses.")
+        compare("full.r2.imports_supply", "TOTAL", "V_TOTAL|Z_IMP|Y_IMP", p7_total, imp.Z.sum(axis=1).add(atomic["IMP"].sum(axis=1)), len(imp.Z.columns) + len(atomic["IMP"].columns), "TOTAL P7 must bridge complete imported row uses.")
     else:
         checks.append(_not_tested("full.r2.imports_supply", flow="TOTAL", block="V_TOTAL|Z_IMP|Y_IMP", explanation="IMP/TOTAL flows and atomic Y are required."))
     if total is not None and "TOTAL" in atomic:
         tu_total = _safe_column(total.Y, "TU", flow="TOTAL", checks=checks, check_id="full.r3.total_use")
-        compare("full.r3.total_use", "TOTAL", "Y_TOTAL|Z_TOTAL", tu_total, total.Z.sum(axis=1).add(atomic["TOTAL"].sum(axis=1)), len(total.Z.columns) + len(policy.atomic_final_demand_columns), "TOTAL TU must equal total row uses.")
+        compare("full.r3.total_use", "TOTAL", "Y_TOTAL|Z_TOTAL", tu_total, total.Z.sum(axis=1).add(atomic["TOTAL"].sum(axis=1)), len(total.Z.columns) + len(atomic["TOTAL"].columns), "TOTAL TU must equal total row uses.")
     else:
         checks.append(_not_tested("full.r3.total_use", flow="TOTAL", block="Y_TOTAL|Z_TOTAL", explanation="TOTAL flow and atomic Y are required."))
     if total is not None and dom is not None and imp is not None:
@@ -971,7 +1029,7 @@ def validate_eurostat_iot_full_table(
         tu = _safe_column(total.Y, "TU", flow="TOTAL", checks=checks, check_id="full.sp2.ts_equals_tu")
         compare("full.sp2.ts_equals_tu", "TOTAL", "V|Y", ts, tu, 1, "TS_BP must equal TU where the source table publishes the common valuation control.")
         if "TOTAL" in atomic and p1 is not None and p7 is not None:
-            compare("full.sp3.output_imports_use", "TOTAL", "V|Z|Y", p1.add(p7), total.Z.sum(axis=1).add(atomic["TOTAL"].sum(axis=1)), len(total.Z.columns) + len(policy.atomic_final_demand_columns), "P1 plus P7 must equal total row uses.")
+            compare("full.sp3.output_imports_use", "TOTAL", "V|Z|Y", p1.add(p7), total.Z.sum(axis=1).add(atomic["TOTAL"].sum(axis=1)), len(total.Z.columns) + len(atomic["TOTAL"].columns), "P1 plus P7 must equal total row uses.")
         else:
             checks.append(_not_tested("full.sp3.output_imports_use", flow="TOTAL", block="V|Z|Y", explanation="P1, P7 and atomic TOTAL Y are required."))
         if ts is not None and tu is not None:

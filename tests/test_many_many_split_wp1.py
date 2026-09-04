@@ -315,6 +315,37 @@ def test_wp1_accepts_explicit_weights_and_rejects_cellwise_or_p5m_drift(
         )
 
 
+def test_wp1_nested_p5_allocates_p5m_once_and_derives_exact_child_p5(
+    tmp_path: Path,
+) -> None:
+    """EU27-style P51G/P5M controls never allocate P5 as an independent donor."""
+    z, y, donor_slice, split_mapping = _core_fixture(tmp_path)
+    nested_y = y.drop(columns=["P52", "P53"])
+    edges = {
+        "CPA_C20": {"p24.d": 0.5, "p24.g": 1.0},
+        "CPA_C21": {"p24.d": 0.5, "p24.h": 1.0},
+    }
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=z,
+        eurostat_Y=nested_y,
+        exio_slice=donor_slice,
+        sector_to_exio_sectors=split_mapping,
+        eurostat_sector_mapping=edges,
+        export_vector_loader=lambda **_kwargs: pd.Series(0.0, index=donor_slice.Z.index),
+        create_io_system=False,
+    )
+    assert "P52" not in result.Y.columns and "P53" not in result.Y.columns
+    pd.testing.assert_series_equal(
+        result.Y["P5"], result.Y["P51G"] + result.Y["P5M"], check_names=False
+    )
+    pd.testing.assert_frame_equal(
+        _aggregate_rows_to_original(
+            result.Y.loc[:, ["P51G", "P5M"]], split_profiles=result.split_profiles
+        ).reindex(index=nested_y.index),
+        nested_y.loc[:, ["P51G", "P5M"]],
+    )
+
+
 def test_wp1_rejects_child_collisions_and_removes_inactive_balancing_api() -> None:
     """A child owns one parent, and donor-block APIs expose no inactive RAS controls."""
     share = pd.Series([1.0], index=["edge"], dtype="float64")

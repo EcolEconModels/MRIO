@@ -49,14 +49,24 @@ def test_atomic_final_demand_rejects_no_recognised_columns() -> None:
         atomic_final_demand(pd.DataFrame({"TU": [1.0]}))
 
 
-def test_atomic_final_demand_uses_p5_aggregate_when_detail_partition_is_partial() -> None:
+def test_atomic_final_demand_rejects_partial_p5_partition_even_with_aggregate() -> None:
     Y = pd.DataFrame({"P5": [10.0], "P51G": [3.0]})
-    assert list(atomic_final_demand(Y).columns) == ["P5"]
+    with pytest.raises(ValueError, match="Incomplete P5 investment partition"):
+        atomic_final_demand(Y)
 
 
 def test_atomic_final_demand_rejects_partial_p5_partition_without_aggregate() -> None:
-    with pytest.raises(ValueError, match="Incomplete P5 detail partition without aggregate"):
+    with pytest.raises(ValueError, match="Incomplete P5 investment partition"):
         atomic_final_demand(pd.DataFrame({"P51G": [3.0]}))
+
+
+def test_atomic_final_demand_uses_complete_nested_p5_partition() -> None:
+    Y = pd.DataFrame({"P5": [9.0], "P51G": [3.0], "P5M": [6.0]})
+    assert list(atomic_final_demand(Y).columns) == ["P51G", "P5M"]
+
+
+def test_atomic_final_demand_accepts_aggregate_only_p5() -> None:
+    assert list(atomic_final_demand(pd.DataFrame({"P5": [9.0]})).columns) == ["P5"]
 
 
 def test_atomic_final_demand_uses_complete_consistent_p5_detail_partition() -> None:
@@ -109,6 +119,17 @@ def test_display_aggregates_are_derived_from_atomic_details() -> None:
     assert out.loc["a", "P6"] == 7.0
     assert out.loc["a", "P6_D0"] == 2.0
     assert out.loc["a", "P6_U3"] == 2.0
+
+
+def test_display_aggregates_derive_nested_p5_without_fabricating_flat_details() -> None:
+    from ecolecon_mrio.iot_flow_semantics import enforce_final_demand_display_identities
+
+    out = enforce_final_demand_display_identities(
+        pd.DataFrame({"P5": [999.0], "P51G": [4.0], "P5M": [6.0]}, index=pd.Index(["a"]))
+    )
+    assert out.loc["a", "P5"] == 10.0
+    assert "P52" not in out.columns
+    assert "P53" not in out.columns
 
 
 def test_display_export_residuals_allow_rounded_geographic_crossing() -> None:
