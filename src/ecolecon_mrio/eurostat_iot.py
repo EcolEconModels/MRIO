@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import typing
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -415,6 +416,76 @@ _EXPORT_DISPLAY_RESIDUAL_FORMULAS: dict[str, tuple[str, str, str]] = {
     "P6_D0": ("P6", "P6_B0", "P6 - P6_B0"),
     "P6_U3": ("P6_B0", "P6_U2", "P6_B0 - P6_U2"),
 }
+_CONSOLIDATED_EU_GEO_CODES = {"EU27_2020"}
+_CONSOLIDATED_EU_STRUCTURAL_ZERO_EXPORT_COLUMNS = ("P6_B0", "P6_U2", "P6_U3")
+
+
+def _complete_consolidated_eu_export_structural_zeros(
+    frame: pd.DataFrame,
+    *,
+    payload: Mapping[str, Any],
+    col_dim: str,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Materialise only export controls that are zero by the consolidated-EU boundary.
+
+    Eurostat defines intra-EU trade as domestic in consolidated EU SUIOTs.  Therefore
+    exports from the EU aggregate to EU countries, euro-area countries, or EU
+    countries outside the euro area are structurally zero rather than unknown source
+    observations.  The source codelist must still declare each completed control.
+    Any explicit non-zero observation contradicts that accounting boundary and fails.
+    """
+    dimension = payload.get("dimension")
+    if not isinstance(dimension, dict):
+        return frame, []
+    geo_category = dimension.get("geo", {}).get("category", {})
+    geo_index = geo_category.get("index", {}) if isinstance(geo_category, dict) else {}
+    if not isinstance(geo_index, dict) or len(geo_index) != 1:
+        return frame, []
+    geo_code = str(next(iter(geo_index)))
+    if geo_code not in _CONSOLIDATED_EU_GEO_CODES:
+        return frame, []
+
+    col_category = dimension.get(col_dim, {}).get("category", {})
+    col_index = col_category.get("index", {}) if isinstance(col_category, dict) else {}
+    if not isinstance(col_index, dict):
+        return frame, []
+    declared_positions = {str(code): int(pos) for code, pos in col_index.items()}
+    out = frame.copy()
+    completed: list[str] = []
+    for code in _CONSOLIDATED_EU_STRUCTURAL_ZERO_EXPORT_COLUMNS:
+        if code not in declared_positions:
+            continue
+        if code in out.columns:
+            observed = typing.cast(pd.Series, pd.to_numeric(out[code], errors="coerce"))
+            malformed = typing.cast(pd.Series, out[code]).notna() & observed.isna()
+            if bool(malformed.any()):
+                raise EurostatParseError(
+                    f"Consolidated EU structural-zero export control {code} contains non-numeric observations."
+                )
+            finite_observed = observed.dropna().to_numpy(dtype="float64")
+            if not np.isfinite(finite_observed).all():
+                raise EurostatParseError(
+                    f"Consolidated EU structural-zero export control {code} contains non-finite observations."
+                )
+            nonzero = observed.notna() & observed.ne(0.0)
+            if bool(nonzero.any()):
+                sample = [str(label) for label in out.index[nonzero][:10]]
+                raise EurostatParseError(
+                    "Consolidated EU export accounting contradiction: intra-EU export "
+                    f"control {code} must be structural zero, but non-zero observations "
+                    f"exist for rows={sample!r}."
+                )
+            out.loc[:, code] = observed.fillna(0.0).astype("float64")
+        else:
+            out.loc[:, code] = 0.0
+        completed.append(code)
+
+    if completed:
+        # Restore SDMX codelist order after materialising globally sparse columns.
+        current = [str(code) for code in out.columns]
+        current.sort(key=lambda code: declared_positions.get(code, len(declared_positions)))
+        out = out.loc[:, current]
+    return out, completed
 
 
 def _complete_derivable_export_display_residuals(
@@ -520,6 +591,14 @@ def parse_eurostat_iot(
     if not isinstance(df.index, pd.Index):
         raise EurostatParseError("Unexpected index type after reshaping SDMX payload.")
 
+    df, structural_zero_final_demand_columns = (
+        _complete_consolidated_eu_export_structural_zeros(
+            df,
+            payload=payload,
+            col_dim=col_dim,
+        )
+    )
+
     industries = pd.Index(df.index.astype(str))
     columns = pd.Index(df.columns.astype(str))
     industry_set = set(map(str, industries))
@@ -562,6 +641,7 @@ def parse_eurostat_iot(
         "row_codes_not_in_intermediate_columns": sorted(row_codes - set(ind_cols)),
         "intermediate_columns_not_in_rows": sorted(set(ind_cols) - row_codes),
         "identified_supplementary_rows": lower_rows,
+        "structural_zero_final_demand_columns": structural_zero_final_demand_columns,
         "derived_final_demand_residual_cells": derived_final_demand_residual_cells,
         "source_rounding_quantum": infer_source_rounding_quantum(payload, value_key=value_key),
     }

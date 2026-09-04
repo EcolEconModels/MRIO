@@ -971,7 +971,9 @@ def _tiny_complete_eurostat_iot_payload() -> dict[str, object]:
     }
 
 
-def _tiny_export_residual_eurostat_iot_payload() -> dict[str, object]:
+def _tiny_export_residual_eurostat_iot_payload(
+    *, geo: str = "AT"
+) -> dict[str, object]:
     """Build two product rows so one residual cell can be sparse while its column exists."""
     use_codes = [
         "CPA_A", "CPA_B", "P6", "P6_B0", "P6_D0", "P6_U2", "P6_U3"
@@ -988,7 +990,7 @@ def _tiny_export_residual_eurostat_iot_payload() -> dict[str, object]:
         "id": ["geo", "prd_ava", "prd_use"],
         "size": [1, 2, len(use_codes)],
         "dimension": {
-            "geo": {"category": {"index": {"EU27_2020": 0}}},
+            "geo": {"category": {"index": {geo: 0}}},
             "prd_ava": {
                 "category": {"index": {"CPA_A": 0, "CPA_B": 1}}
             },
@@ -1046,6 +1048,57 @@ def test_parse_eurostat_iot_still_rejects_missing_nonresidual_final_demand() -> 
     del values["3"]  # CPA_A P6_B0 is a published control, not a residual.
     payload["value"] = values
     with pytest.raises(EurostatParseError, match="absent SDMX observations"):
+        parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
+
+
+def test_parse_eurostat_iot_materialises_consolidated_eu_intra_eu_export_structural_zeros() -> None:
+    from ecolecon_mrio.eurostat_iot import parse_eurostat_iot
+
+    payload = _tiny_export_residual_eurostat_iot_payload(geo="EU27_2020")
+    values_obj = payload["value"]
+    assert isinstance(values_obj, dict)
+    values = dict(values_obj)
+    sizes_obj = payload["size"]
+    assert isinstance(sizes_obj, list)
+    use_count = int(sizes_obj[2])
+    # Reproduce the real EU27 pattern: P6_D0 remains an explicit extra-EU export
+    # control equal to P6; P6_B0 and P6_U2 are globally absent; P6_U3 is explicit
+    # zero for one row and absent for the other.
+    p6_pos, p6_b0_pos, p6_d0_pos, p6_u2_pos, p6_u3_pos = 2, 3, 4, 5, 6
+    for row_pos in (0, 1):
+        values[str(row_pos * use_count + p6_d0_pos)] = values[str(row_pos * use_count + p6_pos)]
+        values.pop(str(row_pos * use_count + p6_b0_pos), None)
+        values.pop(str(row_pos * use_count + p6_u2_pos), None)
+    values[str(0 * use_count + p6_u3_pos)] = 0.0
+    values.pop(str(1 * use_count + p6_u3_pos), None)
+    payload["value"] = values
+
+    parsed = parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
+
+    for code in ("P6_B0", "P6_U2", "P6_U3"):
+        assert code in parsed.Y.columns
+        assert parsed.Y.loc[:, code].eq(0.0).all()
+    pd.testing.assert_series_equal(
+        parsed.Y.loc[:, "P6_D0"],
+        parsed.Y.loc[:, "P6"],
+        check_names=False,
+    )
+    assert parsed.meta["structural_zero_final_demand_columns"] == [
+        "P6_B0", "P6_U2", "P6_U3"
+    ]
+
+
+def test_parse_eurostat_iot_rejects_nonzero_consolidated_eu_intra_eu_export_control() -> None:
+    from ecolecon_mrio.eurostat_iot import EurostatParseError, parse_eurostat_iot
+
+    payload = _tiny_export_residual_eurostat_iot_payload(geo="EU27_2020")
+    values_obj = payload["value"]
+    assert isinstance(values_obj, dict)
+    values = dict(values_obj)
+    values["3"] = 1.0  # CPA_A P6_B0 contradicts the consolidated-EU boundary.
+    payload["value"] = values
+
+    with pytest.raises(EurostatParseError, match="structural zero"):
         parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
 
 def test_parse_eurostat_iot_preserves_explicit_zero_in_complete_core() -> None:

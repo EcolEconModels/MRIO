@@ -240,6 +240,16 @@ independently published rounded control. Missing operands, missing atomic/contro
 cells such as `P6`, `P6_B0`, or `P6_U2`, and all other missing core `Z`/`Y` cells
 remain hard source-evidence failures.
 
+For Eurostat's consolidated `EU27_2020` SUIOT, the accounting boundary is the EU as
+a whole: intra-EU trade is domestic and `P6` is export to economies outside the EU.
+Consequently `P6_B0`, `P6_U2`, and `P6_U3` are structural-zero/non-applicable export
+controls at that boundary. The parser may materialise those declared SDMX controls
+as exact zero when their observations are globally or locally sparse, but must fail
+if any explicit non-zero observation contradicts the consolidated-EU boundary.
+`P6_D0` remains a published display control and, after generated-table construction,
+is exactly `P6 - P6_B0 = P6`. This is a geography-specific accounting identity, not
+a general licence to convert sparse SDMX observations to zero.
+
 The additive final-use set `F` must contain exactly one representation of each
 included family. Controls such as total final use and total use are never part
 of `F`.
