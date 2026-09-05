@@ -209,9 +209,22 @@ For current Eurostat conventions, the candidate families are:
 P3 = P3\_S13 + P3\_S14 + P3\_S15,
 \]
 
+and either the flat investment hierarchy
+
 \[
-P5 = P51G + P52 + P53.
+P5 = P51G + P52 + P53,
 \]
+
+or the nested hierarchy
+
+\[
+P5 = P51G + P5M.
+\]
+
+When `P52` and `P53` are published, `P5M = P52 + P53` is a derived display
+aggregate. When those details are absent but `P5M` is published, `P5M` is the
+atomic inventories-plus-valuables control and the missing detail must not be
+invented. If no investment detail is published, `P5` itself is the atomic control.
 
 Exports may be represented by `P6` or by an explicitly declared exhaustive
 partition. Export details must not be assumed exhaustive from a shared prefix.
@@ -550,6 +563,14 @@ For every atomic final-use category:
 Y^{before}_{if}
 = \sum_{a \in children(i)}Y^{after}_{af}.
 \]
+
+Signed investment atoms require an additional child-level gross-use constraint.
+For `DOM`, each emitted child's complete row use is domestic output; for `IMP`, it
+is imported supply. These gross controls cannot be negative. The split may
+therefore redistribute the selected atomic investment component within its source
+parent while conserving that parent's value exactly. Use the most granular
+available atomic investment control (`P52`, nested `P5M`, or aggregate-only `P5`),
+and never invent omitted `P52`/`P53` detail merely to perform this balancing.
 
 ### Primary inputs and supplementary observations
 

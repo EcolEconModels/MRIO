@@ -85,6 +85,69 @@ def test_inventory_constraint_covers_negative_signed_other_use() -> None:
     assert (constrained + other_use >= -1e-12).all()
 
 
+def test_nested_p5m_rebalances_signed_child_use_without_inventing_detail(
+    tmp_path: Path,
+) -> None:
+    """Nested P5M stays conserved while every synthetic child keeps gross use non-negative."""
+    parents = pd.Index(["CPA_TEST"])
+    z = pd.DataFrame([[0.0]], index=parents, columns=parents)
+    y = pd.DataFrame(
+        {
+            "P3": [100.0],
+            "P51G": [0.0],
+            "P5M": [-80.0],
+            "P5": [-80.0],
+            "P6": [0.0],
+            "TFU": [20.0],
+            "TU": [20.0],
+        },
+        index=parents,
+    )
+    donors = pd.Index(["d1", "d2"])
+    donor_z = pd.DataFrame(
+        [[1.0, 0.0], [0.0, 1.0]], index=donors, columns=donors
+    )
+    donor_y = pd.DataFrame(
+        {
+            "Households": [10.0, 90.0],
+            "Inventories": [90.0, 10.0],
+        },
+        index=donors,
+    )
+    donor_slice = MrioScopeSlice(
+        scope=RegionScope(code="AT", members=("AT",)),
+        Z=donor_z,
+        Y=donor_y,
+        x_scope=donor_z.sum(axis=1) + donor_y.sum(axis=1),
+        flow="internal",
+        metadata={
+            "dataset": "exiobase",
+            "year": 2021,
+            "system": "pxp",
+            "source_zip": str(tmp_path / "donors.zip"),
+        },
+    )
+
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=z,
+        eurostat_Y=y,
+        exio_slice=donor_slice,
+        sector_to_exio_sectors={"CPA_TEST": ["d1", "d2"]},
+        create_io_system=False,
+    )
+
+    assert "P52" not in result.Y.columns
+    assert "P53" not in result.Y.columns
+    pd.testing.assert_series_equal(
+        result.Y["P5"],
+        result.Y["P51G"] + result.Y["P5M"],
+        check_names=False,
+    )
+    assert float(result.Y.loc[donors, "P5M"].sum()) == pytest.approx(-80.0)
+    assert (result.use_total.loc[donors] >= -1e-12).all()
+    assert float(result.use_total.loc["d1"]) == pytest.approx(0.0)
+
+
 def test_wp1_keeps_zero_weight_edge_children_and_reconstructs_cells(
     tmp_path: Path,
 ) -> None:

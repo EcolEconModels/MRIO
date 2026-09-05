@@ -161,17 +161,24 @@ def _normalize_vector(values: pd.Series) -> pd.Series:
 
 
 def _cap_inventory_withdrawals(
-    *, parent: str, allocated: pd.Series, other_use: pd.Series, flow: str,
+    *,
+    parent: str,
+    allocated: pd.Series,
+    other_use: pd.Series,
+    flow: str,
+    component_code: str = "P52",
 ) -> pd.Series:
-    """Constrain signed child P52 without changing its parent total.
+    """Constrain one signed investment component without changing its parent total.
 
-    The parent inventory change and EXIO donor proportions remain authoritative.
-    Withdrawals are capped by each child's other use; the resulting offset is
-    removed proportionally over the remaining absolute donor magnitudes.
+    The selected atomic investment component may be ``P52`` on the flat basis,
+    ``P5M`` on the nested basis, or ``P5`` when only the aggregate is available.
+    Its source-parent total and EXIO donor proportions remain authoritative.
+    Withdrawals are capped by each child's other use; the offset is redistributed
+    over remaining donor-supported children without altering the parent total.
     """
-    # P52 is the final balancing component: child supply must satisfy
-    # P52 + other_use >= 0 even when another signed component (for example P53)
-    # has already made other_use negative.
+    # The selected signed component is the last balancing degree of freedom:
+    # component + other_use >= 0 for every synthetic child. Other signed atomic
+    # uses stay fixed and are absorbed into ``other_use``.
     lower = -other_use.astype("float64")
     constrained = allocated.clip(lower=lower).astype("float64")
     excess = float(constrained.sum() - allocated.sum())
@@ -182,7 +189,7 @@ def _cap_inventory_withdrawals(
     supported = float(headroom.loc[weights > 0.0].sum())
     if supported + 1e-9 < excess:
         raise ValueError(
-            "Parent P52 cannot be conserved without negative child supply: "
+            f"Parent {component_code} cannot be conserved without negative child supply: "
             f"parent={parent!r}, flow={flow!r}, required_offset={excess:.12g}, "
             f"donor_supported_headroom={supported:.12g}."
         )
@@ -196,7 +203,7 @@ def _cap_inventory_withdrawals(
         active_weight = float(weights.loc[active].sum())
         if active_weight <= 0.0:
             raise ValueError(
-                f"P52 allocation exhausted donor support: parent={parent!r}, flow={flow!r}."
+                f"{component_code} allocation exhausted donor support: parent={parent!r}, flow={flow!r}."
             )
         proposal = remaining * weights.loc[active] / active_weight
         available = headroom.loc[active] - reductions.loc[active]
@@ -1209,8 +1216,13 @@ def _split_iot_using_donor_blocks(
     export_donor: pd.Series | None = None
     export_donor_method: str | None = None
 
-    atomic_without_p52 = [
-        code for code in source_atomic_final_demand(Y_split).columns if code != "P52"
+    atomic_columns = list(map(str, source_atomic_final_demand(Y_split).columns))
+    signed_investment_code = next(
+        (code for code in ("P52", "P5M", "P5") if code in atomic_columns),
+        None,
+    )
+    atomic_without_signed_investment = [
+        code for code in atomic_columns if code != signed_investment_code
     ]
     for row_sector in sectors_old:
         row_labels = (
@@ -1432,20 +1444,21 @@ def _split_iot_using_donor_blocks(
                 * fd_total
             )
 
-        # P52 is a signed stock-flow adjustment, but the complete domestic or
-        # imported row use is output or import supply and cannot be negative.
-        # Reallocate only P52 inside its source parent, retaining exact parent
-        # reconstruction and every other donor-allocated transaction cell.
-        if "P52" in Y_split.columns:
+        # Investment stock/disposal controls can be signed, but complete domestic
+        # row use or imported supply is gross and cannot be negative for a child.
+        # Reallocate only the selected atomic investment component inside its source
+        # parent; never invent absent P52/P53 detail or change another transaction.
+        if signed_investment_code is not None:
             other_use = Z_split.loc[row_labels].sum(axis=1).add(
-                Y_split.loc[row_labels, atomic_without_p52].sum(axis=1),
+                Y_split.loc[row_labels, atomic_without_signed_investment].sum(axis=1),
                 fill_value=0.0,
             )
-            Y_split.loc[row_labels, "P52"] = _cap_inventory_withdrawals(
+            Y_split.loc[row_labels, signed_investment_code] = _cap_inventory_withdrawals(
                 parent=row_sector,
-                allocated=Y_split.loc[row_labels, "P52"],
+                allocated=Y_split.loc[row_labels, signed_investment_code],
                 other_use=other_use,
                 flow=exio_slice.flow,
+                component_code=signed_investment_code,
             )
 
     Y_split = enforce_final_demand_display_identities(Y_split, Z=Z_split)
