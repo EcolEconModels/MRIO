@@ -1,0 +1,28 @@
+{
+  "provider": "DGBAS",
+  "country": "Taiwan",
+  "statistic": "GDP implicit price deflator",
+  "dgbas_table": "A018102050",
+  "measure": "fldid=3",
+  "item": "code1=14",
+  "frequency": "annual",
+  "reference_year": 2021,
+  "source_publication": "4-1. Implicit Price Deflators / National Accounts Yearbook Table 16",
+  "official_source_url": "https://ws.dgbas.gov.tw/001/Upload/464/relfile/10866/235856/nie.pdf",
+  "metadata_url": "https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/A018102050/all",
+  "snapshot_domain": "2012--2022",
+  "snapshot_purpose": "Reproducible historical source for the project's fixed 2012--2022 sensitivity while DGBAS live/static machine transport is not certificate/API reliable.",
+  "observations": [
+    {"year": 2012, "gdp_deflator": 90.99},
+    {"year": 2013, "gdp_deflator": 92.38},
+    {"year": 2014, "gdp_deflator": 93.92},
+    {"year": 2015, "gdp_deflator": 97.10},
+    {"year": 2016, "gdp_deflator": 97.83},
+    {"year": 2017, "gdp_deflator": 96.83},
+    {"year": 2018, "gdp_deflator": 96.23},
+    {"year": 2019, "gdp_deflator": 96.18},
+    {"year": 2020, "gdp_deflator": 98.15},
+    {"year": 2021, "gdp_deflator": 100.00},
+    {"year": 2022, "gdp_deflator": 102.07}
+  ]
+}

@@ -658,8 +658,17 @@ the USD/EUR conversion is common across countries. An unweighted mean of country
 price indices or factors is not used.
 
 Taiwan (`TW`) remains an explicit EXIOBASE country and is not substituted by the
-UNSD China observation. Its annual aggregate GDP implicit-price deflator is read
-from the Taiwan DGBAS primary-data XML dataset discovered from data.gov.tw; its
+UNSD China observation. For the project's fixed 2012--2022 sensitivity, its
+annual aggregate GDP implicit-price deflator is a packaged, audited snapshot of
+the official Taiwan DGBAS Macro Database table `A018102050`, measure `fldid=3`
+(implicit price deflator, 2021=100), item `code1=14` (GDP), annual frequency.
+The snapshot records the official [National Accounts Yearbook Table 16,
+"4-1. Implicit Price Deflators"](https://ws.dgbas.gov.tw/001/Upload/464/relfile/10866/235856/nie.pdf)
+publication and [DGBAS table metadata](https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/A018102050/all).
+It is deliberately bounded to 2012--2022 and fails closed outside that domain.
+This replaces live DGBAS XML/data.gov discovery: the available machine transports
+could not be fetched reproducibly with normal certificate/API verification, so
+there is no DGBAS runtime HTTP request or transport fallback. Its
 annual-average NTD/USD series is read from the Central Bank of the Republic of
 China. With `n_t` denoting NTD per USD, Taiwan uses
 
@@ -678,7 +687,7 @@ UNSD AMA is described here as a global national-accounts series, not as a claim
 that every country-year observation is a direct national-statistical submission:
 UNSD supplements official submissions with secondary sources and estimates where
 needed. Source URLs, the pinned EXIOBASE classification commit, fiscal-year notes,
-and the Taiwan source resource are retained in returned provenance metadata.
+and the Taiwan pinned-source identity are retained in returned provenance metadata.
 
 This remains a **country-GDP-deflator sensitivity**, not a reconstruction of
 product-by-country constant-price EXIOBASE. A common factor within an explicit

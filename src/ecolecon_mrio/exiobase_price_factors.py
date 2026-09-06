@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from html.parser import HTMLParser
+from importlib import resources
+import json
 import math
 from pathlib import Path
 import re
 from typing import Any
-from urllib.parse import urljoin
 import urllib.request
-import xml.etree.ElementTree as ET
 
 import numpy as np
 import pandas as pd
@@ -46,7 +46,10 @@ EXIOBASE_COUNTRY_COVERAGE_URL = (
     "https://raw.githubusercontent.com/EXIOBASE/00-class/"
     f"{EXIOBASE_META_COMMIT}/class/country_axes/country_coverage_matrix.csv"
 )
-DGBAS_DATASET_PAGE = "https://data.gov.tw/en/datasets/44224"
+DGBAS_TABLE_ID = "A018102050"
+DGBAS_METADATA_URL = f"https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/{DGBAS_TABLE_ID}/all"
+DGBAS_SNAPSHOT_RESOURCE = "reference_data/taiwan_dgbas_gdp_deflator_2012_2022.json"
+PINNED_TAIWAN_DGBAS_YEARS = tuple(range(2012, 2023))
 CBC_TWD_USD_ANNUAL_URL = "https://www.cbc.gov.tw/en/cp-480-1879-66035-2.html"
 ROW_CODE_MAP = {"WWA": "WA", "WWL": "WL", "WWE": "WE", "WWF": "WF", "WWM": "WM"}
 EXPECTED_ROW_REGIONS = frozenset(ROW_CODE_MAP.values())
@@ -264,45 +267,75 @@ def _read_exiobase3_membership(path: Path) -> pd.DataFrame:
     return result.sort_values(["region_kind", "exio_region", "iso3"], kind="stable").reset_index(drop=True)
 
 
-def _read_taiwan_dgbas_gdp_deflator(path: Path) -> pd.Series:
-    """Parse annual Taiwan aggregate GDP implicit-price-deflator rows from DGBAS XML."""
+def _read_taiwan_dgbas_gdp_deflator_snapshot(path: Path) -> tuple[pd.Series, dict[str, Any]]:
+    """Read the audited DGBAS annual GDP-deflator snapshot and its source identity.
+
+    The package resource is intentionally bounded to the historical 2012--2022
+    sensitivity domain because DGBAS's live observation transports are currently
+    not reproducibly certificate-verifiable.  Its table, measure, item, frequency,
+    and index-base metadata are validated before the values enter the Taiwan EUR
+    conversion, so a future source update cannot silently change the statistic.
+    """
 
     try:
-        root = ET.fromstring(path.read_text(encoding="utf-8"))
-    except (OSError, ET.ParseError) as exc:
-        raise PriceIndexParseError(f"Cannot parse Taiwan DGBAS XML {path}: {exc}") from exc
-    records: list[dict[str, str]] = []
-    for element in root.iter():
-        fields: dict[str, str] = {}
-        for child in list(element):
-            tag = child.tag.rsplit("}", 1)[-1].strip().casefold()
-            if tag in {"item", "time_period", "freq", "type", "item_value"}:
-                fields[tag] = " ".join("".join(child.itertext()).split())
-        if {"item", "time_period", "freq", "type", "item_value"}.issubset(fields):
-            records.append(fields)
-    if not records:
-        raise PriceIndexParseError("Taiwan DGBAS XML contains no standard Item/TIME_PERIOD/FREQ/TYPE/Item_VALUE records")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PriceIndexParseError(f"Cannot parse pinned DGBAS Taiwan GDP-deflator snapshot {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise PriceIndexParseError("Pinned DGBAS Taiwan GDP-deflator snapshot must be a JSON object")
+    required_identity = {
+        "provider": "DGBAS",
+        "country": "Taiwan",
+        "dgbas_table": DGBAS_TABLE_ID,
+        "measure": "fldid=3",
+        "item": "code1=14",
+        "frequency": "annual",
+        "reference_year": 2021,
+    }
+    for key, expected in required_identity.items():
+        if payload.get(key) != expected:
+            raise PriceIndexParseError(
+                f"Pinned DGBAS Taiwan GDP-deflator snapshot has unexpected {key}: {payload.get(key)!r}"
+            )
+    observations = payload.get("observations")
+    if not isinstance(observations, list):
+        raise PriceIndexParseError("Pinned DGBAS Taiwan GDP-deflator snapshot observations must be a list")
     values: dict[int, float] = {}
-    for record in records:
-        combined = f"{record['item']} {record['type']}".casefold()
-        is_gdp = bool(re.search(r"\bgdp\b", combined)) or "gross domestic product" in combined or "國內生產毛額" in combined
-        is_deflator = "deflator" in combined or "平減" in combined
-        freq = record["freq"].strip().casefold()
-        annual = freq in {"a", "annual", "year", "yearly", "年"} or "annual" in freq
-        if not (is_gdp and is_deflator and annual):
-            continue
-        year_match = re.fullmatch(r"(19|20|21)\d{2}", record["time_period"].strip())
-        if year_match is None:
-            raise PriceIndexParseError(f"Taiwan DGBAS GDP-deflator row has non-Gregorian annual period {record['time_period']!r}")
-        year = int(year_match.group(0))
+    for row in observations:
+        if not isinstance(row, dict) or set(row) != {"year", "gdp_deflator"}:
+            raise PriceIndexParseError("Pinned DGBAS Taiwan GDP-deflator snapshot rows must contain only year and gdp_deflator")
         try:
-            value = float(record["item_value"].replace(",", ""))
-        except ValueError as exc:
-            raise PriceIndexParseError(f"Taiwan DGBAS GDP deflator is non-numeric for {year}") from exc
+            year = int(row["year"])
+            value = float(row["gdp_deflator"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PriceIndexParseError(f"Pinned DGBAS Taiwan GDP-deflator snapshot has non-numeric row {row!r}") from exc
         if year in values:
-            raise PriceIndexParseError(f"Taiwan DGBAS XML has multiple aggregate GDP deflator rows for {year}")
+            raise PriceIndexParseError(f"Pinned DGBAS Taiwan GDP-deflator snapshot duplicates year {year}")
         values[year] = value
-    return _positive_series(values, name="taiwan_gdp_deflator")
+    if tuple(sorted(values)) != PINNED_TAIWAN_DGBAS_YEARS:
+        raise PriceIndexParseError(
+            "Pinned DGBAS Taiwan GDP-deflator snapshot must cover exactly 2012--2022"
+        )
+    series = _positive_series(values, name="taiwan_gdp_deflator")
+    provenance = {key: value for key, value in payload.items() if key != "observations"}
+    provenance["snapshot_resource"] = DGBAS_SNAPSHOT_RESOURCE
+    return series, provenance
+
+
+def _load_taiwan_dgbas_gdp_deflator(years: Sequence[int]) -> tuple[pd.Series, dict[str, Any]]:
+    """Load the packaged DGBAS snapshot and reject requests outside its audited domain."""
+
+    requested = tuple(sorted({int(year) for year in years}))
+    outside = [year for year in requested if year not in PINNED_TAIWAN_DGBAS_YEARS]
+    if outside:
+        raise ValueError(
+            "Pinned DGBAS Taiwan GDP-deflator snapshot covers 2012--2022 only; "
+            f"requested outside years {outside}"
+        )
+    resource = resources.files("ecolecon_mrio").joinpath(DGBAS_SNAPSHOT_RESOURCE)
+    with resources.as_file(resource) as path:
+        series, provenance = _read_taiwan_dgbas_gdp_deflator_snapshot(path)
+    return _require_years(series, requested, name="Pinned DGBAS Taiwan GDP deflator"), provenance
 
 
 def _read_taiwan_ntd_per_usd(path: Path) -> pd.Series:
@@ -324,18 +357,6 @@ def _read_taiwan_ntd_per_usd(path: Path) -> pd.Series:
                 raise PriceIndexParseError(f"Taiwan central-bank page has conflicting NTD/USD values for {year}")
             values[year] = value
     return _positive_series(values, name="ntd_per_usd")
-
-
-def _discover_dgbas_xml_url(page_path: Path) -> str:
-    """Discover the current DGBAS XML resource from Taiwan's official data portal."""
-
-    parser = _parse_html(page_path.read_text(encoding="utf-8"))
-    candidates = [urljoin(DGBAS_DATASET_PAGE, href) for href in parser.links if href.casefold().endswith(".xml")]
-    candidates = [url for url in candidates if "dgbas.gov.tw" in url.casefold()]
-    unique = list(dict.fromkeys(candidates))
-    if len(unique) != 1:
-        raise PriceIndexParseError(f"Expected exactly one DGBAS XML link on dataset 44224, got {unique!r}")
-    return unique[0]
 
 
 def _require_years(series: pd.Series, years: Sequence[int], *, name: str) -> pd.Series:
@@ -520,15 +541,12 @@ def build_exiobase3_eur_price_factors(
     ecb_path = _cached_text(ECB_USD_EUR_URL, path=root / "ecb" / "usd_per_eur_annual.csv", force_download=force_download, timeout_s=timeout_s)
     m49_path = _cached_text(UNSD_M49_URL, path=root / "unsd_m49" / "overview.html", force_download=force_download, timeout_s=timeout_s)
     exio_path = _cached_text(EXIOBASE_COUNTRY_COVERAGE_URL, path=root / "exiobase_meta" / f"country_coverage_matrix_{EXIOBASE_META_COMMIT[:12]}.csv", force_download=force_download, timeout_s=timeout_s)
-    dgbas_page = _cached_text(DGBAS_DATASET_PAGE, path=root / "taiwan_dgbas" / "dataset_44224.html", force_download=force_download, timeout_s=timeout_s)
-    dgbas_xml_url = _discover_dgbas_xml_url(dgbas_page)
-    dgbas_xml = _cached_text(dgbas_xml_url, path=root / "taiwan_dgbas" / "gdp_deflator_annual.xml", force_download=force_download, timeout_s=timeout_s)
     cbc_path = _cached_text(CBC_TWD_USD_ANNUAL_URL, path=root / "taiwan_cbc" / "ntd_per_usd_annual.html", force_download=force_download, timeout_s=timeout_s)
 
     usd_per_eur = _require_years(_read_ecb_usd_per_eur(ecb_path), all_years, name="ECB USD/EUR")
     m49_table = _read_unsd_m49_iso3(m49_path)
     membership = _read_exiobase3_membership(exio_path)
-    taiwan_deflator = _require_years(_read_taiwan_dgbas_gdp_deflator(dgbas_xml), all_years, name="Taiwan GDP deflator")
+    taiwan_deflator, taiwan_dgbas_metadata = _load_taiwan_dgbas_gdp_deflator(all_years)
     ntd_per_usd = _require_years(_read_taiwan_ntd_per_usd(cbc_path), all_years, name="Taiwan NTD/USD")
 
     iso3_to_m49 = dict(zip(
@@ -593,8 +611,8 @@ def build_exiobase3_eur_price_factors(
         "un_m49_url": UNSD_M49_URL,
         "exiobase_meta_commit": EXIOBASE_META_COMMIT,
         "exiobase_country_coverage_url": EXIOBASE_COUNTRY_COVERAGE_URL,
-        "taiwan_dgbas_dataset": DGBAS_DATASET_PAGE,
-        "taiwan_dgbas_resource": dgbas_xml_url,
+        "taiwan_dgbas_snapshot": taiwan_dgbas_metadata,
+        "taiwan_dgbas_metadata_url": DGBAS_METADATA_URL,
         "taiwan_cbc_exchange_rate": CBC_TWD_USD_ANNUAL_URL,
         "interpretation": "country-level macro GDP-deflator sensitivity; not product-country constant-price EXIOBASE",
     }

@@ -1,9 +1,14 @@
 """Scientific regressions for complete EXIOBASE3 common-EUR macro price factors."""
 from __future__ import annotations
 
+from collections.abc import Callable
+import copy
+import json
 from pathlib import Path
 import string
+from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -73,18 +78,6 @@ def _write_source_fixture(tmp_path: Path) -> tuple[dict[str, Path], dict[str, in
         "EXR.A.USD.EUR.SP00.A,2022,1.05\n",
         encoding="utf-8",
     )
-    dgbas_page = tmp_path / "dgbas.html"
-    dgbas_page.write_text('<a href="https://ws.dgbas.gov.tw/source.xml">XML</a>', encoding="utf-8")
-    dgbas_xml = tmp_path / "dgbas.xml"
-    dgbas_xml.write_text(
-        "<root>"
-        "<row><Item>Gross Domestic Product</Item><TIME_PERIOD>2020</TIME_PERIOD><FREQ>A</FREQ>"
-        "<TYPE>Implicit Price Deflator</TYPE><Item_VALUE>100</Item_VALUE></row>"
-        "<row><Item>Gross Domestic Product</Item><TIME_PERIOD>2022</TIME_PERIOD><FREQ>A</FREQ>"
-        "<TYPE>Implicit Price Deflator</TYPE><Item_VALUE>108</Item_VALUE></row>"
-        "</root>",
-        encoding="utf-8",
-    )
     cbc_path = tmp_path / "cbc.html"
     cbc_path.write_text(
         "<table><tr><th>Period Average</th><th>NTD/USD</th></tr>"
@@ -95,8 +88,6 @@ def _write_source_fixture(tmp_path: Path) -> tuple[dict[str, Path], dict[str, in
         "exio": exio_path,
         "m49": m49_path,
         "ecb": ecb_path,
-        "dgbas_page": dgbas_page,
-        "dgbas_xml": dgbas_xml,
         "cbc": cbc_path,
     }, iso_to_m49
 
@@ -178,22 +169,92 @@ def test_row_factor_fails_if_one_member_lacks_factor_or_gdp() -> None:
         )
 
 
-def test_taiwan_source_parsers_keep_official_annual_series(tmp_path: Path) -> None:
-    """Taiwan must use its own GDP deflator and annual NTD/USD source, not China data."""
+def _snapshot_payload() -> dict[str, Any]:
+    """Return an independently mutable valid fixture for snapshot validation tests."""
 
-    xml = tmp_path / "taiwan.xml"
-    xml.write_text(
-        "<root><row><Item>Gross Domestic Product</Item><TIME_PERIOD>2022</TIME_PERIOD>"
-        "<FREQ>A</FREQ><TYPE>Implicit Price Deflator</TYPE><Item_VALUE>105.5</Item_VALUE></row></root>",
-        encoding="utf-8",
+    observations = [
+        {"year": year, "gdp_deflator": float(year - 1900)}
+        for year in factors.PINNED_TAIWAN_DGBAS_YEARS
+    ]
+    return {
+        "provider": "DGBAS",
+        "country": "Taiwan",
+        "dgbas_table": factors.DGBAS_TABLE_ID,
+        "measure": "fldid=3",
+        "item": "code1=14",
+        "frequency": "annual",
+        "reference_year": 2021,
+        "observations": observations,
+    }
+
+
+def _write_snapshot(tmp_path: Path, payload: dict[str, Any]) -> Path:
+    path = tmp_path / "taiwan_dgbas_snapshot.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_taiwan_pinned_dgbas_snapshot_has_audited_official_annual_series() -> None:
+    """Taiwan uses the audited official DGBAS annual GDP-deflator source, not China data."""
+
+    series, provenance = factors._load_taiwan_dgbas_gdp_deflator(range(2012, 2023))
+    assert len(series) == 11
+    assert series.loc[2012] == pytest.approx(90.99)
+    assert series.loc[2021] == pytest.approx(100.00)
+    assert series.loc[2022] == pytest.approx(102.07)
+    assert np.isfinite(series.to_numpy(dtype=float)).all()
+    assert bool((series > 0.0).all())
+    assert provenance["provider"] == "DGBAS"
+    assert provenance["dgbas_table"] == "A018102050"
+    assert provenance["snapshot_resource"] == factors.DGBAS_SNAPSHOT_RESOURCE
+
+
+@pytest.mark.parametrize(
+    ("mutate", "error"),
+    [
+        (lambda payload: payload["observations"].append(copy.deepcopy(payload["observations"][0])), "duplicates year"),
+        (lambda payload: payload["observations"].pop(), "cover exactly 2012--2022"),
+        (lambda payload: payload["observations"].__setitem__(0, {"year": 2012, "gdp_deflator": float("nan")}), "positive finite"),
+        (lambda payload: payload["observations"].__setitem__(0, {"year": 2012, "gdp_deflator": 0.0}), "positive finite"),
+    ],
+)
+def test_taiwan_pinned_snapshot_rejects_malformed_observations(
+    tmp_path: Path, mutate: Callable[[dict[str, Any]], None], error: str
+) -> None:
+    """Duplicate, incomplete, non-finite, and non-positive snapshot values fail closed."""
+
+    payload = _snapshot_payload()
+    mutate(payload)
+    with pytest.raises(factors.PriceIndexParseError, match=error):
+        factors._read_taiwan_dgbas_gdp_deflator_snapshot(_write_snapshot(tmp_path, payload))
+
+
+def test_taiwan_pinned_snapshot_rejects_outside_audited_years() -> None:
+    with pytest.raises(ValueError, match="Pinned DGBAS Taiwan GDP-deflator snapshot covers 2012--2022 only"):
+        factors._load_taiwan_dgbas_gdp_deflator([2011, 2022])
+
+
+def test_taiwan_pinned_snapshot_load_never_performs_runtime_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden_http(*args: object, **kwargs: object) -> str:
+        raise AssertionError("the packaged Taiwan snapshot must not make an HTTP request")
+
+    monkeypatch.setattr(factors, "_http_text", forbidden_http)
+    series, _ = factors._load_taiwan_dgbas_gdp_deflator([2020, 2022])
+    assert series.index.tolist() == [2020, 2022]
+
+
+def test_taiwan_common_eur_formula_and_base_year_identity_are_unchanged() -> None:
+    deflator = pd.Series({2020: 98.15, 2022: 102.07})
+    ntd_per_usd = pd.Series({2020: 29.578, 2022: 29.777})
+    usd_per_eur = pd.Series({2020: 1.14, 2022: 1.05})
+    result = factors._taiwan_common_eur_factor(
+        deflator, ntd_per_usd, usd_per_eur, year=2020, base_year=2022
     )
-    html = tmp_path / "cbc.html"
-    html.write_text(
-        "<table><tr><th>Period Average</th><th>NTD/USD</th></tr><tr><td>2022</td><td>29.777</td></tr></table>",
-        encoding="utf-8",
-    )
-    assert factors._read_taiwan_dgbas_gdp_deflator(xml).loc[2022] == pytest.approx(105.5)
-    assert factors._read_taiwan_ntd_per_usd(html).loc[2022] == pytest.approx(29.777)
+    expected = (102.07 / 98.15) * ((29.578 * 1.14) / (29.777 * 1.05))
+    assert result == pytest.approx(expected)
+    assert factors._taiwan_common_eur_factor(
+        deflator, ntd_per_usd, usd_per_eur, year=2022, base_year=2022
+    ) == 1.0
 
 
 def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -229,10 +290,6 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
             return sources["m49"]
         if url == factors.EXIOBASE_COUNTRY_COVERAGE_URL:
             return sources["exio"]
-        if url == factors.DGBAS_DATASET_PAGE:
-            return sources["dgbas_page"]
-        if url == "https://ws.dgbas.gov.tw/source.xml":
-            return sources["dgbas_xml"]
         if url == factors.CBC_TWD_USD_ANNUAL_URL:
             return sources["cbc"]
         raise AssertionError(url)
