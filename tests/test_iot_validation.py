@@ -644,6 +644,28 @@ def test_invariant_report_preserves_signed_audit_diagnostics() -> None:
     assert frame.loc[0, "relative_gap"] == pytest.approx(0.2)
 
 
+def test_comparison_reports_the_failed_cells_local_tolerance() -> None:
+    observed = pd.Series([1_000_000_000.0, 1.0], index=pd.Index(["large", "small"]))
+    derived = pd.Series([1_000_000_000.5, 1.00001], index=pd.Index(["large", "small"]))
+    check = iot_validation_module._comparison_check(
+        check_id="audit.local_tolerance",
+        category="full_table",
+        flow_role="TOTAL",
+        block="M",
+        observed=observed,
+        derived=derived,
+        rtol=1e-9,
+        atol=1e-6,
+        explanation="test",
+    )
+    assert check.status == "fail"
+    assert check.affected_labels == ("small",)
+    assert check.published == pytest.approx(1.0)
+    assert check.derived == pytest.approx(1.00001)
+    assert check.max_abs_gap == pytest.approx(0.00001)
+    assert check.tolerance == pytest.approx(0.00000100100001)
+
+
 def test_generated_comparison_preserves_matching_missing_cells() -> None:
     observed = pd.Series([1.0, np.nan], index=pd.Index(["value", "not_applicable"]))
     matching = iot_validation_module._comparison_check(

@@ -407,14 +407,26 @@ valuation.
 
 ### Total supply at basic prices
 
-For every product the supply-side controls satisfy
+The combined dissemination has flow-specific stock-flow presentations, so the
+same accounting-item code must not be given one equation solely because its row
+label is present. For every product the TOTAL supply-side controls satisfy
 
 \[
-TS^{BP}_i = P1_i + P7_i,
+TS^{BP, TOTAL}_i = P1^{TOTAL}_i + P7^{TOTAL}_i,
 \]
 
 where `P7` is imports CIF by product. `P7` is not reconstructed from the IMP
 transaction-row-use vector.
+
+When the DOM presentation exposes `TS_BP`, it is a domestic-output control:
+
+\[
+TS^{BP, DOM}_i = P1^{DOM}_i.
+\]
+
+A separately published DOM `P7` remains source evidence but is not added to DOM
+output. The IMP imported-use presentation has no domestic production/supply
+`TS_BP` closure.
 
 ### Supply/use reconciliation
 

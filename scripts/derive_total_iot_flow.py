@@ -217,6 +217,42 @@ def _validate_rounded_series(
     return diagnostics
 
 
+def _validate_source_ts_bp_controls(
+    *, references: Mapping[str, ParsedEurostatIOT], source_rounding_quantum: float,
+    rtol: float, atol: float,
+) -> list[dict[str, object]]:
+    """Validate published TS_BP under its flow-specific source control."""
+    diagnostics: list[dict[str, object]] = []
+    controls = (
+        ("DOM", "DOM_TS_BP_equals_P1", ("TS_BP", "P1"), 1),
+        ("TOTAL", "TOTAL_TS_BP_equals_P1_plus_P7", ("TS_BP", "P1", "P7"), 2),
+    )
+    for flow, identity, rows, component_term_count in controls:
+        published, *components = (_source_row(references[flow], row) for row in rows)
+        if published is None or any(component is None for component in components):
+            continue
+        first_component = components[0]
+        assert first_component is not None
+        derived = first_component.copy()
+        for component in components[1:]:
+            assert component is not None
+            derived = derived.add(component)
+        counts = pd.Series(component_term_count, index=published.index, dtype="int64")
+        for diagnostic in _validate_rounded_series(
+            flow=flow,
+            identity=identity,
+            published=published,
+            derived=derived,
+            component_counts=counts,
+            source_rounding_quantum=source_rounding_quantum,
+            rtol=rtol,
+            atol=atol,
+        ):
+            diagnostic.update({"stage": "source_supply_control", "source_identity": identity})
+            diagnostics.append(diagnostic)
+    return diagnostics
+
+
 def _derived_final_demand_residual_rows(
     reference: ParsedEurostatIOT, *, identity: str
 ) -> set[str]:
@@ -617,9 +653,17 @@ def _construct_transaction_v(
                 raise ValueError(f"{flow} gross-surplus closure requires {sorted(required_gross)!r}")
             V.loc["B2A3G"] = b1g - V.loc["D1"] - V.loc["D29X39"]
     if "TS_BP" in source.index:
-        if flow != "TOTAL" or allocated_p7 is None:
-            raise ValueError(f"{flow} TS_BP requires TOTAL P7")
-        V.loc["TS_BP"] = output_proxy + allocated_p7
+        # TOTAL is a supply table (P1 + P7); DOM is a domestic-output table (P1).
+        if flow == "TOTAL":
+            if allocated_p7 is None:
+                raise ValueError("TOTAL TS_BP requires P7")
+            V.loc["TS_BP"] = output_proxy + allocated_p7
+        elif flow == "DOM":
+            if "P1" not in V.index or V.loc["P1"].isna().any():
+                raise ValueError("DOM TS_BP requires generated P1")
+            V.loc["TS_BP"] = V.loc["P1"]
+        else:
+            raise ValueError("IMP TS_BP has no production/supply role")
 
     # A numeric source row without a declared primitive or identity role is a
     # genuine accounting gap; all-blank template-only rows are handled at export.
@@ -675,13 +719,6 @@ def _construct_transaction_m(
                 M.loc["IMP", column] = float(Z_imp.to_numpy(dtype="float64").sum())
             elif column in Y_imp.columns:
                 M.loc["IMP", column] = float(Y_imp[column].sum())
-    if "P2_ADJ" in M.index and "D21X31" in M.index:
-        for column in M.columns:
-            if column == "TOTAL":
-                continue
-            if column in Y.columns and not pd.isna(M.loc["D21X31", column]):
-                M.loc["P2_ADJ", column] = float(Y[column].sum()) + float(M.loc["D21X31", column])
-
     # Rebuild non-overlapping display controls only where the source schema says
     # the supplementary observation is applicable.
     m_rows = cast(pd.Index, M.index).astype(str)
@@ -701,6 +738,16 @@ def _construct_transaction_m(
             intermediate = float(M.loc[row, "TOTAL"]) if "TOTAL" in M.columns else 0.0
             final = float(M.loc[row, "TFU"]) if "TFU" in M.columns else float(M.loc[row, atomic_cols].sum())
             M.loc[row, "TU"] = intermediate + final
+
+    # P2_ADJ is a display-column identity, so construct it only after D21X31 and
+    # every Y/M display aggregate have reached their canonical generated values.
+    if "P2_ADJ" in M.index and "D21X31" in M.index:
+        m_columns = cast(pd.Index, M.columns).astype(str)
+        for column in m_columns:
+            if column == "TOTAL":
+                continue
+            if column in Y.columns and not pd.isna(M.loc["D21X31", column]):
+                M.loc["P2_ADJ", column] = float(Y[column].sum()) + float(M.loc["D21X31", column])
     return M
 
 
@@ -833,6 +880,12 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         filters[eurostat_stk_flow_dim] = flow
         references[flow] = load_eurostat_iot(dataset=eurostat_dataset, filters=filters, row_dim=eurostat_row_dim, col_dim=eurostat_col_dim, storage_folder=default_data_root() / "eurostat")
     quantum = _resolve_source_rounding_quantum(references, source_rounding_quantum)
+    diagnostics.extend(_validate_source_ts_bp_controls(
+        references=references,
+        source_rounding_quantum=quantum,
+        rtol=rtol,
+        atol=atol,
+    ))
     source_codes = references["TOTAL"].Z.index.astype(str)
     child_parent = _child_to_parent(manifest, source_codes)
     # Row conservation supplies the only child-output margin. EXIO producer

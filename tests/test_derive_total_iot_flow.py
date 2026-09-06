@@ -335,6 +335,43 @@ def test_transaction_m_rebuilds_controls_partitions_and_missingness() -> None:
     assert M.loc["B3G"].isna().all()
 
 
+def test_transaction_m_rebuilds_p2_display_after_rounded_atomic_source_cells() -> None:
+    columns = pd.Index(
+        [
+            "P3", "P3_S13", "P3_S14", "P3_S15", "P5", "P51G",
+            "P52", "P53", "P5M", "P6", "TFU", "TOTAL", "TU",
+        ]
+    )
+    products = pd.Index(["a", "b"])
+    y = pd.DataFrame(1.0, index=products, columns=columns)
+    y["P3"] = y[["P3_S13", "P3_S14", "P3_S15"]].sum(axis=1)
+    y["P5M"] = y[["P52", "P53"]].sum(axis=1)
+    y["P5"] = y[["P51G", "P52", "P53"]].sum(axis=1)
+    y["TFU"] = y[["P3_S13", "P3_S14", "P3_S15", "P51G", "P52", "P53", "P6"]].sum(axis=1)
+    z = pd.DataFrame(1.0, index=products, columns=products)
+    y["TU"] = z.sum(axis=1) + y["TFU"]
+    rows = pd.Index(["P2_ADJ", "D21X31"])
+    source_m = pd.DataFrame(1.0, index=rows, columns=columns)
+    source_m.loc["D21X31", "P6"] = np.nan
+    source_m.loc["P2_ADJ", "P6"] = 999.0
+    source_m.loc["P2_ADJ", "TFU"] = 999.0
+    result = MODULE._construct_transaction_m(
+        flow="TOTAL",
+        reference=SimpleNamespace(M=source_m),
+        Y=y,
+        Z=z,
+        Y_imp=y,
+        Z_imp=z,
+        V=pd.DataFrame(0.0, index=rows, columns=products),
+    )
+    assert result is not None
+    expected = float(y["TFU"].sum()) + float(result.loc["D21X31", "TFU"])
+    assert result.loc["P2_ADJ", "TFU"] == pytest.approx(expected)
+    assert result.loc["P2_ADJ", "TFU"] != pytest.approx(
+        float(result.loc["P2_ADJ", MODULE.source_atomic_final_demand(y).columns].sum())
+    )
+
+
 def test_signed_primitive_requires_a_transaction_proxy() -> None:
     with pytest.raises(ValueError, match="No usable V allocation proxy"):
         MODULE._allocate_source_parent_vector(
@@ -411,3 +448,71 @@ def test_transaction_v_preserves_published_p7_supply_not_imp_row_use() -> None:
     assert standalone_v is not None
     assert float(standalone_v.loc["P7_D0"].sum()) == pytest.approx(4.0)
     assert "P7_B0" not in standalone_v.index
+
+
+def test_transaction_v_uses_domestic_output_for_dom_ts_bp() -> None:
+    products = pd.Index(["a1", "a2"])
+    parent = pd.Index(["A"])
+    source_v = pd.DataFrame(
+        [[50.0], [10.0], [50.0]],
+        index=pd.Index(["P1", "P7", "TS_BP"]),
+        columns=parent,
+    )
+    z = pd.DataFrame(0.0, index=products, columns=products)
+    output = pd.Series([20.0, 30.0], index=products)
+    imports = pd.Series([1.0, 3.0], index=products)
+    v, _ = MODULE._construct_transaction_v(
+        flow="DOM",
+        reference=SimpleNamespace(V=source_v),
+        child_parent={"a1": "A", "a2": "A"},
+        Z=z,
+        Z_total=z,
+        Z_imp=z,
+        x_domestic=output,
+        import_supply_proxy=imports,
+    )
+    assert v is not None
+    pd.testing.assert_series_equal(v.loc["P1"], output, check_names=False)
+    pd.testing.assert_series_equal(v.loc["P7"], pd.Series([2.5, 7.5], index=products), check_names=False)
+    pd.testing.assert_series_equal(v.loc["TS_BP"], output, check_names=False)
+    assert not v.loc["TS_BP"].equals(v.loc["P1"] + v.loc["P7"])
+
+
+def test_source_ts_bp_controls_reject_flow_specific_identity_drift() -> None:
+    columns = pd.Index(["A", "B"])
+    dom = SimpleNamespace(V=pd.DataFrame(
+        [[10.0, 20.0], [10.0, 20.0]],
+        index=pd.Index(["TS_BP", "P1"]), columns=columns,
+    ))
+    total = SimpleNamespace(V=pd.DataFrame(
+        [[14.0, 27.0], [10.0, 20.0], [4.0, 7.0]],
+        index=pd.Index(["TS_BP", "P1", "P7"]), columns=columns,
+    ))
+    diagnostics = MODULE._validate_source_ts_bp_controls(
+        references={"DOM": dom, "TOTAL": total},
+        source_rounding_quantum=0.01,
+        rtol=1e-9,
+        atol=1e-6,
+    )
+    assert {item["source_identity"] for item in diagnostics} == {
+        "DOM_TS_BP_equals_P1", "TOTAL_TS_BP_equals_P1_plus_P7",
+    }
+
+    dom.V.loc["TS_BP", "A"] += 1.0
+    with pytest.raises(ValueError, match="DOM_TS_BP_equals_P1"):
+        MODULE._validate_source_ts_bp_controls(
+            references={"DOM": dom, "TOTAL": total},
+            source_rounding_quantum=0.01,
+            rtol=1e-9,
+            atol=1e-6,
+        )
+
+    dom.V.loc["TS_BP", "A"] -= 1.0
+    total.V.loc["TS_BP", "B"] += 1.0
+    with pytest.raises(ValueError, match="TOTAL_TS_BP_equals_P1_plus_P7"):
+        MODULE._validate_source_ts_bp_controls(
+            references={"DOM": dom, "TOTAL": total},
+            source_rounding_quantum=0.01,
+            rtol=1e-9,
+            atol=1e-6,
+        )

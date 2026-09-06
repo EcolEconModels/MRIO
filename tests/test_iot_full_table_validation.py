@@ -237,6 +237,51 @@ def test_source_rounding_gap_passes_but_generated_gap_fails() -> None:
     assert generated["full.y1.p3.total"].affected_labels == ("a",)
 
 
+def test_dom_ts_bp_uses_domestic_output_not_import_supply() -> None:
+    variants = _triplet()
+    dom = variants["DOM"]
+    assert dom.V is not None
+    dom.V.loc["P7"] = 11.0
+    dom.V.loc["TS_BP"] = dom.V.loc["P1"]
+
+    source = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="source"
+        )
+    )
+    generated = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+    assert source["full.sp0.dom_ts_output"].status == "pass"
+    assert generated["full.sp0.dom_ts_output"].status == "pass"
+
+    dom.V.loc["TS_BP"] = dom.V.loc["P1"] + dom.V.loc["P7"]
+    failed = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+    assert failed["full.sp0.dom_ts_output"].status == "fail"
+    assert failed["full.sp0.dom_ts_output"].affected_labels == ("a",)
+
+
+def test_generated_p2_tfu_uses_canonical_y_and_d21_controls() -> None:
+    variants = _triplet()
+    total = variants["TOTAL"]
+    assert total.M is not None
+    total.M.loc["P2_ADJ", "TFU"] = (
+        total.Y["TFU"].sum() + total.M.loc["D21X31", "TFU"]
+    )
+    checks = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+    assert checks["full.p2_2.total_m"].status == "pass"
+
+
 def test_mutations_are_localised_to_the_named_accounting_control() -> None:
     variants = _triplet()
     variants["TOTAL"].V.loc["P2_ADJ", "a"] += 1.0

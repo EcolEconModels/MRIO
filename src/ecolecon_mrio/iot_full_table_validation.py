@@ -1116,6 +1116,21 @@ def validate_eurostat_iot_full_table(
     checks.append(_check("full.i7.cif_fob_ambiguity", status="fail" if competing_imports else "pass", severity="error" if competing_imports else "info", block="V_TOTAL", affected=competing_imports, explanation="Competing CIF/FOB imports controls require an explicit valuation policy and cannot be selected silently."))
     checks.append(_check("full.i8.import_orientation", status="pass", severity="info", block="V|M", explanation="DOM IMP is an imported-use control while TOTAL P7 is imports supply; the validator compares only their declared orientations."))
 
+    if dom is not None:
+        dom_ts = _safe_row(dom.V, "TS_BP", flow="DOM", block="V", checks=checks, check_id="full.sp0.dom_ts_output")
+        dom_p1 = _safe_row(dom.V, "P1", flow="DOM", block="V", checks=checks, check_id="full.sp0.dom_ts_output")
+        compare(
+            "full.sp0.dom_ts_output",
+            "DOM",
+            "V",
+            dom_ts,
+            dom_p1,
+            1,
+            "DOM TS_BP is a domestic-output control and must equal P1 by product when published.",
+        )
+    else:
+        checks.append(_not_tested("full.sp0.dom_ts_output", flow="DOM", block="V", explanation="DOM flow is absent."))
+
     if total is not None:
         ts = _safe_row(total.V, "TS_BP", flow="TOTAL", block="V", checks=checks, check_id="full.sp1.ts_components")
         p1 = _safe_row(total.V, "P1", flow="TOTAL", block="V", checks=checks, check_id="full.sp1.ts_components")

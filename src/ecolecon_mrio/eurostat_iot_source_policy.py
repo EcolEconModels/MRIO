@@ -357,7 +357,9 @@ AT_2021_NAIO_10_CP1700_PROFILE = EurostatIOTSourceProfile(
             code="TS_BP",
             role="total_supply_at_basic_prices_control",
             blocks=("V", "M"),
-            flows=("TOTAL",),
+            # The code appears in both presentations, but its equation is flow-specific:
+            # TOTAL is P1 + P7 while DOM is the domestic-output P1 control.
+            flows=("DOM", "TOTAL"),
             authority="source_code_and_label",
             equation_authorized=True,
         ),

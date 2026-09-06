@@ -194,14 +194,25 @@ def _comparison_check(
     passed = jointly_missing | (finite & (gaps <= tolerance))
     failed_index = cast(pd.Index, observed_aligned.index)
     failed_labels = failed_index[~passed].astype(str).tolist()
-    finite_gaps = gaps[np.isfinite(gaps)]
-    finite_tolerances = tolerance[np.isfinite(tolerance)]
-    max_abs_gap = float(finite_gaps.max()) if finite_gaps.size else float("inf")
-    max_tolerance = float(finite_tolerances.max()) if finite_tolerances.size else float(atol)
-    published, calculated, signed_gap, relative_gap = _gap_diagnostics(
-        values_observed,
-        values_derived,
-    )
+    candidate = (~passed) & finite if failed_labels else finite
+    if candidate.any():
+        normalized = np.full(gaps.shape, -np.inf, dtype="float64")
+        positive_tolerance = candidate & (tolerance > 0.0)
+        normalized[positive_tolerance] = gaps[positive_tolerance] / tolerance[positive_tolerance]
+        zero_tolerance = candidate & ~positive_tolerance
+        normalized[zero_tolerance] = np.where(gaps[zero_tolerance] > 0.0, np.inf, 0.0)
+        position = int(np.argmax(normalized))
+        published = float(values_observed[position])
+        calculated = float(values_derived[position])
+        signed_gap = float(values_observed[position] - values_derived[position])
+        denominator = max(abs(published), abs(calculated))
+        relative_gap = 0.0 if denominator == 0.0 else signed_gap / denominator
+        max_abs_gap = float(gaps[position])
+        max_tolerance = float(tolerance[position])
+    else:
+        published = calculated = signed_gap = relative_gap = None
+        max_abs_gap = float("inf")
+        max_tolerance = float(atol)
     return InvariantCheck(
         check_id=check_id,
         category=category,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -825,6 +826,79 @@ def test_phase7_validator_fails_on_extra_aggregate_labels(tmp_path):
     assert report["ok"] is False
     z_check = next(check for check in report["checks"] if check["name"] == "Z_agg_matches_recomputed_reaggregation")
     assert z_check["max_abs_gap"] == float("inf")
+
+
+def test_validator_numeric_comparisons_preserve_elementwise_relative_tolerance(tmp_path):
+    """Validator reductions retain the rtol contract and report the worst cell."""
+    from scripts.validate_many_many_pipeline_outputs import (
+        _check_ratio_file,
+        _compare_environmental_extensions,
+        _compare_numeric_frames,
+    )
+
+    keys = {
+        "sector": ["large", "small"],
+        "extension": ["air", "air"],
+        "stressor": ["CO2", "CO2"],
+        "unit": ["kg", "kg"],
+    }
+    expected = pd.DataFrame(
+        {
+            **keys,
+            "value": [1.0e11, 10.0],
+            "monetary_output": [1.0e11, 10.0],
+        }
+    )
+    actual = expected.copy()
+    actual.loc[0, "value"] += 1.52587890625e-05
+    passing = _compare_environmental_extensions(
+        actual, expected, rtol=1e-9, atol=1e-6
+    )
+    assert passing["ok"] is True
+    assert passing["max_abs_gap"] == 1.52587890625e-05
+
+    actual.loc[1, "value"] += 2.0e-5
+    failing = _compare_environmental_extensions(
+        actual, expected, rtol=1e-9, atol=1e-6
+    )
+    assert failing["ok"] is False
+    assert failing["worst_label"] == ["small", "air", "CO2", "kg"]
+    assert failing["worst_field"] == "value"
+    assert failing["worst_tolerance"] == pytest.approx(1.01e-6)
+
+    mismatched_keys = actual.copy()
+    mismatched_keys.loc[1, "sector"] = "other"
+    assert not _compare_environmental_extensions(
+        mismatched_keys, expected, rtol=1e-9, atol=1e-6
+    )["ok"]
+    mismatched_nan = actual.copy()
+    mismatched_nan.loc[1, "value"] = np.nan
+    assert not _compare_environmental_extensions(
+        mismatched_nan, expected, rtol=1e-9, atol=1e-6
+    )["ok"]
+
+    ratio_path = tmp_path / "ratio.csv"
+    pd.DataFrame(
+        {
+            "numerator": [1.0e11],
+            "denominator": [1.0],
+            "ratio": [1.0e11 + 1.52587890625e-05],
+        }
+    ).to_csv(ratio_path, index=False)
+    assert _check_ratio_file(
+        ratio_path,
+        numerator_col="numerator",
+        denominator_col="denominator",
+        ratio_col="ratio",
+        rtol=1e-9,
+        atol=1e-6,
+    )["ok"]
+
+    frame_actual = pd.DataFrame([[1.0e11 + 1.52587890625e-05]], index=["A"], columns=["A"])
+    frame_expected = pd.DataFrame([[1.0e11]], index=["A"], columns=["A"])
+    assert _compare_numeric_frames(
+        frame_actual, frame_expected, rtol=1e-9, atol=1e-6
+    )["ok"]
 
 
 def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(

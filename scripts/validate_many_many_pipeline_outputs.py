@@ -63,7 +63,100 @@ def _numeric_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out.astype("float64")
 
 
-def _max_abs_frame_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
+def _comparison_failure(*, reason: str) -> dict[str, Any]:
+    """Return a uniform failed comparison diagnostic for structural defects."""
+    return {
+        "ok": False,
+        "max_abs_gap": float("inf"),
+        "max_relative_gap": float("inf"),
+        "max_normalized_gap": float("inf"),
+        "worst_label": None,
+        "worst_field": None,
+        "worst_actual": None,
+        "worst_expected": None,
+        "worst_abs_gap": float("inf"),
+        "worst_tolerance": None,
+        "reason": reason,
+    }
+
+
+def _comparison_label(label: object) -> object:
+    if isinstance(label, tuple):
+        return [str(item) for item in label]
+    return str(label)
+
+
+def _compare_labelled_numeric_frames(
+    actual: pd.DataFrame,
+    expected: pd.DataFrame,
+    *,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
+    """Compare aligned labelled extensive values under the symmetric rtol+atol contract."""
+    if not actual.index.is_unique or not actual.columns.is_unique:
+        return _comparison_failure(reason="actual labels are not unique")
+    if not expected.index.is_unique or not expected.columns.is_unique:
+        return _comparison_failure(reason="expected labels are not unique")
+    if set(actual.index) != set(expected.index) or set(actual.columns) != set(expected.columns):
+        return _comparison_failure(reason="label domains differ")
+
+    expected_aligned = expected.reindex(index=actual.index, columns=actual.columns)
+    actual_values = actual.astype("float64").to_numpy(dtype="float64")
+    expected_values = expected_aligned.astype("float64").to_numpy(dtype="float64")
+    actual_missing = np.isnan(actual_values)
+    expected_missing = np.isnan(expected_values)
+    if np.any(actual_missing != expected_missing):
+        return _comparison_failure(reason="NaN masks differ")
+    jointly_missing = actual_missing & expected_missing
+    finite = np.isfinite(actual_values) & np.isfinite(expected_values)
+    if np.any(~finite & ~jointly_missing):
+        return _comparison_failure(reason="non-finite numerical values")
+    if actual_values.size == 0:
+        return {
+            "ok": True,
+            "max_abs_gap": 0.0,
+            "max_relative_gap": 0.0,
+            "max_normalized_gap": 0.0,
+            "worst_label": None,
+            "worst_field": None,
+            "worst_actual": None,
+            "worst_expected": None,
+            "worst_abs_gap": 0.0,
+            "worst_tolerance": None,
+        }
+
+    delta = actual_values - expected_values
+    abs_gap = np.where(jointly_missing, 0.0, np.abs(delta))
+    scale = np.where(
+        jointly_missing, 0.0, np.maximum(np.abs(actual_values), np.abs(expected_values))
+    )
+    tolerance = atol + rtol * scale
+    normalized = np.divide(abs_gap, tolerance, out=np.full_like(abs_gap, np.inf), where=tolerance > 0.0)
+    relative = np.divide(abs_gap, scale, out=np.zeros_like(abs_gap), where=scale > 0.0)
+    worst_position = np.unravel_index(int(np.argmax(normalized)), normalized.shape)
+    row_position, column_position = worst_position
+    return {
+        "ok": bool(np.all(abs_gap <= tolerance)),
+        "max_abs_gap": float(np.max(abs_gap)),
+        "max_relative_gap": float(np.max(relative)),
+        "max_normalized_gap": float(np.max(normalized)),
+        "worst_label": _comparison_label(actual.index[row_position]),
+        "worst_field": str(actual.columns[column_position]),
+        "worst_actual": float(actual_values[worst_position]),
+        "worst_expected": float(expected_values[worst_position]),
+        "worst_abs_gap": float(abs_gap[worst_position]),
+        "worst_tolerance": float(tolerance[worst_position]),
+    }
+
+
+def _compare_numeric_frames(
+    actual: pd.DataFrame,
+    expected: pd.DataFrame,
+    *,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
     actual_norm = actual.copy()
     expected_norm = expected.copy()
     actual_norm.index = actual_norm.index.astype(str)
@@ -76,52 +169,48 @@ def _max_abs_frame_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
         or not expected_norm.index.is_unique
         or not expected_norm.columns.is_unique
     ):
-        return float("inf")
+        return _comparison_failure(reason="frame labels are not unique")
     if set(actual_norm.index) != set(expected_norm.index):
-        return float("inf")
+        return _comparison_failure(reason="frame row domains differ")
     if set(actual_norm.columns) != set(expected_norm.columns):
-        return float("inf")
-    expected_aligned = expected_norm.reindex(
-        index=actual_norm.index, columns=actual_norm.columns
+        return _comparison_failure(reason="frame column domains differ")
+    return _compare_labelled_numeric_frames(
+        actual_norm, expected_norm, rtol=rtol, atol=atol
     )
-    actual_values = actual_norm.astype("float64").to_numpy(dtype="float64")
-    expected_values = expected_aligned.astype("float64").to_numpy(dtype="float64")
-    if np.any(np.isnan(actual_values) != np.isnan(expected_values)):
-        return float("inf")
-    diff = actual_norm.astype("float64") - expected_aligned.astype("float64")
-    if diff.empty:
-        return 0.0
-    values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
-    return float(np.max(values))
 
 
-def _max_abs_series_gap(actual: pd.Series, expected: pd.Series) -> float:
+def _compare_numeric_series(
+    actual: pd.Series,
+    expected: pd.Series,
+    *,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
     actual_norm = actual.copy()
     expected_norm = expected.copy()
     actual_norm.index = actual_norm.index.astype(str)
     expected_norm.index = expected_norm.index.astype(str)
     if not actual_norm.index.is_unique or not expected_norm.index.is_unique:
-        return float("inf")
+        return _comparison_failure(reason="series labels are not unique")
     if set(actual_norm.index) != set(expected_norm.index):
-        return float("inf")
-    expected_aligned = expected_norm.reindex(actual_norm.index)
-    actual_values = actual_norm.astype("float64").to_numpy(dtype="float64")
-    expected_values = expected_aligned.astype("float64").to_numpy(dtype="float64")
-    if np.any(np.isnan(actual_values) != np.isnan(expected_values)):
-        return float("inf")
-    diff = actual_norm.astype("float64") - expected_aligned.astype("float64")
-    if diff.empty:
-        return 0.0
-    values = np.nan_to_num(np.abs(diff.to_numpy(dtype="float64")), nan=0.0)
-    return float(np.max(values))
+        return _comparison_failure(reason="series label domains differ")
+    return _compare_labelled_numeric_frames(
+        actual_norm.to_frame("value"), expected_norm.to_frame("value"), rtol=rtol, atol=atol
+    )
 
 
-def _max_abs_environmental_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> float:
+def _compare_environmental_extensions(
+    actual: pd.DataFrame,
+    expected: pd.DataFrame,
+    *,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
     key_cols = ["sector", "extension", "stressor", "unit"]
     value_cols = ["value", "monetary_output"]
     required = set(key_cols + value_cols)
     if not required.issubset(actual.columns) or not required.issubset(expected.columns):
-        return float("inf")
+        return _comparison_failure(reason="environmental columns are missing")
     sort_keys = list(map(str, key_cols))
     actual_keyed = cast(
         pd.DataFrame, actual.loc[:, key_cols + value_cols].copy()
@@ -129,12 +218,11 @@ def _max_abs_environmental_gap(actual: pd.DataFrame, expected: pd.DataFrame) -> 
     expected_keyed = cast(
         pd.DataFrame, expected.loc[:, key_cols + value_cols].copy()
     ).sort_values(sort_keys).reset_index(drop=True)
-    if not actual_keyed[key_cols].equals(expected_keyed[key_cols]):
-        return float("inf")
-    if actual_keyed.empty:
-        return 0.0
-    delta = actual_keyed[value_cols].astype("float64") - expected_keyed[value_cols].astype("float64")
-    return float(np.nanmax(np.abs(delta.to_numpy(dtype="float64"))))
+    actual_keyed = actual_keyed.set_index(key_cols)
+    expected_keyed = expected_keyed.set_index(key_cols)
+    return _compare_labelled_numeric_frames(
+        actual_keyed[value_cols], expected_keyed[value_cols], rtol=rtol, atol=atol
+    )
 
 def _check_ratio_file(
     path: Path,
@@ -155,16 +243,17 @@ def _check_ratio_file(
     num = pd.to_numeric(df[numerator_col], errors="coerce").astype("float64")
     den = pd.to_numeric(df[denominator_col], errors="coerce").astype("float64")
     observed = pd.to_numeric(df[ratio_col], errors="coerce").astype("float64")
-    valid = den.replace(0.0, np.nan).notna() & observed.notna()
+    valid = den.replace(0.0, np.nan).notna()
     if not bool(valid.any()):
         return {"path": str(path), "exists": True, "ok": True, "max_abs_gap": 0.0, "n_checked": 0}
     expected = num.loc[valid] / den.loc[valid]
-    gap = float(np.nanmax(np.abs((observed.loc[valid] - expected).to_numpy(dtype="float64"))))
+    comparison = _compare_numeric_series(
+        observed.loc[valid], expected, rtol=rtol, atol=atol
+    )
     return {
         "path": str(path),
         "exists": True,
-        "ok": bool(np.isclose(gap, 0.0, rtol=rtol, atol=atol)),
-        "max_abs_gap": gap,
+        **comparison,
         "n_checked": int(valid.sum()),
     }
 
@@ -480,10 +569,14 @@ def validate_pipeline_outputs(
             observed_df = _read_frame(path)
             if isinstance(expected, pd.Series):
                 observed_series = observed_df.iloc[:, 0].astype("float64")
-                gap = _max_abs_series_gap(observed_series, expected.astype("float64"))
+                comparison = _compare_numeric_series(
+                    observed_series, expected.astype("float64"), rtol=rtol, atol=atol
+                )
             else:
-                gap = _max_abs_frame_gap(_numeric_frame(observed_df), expected.astype("float64"))
-            add_check(f"{name}_matches_recomputed_reaggregation", np.isclose(gap, 0.0, rtol=rtol, atol=atol), max_abs_gap=gap)
+                comparison = _compare_numeric_frames(
+                    _numeric_frame(observed_df), expected.astype("float64"), rtol=rtol, atol=atol
+                )
+            add_check(f"{name}_matches_recomputed_reaggregation", **comparison)
 
         emitted_flow_output = flow_use_total(recomputed.Z, recomputed.Y)
         emitted_z_path = agg_dir / "Z_agg.csv"
@@ -570,15 +663,22 @@ def validate_pipeline_outputs(
                     ].copy(),
                 )
                 if expected_environmental is None:
-                    gap = 0.0 if scientific_rows.empty else float("inf")
+                    comparison = (
+                        _compare_labelled_numeric_frames(
+                            pd.DataFrame(), pd.DataFrame(), rtol=rtol, atol=atol
+                        )
+                        if scientific_rows.empty
+                        else _comparison_failure(reason="environmental expected rows are missing")
+                    )
                 else:
-                    gap = _max_abs_environmental_gap(
-                        scientific_rows, expected_environmental
+                    # Despite its historical name, this compares every keyed
+                    # environmental extensive value and monetary denominator.
+                    comparison = _compare_environmental_extensions(
+                        scientific_rows, expected_environmental, rtol=rtol, atol=atol
                     )
                 add_check(
                     "environmental_totals_match_reaggregation",
-                    np.isclose(gap, 0.0, rtol=rtol, atol=atol),
-                    max_abs_gap=gap,
+                    **comparison,
                 )
                 grid = _validate_environmental_grid(
                     environmental_path=observed_environmental_path,
