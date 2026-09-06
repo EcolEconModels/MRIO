@@ -509,3 +509,105 @@ IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of natio
 Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
 and are reaggregated by summing physical numerators and their matching monetary
 denominators before deriving intensity. Aggregate exports exclude intra-scope trade.
+
+<!-- ecolecon-price-index-api -->
+## Country-level price indices and monetary price adjustment
+
+MRIO owns the reusable acquisition and numerical transformation boundary for
+country-level price-adjustment sensitivities.  Downstream analyses must not fetch
+macroeconomic deflators independently or deflate already-derived `A`, SDA, or
+extension results after the fact.
+
+### Official source and cache
+
+The initial provider is the United Nations Statistics Division (UNSD) **Analysis
+of Main Aggregates (AMA)** REST API:
+
+- `GET /api/Country?countriesOnly=true` supplies the official M49 country domain
+  and currency metadata;
+- `GET /api/Series` supplies the current series ids and names;
+- `POST /api/Data/basic/{serieId}` supplies observations for requested countries
+  and years; and
+- `GET /api/Data/lastupdated` supplies source-release provenance.
+
+`download_unsd_ama_gdp_deflators(...)` discovers the GDP implicit-price-deflator
+series from the official series metadata instead of hard-coding a mutable series
+or spreadsheet-file id.  Small raw JSON responses are cached under
+`MRIO_DATA_ROOT/price_indices/unsd_ama/` (or an explicitly supplied storage
+folder).  `load_unsd_ama_gdp_deflators(...)` returns the validated long-form table
+plus provenance metadata.  Source rows retain M49 code, country name, year,
+currency basis, price-index value, source series/item ids and names, unit, and
+observation note.
+
+The parser recognizes the two AMA country-profile deflator bases:
+`national_currency` and `usd`.  `price_adjustment_factors(...)` requires the
+currency basis explicitly and computes
+
+\[
+\phi_{r,t}^{(b)} = \frac{P_{r,b}}{P_{r,t}},
+\]
+
+so multiplying a current-price value from year \(t\) by \(\phi_{r,t}^{(b)}\)
+expresses it at the chosen base-year macro price level under that deflator basis.
+When an explicit area list is supplied, missing year or base-year observations
+fail rather than being interpolated or filled.
+
+The two UNSD bases have different meanings.  The national-currency GDP deflator
+tracks the domestic aggregate price level.  The USD deflator also reflects the
+conversion of current and constant-price GDP into US dollars and can therefore
+incorporate exchange-rate movements.  **Neither basis is silently declared to be
+an exact constant-EUR transformation for an EUR-valued MRIO.**  A later analysis
+must choose and document the appropriate currency treatment before claiming
+constant-EUR results.
+
+### Extensive-account transformation
+
+`adjust_mrio_iot_prices(...)` accepts only a non-empty subset of the primitive
+monetary accounts `x`, `Z`, and `Y`, plus a full region-sector row-factor Series.
+For
+
+\[
+D_t = \operatorname{diag}(\phi_{i,t}),
+\]
+
+it applies
+
+\[
+x_t^{(b)} = D_t x_t, \qquad
+Z_t^{(b)} = D_t Z_t, \qquad
+Y_t^{(b)} = D_t Y_t.
+\]
+
+The same factor therefore scales every monetary supply row across intermediate
+and final uses and preserves the row accounting identity.  Sparse matrices are
+scaled row-by-row in CSR storage without densification or an nnz-length repeated
+factor vector.  Inputs are copied rather than mutated.
+
+Technical coefficients are deliberately outside this API.  They must be derived
+*after* the extensive accounts are adjusted, using the existing MRIO coefficient
+helper.  Algebraically,
+
+\[
+A_t^{(b)}
+= Z_t^{(b)}\operatorname{diag}(x_t^{(b)})^{-1}
+= D_t A_t D_t^{-1}.
+\]
+
+If one country-level factor is applied to every product in a region, its domestic
+block of \(A\) is unchanged exactly.  The sensitivity therefore removes aggregate
+country price-level effects but **does not remove within-country product-relative
+price movements**.  It must not be described as a reconstruction of
+product-by-country constant-price EXIOBASE tables.
+
+`expand_region_price_factors(...)` expands factors already defined on the exact
+MRIO region labels to the canonical `MultiIndex(region, sector)`.  It performs no
+country-name matching and no Rest-of-World aggregation.  Construction of the five
+EXIOBASE Rest-of-World factors and any exact common-currency treatment are separate
+scientific mapping tasks and are intentionally not guessed in this first API
+patch.
+
+Physical environmental extensions (`F`, `F_Y`, material, energy, emissions, and
+other non-monetary rows) are never price-adjusted.  Their monetary intensities may
+be recomputed later against adjusted monetary denominators only when the consuming
+analysis explicitly defines that sensitivity.
+<!-- /ecolecon-price-index-api -->

@@ -357,3 +357,31 @@ __all__.extend([
     "compile_region_aggregation",
     "load_mrio_iot_scope_slice",
 ])
+
+# ecolecon-price-index-api
+# Price-index acquisition and primitive monetary price-adjustment API.
+from .price_indices import (
+    PriceIndexError,
+    PriceIndexHTTPError,
+    PriceIndexParseError,
+    default_price_index_storage_folder,
+    download_unsd_ama_gdp_deflators,
+    load_unsd_ama_gdp_deflators,
+    price_adjustment_factors,
+    read_unsd_ama_gdp_deflators,
+)
+from .price_adjustment import adjust_mrio_iot_prices, expand_region_price_factors
+
+__all__.extend([
+    "PriceIndexError",
+    "PriceIndexHTTPError",
+    "PriceIndexParseError",
+    "default_price_index_storage_folder",
+    "download_unsd_ama_gdp_deflators",
+    "load_unsd_ama_gdp_deflators",
+    "price_adjustment_factors",
+    "read_unsd_ama_gdp_deflators",
+    "adjust_mrio_iot_prices",
+    "expand_region_price_factors",
+])
+# /ecolecon-price-index-api
