@@ -426,3 +426,57 @@ def test_wp1_rejects_child_collisions_and_removes_inactive_balancing_api() -> No
     ):
         parameters = inspect.signature(function).parameters
         assert {"balancing_scope", "ras_max_iter", "ras_tol"}.isdisjoint(parameters)
+
+def test_external_import_nested_p5m_preserves_signed_child_use(tmp_path: Path) -> None:
+    """IMP rows are signed imported-product use, not non-negative child supply."""
+    parents = pd.Index(["CPA_TEST"])
+    z = pd.DataFrame([[0.0]], index=parents, columns=parents)
+    y = pd.DataFrame(
+        {
+            "P3": [100.0],
+            "P51G": [0.0],
+            "P5M": [-80.0],
+            "P5": [-80.0],
+            "P6": [0.0],
+            "TFU": [20.0],
+            "TU": [20.0],
+        },
+        index=parents,
+    )
+    donors = pd.Index(["d1", "d2"])
+    donor_z = pd.DataFrame([[1.0, 0.0], [0.0, 1.0]], index=donors, columns=donors)
+    donor_y = pd.DataFrame(
+        {"Households": [10.0, 90.0], "Inventories": [90.0, 10.0]}, index=donors
+    )
+    donor_slice = MrioScopeSlice(
+        scope=RegionScope(code="AT", members=("AT",)),
+        Z=donor_z,
+        Y=donor_y,
+        x_scope=donor_z.sum(axis=1) + donor_y.sum(axis=1),
+        flow="external_imports",
+        metadata={"dataset": "exiobase", "year": 2021, "system": "pxp", "source_zip": str(tmp_path / "donors.zip")},
+    )
+    column_share = pd.Series([0.5, 0.5], index=donors, dtype="float64")
+    dom_column_profiles = {
+        "CPA_TEST": SplitProfiles(
+            aggregate_sector="CPA_TEST",
+            subsectors=("d1", "d2"),
+            output_share=column_share.copy(),
+            intermediate_sales_share=column_share.copy(),
+            intermediate_input_share=column_share.copy(),
+            final_demand_share=column_share.copy(),
+            subsector_to_exio_sectors={"d1": ["d1"], "d2": ["d2"]},
+        )
+    }
+    result = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=z,
+        eurostat_Y=y,
+        exio_slice=donor_slice,
+        sector_to_exio_sectors={"CPA_TEST": ["d1", "d2"]},
+        column_split_profiles=dom_column_profiles,
+        create_io_system=False,
+    )
+    assert "P52" not in result.Y.columns and "P53" not in result.Y.columns
+    assert float(result.Y.loc[donors, "P5M"].sum()) == pytest.approx(-80.0)
+    assert float(result.use_total.sum()) == pytest.approx(20.0)
+    assert float(result.use_total.loc["d1"]) < 0.0

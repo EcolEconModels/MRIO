@@ -1020,8 +1020,8 @@ def _combine_total_supply_extension_arrays(
     import_values: np.ndarray,
     import_denominator: np.ndarray,
     target_domestic_output: pd.Series,
-    target_import_supply: pd.Series,
-    target_total_supply: pd.Series,
+    target_import_use: pd.Series,
+    target_total_use: pd.Series,
     identity: tuple[str, str, str],
     rtol: float,
     atol: float,
@@ -1043,7 +1043,7 @@ def _combine_total_supply_extension_arrays(
         if values.shape != (n,) or not np.isfinite(values).all():
             raise ValueError(f"{name} must be a finite vector on the environmental target axis.")
 
-    def control(series: pd.Series, *, name: str) -> np.ndarray:
+    def control(series: pd.Series, *, name: str, allow_signed: bool) -> np.ndarray:
         if not isinstance(series, pd.Series) or not series.index.is_unique:
             raise ValueError(f"{name} must be a unique pandas Series.")
         normalized = series.copy()
@@ -1052,20 +1052,24 @@ def _combine_total_supply_extension_arrays(
             raise ValueError(
                 f"{name} must exactly match the environmental target-product axis in order."
             )
-        normalized = _normalize_nonnegative_accounting_control(
-            normalized,
-            context=name,
-        )
-        return normalized.to_numpy(dtype="float64")
+        try:
+            numeric = cast(pd.Series, pd.to_numeric(normalized, errors="raise")).astype("float64")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be numeric.") from exc
+        if not np.isfinite(numeric.to_numpy(dtype="float64")).all():
+            raise ValueError(f"{name} must be finite.")
+        if not allow_signed:
+            numeric = _normalize_nonnegative_accounting_control(numeric, context=name)
+        return numeric.to_numpy(dtype="float64")
 
-    domestic = control(target_domestic_output, name="target_domestic_output")
-    imports = control(target_import_supply, name="target_import_supply")
-    total = control(target_total_supply, name="target_total_supply")
-    if not np.allclose(domestic + imports, total, rtol=float(rtol), atol=float(atol)):
-        max_gap = float(np.max(np.abs((domestic + imports) - total))) if n else 0.0
+    domestic = control(target_domestic_output, name="target_domestic_output", allow_signed=False)
+    import_use = control(target_import_use, name="target_import_use", allow_signed=True)
+    total = control(target_total_use, name="target_total_use", allow_signed=False)
+    if not np.allclose(domestic + import_use, total, rtol=float(rtol), atol=float(atol)):
+        max_gap = float(np.max(np.abs((domestic + import_use) - total))) if n else 0.0
         raise ValueError(
-            "Target total-supply identity failed: domestic output + import supply must "
-            f"equal total supply; max_abs_gap={max_gap:.12g}."
+            "Target total-use identity failed: domestic output + imported-product use must "
+            f"equal total use; max_abs_gap={max_gap:.12g}."
         )
 
     prod_coeff = np.full(n, np.nan, dtype="float64")
@@ -1076,7 +1080,7 @@ def _combine_total_supply_extension_arrays(
     imp_available = np.isfinite(imp_coeff)
     unavailable = (
         ((domestic > 0.0) & ~prod_available)
-        | ((imports > 0.0) & ~imp_available)
+        | ((import_use != 0.0) & ~imp_available)
         | ((total == 0.0) & ~prod_available & ~imp_available)
     )
 
@@ -1084,19 +1088,19 @@ def _combine_total_supply_extension_arrays(
     computable = ~unavailable
     if bool(computable.any()):
         prod_contribution = np.where(domestic > 0.0, prod_coeff * domestic, 0.0)
-        imp_contribution = np.where(imports > 0.0, imp_coeff * imports, 0.0)
+        imp_contribution = np.where(import_use != 0.0, imp_coeff * import_use, 0.0)
         combined = prod_contribution + imp_contribution
         if not np.isfinite(combined[computable]).all():
             raise RuntimeError(
-                "Supported total-supply environmental combination produced non-finite values."
+                "Supported total-use environmental combination produced non-finite values."
             )
         physical[computable] = combined[computable]
 
     extension, stressor, unit = identity
     return _environmental_account_frame(
         axis_labels=axis_labels,
-        boundary="total_supply_direct",
-        denominator_role="target_total_supply",
+        boundary="total_use_direct",
+        denominator_role="target_total_use",
         extension=extension,
         stressor=stressor,
         unit=unit,
@@ -1116,7 +1120,12 @@ def combine_total_supply_extension_direct(
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> pd.DataFrame:
-    """Combine direct domestic-production and import coefficients on target controls."""
+    """Combine direct DOM and import coefficients on target transaction-use controls.
+
+    The public function and keyword names are retained for API compatibility, but
+    ``target_import_supply`` is the signed imported-product use vector and
+    ``target_total_supply`` is the corresponding total transaction-use vector.
+    """
     prod_labels, prod_values, prod_den, prod_identity = _validated_environmental_account_group(
         production_account,
         expected_boundary="scope_production",
@@ -1138,8 +1147,8 @@ def combine_total_supply_extension_direct(
         import_values=imp_values,
         import_denominator=imp_den,
         target_domestic_output=target_domestic_output,
-        target_import_supply=target_import_supply,
-        target_total_supply=target_total_supply,
+        target_import_use=target_import_supply,
+        target_total_use=target_total_supply,
         identity=prod_identity,
         rtol=float(rtol),
         atol=float(atol),
@@ -1151,7 +1160,7 @@ def _combine_target_supply_extension_sidecars_direct(
     import_sidecar: pd.DataFrame,
     *,
     target_domestic_output: pd.Series,
-    target_import_supply: pd.Series,
+    target_import_use: pd.Series,
     rtol: float = 1e-9,
     atol: float = 1e-6,
 ) -> pd.DataFrame:
@@ -1168,7 +1177,7 @@ def _combine_target_supply_extension_sidecars_direct(
     }
     for label, frame, boundary, role in (
         ("DOM", production_sidecar, "scope_production", "target_domestic_output"),
-        ("IMP", import_sidecar, "external_imports_direct", "target_import_supply"),
+        ("IMP", import_sidecar, "external_imports_direct", "target_import_use"),
     ):
         missing = required - set(frame.columns)
         if missing:
@@ -1178,23 +1187,25 @@ def _combine_target_supply_extension_sidecars_direct(
         if set(frame["denominator_role"].astype(str)) != {role}:
             raise ValueError(f"{label} environmental sidecar has the wrong denominator role.")
     labels = tuple(str(value).strip() for value in target_domestic_output.index)
-    if tuple(str(value).strip() for value in target_import_supply.index) != labels:
+    if tuple(str(value).strip() for value in target_import_use.index) != labels:
         raise ValueError("DOM/IMP environmental target denominators must use one ordered sector axis.")
     if len(set(labels)) != len(labels) or any(not label for label in labels):
         raise ValueError("Environmental target sector axis must be unique and non-blank.")
 
     dom_target = target_domestic_output.astype("float64").copy()
-    imp_target = target_import_supply.astype("float64").copy()
+    imp_target = target_import_use.astype("float64").copy()
     dom_target.index = pd.Index(labels)
     imp_target.index = pd.Index(labels)
     dom_target = _normalize_nonnegative_accounting_control(
         dom_target, context="target_domestic_output"
     )
-    imp_target = _normalize_nonnegative_accounting_control(
-        imp_target, context="target_import_supply"
-    )
+    if not np.isfinite(imp_target.to_numpy(dtype="float64")).all():
+        raise ValueError("target_import_use must be finite.")
     target_total = (dom_target + imp_target).astype("float64")
     target_total.index = pd.Index(labels)
+    target_total = _normalize_nonnegative_accounting_control(
+        target_total, context="target_total_use"
+    )
 
     keys = ["sector", "extension", "stressor", "unit"]
     if production_sidecar.duplicated(keys).any() or import_sidecar.duplicated(keys).any():
@@ -1233,9 +1244,10 @@ def _combine_target_supply_extension_sidecars_direct(
 
         for pos, sector in enumerate(labels):
             if sector not in by_sector.index:
-                if target_values[pos] > 0.0:
+                requires_row = target_values[pos] != 0.0 if side == "IMP" else target_values[pos] > 0.0
+                if requires_row:
                     raise ValueError(
-                        f"{side} environmental sidecar is structurally missing a positive-mass row: "
+                        f"{side} environmental sidecar is structurally missing a nonzero-mass row: "
                         f"{(sector, ext, stressor, unit)!r}"
                     )
                 continue
@@ -1334,7 +1346,7 @@ def _combine_target_supply_extension_sidecars_direct(
 
         required_unavailable = (
             ((dom_mass > 0.0) & ~prod_available)
-            | ((imp_mass > 0.0) & ~imp_available)
+            | ((imp_mass != 0.0) & ~imp_available)
         )
         unsupported_zero_mass = (
             (total_mass == 0.0) & ~prod_available & ~imp_available
@@ -1345,7 +1357,7 @@ def _combine_target_supply_extension_sidecars_direct(
         computable = ~unavailable
         if bool(computable.any()):
             prod_contribution = np.where(dom_mass > 0.0, prod_values, 0.0)
-            imp_contribution = np.where(imp_mass > 0.0, imp_values, 0.0)
+            imp_contribution = np.where(imp_mass != 0.0, imp_values, 0.0)
             computed = prod_contribution + imp_contribution
             if not np.isfinite(computed[computable]).all():
                 raise RuntimeError(
@@ -1361,8 +1373,8 @@ def _combine_target_supply_extension_sidecars_direct(
         sidecar = pd.DataFrame(
             {
                 "sector": labels,
-                "boundary": "total_supply_direct",
-                "denominator_role": "target_total_supply",
+                "boundary": "total_use_direct",
+                "denominator_role": "target_total_use",
                 "extension": extension,
                 "stressor": stressor,
                 "unit": unit,
@@ -1381,6 +1393,7 @@ def _retarget_direct_environmental_account(
     target_denominator: pd.Series,
     boundary: str,
     denominator_role: str,
+    allow_signed_denominator: bool = False,
 ) -> pd.DataFrame:
     labels, _values, _denominator, identity = _validated_environmental_account_group(
         account,
@@ -1391,20 +1404,26 @@ def _retarget_direct_environmental_account(
     target.index = pd.Index([str(v) for v in target.index])
     if tuple(target.index) != labels:
         raise ValueError("Target environmental denominator must exactly match the projected sector axis.")
-    target = _normalize_nonnegative_accounting_control(
-        target,
-        context=f"Target environmental denominator ({boundary})",
-    )
+    if not np.isfinite(target.to_numpy(dtype="float64")).all():
+        raise ValueError(f"Target environmental denominator ({boundary}) must be finite.")
+    if allow_signed_denominator and denominator_role != "target_import_use":
+        raise ValueError("Signed environmental retargeting is allowed only for target_import_use.")
+    allow_signed = allow_signed_denominator or denominator_role == "target_import_use"
+    if not allow_signed:
+        target = _normalize_nonnegative_accounting_control(
+            target,
+            context=f"Target environmental denominator ({boundary})",
+        )
     coeff = cast(
         pd.Series,
         pd.to_numeric(account["intensity"], errors="coerce"),
     ).to_numpy(dtype="float64")
     target_values = target.to_numpy(dtype="float64")
     # A donor coefficient may be undefined even when the authoritative target
-    # monetary control is positive (for example, zero net mapped donor import use).
-    # This is unavailable environmental evidence, not physical zero. Preserve the
-    # target denominator and propagate NaN to value/intensity.
-    physical = np.where(target_values > 0.0, coeff * target_values, 0.0)
+    # monetary control is nonzero. Preserve the signed use denominator and propagate
+    # unavailable evidence rather than silently replacing it with physical zero.
+    active = target_values != 0.0 if allow_signed else target_values > 0.0
+    physical = np.where(active, coeff * target_values, 0.0)
     extension, stressor, unit = identity
     return _environmental_account_frame(
         axis_labels=labels,
@@ -1594,7 +1613,8 @@ def build_scope_target_environmental_extensions(
                     donor,
                     target_denominator=target_denominator,
                     boundary="external_imports_direct",
-                    denominator_role="target_import_supply",
+                    denominator_role="target_import_use",
+                    allow_signed_denominator=True,
                 )
             target_rows.append(_environmental_account_to_split_sidecar(target))
 

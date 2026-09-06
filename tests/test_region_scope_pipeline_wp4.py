@@ -94,7 +94,7 @@ def test_boundary_reaggregation_rejects_domestic_x_as_import_denominator() -> No
         {
             "sector": ["a"],
             "boundary": ["external_imports_direct"],
-            "denominator_role": ["target_import_supply"],
+            "denominator_role": ["target_import_use"],
             "extension": ["air"],
             "stressor": ["CO2"],
             "unit": ["kg"],
@@ -256,8 +256,8 @@ def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows
     target = pd.DataFrame(
         {
             "sector": ["S"],
-            "boundary": ["total_supply_direct"],
-            "denominator_role": ["target_total_supply"],
+            "boundary": ["total_use_direct"],
+            "denominator_role": ["target_total_use"],
             "extension": ["air"],
             "stressor": ["CO2"],
             "unit": ["kg"],
@@ -304,8 +304,8 @@ def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows
         mapping_csv=mapping_csv,
     )
     assert report["ok"], report
-def test_environmental_target_retarget_uses_accounting_nonnegative_tolerance() -> None:
-    """Roundoff-scale negative supply is zero; a material negative still fails closed."""
+def test_environmental_target_retarget_preserves_signed_import_use() -> None:
+    """Signed target import use is preserved rather than clipped as supply noise."""
     from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account
 
     account = pd.DataFrame(
@@ -322,23 +322,16 @@ def test_environmental_target_retarget_uses_accounting_nonnegative_tolerance() -
             "intensity": [0.2],
         }
     )
-    normalized = _retarget_direct_environmental_account(
-        account,
-        target_denominator=pd.Series([-5e-7], index=pd.Index(["a"])),
-        boundary="external_imports_direct",
-        denominator_role="target_import_supply",
-    )
-    assert float(normalized.loc[0, "monetary_denominator"]) == 0.0
-    assert float(normalized.loc[0, "value"]) == 0.0
-    assert pd.isna(normalized.loc[0, "intensity"])
-
-    with pytest.raises(ValueError, match="materially negative"):
-        _retarget_direct_environmental_account(
+    for target_value in (-5e-7, -2e-6):
+        retargeted = _retarget_direct_environmental_account(
             account,
-            target_denominator=pd.Series([-2e-6], index=pd.Index(["a"])),
+            target_denominator=pd.Series([target_value], index=pd.Index(["a"])),
             boundary="external_imports_direct",
-            denominator_role="target_import_supply",
+            denominator_role="target_import_use",
         )
+        assert float(retargeted.loc[0, "monetary_denominator"]) == pytest.approx(target_value)
+        assert float(retargeted.loc[0, "value"]) == pytest.approx(0.2 * target_value)
+        assert float(retargeted.loc[0, "intensity"]) == pytest.approx(0.2)
 
 
 def test_total_sidecar_combiner_normalizes_components_before_total() -> None:
@@ -362,7 +355,7 @@ def test_total_sidecar_combiner_normalizes_components_before_total() -> None:
         {
             "sector": ["a"],
             "boundary": ["external_imports_direct"],
-            "denominator_role": ["target_import_supply"],
+            "denominator_role": ["target_import_use"],
             "extension": ["air"],
             "stressor": ["CO2"],
             "unit": ["kg"],
@@ -375,7 +368,7 @@ def test_total_sidecar_combiner_normalizes_components_before_total() -> None:
         dom,
         imp,
         target_domestic_output=pd.Series([-5e-7], index=pd.Index(["a"])),
-        target_import_supply=pd.Series([5.0], index=pd.Index(["a"])),
+        target_import_use=pd.Series([5.0], index=pd.Index(["a"])),
     )
     assert float(total.loc[0, "monetary_output"]) == 5.0
     assert float(total.loc[0, "value"]) == 10.0
@@ -405,7 +398,7 @@ def test_environmental_target_retarget_preserves_unavailable_positive_mass() -> 
         donor,
         target_denominator=pd.Series([5.0], index=pd.Index(["CPA_E36"])),
         boundary="external_imports_direct",
-        denominator_role="target_import_supply",
+        denominator_role="target_import_use",
     )
     assert float(target.loc[0, "monetary_denominator"]) == 5.0
     assert pd.isna(target.loc[0, "value"])
@@ -435,7 +428,7 @@ def test_total_sidecar_propagates_unavailable_positive_component_only() -> None:
         {
             "sector": ["a"],
             "boundary": ["external_imports_direct"],
-            "denominator_role": ["target_import_supply"],
+            "denominator_role": ["target_import_use"],
             "extension": ["air"],
             "stressor": ["CO2"],
             "unit": ["kg"],
@@ -448,7 +441,7 @@ def test_total_sidecar_propagates_unavailable_positive_component_only() -> None:
         dom,
         imp_missing,
         target_domestic_output=pd.Series([10.0], index=["a"]),
-        target_import_supply=pd.Series([5.0], index=["a"]),
+        target_import_use=pd.Series([5.0], index=["a"]),
     )
     assert float(unavailable_total.loc[0, "monetary_output"]) == 15.0
     assert pd.isna(unavailable_total.loc[0, "value"])
@@ -460,7 +453,7 @@ def test_total_sidecar_propagates_unavailable_positive_component_only() -> None:
         dom,
         imp_zero_mass,
         target_domestic_output=pd.Series([10.0], index=["a"]),
-        target_import_supply=pd.Series([0.0], index=["a"]),
+        target_import_use=pd.Series([0.0], index=["a"]),
     )
     assert float(supported_total.loc[0, "monetary_output"]) == 10.0
     assert float(supported_total.loc[0, "value"]) == 20.0
@@ -488,13 +481,13 @@ def test_total_sidecar_rejects_infinite_intensity_at_zero_denominator() -> None:
     )
     imp = zero.copy()
     imp["boundary"] = "external_imports_direct"
-    imp["denominator_role"] = "target_import_supply"
+    imp["denominator_role"] = "target_import_use"
     with pytest.raises(ValueError, match="intensity must be missing at zero denominator"):
         _combine_target_supply_extension_sidecars_direct(
             zero,
             imp,
             target_domestic_output=pd.Series([0.0], index=["a"]),
-            target_import_supply=pd.Series([0.0], index=["a"]),
+            target_import_use=pd.Series([0.0], index=["a"]),
         )
 
 
@@ -523,7 +516,7 @@ def test_validator_accepts_imp_target_environmental_grid_without_raw_sidecar(
         {
             "sector": ["S"],
             "boundary": ["external_imports_direct"],
-            "denominator_role": ["target_import_supply"],
+            "denominator_role": ["target_import_use"],
             "extension": ["water"],
             "stressor": ["Synthetic water stressor"],
             "unit": ["kg"],

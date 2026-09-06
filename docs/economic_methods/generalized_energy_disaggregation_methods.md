@@ -593,36 +593,37 @@ mapped origin/target-product denominator remains non-positive where import use i
 positive. The account is direct origin production, not a full embodied footprint;
 upstream burdens require a separately declared Leontief calculation.
 
-The target total-supply extension must not reuse the domestic coefficient. When
-the target IOT publishes domestic-output and import-supply components, form
+The combined direct-use extension must not reuse the domestic coefficient. The
+target IMP transaction row total is imported-product use, not the supply-side P7
+control, and it can be signed. Form
 
 \[
-\widehat F^{\mathrm{total}}_a
+\widehat F^{\mathrm{total,use}}_a
  = e^{\mathrm{prod},G}_a x^{\mathrm{target,dom}}_a
- + e^{\mathrm{imp},G}_a m^{\mathrm{target,imp}}_a,
+ + e^{\mathrm{imp},G}_a u^{\mathrm{target,imp}}_a,
 \]
 
 \[
-e^{\mathrm{total}}_a
- = \frac{\widehat F^{\mathrm{total}}_a}
- {x^{\mathrm{target,dom}}_a+m^{\mathrm{target,imp}}_a}.
+e^{\mathrm{total,use}}_a
+ = \frac{\widehat F^{\mathrm{total,use}}_a}
+ {x^{\mathrm{target,dom}}_a+u^{\mathrm{target,imp}}_a}.
 \]
 
-Here \(a\) is on the transformed target product basis. The monetary sum must
-validate against the target total-supply control. EXIO domestic/import shares are
-only an explicit lower-quality fallback when those target components are absent.
+Here \(a\) is on the transformed target product basis. The denominator must
+match the target TOTAL transaction-use vector. It is not a reconstruction of
+supply-side P7/TS_BP. EXIO shares remain donor evidence only.
 
 If all origin-level consistency checks pass but the collapsed donor coefficient
 \(e^{\mathrm{imp},G}_a\) is still undefined (for example because the mapped net
-import-use denominator is zero), a positive authoritative target import-supply
+import-use denominator is zero), a nonzero authoritative target import-use
 control does not justify inventing a coefficient. The target-sector/stressor
 estimate is then unavailable evidence: retain its monetary denominator and store
 physical value and intensity as `NaN`, never zero and never the domestic coefficient.
-A TOTAL estimate is likewise unavailable whenever any positive-mass DOM or IMP
+A TOTAL estimate is likewise unavailable whenever any required nonzero-mass DOM or IMP
 component required for that TOTAL is unavailable. An unavailable component with
 zero target monetary mass does not invalidate a supported positive-mass counterpart.
 Subsequent sector reaggregation may form a finite ratio only from complete
-positive-denominator support; partial support remains a fail-closed condition.
+nonzero-denominator support; partial support remains a fail-closed condition.
 
 Direct final-demand extensions remain on their own axis:
 
@@ -774,7 +775,7 @@ flag is used. The raw EXIO provenance sidecar is not grid-completed:
 production ``F`` remains source-product evidence and ``F_Y`` remains category-level
 evidence outside the sector-axis contract. Production-side model extensions use the explicit boundaries defined in
 `Geographic scope aggregation`. A domestic/scope-production coefficient is never
-transferred to external imports or total supply; those accounts use the
+transferred to external imports or total transaction use; those accounts use the
 import-weighted and target-component equations above.
 
 Direct final-demand extensions \(F_Y\) are a separate accounting boundary and are
@@ -794,7 +795,7 @@ final-demand satellite total and is not allocated across product/sector rows. Se
 reaggregation therefore leaves these category-level donor rows unchanged.
 
 A destination scope's production extension must not be reused as an import-production
-proxy. Imported-product and combined total-supply extensions are defined only by the
+proxy. Imported-product and combined total-use extensions are defined only by the
 origin-weighted and target-component equations in `Geographic scope aggregation`;
 unweighted complement production is a different descriptive account and is not a
 valid substitute.

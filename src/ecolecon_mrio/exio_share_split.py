@@ -1444,11 +1444,11 @@ def _split_iot_using_donor_blocks(
                 * fd_total
             )
 
-        # Investment stock/disposal controls can be signed, but complete domestic
-        # row use or imported supply is gross and cannot be negative for a child.
-        # Reallocate only the selected atomic investment component inside its source
-        # parent; never invent absent P52/P53 detail or change another transaction.
-        if signed_investment_code is not None:
+        # Investment stock/disposal controls can be signed. Only DOM complete row
+        # use is the child domestic-output margin and must remain non-negative. IMP
+        # rows are imported-product use and may remain signed; rebalancing them would
+        # turn an accounting-use vector into a fabricated import-supply constraint.
+        if signed_investment_code is not None and exio_slice.flow == "internal":
             other_use = Z_split.loc[row_labels].sum(axis=1).add(
                 Y_split.loc[row_labels, atomic_without_signed_investment].sum(axis=1),
                 fill_value=0.0,

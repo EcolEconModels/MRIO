@@ -460,3 +460,38 @@ def test_environmental_reaggregation_uses_accounting_nonnegative_tolerance() -> 
             {},
             output=pd.Series([-2e-6], index=pd.Index(["A"])),
         )
+
+def test_environmental_grid_preserves_signed_target_import_use() -> None:
+    from scripts.aggregate_iot_by_mapping import _complete_environmental_extension_sector_grid
+
+    groups = pd.DataFrame(
+        {
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_use"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+        }
+    )
+    actual = pd.DataFrame(
+        {
+            "sector": ["A", "B"],
+            "boundary": ["external_imports_direct"] * 2,
+            "denominator_role": ["target_import_use"] * 2,
+            "extension": ["air"] * 2,
+            "stressor": ["CO2"] * 2,
+            "unit": ["kg"] * 2,
+            "value": [-10.0, 30.0],
+            "monetary_output": [-5.0, 15.0],
+            "intensity": [2.0, 2.0],
+        }
+    )
+    completed = _complete_environmental_extension_sector_grid(
+        actual,
+        output=pd.Series({"A": -5.0, "B": 15.0}),
+        production_groups=groups,
+    )
+    assert completed is not None
+    by_sector = completed.set_index("sector")
+    assert float(by_sector.loc["A", "monetary_output"]) == pytest.approx(-5.0)
+    assert float(by_sector.loc["B", "monetary_output"]) == pytest.approx(15.0)

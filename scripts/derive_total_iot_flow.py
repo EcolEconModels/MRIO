@@ -133,16 +133,24 @@ def _derived_y_control(
         counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
         return values, counts
     if identity == "P5":
-        detail = ["P51G", "P52", "P53"]
-        if not set(detail).issubset(Y.columns):
-            raise ValueError("P5 published-control validation requires its complete detail partition")
+        if {"P51G", "P52", "P53"}.issubset(Y.columns):
+            detail = ["P51G", "P52", "P53"]
+        elif {"P51G", "P5M"}.issubset(Y.columns) and not {"P52", "P53"}.intersection(Y.columns):
+            detail = ["P51G", "P5M"]
+        elif "P5" in source_atomic_final_demand(Y).columns:
+            detail = ["P5"]
+        else:
+            raise ValueError("P5 published-control validation requires one complete recognised investment basis")
         values = Y.loc[:, detail].sum(axis=1).astype("float64")
         counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
         return values, counts
     if identity == "P5M":
-        detail = ["P52", "P53"]
-        if not set(detail).issubset(Y.columns):
-            raise ValueError("P5M published-control validation requires P52 and P53")
+        if {"P52", "P53"}.issubset(Y.columns):
+            detail = ["P52", "P53"]
+        elif "P5M" in source_atomic_final_demand(Y).columns:
+            detail = ["P5M"]
+        else:
+            raise ValueError("P5M published-control validation requires P52/P53 detail or atomic nested P5M")
         values = Y.loc[:, detail].sum(axis=1).astype("float64")
         counts = Y.loc[:, detail].notna().sum(axis=1).astype("int64")
         return values, counts
@@ -366,9 +374,7 @@ def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], sou
 
 
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
-# Inventories/valuables and every display aggregate that contains them can be
-# signed; ordinary final-use categories are non-negative import partitions.
-_SIGNED_FINAL_USE_COLUMNS = frozenset({"P5", "P5M", "P52", "P53", "TFU"})
+_SIGNED_INVESTMENT_ATOMS = frozenset({"P5", "P5M", "P52", "P53"})
 
 
 def _allocate_source_parent_vector(
@@ -446,21 +452,10 @@ def _allocate_import_partition(
     return out
 
 
-def _validate_import_partition_proxy(*, total: float, part: float, column: str) -> None:
-    """Validate a geographic-import proxy on its declared final-use domain."""
-    if not np.isfinite(total) or not np.isfinite(part):
-        raise ValueError(f"Incomplete import-partition proxy in M: column={column!r}")
-    if column not in _SIGNED_FINAL_USE_COLUMNS and (total < 0.0 or part < 0.0 or part > total):
-        raise ValueError(
-            f"Import-partition proxy must be a non-negative partition in M: "
-            f"column={column!r}, part={part!r}, total={total!r}"
-        )
-
-
 def _construct_transaction_v(
     *, flow: str, reference: ParsedEurostatIOT, child_parent: Mapping[str, str],
     Z: pd.DataFrame, Z_total: pd.DataFrame, Z_imp: pd.DataFrame,
-    x_domestic: pd.Series, imported_supply: pd.Series,
+    x_domestic: pd.Series, import_supply_proxy: pd.Series,
     primitive_reference: ParsedEurostatIOT | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame]:
     """Construct V from primitive observations and exact transaction identities."""
@@ -537,20 +532,37 @@ def _construct_transaction_v(
         V.loc["P1"] = x_domestic.reindex(children) if flow in {"DOM", "TOTAL"} else 0.0
     if "IMP" in source.index:
         V.loc["IMP"] = Z_imp.sum(axis=0).reindex(children)
-    if "P7" in source.index:
-        V.loc["P7"] = imported_supply.reindex(children)
 
-    # Import geography is a source composition applied to derived P7. The final
-    # component in each exhaustive partition is a residual so identities remain exact.
+    # P7 is imports-CIF supply by product, not the IMP transaction-row-use vector.
+    # Preserve each published parent P7 and use a non-negative transaction proxy
+    # only to distribute that supply control among newly emitted child products.
     source_p7 = _source_row(reference, "P7")
-    if source_p7 is not None and "P7_B0" in source.index and "P7_D0" in source.index:
+    allocated_p7: pd.Series | None = None
+    if source_p7 is not None and "P7" in source.index:
+        allocated_p7 = _allocate_source_parent_vector(
+            published=source_p7,
+            child_parent=child_parent,
+            children=children,
+            proxy=import_supply_proxy,
+            flow=flow,
+            row_code="P7",
+        )
+        V.loc["P7"] = allocated_p7
+
+    # Geographic P7 rows remain supply-side partitions of the allocated P7 vector.
+    if (
+        source_p7 is not None
+        and allocated_p7 is not None
+        and "P7_B0" in source.index
+        and "P7_D0" in source.index
+    ):
         b0 = _allocate_import_partition(
-            aggregate=imported_supply, published_part=source.loc["P7_B0"],
+            aggregate=allocated_p7, published_part=source.loc["P7_B0"],
             published_total=source_p7, child_parent=child_parent, children=children,
             row_code="P7_B0",
         )
         V.loc["P7_B0"] = b0
-        V.loc["P7_D0"] = imported_supply.reindex(children) - b0
+        V.loc["P7_D0"] = allocated_p7 - b0
         if "P7_U2" in source.index and "P7_U3" in source.index:
             u2 = _allocate_import_partition(
                 aggregate=b0, published_part=source.loc["P7_U2"],
@@ -583,9 +595,9 @@ def _construct_transaction_v(
             if "B2A3G" in source.index:
                 V.loc["B2A3G"] = b2n + V.loc["P51C"]
     if "TS_BP" in source.index:
-        if flow != "TOTAL" or "P7" not in V.index:
+        if flow != "TOTAL" or allocated_p7 is None:
             raise ValueError(f"{flow} TS_BP requires TOTAL P7")
-        V.loc["TS_BP"] = output_proxy + imported_supply.reindex(children)
+        V.loc["TS_BP"] = output_proxy + allocated_p7
 
     # A numeric source row without a declared primitive or identity role is a
     # genuine accounting gap; all-blank template-only rows are handled at export.
@@ -611,47 +623,22 @@ def _construct_transaction_m(
     if V is None:
         return M
 
-    # TOTAL imports by final use come from the transformed IMP transactions.
-    # Source geography is a composition prior only; residual components make
-    # both declared partitions exact without inventing equal shares.
-    if flow == "TOTAL" and "P7" in M.index:
-        for column in M.columns.intersection(Y_imp.columns):
-            M.loc["P7", column] = float(Y_imp[column].sum())
-        for aggregate_row, first_row, residual_row in (
-            ("P7", "P7_B0", "P7_D0"),
-            ("P7_B0", "P7_U2", "P7_U3"),
-        ):
-            if not {aggregate_row, first_row, residual_row}.issubset(M.index):
-                continue
-            source_m = reference.M
-            assert source_m is not None
-            for column in M.columns:
-                if column == "TOTAL" or column not in source_m.columns:
-                    continue
-                aggregate_value = float(M.loc[aggregate_row, column])
-                source_total = float(source_m.loc[aggregate_row, column])
-                source_part = float(source_m.loc[first_row, column])
-                if np.isnan(source_total) and np.isnan(source_part):
-                    continue
-                _validate_import_partition_proxy(
-                    total=source_total, part=source_part, column=str(column),
-                )
-                if source_total == 0.0:
-                    if aggregate_value != 0.0 or source_part != 0.0:
-                        raise ValueError(
-                            f"No usable import-partition proxy in M: {aggregate_row}, "
-                            f"column={column!r}"
-                        )
-                    first_value = 0.0
-                else:
-                    first_value = aggregate_value * source_part / source_total
-                M.loc[first_row, column] = first_value
-                M.loc[residual_row, column] = aggregate_value - first_value
+    # P7/P7_* and TS_BP are supply-by-product rows. Their cells on the final-use
+    # M block are structurally non-applicable and must never be populated from Y_imp.
+    supply_only_rows = cast(pd.Index, M.index).intersection(
+        pd.Index(["P7", "P7_B0", "P7_D0", "P7_U2", "P7_U3", "TS_BP"])
+    )
+    if len(supply_only_rows):
+        M.loc[supply_only_rows, :] = np.nan
 
-    # The TOTAL display column under each supplementary row is the matching V
-    # grand total; it is not an independently allocated final-demand cell.
+    # The TOTAL display column under applicable supplementary use/production rows
+    # is the matching V grand total. Supply-only rows remain non-applicable in M.
     if "TOTAL" in M.columns:
-        shared_rows = cast(pd.Index, M.index).intersection(cast(pd.Index, V.index))
+        shared_rows = (
+            cast(pd.Index, M.index)
+            .intersection(cast(pd.Index, V.index))
+            .difference(supply_only_rows)
+        )
         for row in shared_rows:
             M.loc[row, "TOTAL"] = float(V.loc[row].sum(min_count=1))
     if "CPA_TOTAL" in M.index:
@@ -683,6 +670,8 @@ def _construct_transaction_m(
             M.loc[row, "P5M"] = float(M.loc[row, ["P52", "P53"]].sum())
         if {"P51G", "P52", "P53"}.issubset(M.columns) and not pd.isna(M.loc[row, "P5"]):
             M.loc[row, "P5"] = float(M.loc[row, ["P51G", "P52", "P53"]].sum())
+        elif {"P51G", "P5M"}.issubset(M.columns) and not pd.isna(M.loc[row, "P5"]):
+            M.loc[row, "P5"] = float(M.loc[row, ["P51G", "P5M"]].sum())
         atomic_cols = [c for c in source_atomic_final_demand(Y).columns if c in M.columns]
         if "TFU" in M.columns and not pd.isna(M.loc[row, "TFU"]):
             M.loc[row, "TFU"] = float(M.loc[row, atomic_cols].sum())
@@ -752,7 +741,7 @@ def _read_generated_variants(
 
 
 def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
-    """Build TOTAL target-supply direct extensions through the canonical combiner."""
+    """Build TOTAL direct-use extensions from DOM output and signed IMP use."""
     dom_path = dirs["DOM"] / "environmental_extensions.csv"
     imp_path = dirs["IMP"] / "environmental_extensions.csv"
     if not dom_path.exists() and not imp_path.exists():
@@ -769,12 +758,12 @@ def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
         dom,
         imp,
         target_domestic_output=dom_use,
-        target_import_supply=imp_use,
+        target_import_use=imp_use,
     )
     total.to_csv(dirs["TOTAL"] / "environmental_extensions.csv", index=False)
 
     # Carry source F/F_Y identities forward as provenance only. The TOTAL target
-    # sidecar owns total_supply_direct / target_total_supply; downstream
+    # sidecar owns total_use_direct / target_total_use; downstream
     # reaggregation must never infer a target boundary from the raw source file.
     raw_dom = dirs["DOM"] / "exio_environmental_extensions.csv"
     if raw_dom.exists():
@@ -783,9 +772,10 @@ def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
 def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: Mapping[str, object], eurostat_row_dim: str, eurostat_col_dim: str, eurostat_stk_flow_dim: str = "stk_flow", source_rounding_quantum: float | None = None, atol: float = 1e-6, rtol: float = 1e-9) -> None:
     """Canonicalise DOM/IMP transactions into a cleared production account.
 
-    Domestic product output is the complete domestic-origin row use. Imported
-    supply is the complete import-origin row use. Primitive supplementary rows
-    retain source parent totals; generated rows are recomputed from transactions.
+    Domestic product output is the complete domestic-origin row use. The IMP
+    transaction table is imported-product use and may be signed; P7 remains a
+    separate imports-CIF supply control. Primitive supplementary rows retain source
+    parent totals; generated rows are recomputed only for declared identities.
     """
     dirs = {flow: outdir / f"{eurostat_stk_flow_dim}={flow}" for flow in ("DOM", "IMP", "TOTAL")}
     for flow in ("DOM", "IMP"):
@@ -826,7 +816,18 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     # Row conservation supplies the only child-output margin. EXIO producer
     # output shares remain donor diagnostics and are not a second hard target.
     x_domestic = use["DOM"].rename("x")
-    imported_supply = use["IMP"].rename("imports")
+    import_atomic = source_atomic_final_demand(Y_imp)
+    nonsigned_import_columns = [
+        code for code in import_atomic.columns if code not in _SIGNED_INVESTMENT_ATOMS
+    ]
+    import_supply_proxy = Z_imp.sum(axis=1).add(
+        import_atomic.loc[:, nonsigned_import_columns].sum(axis=1), fill_value=0.0
+    ).astype("float64")
+    if not np.isfinite(import_supply_proxy.to_numpy(dtype="float64")).all() or bool(
+        (import_supply_proxy < -1e-9).any()
+    ):
+        raise ValueError("P7 child-allocation proxy must be finite and non-negative.")
+    import_supply_proxy = import_supply_proxy.clip(lower=0.0)
     published_p1 = _source_row(references["DOM"], "P1")
     if published_p1 is not None:
         derived_p1 = cast(
@@ -879,7 +880,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         V, v_diagnostics = _construct_transaction_v(
             flow=flow, reference=references[flow], child_parent=child_parent,
             Z=Z[flow], Z_total=Z_total, Z_imp=Z_imp,
-            x_domestic=x_domestic, imported_supply=imported_supply,
+            x_domestic=x_domestic, import_supply_proxy=import_supply_proxy,
             primitive_reference=references["TOTAL"] if flow in {"DOM", "TOTAL"} else None,
         )
         canonical_v[flow] = V

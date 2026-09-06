@@ -210,19 +210,15 @@ NAIO_10_CP1700_ACCOUNTING_POLICY = EurostatIOTAccountingPolicy(
             "P51C",
             "B2A3G",
             "B2A3N",
-            "P7",
-            "P7_B0",
-            "P7_D0",
-            "P7_U2",
-            "P7_U3",
-            "TS_BP",
         ),
     },
     # Inventory change (P52), valuables (P53), taxes/subsidies and surplus
-    # remain signed. These named transaction/use and supply controls do not.
+    # remain signed. IMP is a use table, so its product-level TU can also be signed
+    # when net stock/disposal uses dominate; DOM/TOTAL TU remain gross controls.
     nonnegative_y_columns_by_flow={
-        flow: ("P3_S13", "P3_S14", "P3_S15", "P51G", "P6", "TU")
-        for flow in ("DOM", "IMP", "TOTAL")
+        "DOM": ("P3_S13", "P3_S14", "P3_S15", "P51G", "P6", "TU"),
+        "IMP": ("P3_S13", "P3_S14", "P3_S15", "P51G", "P6"),
+        "TOTAL": ("P3_S13", "P3_S14", "P3_S15", "P51G", "P6", "TU"),
     },
     nonnegative_v_rows_by_flow={
         "DOM": ("CPA_TOTAL", "D1", "D11", "P1", "P2_ADJ", "P51C"),

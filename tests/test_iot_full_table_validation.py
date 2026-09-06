@@ -5,6 +5,7 @@ import pandas as pd
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT
 from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
 from ecolecon_mrio.iot_full_table_validation import validate_eurostat_iot_full_table
+from ecolecon_mrio.iot_validation import InvariantCheck, InvariantReport
 
 
 _Y_COLUMNS = (
@@ -133,7 +134,7 @@ def _triplet() -> dict[str, ParsedEurostatIOT]:
     }
 
 
-def _checks(report) -> dict[str, object]:
+def _checks(report: InvariantReport) -> dict[str, InvariantCheck]:
     return {check.check_id: check for check in report.checks}
 
 
@@ -245,3 +246,36 @@ def test_total_v_and_m_are_not_blanket_additive_contracts() -> None:
     assert checks["full.v7.no_blanket_v_additivity"].status == "not_applicable"
     assert checks["full.vm.no_blanket_m_additivity"].status == "not_applicable"
     assert checks["full.gdp1.production"].status == "not_tested"
+
+def test_validator_does_not_equate_p7_supply_with_signed_imp_row_use() -> None:
+    variants = _triplet()
+    imp = variants["IMP"]
+    dom = variants["DOM"]
+    total = variants["TOTAL"]
+    # Make the IMP transaction row use negative through signed inventories while
+    # preserving DOM+IMP=TOTAL transactions. P7 remains its independent supply control.
+    delta = -30.0
+    affected = ["P52", "P5M", "P5", "TFU", "TU"]
+    for parsed in (imp, total):
+        parsed.Y.loc["a", "P52"] += delta
+        parsed.Y.loc["a", "P5M"] += delta
+        parsed.Y.loc["a", "P5"] += delta
+        parsed.Y.loc["a", "TFU"] += delta
+        parsed.Y.loc["a", "TU"] += delta
+        assert parsed.M is not None
+        parsed.M.loc["CPA_TOTAL", affected] = parsed.Y.loc["a", affected]
+    assert total.M is not None
+    total.M.loc["P2_ADJ", affected] = total.Y.loc["a", affected]
+    # Keep the DOM imported-use supplementary final-use row aligned to IMP Y.
+    assert dom.M is not None
+    dom.M.loc["IMP", :] = imp.Y.loc["a", :]
+    checks = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+    assert "full.domain.y.imp.tu" not in checks
+    assert checks["full.r2.imports_supply"].status == "not_tested"
+    assert checks["full.i2.dom_v_imp"].status == "pass"
+    assert checks["full.i3.dom_m_imp"].status == "pass"
+    assert checks["full.i8.import_orientation"].status == "pass"

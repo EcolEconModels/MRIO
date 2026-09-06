@@ -241,7 +241,7 @@ def test_total_supply_combines_coefficients_on_authoritative_target_controls() -
     np.testing.assert_allclose(out["value"], expected)
     np.testing.assert_allclose(out["monetary_denominator"], target_total.to_numpy())
 
-    with pytest.raises(ValueError, match="Target total-supply identity failed"):
+    with pytest.raises(ValueError, match="Target total-use identity failed"):
         combine_total_supply_extension_direct(
             production_account=production,
             import_account=imports,
@@ -341,7 +341,7 @@ def test_target_supply_sidecar_combiner_preserves_unavailable_zero_mass() -> Non
         {
             "sector": ["a", "b"],
             "boundary": ["external_imports_direct"] * 2,
-            "denominator_role": ["target_import_supply"] * 2,
+            "denominator_role": ["target_import_use"] * 2,
             "extension": ["air"] * 2,
             "stressor": ["CO2"] * 2,
             "unit": ["kg"] * 2,
@@ -354,7 +354,7 @@ def test_target_supply_sidecar_combiner_preserves_unavailable_zero_mass() -> Non
         dom,
         imp,
         target_domestic_output=pd.Series([10.0, 0.0], index=["a", "b"]),
-        target_import_supply=pd.Series([5.0, 0.0], index=["a", "b"]),
+        target_import_use=pd.Series([5.0, 0.0], index=["a", "b"]),
     )
     row_a = total.set_index("sector").loc["a"]
     assert float(row_a["value"]) == pytest.approx(35.0)
@@ -380,7 +380,7 @@ def test_target_supply_sidecar_combiner_propagates_missing_positive_evidence() -
     imp = pd.DataFrame(
         {
             "sector": ["a"], "boundary": ["external_imports_direct"],
-            "denominator_role": ["target_import_supply"], "extension": ["air"],
+            "denominator_role": ["target_import_use"], "extension": ["air"],
             "stressor": ["CO2"], "unit": ["kg"], "value": [0.0],
             "monetary_output": [0.0], "intensity": [np.nan],
         }
@@ -389,7 +389,7 @@ def test_target_supply_sidecar_combiner_propagates_missing_positive_evidence() -
         dom,
         imp,
         target_domestic_output=pd.Series([1.0], index=["a"]),
-        target_import_supply=pd.Series([0.0], index=["a"]),
+        target_import_use=pd.Series([0.0], index=["a"]),
     )
     row = total.set_index("sector").loc["a"]
     assert float(row["monetary_output"]) == 1.0
@@ -474,3 +474,58 @@ def test_public_environmental_account_rejects_infinite_zero_denominator_intensit
             target_import_supply=pd.Series([0.0], index=["a"]),
             target_total_supply=pd.Series([0.0], index=["a"]),
         )
+
+def test_retarget_direct_environmental_account_accepts_signed_import_use() -> None:
+    from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account
+
+    donor = pd.DataFrame(
+        {
+            "axis_position": [1],
+            "axis_label": ["a"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["scope_external_import_use"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [5.0],
+            "monetary_denominator": [10.0],
+            "intensity": [0.5],
+        }
+    )
+    out = _retarget_direct_environmental_account(
+        donor,
+        target_denominator=pd.Series([-20.0], index=["a"]),
+        boundary="external_imports_direct",
+        denominator_role="target_import_use",
+        allow_signed_denominator=True,
+    )
+    row = out.iloc[0]
+    assert float(row["value"]) == pytest.approx(-10.0)
+    assert float(row["monetary_denominator"]) == pytest.approx(-20.0)
+    assert float(row["intensity"]) == pytest.approx(0.5)
+
+def test_public_total_combiner_accepts_signed_target_import_use() -> None:
+    production = pd.DataFrame(
+        {
+            "axis_position": [1], "axis_label": ["a"], "boundary": ["scope_production"],
+            "denominator_role": ["scope_production_output"], "extension": ["air"],
+            "stressor": ["CO2"], "unit": ["kg"], "value": [20.0],
+            "monetary_denominator": [10.0], "intensity": [2.0],
+        }
+    )
+    imports = production.copy()
+    imports["boundary"] = "external_imports_direct"
+    imports["denominator_role"] = "scope_external_import_use"
+    imports[["value", "monetary_denominator", "intensity"]] = [5.0, 10.0, 0.5]
+    out = combine_total_supply_extension_direct(
+        production_account=production,
+        import_account=imports,
+        target_domestic_output=pd.Series([100.0], index=["a"]),
+        target_import_supply=pd.Series([-20.0], index=["a"]),
+        target_total_supply=pd.Series([80.0], index=["a"]),
+    )
+    row = out.iloc[0]
+    assert row["boundary"] == "total_use_direct"
+    assert row["denominator_role"] == "target_total_use"
+    assert float(row["value"]) == pytest.approx(190.0)
+    assert float(row["monetary_denominator"]) == pytest.approx(80.0)

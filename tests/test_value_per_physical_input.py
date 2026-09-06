@@ -393,3 +393,31 @@ def test_environmental_reaggregation_rejects_nonzero_value_at_zero_denominator()
             {},
             output=pd.Series({"A": 0.0}, dtype=float),
         )
+
+def test_environmental_reaggregation_preserves_signed_target_import_use() -> None:
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+
+    frame = pd.DataFrame(
+        {
+            "sector": ["A", "B"],
+            "boundary": ["external_imports_direct"] * 2,
+            "denominator_role": ["target_import_use"] * 2,
+            "extension": ["air"] * 2,
+            "stressor": ["CO2"] * 2,
+            "unit": ["kg"] * 2,
+            "value": [-10.0, 30.0],
+            "monetary_output": [-5.0, 15.0],
+            "intensity": [2.0, 2.0],
+        }
+    )
+    result = aggregate_environmental_extensions(
+        frame,
+        {"A": "X", "B": "X"},
+        output=pd.Series({"A": -5.0, "B": 15.0}),
+    )
+    assert result is not None
+    row = result.iloc[0]
+    assert row["sector"] == "X"
+    assert float(row["monetary_output"]) == pytest.approx(10.0)
+    assert float(row["value"]) == pytest.approx(20.0)
+    assert float(row["intensity"]) == pytest.approx(2.0)

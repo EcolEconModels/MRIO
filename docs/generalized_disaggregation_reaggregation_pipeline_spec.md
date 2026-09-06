@@ -501,14 +501,14 @@ Initial boundaries are:
 |---|---|---|
 | `scope_production` | product/sector | member-region production output |
 | `external_imports_direct` | product/sector | imports used by the destination scope |
-| `total_supply_direct` | product/sector | target domestic output plus target import supply |
+| `total_use_direct` | product/sector | target domestic output plus signed target imported-product use |
 | `scope_final_demand_direct` | final-demand category | all-origin final demand in the scope |
 
 `scope_production` is formed by summing member-region `F` and `x` before
 division. `external_imports_direct` weights origin-specific `F/x` by actual EXIO
 `Z+Y` flows from origins outside the scope to destinations inside it.
-`total_supply_direct` combines the first two coefficients with the authoritative
-target DOM and IMP monetary components. `F_Y` is summed over destination members
+`total_use_direct` combines the first two coefficients with authoritative target
+DOM output and signed IMP transaction-use components. `F_Y` is summed over destination members
 and divided by final demand by category; it never receives a product position or
 a RoW-import counterpart.
 

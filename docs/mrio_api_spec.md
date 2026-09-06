@@ -348,27 +348,28 @@ an origin-specific coefficient is formed. Only then are origins weighted by thei
 actual imports into the scope. The result is a direct origin-production import
 account, not a Leontief footprint or full embodied-import intensity.
 
-### Total target supply
+### Total target transaction use
 
-Do not copy the scope-production coefficient onto `TOTAL`. When the target
-provider supplies domestic-output and import-supply components, combine implied
-extensive totals using those authoritative target denominators:
+Do not copy the scope-production coefficient onto `TOTAL`. Combine domestic output
+with the signed target IMP transaction-use component; do not substitute supply-side
+P7 merely because it shares the product classification:
 
 \[
 \widehat F^{\mathrm{total}}_a =
 e^{\mathrm{prod},G}_a x^{\mathrm{target,dom}}_a
-+e^{\mathrm{imp},G}_a m^{\mathrm{target,imp}}_a,
++e^{\mathrm{imp},G}_a u^{\mathrm{target,imp}}_a,
 \]
 
 \[
 e^{\mathrm{total}}_a =
 \frac{\widehat F^{\mathrm{total}}_a}
-{x^{\mathrm{target,dom}}_a+m^{\mathrm{target,imp}}_a}.
+{x^{\mathrm{target,dom}}_a+u^{\mathrm{target,imp}}_a}.
 \]
 
-The target identity against total supply must be validated. Falling back to EXIO
-domestic/import monetary shares is allowed only as an explicit lower-quality
-policy when the target components are unavailable.
+The target identity against TOTAL transaction use must be validated. The public
+function name `combine_total_supply_extension_direct(...)` is retained for API
+compatibility, but its import/total target keywords carry import-use/total-use
+semantics. Supply-side P7 is not a fallback for signed IMP use.
 
 ### Direct final demand
 
@@ -395,7 +396,7 @@ value,monetary_denominator,intensity
 ~~~
 
 Allowed initial boundaries are `scope_production`,
-`external_imports_direct`, `total_supply_direct`, and
+`external_imports_direct`, `total_use_direct`, and
 `scope_final_demand_direct`. Missing evidence is not zero.
 
 WP3 implements these boundaries as independent geography/satellite operators:

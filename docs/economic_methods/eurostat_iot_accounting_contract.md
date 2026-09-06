@@ -137,8 +137,8 @@ r_i = \sum_j Z_{ij} + \sum_{f \in F} Y_{if},
 its economic meaning depends on the flow role:
 
 - for `DOM`, `r_i` is domestic output allocated to uses;
-- for `IMP`, `r_i` is imported supply allocated to uses;
-- for `TOTAL`, `r_i` is total use and, at a common valuation, total supply.
+- for `IMP`, `r_i` is imported-product use and may be signed when signed stock/disposal uses dominate;
+- for `TOTAL`, `r_i` is total transaction use. A separate published supply control may exist on the same product domain.
 
 The generic expression must therefore not be named `output` without a flow-role
 qualification.
@@ -303,13 +303,17 @@ For `DOM`:
 q_i = \sum_j Z^{DOM}_{ij} + \sum_{f \in F} Y^{DOM}_{if}.
 \]
 
-### Imported-supply allocation
+### Imported-product use
 
 For `IMP`:
 
 \[
-m_i = \sum_j Z^{IMP}_{ij} + \sum_{f \in F} Y^{IMP}_{if}.
+u^{IMP}_i = \sum_j Z^{IMP}_{ij} + \sum_{f \in F} Y^{IMP}_{if}.
 \]
+
+This is a use-table row total, not the separate imports-CIF supply control `P7`.
+Because the selected final-use basis contains signed stock/disposal components,
+imported-product use may be signed.
 
 ### Total-use allocation
 
@@ -382,23 +386,22 @@ valuation.
 
 ### Total supply at basic prices
 
-For every product:
+For every product the supply-side controls satisfy
 
 \[
-TS^{BP}_i = q_i + m_i.
+TS^{BP}_i = P1_i + P7_i,
 \]
 
-### Supply equals use
+where `P7` is imports CIF by product. `P7` is not reconstructed from the IMP
+transaction-row-use vector.
 
-At a common valuation:
+### Supply/use reconciliation
 
-\[
-TS_i = TU_i.
-\]
-
-This must be checked product by product and also as a whole-table scalar. The
-scalar identity is a diagnostic supplement, not a substitute for product-level
-balance.
+Supply equals use only after the compared objects have been established at a
+common valuation and transformation boundary. The current `naio_10_cp1700`
+implementation therefore preserves `TS_BP/P7` supply controls and transaction-use
+controls independently and reports their bridge as not tested unless source
+evidence authorizes it. A scalar comparison cannot substitute for that evidence.
 
 ### Purchasers'-price bridge
 
@@ -446,16 +449,19 @@ Y^{TOTAL}_{if} = Y^{DOM}_{if} + Y^{IMP}_{if}.
 Aggregate controls and their details must not be tested as if they were
 independent additive cells.
 
-### Imports supply-use bridge
+### Imports supply and imported-use axes
 
-For every imported product:
+`P7` is imports CIF by product on the supply side. The IMP transaction table is a
+use table. They share a product classification but are not therefore the same
+vector. Under the current `naio_10_cp1700` evidence the repository does **not**
+assert
 
 \[
 P7_i = \sum_j Z^{IMP}_{ij} + \sum_{f \in F}Y^{IMP}_{if}.
 \]
 
-`P7` is total imported supply by product. It is not limited to imports purchased
-by households or government.
+A future bridge requires explicit source/valuation evidence rather than matching
+labels alone.
 
 ### Imported intermediate-use controls
 
@@ -485,23 +491,22 @@ allocated in the domestic table:
 P1_i^{TOTAL} = q_i^{DOM}.
 \]
 
-### Imports bridge
+### Imports bridge status
 
-The imports control associated with the total table must equal imported supply
-allocated in the imports table:
+The current source contract keeps `P7` supply and IMP transaction use as separate
+observed/transformed objects. Neither a productwise nor a national-scalar equality
+between them is promoted to a generated identity without a verified valuation and
+transformation bridge.
 
-\[
-P7_i^{TOTAL} = m_i^{IMP}.
-\]
-
-### Whole-table imported-use identity
+The imported-use controls that *are* generated from the IMP table are instead
 
 \[
-\sum_i P7_i = \sum_{ij} Z^{IMP}_{ij}
-+ \sum_{if}Y^{IMP}_{if}.
+IMP^V_j = \sum_i Z^{IMP}_{ij},
+\qquad
+IMP^M_f = \sum_i Y^{IMP}_{if}.
 \]
 
-This supplements but does not replace the product-level bridge.
+These are column-oriented use controls and must not be confused with `P7_i`.
 
 ## Economy-wide identities
 
@@ -564,13 +569,14 @@ Y^{before}_{if}
 = \sum_{a \in children(i)}Y^{after}_{af}.
 \]
 
-Signed investment atoms require an additional child-level gross-use constraint.
-For `DOM`, each emitted child's complete row use is domestic output; for `IMP`, it
-is imported supply. These gross controls cannot be negative. The split may
-therefore redistribute the selected atomic investment component within its source
-parent while conserving that parent's value exactly. Use the most granular
-available atomic investment control (`P52`, nested `P5M`, or aggregate-only `P5`),
-and never invent omitted `P52`/`P53` detail merely to perform this balancing.
+Signed investment atoms require an additional child-level constraint only for
+`DOM`: each emitted child's complete domestic row use is its domestic-output margin
+and cannot be negative. The split may therefore redistribute the selected atomic
+investment component within its source parent while conserving that parent's value
+exactly. `IMP` child rows are imported-product use and may be signed; they are not
+rebalanced to mimic a non-negative supply vector. Use the most granular available
+atomic investment control (`P52`, nested `P5M`, or aggregate-only `P5`), and never
+invent omitted `P52`/`P53` detail merely to perform DOM balancing.
 
 ### Primary inputs and supplementary observations
 

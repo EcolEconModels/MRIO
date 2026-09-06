@@ -968,11 +968,18 @@ def validate_eurostat_iot_full_table(
         compare("full.r1.domestic_output", "TOTAL", "V_TOTAL|Z_DOM|Y_DOM", p1_total, dom.Z.sum(axis=1).add(atomic["DOM"].sum(axis=1)), len(dom.Z.columns) + len(atomic["DOM"].columns), "TOTAL P1 must bridge domestic row uses.")
     else:
         checks.append(_not_tested("full.r1.domestic_output", flow="TOTAL", block="V_TOTAL|Z_DOM|Y_DOM", explanation="DOM/TOTAL flows and atomic Y are required."))
-    if total is not None and imp is not None and "IMP" in atomic:
-        p7_total = _safe_row(total.V, "P7", flow="TOTAL", block="V", checks=checks, check_id="full.r2.imports_supply")
-        compare("full.r2.imports_supply", "TOTAL", "V_TOTAL|Z_IMP|Y_IMP", p7_total, imp.Z.sum(axis=1).add(atomic["IMP"].sum(axis=1)), len(imp.Z.columns) + len(atomic["IMP"].columns), "TOTAL P7 must bridge complete imported row uses.")
-    else:
-        checks.append(_not_tested("full.r2.imports_supply", flow="TOTAL", block="V_TOTAL|Z_IMP|Y_IMP", explanation="IMP/TOTAL flows and atomic Y are required."))
+    checks.append(
+        _not_tested(
+            "full.r2.imports_supply",
+            flow="TOTAL",
+            block="V_TOTAL|Z_IMP|Y_IMP",
+            explanation=(
+                "TOTAL P7 is a supply-side imports-CIF control by product, while the "
+                "IMP transaction row total is imported-product use. The current "
+                "naio_10_cp1700 evidence does not authorize a strict productwise bridge."
+            ),
+        )
+    )
     if total is not None and "TOTAL" in atomic:
         tu_total = _safe_column(total.Y, "TU", flow="TOTAL", checks=checks, check_id="full.r3.total_use")
         compare("full.r3.total_use", "TOTAL", "Y_TOTAL|Z_TOTAL", tu_total, total.Z.sum(axis=1).add(atomic["TOTAL"].sum(axis=1)), len(total.Z.columns) + len(atomic["TOTAL"].columns), "TOTAL TU must equal total row uses.")
@@ -997,25 +1004,71 @@ def validate_eurostat_iot_full_table(
         checks.append(_not_tested("full.i3.dom_m_imp", flow="DOM", block="M_DOM|Y_IMP", explanation="DOM and IMP flows are required."))
 
     if total is not None:
-        for block, frame in (("V", total.V), ("M", total.M)):
-            for partition in policy.import_partitions:
-                aggregate = _safe_row(frame, partition.aggregate, flow="TOTAL", block=block, checks=checks, check_id=f"{partition.check_id}.{block.lower()}")
-                components = [_safe_row(frame, code, flow="TOTAL", block=block, checks=checks, check_id=f"{partition.check_id}.{block.lower()}") for code in partition.components]
-                derived = None if any(item is None for item in components) else pd.concat(cast(list[pd.Series], components), axis=1).sum(axis=1, min_count=len(components))
-                if block == "M" and aggregate is not None and derived is not None:
-                    applicable = aggregate.notna() & derived.notna()
-                    aggregate = aggregate.loc[applicable]
-                    derived = derived.loc[applicable]
-                compare(f"{partition.check_id}.{block.lower()}", "TOTAL", block, aggregate, derived, len(partition.components), f"{partition.aggregate} must equal its declared geographic imports partition in every applicable {block} cell.")
-        p7_total = _safe_row(total.V, "P7", flow="TOTAL", block="V", checks=checks, check_id="full.i4.imports_scalar")
-        if p7_total is not None and imp is not None and "IMP" in atomic:
-            observed = pd.Series([float(p7_total.sum())], index=pd.Index(["national_total"]))
-            derived = pd.Series([float(imp.Z.to_numpy(dtype="float64").sum() + atomic["IMP"].to_numpy(dtype="float64").sum())], index=observed.index)
-            compare("full.i4.imports_scalar", "TOTAL", "V_TOTAL|Z_IMP|Y_IMP", observed, derived, len(p7_total) + imp.Z.size + atomic["IMP"].size, "National P7 must equal all imported intermediate and atomic final uses.")
-        else:
-            checks.append(_not_tested("full.i4.imports_scalar", flow="TOTAL", block="V_TOTAL|Z_IMP|Y_IMP", explanation="P7, IMP flow and atomic Y are required."))
+        for partition in policy.import_partitions:
+            aggregate = _safe_row(
+                total.V,
+                partition.aggregate,
+                flow="TOTAL",
+                block="V",
+                checks=checks,
+                check_id=f"{partition.check_id}.v",
+            )
+            components = [
+                _safe_row(
+                    total.V,
+                    code,
+                    flow="TOTAL",
+                    block="V",
+                    checks=checks,
+                    check_id=f"{partition.check_id}.v",
+                )
+                for code in partition.components
+            ]
+            derived = (
+                None
+                if any(item is None for item in components)
+                else pd.concat(cast(list[pd.Series], components), axis=1).sum(
+                    axis=1, min_count=len(components)
+                )
+            )
+            compare(
+                f"{partition.check_id}.v",
+                "TOTAL",
+                "V",
+                aggregate,
+                derived,
+                len(partition.components),
+                f"{partition.aggregate} must equal its declared geographic imports partition on the supply/product axis.",
+            )
+            checks.append(
+                _check(
+                    f"{partition.check_id}.m",
+                    status="not_applicable",
+                    severity="info",
+                    flow="TOTAL",
+                    block="M",
+                    explanation="P7/P7_* are supply-by-product rows and are not final-use controls in M.",
+                )
+            )
+        checks.append(
+            _not_tested(
+                "full.i4.imports_scalar",
+                flow="TOTAL",
+                block="V_TOTAL|Z_IMP|Y_IMP",
+                explanation=(
+                    "The current source evidence does not authorize a strict scalar "
+                    "bridge between imports-CIF supply P7 and transformed imported use."
+                ),
+            )
+        )
     else:
-        for check_id in ("full.i4.imports_scalar", "full.i5.p7_geography.v", "full.i5.p7_geography.m", "full.i6.p7_eu.v", "full.i6.p7_eu.m"):
+        for check_id in (
+            "full.i4.imports_scalar",
+            "full.i5.p7_geography.v",
+            "full.i5.p7_geography.m",
+            "full.i6.p7_eu.v",
+            "full.i6.p7_eu.m",
+        ):
             checks.append(_not_tested(check_id, flow="TOTAL", block="V|M", explanation="TOTAL flow is absent."))
     competing_imports = [] if total is None or total.V is None else [code for code in ("P7_CIF", "P7_FOB") if code in total.V.index]
     checks.append(_check("full.i7.cif_fob_ambiguity", status="fail" if competing_imports else "pass", severity="error" if competing_imports else "info", block="V_TOTAL", affected=competing_imports, explanation="Competing CIF/FOB imports controls require an explicit valuation policy and cannot be selected silently."))
@@ -1026,16 +1079,39 @@ def validate_eurostat_iot_full_table(
         p1 = _safe_row(total.V, "P1", flow="TOTAL", block="V", checks=checks, check_id="full.sp1.ts_components")
         p7 = _safe_row(total.V, "P7", flow="TOTAL", block="V", checks=checks, check_id="full.sp1.ts_components")
         compare("full.sp1.ts_components", "TOTAL", "V", ts, None if p1 is None or p7 is None else p1.add(p7), 2, "TS_BP must equal P1 plus P7 by product.")
-        tu = _safe_column(total.Y, "TU", flow="TOTAL", checks=checks, check_id="full.sp2.ts_equals_tu")
-        compare("full.sp2.ts_equals_tu", "TOTAL", "V|Y", ts, tu, 1, "TS_BP must equal TU where the source table publishes the common valuation control.")
-        if "TOTAL" in atomic and p1 is not None and p7 is not None:
-            compare("full.sp3.output_imports_use", "TOTAL", "V|Z|Y", p1.add(p7), total.Z.sum(axis=1).add(atomic["TOTAL"].sum(axis=1)), len(total.Z.columns) + len(atomic["TOTAL"].columns), "P1 plus P7 must equal total row uses.")
-        else:
-            checks.append(_not_tested("full.sp3.output_imports_use", flow="TOTAL", block="V|Z|Y", explanation="P1, P7 and atomic TOTAL Y are required."))
-        if ts is not None and tu is not None:
-            compare("full.sp4.supply_use_scalar", "TOTAL", "V|Y", pd.Series([float(ts.sum())], index=pd.Index(["national_total"])), pd.Series([float(tu.sum())], index=pd.Index(["national_total"])), len(ts), "National total supply must equal national total use." )
-        else:
-            checks.append(_not_tested("full.sp4.supply_use_scalar", flow="TOTAL", block="V|Y", explanation="TS_BP and TU are required."))
+        checks.append(
+            _not_tested(
+                "full.sp2.ts_equals_tu",
+                flow="TOTAL",
+                block="V|Y",
+                explanation=(
+                    "TS_BP is a supply-side control and TU is transaction-row use; "
+                    "their productwise valuation bridge is not authorized by the current source evidence."
+                ),
+            )
+        )
+        checks.append(
+            _not_tested(
+                "full.sp3.output_imports_use",
+                flow="TOTAL",
+                block="V|Z|Y",
+                explanation=(
+                    "P1+P7 is supply-side while TOTAL Z+Y is transaction use; "
+                    "the current source evidence does not authorize a strict productwise bridge."
+                ),
+            )
+        )
+        checks.append(
+            _not_tested(
+                "full.sp4.supply_use_scalar",
+                flow="TOTAL",
+                block="V|Y",
+                explanation=(
+                    "A scalar supply/use comparison remains diagnostic until valuation and transformation "
+                    "compatibility between P7/TS_BP and transaction use is established."
+                ),
+            )
+        )
         p7 = _safe_row(total.V, "P7", flow="TOTAL", block="V", checks=checks, check_id="full.sp5.imports_geography_scalar")
         b0 = _safe_row(total.V, "P7_B0", flow="TOTAL", block="V", checks=checks, check_id="full.sp5.imports_geography_scalar")
         d0 = _safe_row(total.V, "P7_D0", flow="TOTAL", block="V", checks=checks, check_id="full.sp5.imports_geography_scalar")

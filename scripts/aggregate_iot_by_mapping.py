@@ -1550,10 +1550,17 @@ def _complete_environmental_extension_sector_grid(
         )
     denominator = output.copy().astype("float64")
     denominator.index = denominator.index.astype(str)
-    denominator = _normalize_nonnegative_accounting_control(
-        denominator,
-        context="Final environmental denominator",
-    )
+    roles = set(groups["denominator_role"].astype(str))
+    if len(roles) != 1:
+        raise ValueError("Final environmental grid requires one denominator role per artifact.")
+    allow_signed = roles == {"target_import_use"}
+    if not np.isfinite(denominator.to_numpy(dtype="float64")).all():
+        raise ValueError("Final environmental denominator must be finite.")
+    if not allow_signed:
+        denominator = _normalize_nonnegative_accounting_control(
+            denominator,
+            context="Final environmental denominator",
+        )
     key_cols = ["sector"] + group_cols
     if bool(actual.duplicated(key_cols).any()):
         raise ValueError(

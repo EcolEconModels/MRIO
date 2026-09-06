@@ -210,7 +210,7 @@ def test_transaction_v_rejects_signed_unknown_row() -> None:
             flow="DOM", reference=reference, child_parent={"A": "A", "B": "B"},
             Z=zeros, Z_total=zeros, Z_imp=zeros,
             x_domestic=pd.Series([1.0, 1.0], index=children),
-            imported_supply=pd.Series([0.0, 0.0], index=children),
+            import_supply_proxy=pd.Series([0.0, 0.0], index=children),
         )
 
 
@@ -226,14 +226,6 @@ def test_import_partition_rejects_negative_or_excess_source_component() -> None:
         MODULE._allocate_import_partition(
             published_part=pd.Series([5.0], index=["A"]), **kwargs
         )
-
-
-def test_m_import_partition_proxy_respects_signed_final_use_domain() -> None:
-    with pytest.raises(ValueError, match="non-negative partition"):
-        MODULE._validate_import_partition_proxy(total=4.0, part=5.0, column="P3")
-    with pytest.raises(ValueError, match="non-negative partition"):
-        MODULE._validate_import_partition_proxy(total=4.0, part=5.0, column="TU")
-    MODULE._validate_import_partition_proxy(total=-4.0, part=-6.0, column="P52")
 
 
 def test_transaction_v_closes_rows_columns_and_value_added() -> None:
@@ -262,7 +254,7 @@ def test_transaction_v_closes_rows_columns_and_value_added() -> None:
     V, _ = MODULE._construct_transaction_v(
         flow="TOTAL", reference=reference, child_parent={"a1": "A", "a2": "A"},
         Z=Z_total, Z_total=Z_total, Z_imp=Z_imp,
-        x_domestic=x, imported_supply=imports,
+        x_domestic=x, import_supply_proxy=imports,
     )
     assert V is not None
     pd.testing.assert_series_equal(V.loc["P1"], x, check_names=False)
@@ -304,11 +296,7 @@ def test_transaction_m_rebuilds_controls_partitions_and_missingness() -> None:
     source_m = pd.DataFrame(np.nan, index=rows, columns=columns)
     source_m.loc["D21X31"] = 1.0
     source_m.loc["P2_ADJ"] = 1.0
-    source_m.loc["P7"] = 10.0
-    source_m.loc["P7_B0"] = 6.0
-    source_m.loc["P7_D0"] = 4.0
-    source_m.loc["P7_U2"] = 4.0
-    source_m.loc["P7_U3"] = 2.0
+    # P7/P7_* are supply-by-product rows and are non-applicable on final-use M.
     reference = SimpleNamespace(M=source_m)
     V = pd.DataFrame(0.0, index=rows, columns=products)
     V.loc["B3G"] = np.nan
@@ -328,13 +316,8 @@ def test_transaction_m_rebuilds_controls_partitions_and_missingness() -> None:
     pd.testing.assert_series_equal(
         M.loc["CPA_TOTAL", ordinary_columns], y_total[ordinary_columns].sum(axis=0), check_names=False
     )
-    pd.testing.assert_series_equal(
-        M.loc["P7", ordinary_columns], y_imp[ordinary_columns].sum(axis=0), check_names=False
-    )
-    pd.testing.assert_series_equal(M.loc["P7"], M.loc["P7_B0"] + M.loc["P7_D0"], check_names=False)
-    pd.testing.assert_series_equal(M.loc["P7_B0"], M.loc["P7_U2"] + M.loc["P7_U3"], check_names=False)
+    assert M.loc[["P7", "P7_B0", "P7_D0", "P7_U2", "P7_U3"]].isna().all().all()
     assert M.loc["P2_ADJ", "P3"] == pytest.approx(y_total["P3"].sum() + M.loc["D21X31", "P3"])
-    assert M.loc["P7", "TOTAL"] == pytest.approx(V.loc["P7"].sum())
     assert M.loc["B3G"].isna().all()
 
 
@@ -355,3 +338,52 @@ def test_assert_close_rejects_infinite_values() -> None:
     right = pd.Series([float("inf")], index=pd.Index(["a"]))
     with pytest.raises(ValueError, match="max_abs_gap=inf"):
         MODULE._assert_close("infinite values", left, right, rtol=1e-9, atol=1e-6)
+
+def test_nested_p5m_source_control_is_atomic_without_p52_p53() -> None:
+    products = pd.Index(["a", "b"])
+    z = pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=products, columns=products)
+    y = pd.DataFrame(
+        {
+            "P3": [5.0, 6.0],
+            "P51G": [2.0, 3.0],
+            "P5M": [-4.0, 1.0],
+            "P5": [-2.0, 4.0],
+            "P6": [1.0, 1.0],
+        },
+        index=products,
+    )
+    reference = MODULE.ParsedEurostatIOT(Z=z, Y=y, V=None, M=None, meta={})
+    p5m, p5m_counts = MODULE._derived_y_control(reference, "P5M")
+    p5, p5_counts = MODULE._derived_y_control(reference, "P5")
+    pd.testing.assert_series_equal(p5m, y["P5M"], check_names=False)
+    pd.testing.assert_series_equal(p5, y["P51G"] + y["P5M"], check_names=False)
+    assert (p5m_counts == 1).all()
+    assert (p5_counts == 2).all()
+
+def test_transaction_v_preserves_published_p7_supply_not_imp_row_use() -> None:
+    products = pd.Index(["a1", "a2"])
+    parent = pd.Index(["A"])
+    source_v = pd.DataFrame(
+        [[10.0], [6.0], [4.0], [60.0]],
+        index=pd.Index(["P7", "P7_B0", "P7_D0", "TS_BP"]),
+        columns=parent,
+    )
+    reference = SimpleNamespace(V=source_v)
+    z = pd.DataFrame(0.0, index=products, columns=products)
+    x = pd.Series([20.0, 30.0], index=products)
+    # The supply proxy deliberately differs from any imported transaction row-use vector.
+    proxy = pd.Series([1.0, 3.0], index=products)
+    v, _ = MODULE._construct_transaction_v(
+        flow="TOTAL",
+        reference=reference,
+        child_parent={"a1": "A", "a2": "A"},
+        Z=z,
+        Z_total=z,
+        Z_imp=z,
+        x_domestic=x,
+        import_supply_proxy=proxy,
+    )
+    assert v is not None
+    pd.testing.assert_series_equal(v.loc["P7"], pd.Series([2.5, 7.5], index=products), check_names=False)
+    pd.testing.assert_series_equal(v.loc["TS_BP"], x + v.loc["P7"], check_names=False)
+    assert float(v.loc["P7"].sum()) == pytest.approx(10.0)

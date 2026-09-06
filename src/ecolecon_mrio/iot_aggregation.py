@@ -285,19 +285,26 @@ def aggregate_environmental_extensions(
         raise ValueError("Environmental extension values and denominators must be numeric.") from exc
     if bool(np.isinf(frame["value"].to_numpy(dtype="float64")).any()):
         raise ValueError("Environmental extension values must not contain +/-Inf.")
+    denominator_roles = set(frame["denominator_role"].astype(str))
+    if len(denominator_roles) != 1:
+        raise ValueError("One environmental artifact must use exactly one denominator role.")
+    allow_signed = denominator_roles == {"target_import_use"}
     observed = frame["monetary_output"].to_numpy(dtype="float64")
-    if not np.isfinite(observed).all() or bool((observed < 0.0).any()):
-        raise ValueError("Environmental monetary denominators must be finite and non-negative.")
+    if not np.isfinite(observed).all() or (not allow_signed and bool((observed < 0.0).any())):
+        raise ValueError("Environmental monetary denominators are invalid for the declared role.")
 
     try:
         source_output = cast(pd.Series, pd.to_numeric(output.copy(), errors="raise")).astype("float64")
     except (TypeError, ValueError) as exc:
         raise ValueError("Environmental denominator vector must be numeric.") from exc
     source_output.index = source_output.index.astype(str)
-    source_output = _normalize_nonnegative_accounting_control(
-        source_output,
-        context="Environmental denominator vector",
-    )
+    if not np.isfinite(source_output.to_numpy(dtype="float64")).all():
+        raise ValueError("Environmental denominator vector must be finite.")
+    if not allow_signed:
+        source_output = _normalize_nonnegative_accounting_control(
+            source_output,
+            context="Environmental denominator vector",
+        )
 
     expected_series = cast(pd.Series, frame["sector"]).map(source_output)
     if expected_series.isna().any():
@@ -319,14 +326,15 @@ def aggregate_environmental_extensions(
             f"sectors={bad!r}."
         )
 
-    positive_sources_by_target: dict[str, set[str]] = {}
+    active_sources_by_target: dict[str, set[str]] = {}
     for source, output_value in source_output.items():
-        if float(output_value) <= 0.0:
+        is_active = float(output_value) != 0.0 if allow_signed else float(output_value) > 0.0
+        if not is_active:
             continue
         source_label = str(source)
         target = str(mapping.get(source_label, source_label)) if keep_unmapped else mapping.get(source_label)
         if target is not None:
-            positive_sources_by_target.setdefault(str(target), set()).add(source_label)
+            active_sources_by_target.setdefault(str(target), set()).add(source_label)
 
     # Closure is target-local.  Entirely unsupported targets remain unavailable;
     # partially supported targets are invalid because their physical numerator
@@ -341,11 +349,11 @@ def aggregate_environmental_extensions(
             if keep_unmapped or source in mapping
         }
         for target in sorted(represented_targets):
-            missing_positive = sorted(positive_sources_by_target.get(target, set()) - supported_sources)
-            if missing_positive:
+            missing_active = sorted(active_sources_by_target.get(target, set()) - supported_sources)
+            if missing_active:
                 raise ValueError(
-                    "Positive-output environmental extension coverage is incomplete before reaggregation: "
-                    f"group={keys!r}, target={target!r}, sectors={missing_positive[:20]!r}."
+                    "Nonzero-denominator environmental extension coverage is incomplete before reaggregation: "
+                    f"group={keys!r}, target={target!r}, sectors={missing_active[:20]!r}."
                 )
 
     # Missing values are unavailable evidence and must not enter physical sums.
