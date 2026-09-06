@@ -612,3 +612,76 @@ other non-monetary rows) are never price-adjusted.  Their monetary intensities m
 be recomputed later against adjusted monetary denominators only when the consuming
 analysis explicitly defines that sensitivity.
 <!-- /ecolecon-price-index-api -->
+
+<!-- ecolecon-exiobase-eur-price-factors -->
+### Complete EXIOBASE3 common-EUR macro factor construction
+
+The country-level sensitivity has one higher-level EXIOBASE3 mapping owner:
+`build_exiobase3_eur_price_factors(...)`. It returns a long table containing the
+requested years plus the base year and exactly 49 legacy EXIOBASE3 regions per
+year (44 explicit countries and `WA`, `WL`, `WE`, `WF`, `WM`). Missing source
+members, missing years, duplicate observations, non-positive source weights, or an
+incomplete 49-region result fail; no source member is silently dropped or
+interpolated.
+
+For ordinary countries the builder uses the UNSD AMA GDP implicit-price-deflator
+series in its US-dollar basis and the ECB annual-average USD/EUR reference rate.
+If `u_t` is USD per EUR, the common-base-EUR factor is
+
+\[
+\phi^{EUR}_{c,t\to b}
+=\frac{P^{USD}_{c,b}}{P^{USD}_{c,t}}\frac{u_t}{u_b}.
+\]
+
+This removes the exchange-rate movement embedded in the USD-basis current-price
+series before applying the factor to the EUR-valued MRIO. The supporting UNSD
+current-price GDP rows are fetched from the same dynamically discovered broad GDP /
+deflator series and are retained only as aggregation weights. Raw
+`/Metadata/fiscalyearnotes` provenance is cached with those rows; the API does not
+pretend that every provider observation is a calendar-year statistic or silently
+calendarize fiscal-year countries.
+
+The five EXIOBASE Rest-of-World factors are constructed from the pinned EXIOBASE
+classification authority (`EXIOBASE/00-class`, commit
+`768ff12b3c1e449e89d4310a44db9c5dc2266652`). ISO3-to-M49 concordance is read from
+the UN M49 overview rather than duplicated in MRIO. For a RoW bucket `R`, the
+factor uses current-USD GDP weights in the source year,
+
+\[
+\phi^{EUR}_{R,t}
+=\frac{\sum_{c\in R} GDP^{cur,USD}_{c,t}\,\phi^{EUR}_{c,t}}
+       {\sum_{c\in R} GDP^{cur,USD}_{c,t}}.
+\]
+
+Current-USD weights are proportional to current-EUR weights within a year because
+the USD/EUR conversion is common across countries. An unweighted mean of country
+price indices or factors is not used.
+
+Taiwan (`TW`) remains an explicit EXIOBASE country and is not substituted by the
+UNSD China observation. Its annual aggregate GDP implicit-price deflator is read
+from the Taiwan DGBAS primary-data XML dataset discovered from data.gov.tw; its
+annual-average NTD/USD series is read from the Central Bank of the Republic of
+China. With `n_t` denoting NTD per USD, Taiwan uses
+
+\[
+\phi^{EUR}_{TW,t\to b}
+=\frac{P^{NTD}_{TW,b}}{P^{NTD}_{TW,t}}
+ \frac{n_t u_t}{n_b u_b}.
+\]
+
+All common-EUR base-year factors must equal one to numerical precision. The
+returned factors can then be expanded over the exact MRIO `(region, sector)` basis
+and passed to `adjust_mrio_iot_prices(...)`; `A` is still derived only afterward.
+Physical environmental extensions remain outside the transformation.
+
+UNSD AMA is described here as a global national-accounts series, not as a claim
+that every country-year observation is a direct national-statistical submission:
+UNSD supplements official submissions with secondary sources and estimates where
+needed. Source URLs, the pinned EXIOBASE classification commit, fiscal-year notes,
+and the Taiwan source resource are retained in returned provenance metadata.
+
+This remains a **country-GDP-deflator sensitivity**, not a reconstruction of
+product-by-country constant-price EXIOBASE. A common factor within an explicit
+country leaves that country's domestic block of `A` unchanged and therefore does
+not remove within-country relative-price changes between products.
+<!-- /ecolecon-exiobase-eur-price-factors -->

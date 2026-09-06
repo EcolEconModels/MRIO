@@ -385,3 +385,27 @@ __all__.extend([
     "expand_region_price_factors",
 ])
 # /ecolecon-price-index-api
+
+# ecolecon-exiobase-eur-price-factors
+from .price_indices import (
+    download_unsd_ama_current_usd_gdp,
+    load_unsd_ama_current_usd_gdp,
+    read_unsd_ama_current_usd_gdp,
+)
+from .exiobase_price_factors import (
+    aggregate_country_price_factors_to_exiobase3_regions,
+    build_exiobase3_eur_price_factors,
+    common_eur_price_factors_from_usd,
+    default_exiobase3_price_factor_storage_folder,
+)
+
+__all__.extend([
+    "download_unsd_ama_current_usd_gdp",
+    "load_unsd_ama_current_usd_gdp",
+    "read_unsd_ama_current_usd_gdp",
+    "aggregate_country_price_factors_to_exiobase3_regions",
+    "build_exiobase3_eur_price_factors",
+    "common_eur_price_factors_from_usd",
+    "default_exiobase3_price_factor_storage_folder",
+])
+# /ecolecon-exiobase-eur-price-factors

@@ -162,8 +162,11 @@ def adjust_mrio_iot_prices(
             if not value.index.equals(index):
                 raise ValueError("x index must exactly equal basis_index")
             numeric: pd.Series = cast(pd.Series, pd.to_numeric(value, errors="coerce")).astype(float)
-            if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+            numeric_values = numeric.to_numpy(dtype=float)
+            if not np.isfinite(numeric_values).all():
                 raise ValueError("x contains non-finite or non-numeric values")
+            if bool((numeric_values < 0.0).any()):
+                raise ValueError("x must be non-negative")
             adjusted[name] = numeric.mul(factors)
         elif name == "Z":
             if issparse(value):
