@@ -1125,3 +1125,48 @@ def test_parse_eurostat_iot_rejects_absent_observation_inside_core() -> None:
     payload["value"] = values
     with pytest.raises(EurostatParseError, match="absent SDMX observations"):
         parse_eurostat_iot(payload, row_dim="prd_ava", col_dim="prd_use")
+
+def test_phase7_environmental_grid_validates_negative_import_use_ratio(tmp_path) -> None:
+    from scripts.validate_many_many_pipeline_outputs import _validate_environmental_grid
+
+    path = tmp_path / "environmental_extensions.csv"
+    frame = pd.DataFrame(
+        {
+            "sector_position": [1],
+            "sector": ["A"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_use"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [-10.0],
+            "monetary_output": [-5.0],
+            "intensity": [2.0],
+        }
+    )
+    groups = frame.loc[
+        :, ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    ].copy()
+    frame.to_csv(path, index=False)
+    good = _validate_environmental_grid(
+        environmental_path=path,
+        raw_path=None,
+        output=pd.Series({"A": -5.0}),
+        rtol=1e-9,
+        atol=1e-6,
+        production_groups=groups,
+    )
+    assert good["ok"] is True
+
+    frame.loc[0, "intensity"] = 999.0
+    frame.to_csv(path, index=False)
+    bad = _validate_environmental_grid(
+        environmental_path=path,
+        raw_path=None,
+        output=pd.Series({"A": -5.0}),
+        rtol=1e-9,
+        atol=1e-6,
+        production_groups=groups,
+    )
+    assert bad["ok"] is False
+    assert "nonzero-denominator intensity does not equal value/output" in bad["errors"]

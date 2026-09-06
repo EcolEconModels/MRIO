@@ -941,6 +941,7 @@ def _validated_environmental_account_group(
     *,
     expected_boundary: str,
     expected_denominator_role: str,
+    allow_zero_denominator_nonzero_value: bool = False,
 ) -> tuple[tuple[str, ...], np.ndarray, np.ndarray, tuple[str, str, str]]:
     if not isinstance(account, pd.DataFrame):
         raise TypeError("Environmental account must be a pandas DataFrame.")
@@ -977,7 +978,7 @@ def _validated_environmental_account_group(
     if not np.isfinite(values).all() or not np.isfinite(denominator).all():
         raise ValueError("Environmental account values and denominators must be finite.")
     inconsistent_zero = (denominator == 0.0) & (values != 0.0)
-    if bool(inconsistent_zero.any()):
+    if not allow_zero_denominator_nonzero_value and bool(inconsistent_zero.any()):
         bad = [labels[pos] for pos in np.flatnonzero(inconsistent_zero)[:10]]
         raise ValueError(
             "Environmental account has nonzero physical value at zero monetary denominator: "
@@ -1135,6 +1136,7 @@ def combine_total_supply_extension_direct(
         import_account,
         expected_boundary="external_imports_direct",
         expected_denominator_role="scope_external_import_use",
+        allow_zero_denominator_nonzero_value=True,
     )
     if imp_labels != prod_labels:
         raise ValueError("Production and import environmental accounts must use the same target-product axis.")
@@ -1399,6 +1401,7 @@ def _retarget_direct_environmental_account(
         account,
         expected_boundary=str(account["boundary"].iloc[0]),
         expected_denominator_role=str(account["denominator_role"].iloc[0]),
+        allow_zero_denominator_nonzero_value=denominator_role == "target_import_use",
     )
     target = cast(pd.Series, target_denominator.copy().astype("float64"))
     target.index = pd.Index([str(v) for v in target.index])

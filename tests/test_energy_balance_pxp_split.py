@@ -214,18 +214,19 @@ def test_component_values_include_selector_and_parent_residuals() -> None:
 def test_compile_and_run_split_uses_existing_disaggregation_api() -> None:
     Z = pd.DataFrame([[100.0]], index=["CPA_C20"], columns=["CPA_C20"])
     Y = pd.DataFrame([[900.0]], index=["CPA_C20"], columns=["P3"])
-    plan = compile_energy_balance_pxp_split_plan(
-        Z=Z,
-        Y=Y,
-        split_frame=_split_frame(),
-        reaggregation_frame=_reagg_frame(),
-        technology_frame=_tech_frame(),
-        prices_frame=_prices_frame(),
-        energy_balance_dictionary_frame=_dictionary_frame(),
-        geo="AT",
-        year=2021,
-        quantity_table_override=_quantity_table(200.0),
-    )
+    with pytest.warns(RuntimeWarning, match="Placeholder Energy Balance prices"):
+        plan = compile_energy_balance_pxp_split_plan(
+            Z=Z,
+            Y=Y,
+            split_frame=_split_frame(),
+            reaggregation_frame=_reagg_frame(),
+            technology_frame=_tech_frame(),
+            prices_frame=_prices_frame(),
+            energy_balance_dictionary_frame=_dictionary_frame(),
+            geo="AT",
+            year=2021,
+            quantity_table_override=_quantity_table(200.0),
+        )
     assert "CPA_C20" in plan.split_profiles
     assert "EB_C20_OTHERS" in plan.split_profiles["CPA_C20"].subsectors
     result = run_energy_balance_pxp_split(Z, Y, plan, balancing_scope="local", create_io_system=False)

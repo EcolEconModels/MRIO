@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.sparse import csr_matrix
 
 from ecolecon_mrio.counterfactual import run_panel_scenarios
@@ -177,7 +178,8 @@ def test_output_change_decomposition_averages_forward_and_backward_identities():
 def test_transition_index_and_classification_bounds():
     panel = load_mrio_panel(dataset="test", years=[2020, 2021, 2022], calc_all=True, include_ghosh=True)
     out = compute_viability_panel(panel, CONSTRAINTS_CFG, max_sectors=20, allow_relaxation=True)
-    align = principal_direction_index(out.x_by_year, out.sector_scores)
+    with pytest.warns(DeprecationWarning, match="principal_direction_index is deprecated"):
+        align = principal_direction_index(out.x_by_year, out.sector_scores)
     assert not align.empty
     assert ((align["align"].dropna() <= 1.0) & (align["align"].dropna() >= -1.0)).all()
     classified = classify_transition_years(out.annual, align, align_high_threshold=0.2, align_low_threshold=-0.2)

@@ -7,7 +7,6 @@ import pytest
 
 from ecolecon_mrio.concordance_audit_flows import (
     FlowAuditRun,
-    _build_consolidated_summary_md,
     _flow_classification_frame,
     build_flow_reconciliation,
     build_flow_total_use_proxy,
@@ -146,7 +145,7 @@ def _make_result(
         subcomponent_exceeds_aggregate=empty,
         report_markdown="",
         mapped_x=mapped_x,
-        mapped_y=mapped_y,
+        mapped_y=mapped_y.sum(axis=1),
         mapped_z=mapped_z,
         eurostat_x=eurostat_x,
         eurostat_y_total=eurostat_y_total,

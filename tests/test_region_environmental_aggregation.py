@@ -480,29 +480,31 @@ def test_retarget_direct_environmental_account_accepts_signed_import_use() -> No
 
     donor = pd.DataFrame(
         {
-            "axis_position": [1],
-            "axis_label": ["a"],
+            "axis_position": [1], "axis_label": ["a"],
             "boundary": ["external_imports_direct"],
             "denominator_role": ["scope_external_import_use"],
-            "extension": ["air"],
-            "stressor": ["CO2"],
-            "unit": ["kg"],
-            "value": [5.0],
-            "monetary_denominator": [10.0],
-            "intensity": [0.5],
+            "extension": ["air"], "stressor": ["CO2"], "unit": ["kg"],
+            "value": [5.0], "monetary_denominator": [10.0], "intensity": [0.5],
         }
     )
     out = _retarget_direct_environmental_account(
-        donor,
-        target_denominator=pd.Series([-20.0], index=["a"]),
-        boundary="external_imports_direct",
-        denominator_role="target_import_use",
+        donor, target_denominator=pd.Series([-20.0], index=["a"]),
+        boundary="external_imports_direct", denominator_role="target_import_use",
         allow_signed_denominator=True,
     )
     row = out.iloc[0]
     assert float(row["value"]) == pytest.approx(-10.0)
     assert float(row["monetary_denominator"]) == pytest.approx(-20.0)
     assert float(row["intensity"]) == pytest.approx(0.5)
+
+    donor.loc[0, ["value", "monetary_denominator", "intensity"]] = [5.0, 0.0, np.nan]
+    unavailable = _retarget_direct_environmental_account(
+        donor, target_denominator=pd.Series([20.0], index=["a"]),
+        boundary="external_imports_direct", denominator_role="target_import_use",
+        allow_signed_denominator=True,
+    ).iloc[0]
+    assert float(unavailable["monetary_denominator"]) == 20.0
+    assert pd.isna(unavailable["value"]) and pd.isna(unavailable["intensity"])
 
 def test_public_total_combiner_accepts_signed_target_import_use() -> None:
     production = pd.DataFrame(
@@ -518,14 +520,19 @@ def test_public_total_combiner_accepts_signed_target_import_use() -> None:
     imports["denominator_role"] = "scope_external_import_use"
     imports[["value", "monetary_denominator", "intensity"]] = [5.0, 10.0, 0.5]
     out = combine_total_supply_extension_direct(
-        production_account=production,
-        import_account=imports,
+        production_account=production, import_account=imports,
         target_domestic_output=pd.Series([100.0], index=["a"]),
         target_import_supply=pd.Series([-20.0], index=["a"]),
         target_total_supply=pd.Series([80.0], index=["a"]),
-    )
-    row = out.iloc[0]
-    assert row["boundary"] == "total_use_direct"
-    assert row["denominator_role"] == "target_total_use"
-    assert float(row["value"]) == pytest.approx(190.0)
-    assert float(row["monetary_denominator"]) == pytest.approx(80.0)
+    ).iloc[0]
+    assert out["boundary"] == "total_use_direct"
+    assert float(out["value"]) == pytest.approx(190.0)
+
+    imports.loc[0, ["value", "monetary_denominator", "intensity"]] = [5.0, 0.0, np.nan]
+    unavailable = combine_total_supply_extension_direct(
+        production_account=production, import_account=imports,
+        target_domestic_output=pd.Series([100.0], index=["a"]),
+        target_import_supply=pd.Series([20.0], index=["a"]),
+        target_total_supply=pd.Series([120.0], index=["a"]),
+    ).iloc[0]
+    assert pd.isna(unavailable["value"]) and pd.isna(unavailable["intensity"])

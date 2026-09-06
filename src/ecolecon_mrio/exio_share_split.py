@@ -120,7 +120,7 @@ def _largest_abs_gap(diff: pd.DataFrame | pd.Series) -> tuple[str, float]:
         return label, float(diff.abs().max())
     if diff.empty:
         return "", 0.0
-    stack = diff.abs().stack(dropna=False)
+    stack = diff.abs().stack(future_stack=True)
     if stack.empty:
         return "", 0.0
     where = stack.idxmax()

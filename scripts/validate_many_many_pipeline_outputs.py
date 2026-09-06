@@ -294,8 +294,8 @@ def _validate_environmental_grid(
     if bool(intensity.loc[missing_value].notna().any()):
         errors.append("value=NA requires intensity=NA")
     finite_value = value.notna()
-    positive_output = monetary.gt(0.0)
-    ratio_rows = finite_value & positive_output
+    nonzero_denominator = monetary.ne(0.0)
+    ratio_rows = finite_value & nonzero_denominator
     if bool(ratio_rows.any()):
         expected_ratio = value.loc[ratio_rows] / monetary.loc[ratio_rows]
         observed_ratio = intensity.loc[ratio_rows]
@@ -306,7 +306,7 @@ def _validate_environmental_grid(
             atol=atol,
             equal_nan=False,
         ):
-            errors.append("positive-output intensity does not equal value/output")
+            errors.append("nonzero-denominator intensity does not equal value/output")
     zero_output_estimates = finite_value & monetary.eq(0.0)
     if bool(zero_output_estimates.any()):
         zero_values = value.loc[zero_output_estimates]

@@ -368,7 +368,8 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
         output_after=flow_use_total(z_after, y_after),
     )
 
-    ws = load_workbook(out_path, data_only=True)["Sheet 1"]
+    out_wb = load_workbook(out_path, data_only=True)
+    ws = out_wb["Sheet 1"]
     header_labels = _row_values(ws, 11, 3, 3)
     assert header_labels == [
         "CPA_C19: Motor Gasoline",
@@ -413,6 +414,7 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     assert _row_values(ws, 12, 6, 5) == pytest.approx([26.0, 13.0, 6.0, 68.0, 45.0])
     assert _row_values(ws, row_lookup["Taxes less subsidies on products"], 6, 5) == pytest.approx([9.0, 8.0, 7.0, 27.0, 24.0])
     assert _row_values(ws, row_lookup["Total intermediate consumption /final use"], 6, 5) == pytest.approx([999.0] * 5)
+    out_wb.close()
 
 def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeypatch) -> None:
     import ecolecon_mrio.eurostat_iot as eurostat_iot

@@ -271,6 +271,20 @@ def test_transaction_v_closes_rows_columns_and_value_added() -> None:
     assert float(V.loc["D21X31"].sum()) == -2.0
     assert V.loc["B3G"].isna().all()
 
+    # Coarser consolidated-EU sources can publish gross B2A3G without P51C/B2A3N.
+    coarse = SimpleNamespace(V=reference.V.drop(index=["D11", "P51C", "B2A3N"]))
+    coarse_v, _ = MODULE._construct_transaction_v(
+        flow="TOTAL", reference=coarse, child_parent={"a1": "A", "a2": "A"},
+        Z=Z_total, Z_total=Z_total, Z_imp=Z_imp,
+        x_domestic=x, import_supply_proxy=imports,
+    )
+    assert coarse_v is not None
+    pd.testing.assert_series_equal(
+        coarse_v.loc["B2A3G"],
+        coarse_v.loc["B1G"] - coarse_v.loc["D1"] - coarse_v.loc["D29X39"],
+        check_names=False,
+    )
+
 
 def test_transaction_m_rebuilds_controls_partitions_and_missingness() -> None:
     columns = pd.Index(
@@ -386,4 +400,14 @@ def test_transaction_v_preserves_published_p7_supply_not_imp_row_use() -> None:
     assert v is not None
     pd.testing.assert_series_equal(v.loc["P7"], pd.Series([2.5, 7.5], index=products), check_names=False)
     pd.testing.assert_series_equal(v.loc["TS_BP"], x + v.loc["P7"], check_names=False)
-    assert float(v.loc["P7"].sum()) == pytest.approx(10.0)
+    assert pytest.approx(float(v.loc["P7"].sum())) == 10.0
+
+    standalone = SimpleNamespace(V=source_v.drop(index=["P7_B0"]))
+    standalone_v, _ = MODULE._construct_transaction_v(
+        flow="TOTAL", reference=standalone,
+        child_parent={"a1": "A", "a2": "A"},
+        Z=z, Z_total=z, Z_imp=z, x_domestic=x, import_supply_proxy=proxy,
+    )
+    assert standalone_v is not None
+    assert float(standalone_v.loc["P7_D0"].sum()) == pytest.approx(4.0)
+    assert "P7_B0" not in standalone_v.index

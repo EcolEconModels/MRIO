@@ -428,7 +428,7 @@ def _structural_checks(
             )
         )
         duplicates: list[str] = []
-        non_finite = 0
+        supplementary_infinite = 0
         core_non_finite = 0
         for name, frame in blocks:
             if frame is None:
@@ -436,14 +436,12 @@ def _structural_checks(
             duplicates.extend(f"{name}.row:{item}" for item in frame.index[frame.index.duplicated()].astype(str))
             duplicates.extend(f"{name}.column:{item}" for item in frame.columns[frame.columns.duplicated()].astype(str))
             values = frame.to_numpy(dtype="float64")
-            if mode == "generated" and name in {"Z", "Y"}:
+            if name in {"Z", "Y"}:
                 core_non_finite += int((~np.isfinite(values)).sum())
             else:
-                non_finite += int(
-                    np.isinf(values).sum()
-                    if mode == "generated"
-                    else (~np.isfinite(values)).sum()
-                )
+                # V/M retain NaN as the only available cell-level missingness /
+                # non-applicability signal. Infinity is never a valid source state.
+                supplementary_infinite += int(np.isinf(values).sum())
         checks.append(
             _check(
                 f"full.s6.{flow.lower()}",
@@ -458,15 +456,18 @@ def _structural_checks(
         checks.append(
             _check(
                 f"full.s7.{flow.lower()}",
-                status="pass" if non_finite == 0 and core_non_finite == 0 else "fail",
+                status="pass" if supplementary_infinite == 0 and core_non_finite == 0 else "fail",
                 severity="error",
                 flow=flow,
                 block="Z|Y|V|M",
-                affected=(str(non_finite + core_non_finite),) if non_finite or core_non_finite else (),
+                affected=(
+                    (str(supplementary_infinite + core_non_finite),)
+                    if supplementary_infinite or core_non_finite
+                    else ()
+                ),
                 explanation=(
-                    "Generated Z and Y must be finite; V and M may retain NaN only for missing/non-applicable cells, but no generated block may contain infinity."
-                    if mode == "generated"
-                    else "All parsed applicable source cells must be finite under the current parser contract."
+                    "Z and Y must be finite. V and M may retain NaN for missing or structurally "
+                    "non-applicable cells, but no parsed or generated block may contain infinity."
                 ),
             )
         )
@@ -689,6 +690,46 @@ def validate_eurostat_iot_full_table(
             )
         )
 
+    def compare_applicable(
+        check_id: str,
+        flow: FlowRole,
+        block: str,
+        observed: pd.Series | None,
+        derived: pd.Series | None,
+        terms: int,
+        explanation: str,
+    ) -> None:
+        """Compare only source-mask-applicable supplementary M cells."""
+        if observed is None or derived is None:
+            checks.append(_not_tested(check_id, flow=flow, block=block, explanation=explanation))
+            return
+        if not observed.index.equals(derived.index):
+            compare(check_id, flow, block, observed, derived, terms, explanation)
+            return
+        applicable = np.isfinite(observed.to_numpy(dtype="float64")) & np.isfinite(
+            derived.to_numpy(dtype="float64")
+        )
+        if not bool(applicable.any()):
+            checks.append(
+                _not_tested(
+                    check_id,
+                    flow=flow,
+                    block=block,
+                    explanation=f"{explanation} No finite jointly applicable source M cells are present.",
+                )
+            )
+            return
+        labels = observed.index[applicable]
+        compare(
+            check_id,
+            flow,
+            block,
+            observed.loc[labels],
+            derived.loc[labels],
+            terms,
+            f"{explanation} Comparison is restricted to finite applicable M cells; NaN is the applicability mask.",
+        )
+
     def frame_compare(
         check_id: str,
         flow: FlowRole,
@@ -897,7 +938,7 @@ def validate_eurostat_iot_full_table(
         p2_m = _safe_row(total.M, "P2_ADJ", flow="TOTAL", block="M", checks=checks, check_id="full.p2_2.total_m")
         d21_m = _safe_row(total.M, "D21X31", flow="TOTAL", block="M", checks=checks, check_id="full.p2_2.total_m")
         ordinary_y_totals = total.Y.drop(columns=[policy.total_control_column], errors="ignore").sum(axis=0)
-        compare("full.p2_2.total_m", "TOTAL", "M|Y", None if p2_m is None else p2_m.reindex(ordinary_y_totals.index), None if d21_m is None else ordinary_y_totals.add(d21_m.reindex(ordinary_y_totals.index)), len(total.Y.index) + 1, "TOTAL M P2_ADJ must equal every ordinary displayed Y column sum plus D21X31; TOTAL is reconciled to V separately.")
+        compare_applicable("full.p2_2.total_m", "TOTAL", "M|Y", None if p2_m is None else p2_m.reindex(ordinary_y_totals.index), None if d21_m is None else ordinary_y_totals.add(d21_m.reindex(ordinary_y_totals.index)), len(total.Y.index) + 1, "TOTAL M P2_ADJ must equal every ordinary displayed Y column sum plus D21X31; TOTAL is reconciled to V separately.")
     else:
         checks.append(_not_tested("full.p2_1.total_v", flow="TOTAL", block="V|Z", explanation="TOTAL flow is absent."))
         checks.append(_not_tested("full.p2_2.total_m", flow="TOTAL", block="M|Y", explanation="TOTAL flow is absent."))
@@ -932,13 +973,14 @@ def validate_eurostat_iot_full_table(
         p2 = _safe_row(parsed.V, "P2_ADJ", flow=flow, block="V", checks=checks, check_id=f"full.v1.p1.{flow.lower()}")
         b1 = _safe_row(parsed.V, "B1G", flow=flow, block="V", checks=checks, check_id=f"full.v1.p1.{flow.lower()}")
         compare(f"full.v1.p1.{flow.lower()}", flow, "V", p1, None if p2 is None or b1 is None else p2.add(b1), 2, "P1 must equal P2_ADJ plus B1G in the declared production account.")
-        components = [_safe_row(parsed.V, code, flow=flow, block="V", checks=checks, check_id=f"full.v2.b1g.{flow.lower()}") for code in ("D1", "D29X39", "P51C", "B2A3N")]
-        compare(f"full.v2.b1g.{flow.lower()}", flow, "V", b1, None if any(item is None for item in components) else pd.concat(cast(list[pd.Series], components), axis=1).sum(axis=1), 4, "B1G must equal D1 plus D29X39 plus P51C plus B2A3N.")
-        b2g = _safe_row(parsed.V, "B2A3G", flow=flow, block="V", checks=checks, check_id=f"full.v3.b2a3g.{flow.lower()}")
+        d1 = _safe_row(parsed.V, "D1", flow=flow, block="V", checks=checks, check_id=f"full.v4.d1.{flow.lower()}")
+        d29 = _safe_row(parsed.V, "D29X39", flow=flow, block="V", checks=checks, check_id=f"full.v2.b1g.{flow.lower()}")
+        b2g = _safe_row(parsed.V, "B2A3G", flow=flow, block="V", checks=checks, check_id=f"full.v2.b1g.{flow.lower()}")
+        gross_components = None if d1 is None or d29 is None or b2g is None else d1.add(d29).add(b2g)
+        compare(f"full.v2.b1g.{flow.lower()}", flow, "V", b1, gross_components, 3, "When the gross-surplus basis is available, B1G must equal D1 plus D29X39 plus B2A3G.")
         b2n = _safe_row(parsed.V, "B2A3N", flow=flow, block="V", checks=checks, check_id=f"full.v3.b2a3g.{flow.lower()}")
         p51c = _safe_row(parsed.V, "P51C", flow=flow, block="V", checks=checks, check_id=f"full.v3.b2a3g.{flow.lower()}")
-        compare(f"full.v3.b2a3g.{flow.lower()}", flow, "V", b2g, None if b2n is None or p51c is None else b2n.add(p51c), 2, "B2A3G must equal B2A3N plus P51C.")
-        d1 = _safe_row(parsed.V, "D1", flow=flow, block="V", checks=checks, check_id=f"full.v4.d1.{flow.lower()}")
+        compare(f"full.v3.b2a3g.{flow.lower()}", flow, "V", b2g, None if b2n is None or p51c is None else b2n.add(p51c), 2, "When net-surplus detail is available, B2A3G must equal B2A3N plus P51C.")
         d11 = _safe_row(parsed.V, "D11", flow=flow, block="V", checks=checks, check_id=f"full.v4.d1.{flow.lower()}")
         if d1 is None or d11 is None:
             checks.append(_not_tested(f"full.v4.d1.{flow.lower()}", flow=flow, block="V", explanation="D1 or D11 is unavailable."))
@@ -998,7 +1040,7 @@ def validate_eurostat_iot_full_table(
         compare("full.i2.dom_v_imp", "DOM", "V_DOM|Z_IMP", dom_imp_v, imp.Z.sum(axis=0), len(imp.Z.index), "DOM V IMP must equal imported intermediate-use column sums.")
         dom_imp_m = _safe_row(dom.M, "IMP", flow="DOM", block="M", checks=checks, check_id="full.i3.dom_m_imp")
         ordinary_imp_y = imp.Y.drop(columns=[policy.total_control_column], errors="ignore").sum(axis=0)
-        compare("full.i3.dom_m_imp", "DOM", "M_DOM|Y_IMP", None if dom_imp_m is None else dom_imp_m.reindex(ordinary_imp_y.index), ordinary_imp_y, len(imp.Y.index), "DOM M IMP must equal imported uses for every ordinary displayed final-use/control column; TOTAL is reconciled to V separately.")
+        compare_applicable("full.i3.dom_m_imp", "DOM", "M_DOM|Y_IMP", None if dom_imp_m is None else dom_imp_m.reindex(ordinary_imp_y.index), ordinary_imp_y, len(imp.Y.index), "DOM M IMP must equal imported uses for every ordinary displayed final-use/control column; TOTAL is reconciled to V separately.")
     else:
         checks.append(_not_tested("full.i2.dom_v_imp", flow="DOM", block="V_DOM|Z_IMP", explanation="DOM and IMP flows are required."))
         checks.append(_not_tested("full.i3.dom_m_imp", flow="DOM", block="M_DOM|Y_IMP", explanation="DOM and IMP flows are required."))
@@ -1127,11 +1169,24 @@ def validate_eurostat_iot_full_table(
             continue
         for row in rows:
             check_id = f"full.vm.{flow.lower()}.{row.lower()}"
+            if mode == "source":
+                checks.append(
+                    _not_tested(
+                        check_id,
+                        flow=cast(FlowRole, flow),
+                        block="M[TOTAL]|V",
+                        explanation=(
+                            "M TOTAL versus the V product-column grand total is a repository-generated "
+                            "serialization identity, not an authorized published-source identity."
+                        ),
+                    )
+                )
+                continue
             v_row = _safe_row(parsed.V, row, flow=cast(FlowRole, flow), block="V", checks=checks, check_id=check_id)
             m_row = _safe_row(parsed.M, row, flow=cast(FlowRole, flow), block="M", checks=checks, check_id=check_id)
             m_total = None if m_row is None or policy.total_control_column not in m_row.index else pd.Series([float(m_row.loc[policy.total_control_column])], index=pd.Index(["total_control"]))
             v_total = None if v_row is None else pd.Series([float(v_row.sum())], index=pd.Index(["total_control"]))
-            compare(check_id, cast(FlowRole, flow), "M[TOTAL]|V", m_total, v_total, len(v_row) if v_row is not None else 1, "The named M TOTAL control must equal the V product-column grand total for this declared row.")
+            compare(check_id, cast(FlowRole, flow), "M[TOTAL]|V", m_total, v_total, len(v_row) if v_row is not None else 1, "Generated M TOTAL must equal the V product-column grand total for this declared row.")
     checks.append(_check("full.vm.no_blanket_m_additivity", status="not_applicable", severity="info", block="M", explanation="The validator does not equate complete DOM and TOTAL M rows or split M rows independently."))
 
     # GDP remains deliberately unpromoted: official formulas need controls not exposed here.

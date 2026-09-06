@@ -367,7 +367,28 @@ an exhaustive component set `R_B1G` such that:
 B1G_j = \sum_{r \in R_{B1G}} W_{rj}.
 \]
 
-No fixed component list may be assumed across all Eurostat presentations.
+No fixed component list may be assumed across all Eurostat presentations. In
+particular, the production account may expose the gross-surplus basis
+
+\[
+B1G_j = D1_j + D29X39_j + B2A3G_j,
+\]
+
+without publishing the finer bridge
+
+\[
+B2A3G_j = B2A3N_j + P51C_j.
+\]
+
+`P51C` and `B2A3N` are therefore conditional detail, not dataset-wide mandatory
+rows. When the finer rows are present, both identities are checked; when only
+`B2A3G` is present, the gross-surplus identity is sufficient.
+
+Supplementary `M` cells may be `NaN` when the source layout marks a row/column
+combination missing or structurally non-applicable. Numerical M identities are
+checked only on finite jointly applicable cells. The repository-generated
+`M[TOTAL] = sum(V)` serialization control is enforced on generated tables, but it
+is not promoted to a published-source identity.
 
 ### Row-column output bridge
 

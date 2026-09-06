@@ -94,9 +94,19 @@ def _supplementary(
                 "TS_BP": p1 + p7,
             }
         )
-    V = pd.DataFrame([[rows[row]] for row in required], index=pd.Index(required), columns=pd.Index(["a"]))
+    # Keep the rich fixture independent of the generic dataset-level mandatory
+    # row set so optional-detail identities remain exercised after policy generalization.
+    present_rows = list(required)
+    for row in rows:
+        if row not in present_rows:
+            present_rows.append(row)
+    V = pd.DataFrame(
+        [[rows[row]] for row in present_rows],
+        index=pd.Index(present_rows),
+        columns=pd.Index(["a"]),
+    )
     m_rows: dict[str, list[float]] = {}
-    for row in required:
+    for row in present_rows:
         values = [0.0] * len(_Y_COLUMNS)
         if row == "CPA_TOTAL":
             values = [float(y.loc["a", column]) for column in _Y_COLUMNS]
@@ -139,13 +149,34 @@ def _checks(report: InvariantReport) -> dict[str, InvariantCheck]:
 
 
 def test_complete_generic_triplet_passes_without_austria_shape() -> None:
+    variants = _triplet()
+    for flow in ("DOM", "TOTAL"):
+        parsed = variants[flow]
+        optional = ["D11", "P51C", "B2A3N"]
+        if flow == "TOTAL":
+            optional += ["P7_B0", "P7_U2", "P7_U3"]
+        variants[flow] = ParsedEurostatIOT(
+            parsed.Z, parsed.Y, parsed.meta,
+            parsed.V.drop(index=optional, errors="ignore") if parsed.V is not None else None,
+            parsed.M.drop(index=optional, errors="ignore") if parsed.M is not None else None,
+        )
+    assert variants["TOTAL"].M is not None and variants["DOM"].M is not None
+    for column in ("P6_B0", "P6_U2", "P6_U3"):
+        variants["TOTAL"].M.loc[["P2_ADJ", "D21X31"], column] = float("nan")
+        variants["DOM"].M.loc["IMP", column] = float("nan")
+    variants["TOTAL"].M.loc["B1G", "TOTAL"] += 50.0
+
     report = validate_eurostat_iot_full_table(
-        _triplet(), policy=NAIO_10_CP1700_ACCOUNTING_POLICY
+        variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="source"
     )
+    checks = _checks(report)
     assert report.ok
-    assert not [check for check in report.checks if check.status == "fail"]
-    assert NAIO_10_CP1700_ACCOUNTING_POLICY.policy_id.startswith("naio_10_cp1700")
-    assert len(_triplet()["TOTAL"].Z) == 1
+    assert checks["full.s7.total"].status == "pass"
+    assert checks["full.schema.rows.total"].status == "pass"
+    assert checks["full.p2_2.total_m"].status == "pass"
+    assert checks["full.i3.dom_m_imp"].status == "pass"
+    assert checks["full.v2.b1g.total"].status == "pass"
+    assert checks["full.vm.total.b1g"].status == "not_tested"
 
 
 def test_missing_atomic_column_is_structural_diagnostic_not_key_error() -> None:

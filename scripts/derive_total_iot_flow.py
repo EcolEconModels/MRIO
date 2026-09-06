@@ -572,8 +572,26 @@ def _construct_transaction_v(
             V.loc["P7_U2"] = u2
             V.loc["P7_U3"] = b0 - u2
 
-    # The production column closes after taxes on products; operating surplus is
-    # the declared residual rather than an independently proxied child margin.
+    # Consolidated tables can publish standalone extra-EU P7_D0 without an
+    # intra-EU P7_B0 counterpart. Preserve that published source row independently.
+    if (
+        source_p7 is not None
+        and allocated_p7 is not None
+        and "P7_D0" in source.index
+        and "P7_B0" not in source.index
+    ):
+        V.loc["P7_D0"] = _allocate_source_parent_vector(
+            published=source.loc["P7_D0"],
+            child_parent=child_parent,
+            children=children,
+            proxy=import_supply_proxy,
+            flow=flow,
+            row_code="P7_D0",
+        )
+
+    # The production column closes after taxes on products. Eurostat may expose
+    # either gross operating surplus directly or the finer net-surplus + CFC basis;
+    # do not require the finer basis when only the gross row is transmitted.
     if {"P2_ADJ", "B1G", "B2A3N", "B2A3G"}.intersection(source.index):
         if flow not in {"DOM", "TOTAL"}:
             raise ValueError(f"{flow} exposes production-account rows unexpectedly")
@@ -585,15 +603,19 @@ def _construct_transaction_v(
             V.loc["P2_ADJ"] = p2
         if "B1G" in source.index:
             V.loc["B1G"] = b1g
-        required = {"D1", "D29X39", "P51C"}
-        if {"B2A3N", "B2A3G"}.intersection(source.index) and not required.issubset(V.index):
-            raise ValueError(f"{flow} surplus closure requires {sorted(required)!r}")
-        if "B2A3N" in source.index or "B2A3G" in source.index:
+        if "B2A3N" in source.index:
+            required_net = {"D1", "D29X39", "P51C"}
+            if any(row not in V.index or V.loc[row].isna().any() for row in required_net):
+                raise ValueError(f"{flow} net-surplus closure requires {sorted(required_net)!r}")
             b2n = b1g - V.loc["D1"] - V.loc["D29X39"] - V.loc["P51C"]
-            if "B2A3N" in source.index:
-                V.loc["B2A3N"] = b2n
+            V.loc["B2A3N"] = b2n
             if "B2A3G" in source.index:
                 V.loc["B2A3G"] = b2n + V.loc["P51C"]
+        elif "B2A3G" in source.index:
+            required_gross = {"D1", "D29X39"}
+            if any(row not in V.index or V.loc[row].isna().any() for row in required_gross):
+                raise ValueError(f"{flow} gross-surplus closure requires {sorted(required_gross)!r}")
+            V.loc["B2A3G"] = b1g - V.loc["D1"] - V.loc["D29X39"]
     if "TS_BP" in source.index:
         if flow != "TOTAL" or allocated_p7 is None:
             raise ValueError(f"{flow} TS_BP requires TOTAL P7")

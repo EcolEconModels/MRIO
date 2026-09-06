@@ -8,7 +8,7 @@ import json
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Mapping, Sequence, cast
+from typing import BinaryIO, Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -1249,7 +1249,7 @@ def _codes_for_template_labels(
 
 
 def _official_template_schema(
-    template_xlsx: Path,
+    template_xlsx: Path | BinaryIO,
     *,
     parsed: ParsedEurostatIOT,
 ) -> tuple[list[str], list[str], list[str]]:
@@ -1849,6 +1849,8 @@ def _write_sfc_workbook(
     output_after: pd.Series | None = None,
 ) -> None:
     """Populate and round-trip validate one official Eurostat workbook layout."""
+    from io import BytesIO
+
     import openpyxl
 
     from ecolecon_mrio.eurostat_iot import load_eurostat_iot
@@ -1879,8 +1881,9 @@ def _write_sfc_workbook(
         raise ValueError("Official Eurostat template is required for SFC workbook export")
     if not template_xlsx.is_file():
         raise FileNotFoundError(f"Official Eurostat template not found: {template_xlsx}")
+    template_bytes = template_xlsx.read_bytes()
     base_product_codes, fd_codes_order_no_total, source_rows = _official_template_schema(
-        template_xlsx, parsed=parsed
+        BytesIO(template_bytes), parsed=parsed
     )
 
     target_label_by_output: dict[str, str] = {}
@@ -1933,7 +1936,7 @@ def _write_sfc_workbook(
 
     # The official workbook is always the layout authority. Reshaping inserts or
     # removes only product rows/columns, leaving final-demand and lower-row order intact.
-    wb = openpyxl.load_workbook(template_xlsx, data_only=False)
+    wb = openpyxl.load_workbook(BytesIO(template_bytes), data_only=False)
     if "Sheet 1" not in wb.sheetnames:
         raise ValueError(f"Template workbook missing required sheet 'Sheet 1': {template_xlsx}")
     ws = wb["Sheet 1"]
@@ -2070,7 +2073,7 @@ def _write_sfc_workbook(
     ws_struct.append(["Final-demand display columns", len(fd_codes_order_no_total)])
     ws_struct.append(["Supplementary rows", len(source_rows)])
 
-    tpl_wb = openpyxl.load_workbook(template_xlsx, data_only=False)
+    tpl_wb = openpyxl.load_workbook(BytesIO(template_bytes), data_only=False)
     tpl_ws = tpl_wb["Sheet 1"]
     tpl_layout = _template_table_layout(tpl_ws)
 
@@ -2232,6 +2235,7 @@ def _write_sfc_workbook(
         row_positions[row_code] = target_r
         row_labels_written[row_code] = row_label
 
+    tpl_wb.close()
     _validate_parent_final_demand_reconstruction(
         product_codes_order=product_codes_order,
         base_product_codes=base_product_codes,
@@ -2241,7 +2245,6 @@ def _write_sfc_workbook(
         Y_ord=Y_ord,
         source_parent_by_input=source_parent_by_input,
     )
-    tpl_wb.close()
     _write_excel_mapping_sheet(
         wb,
         sheet_name="IO Aggregation Mapping",
