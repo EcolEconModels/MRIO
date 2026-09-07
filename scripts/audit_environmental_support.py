@@ -11,6 +11,7 @@ all-extension production run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -23,6 +24,114 @@ import numpy as np
 import pandas as pd
 
 _REQUIRED_EXTENSION_FILES = ("F.txt", "F_Y.txt", "unit.txt")
+
+_SOURCE_COMPLETENESS_COLUMNS = (
+    "extension", "has_F", "has_F_Y", "has_unit", "complete", "missing_files"
+)
+_PRODUCTION_SUPPORT_COLUMNS = (
+    "extension", "stressor", "unit", "sector", "mapped_F", "mapped_x",
+    "target_output", "projection_support", "support_state", "target_state",
+    "method_blocking_positive_target", "reaggregation_parent",
+)
+_PRODUCTION_LINEAGE_COLUMNS = (
+    "extension", "stressor", "unit", "sector", "reaggregation_parent",
+    "source_code", "projection_weight", "raw_scope_F", "raw_scope_x",
+    "weighted_F_contribution", "weighted_x_contribution", "mapped_F",
+    "mapped_x", "target_output", "support_state", "target_state",
+    "method_blocking_positive_target",
+)
+_IMPORT_EXCEPTION_COLUMNS = (
+    "origin", "target_sector", "mapped_import_use", "mapped_production_output",
+    "method_blocking",
+)
+_FY_SUPPORT_COLUMNS = (
+    "extension", "stressor", "unit", "final_demand_category", "F_Y",
+    "monetary_final_demand", "support_state", "method_blocking",
+)
+_SOURCE_ERROR_COLUMNS = ("extension", "kind", "error")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_json_object(path: Path) -> dict[str, object]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object: {path}")
+    return {str(key): value for key, value in data.items()}
+
+
+def validate_split_provenance(
+    *,
+    split_root: Path,
+    source_zip: Path,
+    scope_code: str,
+    scope_members: Sequence[str],
+    scope_mapping_csv: Path | None,
+) -> dict[str, object]:
+    """Prove that census source/scope bytes match the persisted monetary split."""
+    source_sha = _sha256_file(source_zip)
+    expected_members = list(map(str, scope_members))
+    mapping_sha = _sha256_file(scope_mapping_csv) if scope_mapping_csv is not None else None
+    flow_records: dict[str, dict[str, object]] = {}
+    for flow in ("DOM", "IMP"):
+        info_path = Path(split_root) / f"stk_flow={flow}" / "split_info.json"
+        info = _load_json_object(info_path)
+        if info.get("is_reconstruction_validated") is not True:
+            raise ValueError(f"{flow} split_info is not marked reconstruction-validated.")
+        variant = str(info.get("variant_value", "")).upper()
+        if variant != flow:
+            raise ValueError(
+                f"{flow} split_info flow identity mismatch: variant_value={variant!r}."
+            )
+        recorded_sha = str(info.get("exio_source_zip_sha256", "")).strip()
+        if recorded_sha != source_sha:
+            raise ValueError(
+                f"{flow} split/source EXIO SHA-256 mismatch: split={recorded_sha!r}, "
+                f"census={source_sha!r}."
+            )
+        recorded_scope = str(info.get("exio_scope_code", "")).strip()
+        if recorded_scope != str(scope_code):
+            raise ValueError(
+                f"{flow} split scope-code mismatch: split={recorded_scope!r}, "
+                f"census={scope_code!r}."
+            )
+        raw_members = info.get("exio_scope_members", [])
+        if not isinstance(raw_members, list):
+            raise ValueError(f"{flow} split scope members must be a JSON list.")
+        recorded_members = [str(value) for value in raw_members]
+        if recorded_members != expected_members:
+            raise ValueError(
+                f"{flow} split scope-member mismatch: split={recorded_members!r}, "
+                f"census={expected_members!r}."
+            )
+        recorded_mapping_sha = info.get("region_scope_mapping_sha256")
+        normalized_recorded = None if recorded_mapping_sha in (None, "") else str(recorded_mapping_sha)
+        if normalized_recorded != mapping_sha:
+            raise ValueError(
+                f"{flow} split region-scope mapping SHA mismatch: "
+                f"split={normalized_recorded!r}, census={mapping_sha!r}."
+            )
+        flow_records[flow] = {
+            "split_info": str(info_path),
+            "exio_source_zip_sha256": recorded_sha,
+            "exio_scope_code": recorded_scope,
+            "exio_scope_members": recorded_members,
+            "region_scope_mapping_sha256": normalized_recorded,
+        }
+    return {
+        "verified": True,
+        "exio_source_zip_sha256": source_sha,
+        "scope_code": str(scope_code),
+        "scope_members": expected_members,
+        "region_scope_mapping_sha256": mapping_sha,
+        "flows": flow_records,
+    }
 
 
 def _numeric_vector_csv(path: Path) -> pd.Series:
@@ -95,7 +204,13 @@ def _mapping_from_weights(flow_dir: Path) -> dict[str, dict[str, float]]:
         weight = float(getattr(row, "weight"))
         if not source or not target or not math.isfinite(weight) or weight < 0.0:
             raise ValueError(f"Malformed resolved mapping row in {path}: {row!r}")
-        mapping.setdefault(target, {})[source] = weight
+        target_map = mapping.setdefault(target, {})
+        if source in target_map:
+            raise ValueError(
+                "Duplicate persisted projection edge in "
+                f"{path}: target={target!r}, source={source!r}."
+            )
+        target_map[source] = weight
     return mapping
 
 
@@ -181,19 +296,25 @@ def build_projection_from_split_artifacts(
                 raise ValueError(
                     f"Persisted edge child {label!r} refers to absent EXIO source {source!r}."
                 )
+            try:
+                weight = float(weights[target][source])
+            except KeyError as exc:
+                raise ValueError(
+                    f"No authoritative persisted concordance weight for edge child {label!r}: "
+                    f"source={source!r}, target={target!r}."
+                ) from exc
             raw_weight = str(row["edge_weight_current_reference"]).strip()
             if raw_weight:
-                weight = float(raw_weight)
-            else:
-                try:
-                    weight = float(weights[target][source])
-                except KeyError as exc:
+                edge_weight = float(raw_weight)
+                if not math.isclose(edge_weight, weight, rel_tol=0.0, abs_tol=1e-12):
                     raise ValueError(
-                        f"No persisted concordance weight for edge child {label!r}: "
-                        f"source={source!r}, target={target!r}."
-                    ) from exc
+                        "split_child_edges weight disagrees with authoritative "
+                        "flow-specific mapping: "
+                        f"child={label!r}, source={source!r}, target={target!r}, "
+                        f"edge_weight={edge_weight!r}, mapping_weight={weight!r}."
+                    )
             if not math.isfinite(weight) or weight < 0.0:
-                raise ValueError(f"Invalid edge weight for {label!r}: {weight!r}")
+                raise ValueError(f"Invalid authoritative edge weight for {label!r}: {weight!r}")
             P.loc[label, source] = weight
             parent_by_label[label] = str(row["parent_code"]).strip() or selected_parents.get(label, label)
             continue
@@ -434,9 +555,23 @@ def _target_output_from_dom(dom_dir: Path, axis: pd.Index) -> pd.Series:
     return output.astype("float64")
 
 
-def _write_csv(frame: pd.DataFrame, path: Path) -> None:
+def _write_csv(
+    frame: pd.DataFrame, path: Path, *, columns: Sequence[str]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(path, index=False)
+    expected = list(map(str, columns))
+    if frame.empty:
+        out = pd.DataFrame(columns=pd.Index(expected))
+    else:
+        missing = set(expected) - set(frame.columns)
+        extra = set(frame.columns) - set(expected)
+        if missing or extra:
+            raise ValueError(
+                f"Audit CSV schema mismatch for {path}: missing={sorted(missing)!r}, "
+                f"extra={sorted(extra)!r}."
+            )
+        out = frame.loc[:, expected].copy()
+    out.to_csv(path, index=False)
 
 
 def _production_census(
@@ -682,6 +817,18 @@ def _summary_counts(frame: pd.DataFrame, columns: Sequence[str]) -> list[dict[st
     return cast(list[dict[str, object]], summary_frame.to_dict(orient="records"))
 
 
+def _source_discovery_errors(complete_extensions: Sequence[str]) -> list[dict[str, object]]:
+    if complete_extensions:
+        return []
+    return [
+        {
+            "extension": "",
+            "kind": "DISCOVERY",
+            "error": "No complete EXIOBASE extension directories with F.txt, F_Y.txt, and unit.txt were discovered.",
+        }
+    ]
+
+
 def run_census(args: argparse.Namespace) -> dict[str, object]:
     from ecolecon_mrio.data import ensure_exiobase_year_zip, resolve_exiobase_year_dir
 
@@ -706,7 +853,10 @@ def run_census(args: argparse.Namespace) -> dict[str, object]:
         )
 
     completeness, complete_extensions = _source_completeness(source_zip)
-    _write_csv(completeness, outdir / "source_extension_completeness.csv")
+    _write_csv(
+        completeness, outdir / "source_extension_completeness.csv",
+        columns=_SOURCE_COMPLETENESS_COLUMNS,
+    )
     incomplete_count = int((~completeness["complete"].astype(bool)).sum()) if not completeness.empty else 0
 
     coded_output, source_basis, source_regions, raw_sector_order = _coded_basis_and_output(
@@ -727,6 +877,17 @@ def run_census(args: argparse.Namespace) -> dict[str, object]:
             f"split_root must contain stk_flow=DOM and stk_flow=IMP directories: {split_root}"
         )
 
+    scope_mapping_path = (
+        None if args.scope_mapping_csv is None else Path(args.scope_mapping_csv).resolve()
+    )
+    provenance = validate_split_provenance(
+        split_root=split_root,
+        source_zip=source_zip,
+        scope_code=str(scope.code),
+        scope_members=tuple(map(str, scope.members)),
+        scope_mapping_csv=scope_mapping_path,
+    )
+
     P_dom, parent_by_label = build_projection_from_split_artifacts(
         dom_dir, raw_exio_sectors=raw_sector_order
     )
@@ -743,8 +904,8 @@ def run_census(args: argparse.Namespace) -> dict[str, object]:
         parent_by_label=parent_by_label,
         system=str(args.system),
     )
-    _write_csv(production, outdir / "production_F_support.csv")
-    _write_csv(lineage, outdir / "production_F_exception_lineage.csv")
+    _write_csv(production, outdir / "production_F_support.csv", columns=_PRODUCTION_SUPPORT_COLUMNS)
+    _write_csv(lineage, outdir / "production_F_exception_lineage.csv", columns=_PRODUCTION_LINEAGE_COLUMNS)
 
     P_imp, _imp_parent = build_projection_from_split_artifacts(
         imp_dir, raw_exio_sectors=raw_sector_order
@@ -759,7 +920,7 @@ def run_census(args: argparse.Namespace) -> dict[str, object]:
         P=P_imp,
         system=str(args.system),
     )
-    _write_csv(import_exceptions, outdir / "external_import_support_exceptions.csv")
+    _write_csv(import_exceptions, outdir / "external_import_support_exceptions.csv", columns=_IMPORT_EXCEPTION_COLUMNS)
 
     fy_support, fy_errors = _fy_census(
         source_zip=source_zip,
@@ -767,9 +928,9 @@ def run_census(args: argparse.Namespace) -> dict[str, object]:
         scope=scope,
         system=str(args.system),
     )
-    _write_csv(fy_support, outdir / "final_demand_FY_support.csv")
-    source_errors = pd.DataFrame([*prod_errors, *fy_errors])
-    _write_csv(source_errors, outdir / "source_row_errors.csv")
+    _write_csv(fy_support, outdir / "final_demand_FY_support.csv", columns=_FY_SUPPORT_COLUMNS)
+    source_errors = pd.DataFrame([*_source_discovery_errors(complete_extensions), *prod_errors, *fy_errors])
+    _write_csv(source_errors, outdir / "source_row_errors.csv", columns=_SOURCE_ERROR_COLUMNS)
 
     production_summary = _summary_counts(
         production, ["support_state", "target_state", "method_blocking_positive_target"]
@@ -805,6 +966,7 @@ def run_census(args: argparse.Namespace) -> dict[str, object]:
     source_error_count = int(len(source_errors))
     summary: dict[str, object] = {
         "source_zip": str(source_zip),
+        "provenance": provenance,
         "scope_code": str(scope.code),
         "scope_members": list(map(str, scope.members)),
         "split_root": str(split_root),

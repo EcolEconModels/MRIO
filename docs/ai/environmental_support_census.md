@@ -59,6 +59,25 @@ The persisted projection must reconstruct as a complete partition of the raw EXI
 product axis. If a selected child cannot be proven from those artifacts, the audit
 fails instead of guessing its donors.
 
+
+## Provenance verification
+
+Before environmental rows are scanned, the census proves that the selected EXIO
+source bytes and geography scope are the ones persisted by the successful monetary
+split. DOM and IMP `split_info.json` must agree with the census on the exact EXIO
+source ZIP SHA-256, scope code, ordered scope members, and region-scope mapping
+SHA-256 where applicable, and both splits must be marked reconstruction-validated.
+
+`flow_specific_exio_to_eurostat_weights.csv` is the authoritative persisted
+projection-weight source. `split_child_edges.csv` is lineage/topology metadata; an
+edge weight recorded there is accepted only when it agrees with the authoritative
+flow-specific mapping. Duplicate persisted source-target mapping edges fail rather
+than using row order as an implicit precedence rule.
+
+Every output CSV has a stable schema even when it contains zero rows. An archive
+with no complete `F.txt`/`F_Y.txt`/`unit.txt` extension directories is a
+source-integrity blocker, not an empty successful census.
+
 ## Outputs
 
 The output directory contains:
@@ -97,4 +116,4 @@ For a broad extension/geography/year generalization:
 7. only then run the all-extension production path.
 
 This workflow follows the cross-project contract-first debugging policy in
-`../ecolecon-agent-memory/coding/contract-first-scientific-debugging.md`.
+`../../ecolecon-agent-memory/coding/contract-first-scientific-debugging.md`.

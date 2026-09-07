@@ -104,3 +104,94 @@ def test_final_demand_support_keeps_nonzero_zero_denominator_fail_closed() -> No
     assert result.loc["P52", "support_state"] == "NONZERO_FY_ZERO_DENOMINATOR"
     assert bool(result.loc["P52", "method_blocking"])
     assert result.loc["P6", "support_state"] == "ZERO_ZERO"
+
+
+def test_duplicate_persisted_projection_edge_is_rejected(tmp_path: Path) -> None:
+    flow = _artifact_dir(tmp_path)
+    mapping = pd.read_csv(flow / "flow_specific_exio_to_eurostat_weights.csv")
+    mapping = pd.concat([mapping, mapping.iloc[[0]]], ignore_index=True)
+    mapping.to_csv(flow / "flow_specific_exio_to_eurostat_weights.csv", index=False)
+    with pytest.raises(ValueError, match="Duplicate persisted projection edge"):
+        module.build_projection_from_split_artifacts(
+            flow, raw_exio_sectors=("a", "b", "c", "d")
+        )
+
+
+def test_edge_weight_must_match_authoritative_flow_mapping(tmp_path: Path) -> None:
+    flow = _artifact_dir(tmp_path)
+    edges = pd.read_csv(flow / "split_child_edges.csv")
+    edges.loc[0, "edge_weight_current_reference"] = 0.5
+    edges.to_csv(flow / "split_child_edges.csv", index=False)
+    with pytest.raises(ValueError, match="disagrees with authoritative"):
+        module.build_projection_from_split_artifacts(
+            flow, raw_exio_sectors=("a", "b", "c", "d")
+        )
+
+
+def _write_split_info(
+    split_root: Path,
+    *,
+    flow: str,
+    source_sha: str,
+    scope_code: str = "AT",
+    scope_members: list[str] | None = None,
+    mapping_sha: str | None = None,
+) -> None:
+    flow_dir = split_root / f"stk_flow={flow}"
+    flow_dir.mkdir(parents=True, exist_ok=True)
+    (flow_dir / "split_info.json").write_text(
+        json.dumps(
+            {
+                "is_reconstruction_validated": True,
+                "variant_value": flow,
+                "exio_source_zip_sha256": source_sha,
+                "exio_scope_code": scope_code,
+                "exio_scope_members": scope_members or ["AT"],
+                "region_scope_mapping_sha256": mapping_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_split_provenance_requires_exact_source_hash_and_scope(tmp_path: Path) -> None:
+    source = tmp_path / "source.zip"
+    source.write_bytes(b"source-bytes")
+    source_sha = module._sha256_file(source)
+    split_root = tmp_path / "split"
+    _write_split_info(split_root, flow="DOM", source_sha=source_sha)
+    _write_split_info(split_root, flow="IMP", source_sha=source_sha)
+    result = module.validate_split_provenance(
+        split_root=split_root,
+        source_zip=source,
+        scope_code="AT",
+        scope_members=("AT",),
+        scope_mapping_csv=None,
+    )
+    assert result["verified"] is True
+    assert result["exio_source_zip_sha256"] == source_sha
+
+    bad = json.loads((split_root / "stk_flow=IMP" / "split_info.json").read_text())
+    bad["exio_source_zip_sha256"] = "0" * 64
+    (split_root / "stk_flow=IMP" / "split_info.json").write_text(json.dumps(bad))
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        module.validate_split_provenance(
+            split_root=split_root,
+            source_zip=source,
+            scope_code="AT",
+            scope_members=("AT",),
+            scope_mapping_csv=None,
+        )
+
+
+def test_empty_audit_csv_has_stable_schema_and_no_extensions_are_integrity_error(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "empty.csv"
+    module._write_csv(pd.DataFrame(), path, columns=module._IMPORT_EXCEPTION_COLUMNS)
+    loaded = pd.read_csv(path)
+    assert list(loaded.columns) == list(module._IMPORT_EXCEPTION_COLUMNS)
+    errors = module._source_discovery_errors(())
+    assert len(errors) == 1
+    assert errors[0]["kind"] == "DISCOVERY"
+    assert module._source_discovery_errors(("air_emissions",)) == []

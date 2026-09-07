@@ -58,6 +58,10 @@ Environmental extension work must follow
 `scripts/audit_environmental_support.py` before changing donor-support semantics.
 Do not add geography-specific branches unless the published accounting or physical
 boundary itself is geography-specific.
+
+Census provenance is part of the scientific gate: the audit must verify the exact
+EXIO source ZIP hash and scope provenance recorded by the successful monetary split,
+and diagnostic edge metadata must never override the authoritative persisted mapping.
 <!-- /ecolecon-contract-first-production-debugging -->
 
 ## EXIO low-RAM zip-stream contract
