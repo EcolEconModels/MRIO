@@ -136,6 +136,8 @@ def test_row_factor_is_current_usd_gdp_weighted_not_unweighted() -> None:
         pd.Series(gdp),
         pd.DataFrame(membership_rows),
         mapping,
+        year=2022,
+        source_policy=factors._load_price_factor_source_policy(),
         taiwan_factor=1.0,
     )
     row_factor = float(result.loc[result["exio_region"] == "WA", "price_adjustment_factor"].iloc[0])
@@ -165,7 +167,13 @@ def test_row_factor_fails_if_one_member_lacks_factor_or_gdp() -> None:
     gdp = gdp.drop(missing_code)
     with pytest.raises(ValueError, match="incomplete source coverage"):
         factors.aggregate_country_price_factors_to_exiobase3_regions(
-            country, gdp, membership, mapping, taiwan_factor=1.0
+            country,
+            gdp,
+            membership,
+            mapping,
+            year=2022,
+            source_policy=factors._load_price_factor_source_policy(),
+            taiwan_factor=1.0,
         )
 
 
@@ -304,6 +312,40 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
     assert set(result["factor_basis"]) == {"country_gdp_deflator_common_eur"}
     assert metadata["exiobase_meta_commit"] == factors.EXIOBASE_META_COMMIT
     assert metadata["region_count"] == 49
+
+
+
+def test_price_factor_source_policy_exact_rule_overrides_wildcard() -> None:
+    """Country-specific source choice is mapping data, with exact rows overriding the default."""
+
+    policy = factors._load_price_factor_source_policy()
+    default = factors._resolve_price_factor_source_policy(policy, exio_region="AT", year=2022)
+    taiwan = factors._resolve_price_factor_source_policy(policy, exio_region="TW", year=2022)
+    assert default["target_code"] == factors.PRICE_FACTOR_METHOD_UNSD
+    assert taiwan["target_code"] == factors.PRICE_FACTOR_METHOD_TAIWAN
+
+
+def test_historical_source_identity_mapping_records_resolved_and_unresolved_evidence() -> None:
+    """Provider identities are data rows; unresolved historical geography stays disabled."""
+
+    mapping = factors._load_price_factor_source_identity_mapping()
+    by_source = mapping.set_index("source_code")
+    assert str(by_source.loc["Tanzania", "provider_code"]) == "835"
+    assert str(by_source.loc["Zanzibar", "provider_code"]) == "836"
+    antilles = by_source.loc["Netherlands Antilles"]
+    assert antilles["resolution_status"] == "unresolved"
+    assert not bool(antilles["enabled"])
+
+
+def test_unresolved_historical_identity_cannot_be_enabled(tmp_path: Path) -> None:
+    """A mapping edit cannot turn unresolved scientific evidence into an executable rule."""
+
+    mapping = factors._load_price_factor_source_identity_mapping()
+    mapping.loc[mapping["source_code"] == "Netherlands Antilles", "enabled"] = True
+    path = tmp_path / "identity.csv"
+    mapping.to_csv(path, index=False)
+    with pytest.raises(factors.PriceIndexParseError, match="unresolved.*cannot be enabled"):
+        factors._read_price_factor_source_identity_mapping(path)
 
 
 def test_unsd_current_usd_gdp_support_reuses_discovered_series_and_keeps_fiscal_notes(

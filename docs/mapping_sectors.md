@@ -339,3 +339,14 @@ If you want to understand why a row exists, open the CSV.
 If you want to regenerate the mappings, run `make mappings`.
 
 If you want to load mappings in code, use `src/ecolecon_mrio/mapping_csv.py`.
+
+## Installed-library non-sector mappings
+
+This document's `scripts/mappings/` rule governs sector concordances and related
+repo workflows.  A public library API that must carry scientific mapping data in
+an installed wheel may instead own a single packaged mapping under
+`src/ecolecon_mrio/mappings/`; such a mapping must not be duplicated under
+`scripts/mappings/`.  The EXIOBASE macro price-factor source-policy and historical
+source-identity mappings use this installed-library pattern.  Their detailed
+country/source decisions and provenance live in the CSV rows rather than Python
+country branches or duplicated markdown tables.

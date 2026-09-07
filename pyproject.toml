@@ -36,7 +36,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-ecolecon_mrio = ["reference_data/*.json"]
+ecolecon_mrio = ["reference_data/*.json", "mappings/*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

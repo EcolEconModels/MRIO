@@ -694,3 +694,38 @@ product-by-country constant-price EXIOBASE. A common factor within an explicit
 country leaves that country's domestic block of `A` unchanged and therefore does
 not remove within-country relative-price changes between products.
 <!-- /ecolecon-exiobase-eur-price-factors -->
+
+## Price-factor mapping data contract
+
+Scientific geography and source-selection facts for macro price factors are mapping
+data, not country-name branches in Python.  Installed-library mappings therefore
+live once under `src/ecolecon_mrio/mappings/` and are included in the wheel; they
+are not mirrored under `scripts/mappings/`.  Provider algorithms and validation
+remain Python code, while the mapping rows choose which algorithm/source identity
+applies.
+
+`exiobase_price_factor_source_policy.csv` maps an EXIOBASE explicit-region code and
+inclusive validity interval to a price-factor method.  An enabled `*` row supplies
+the ordinary UNSD+ECB default and an exact region row overrides it.  The current
+Taiwan choice is therefore a mapping row rather than an `if iso3 == "TWN"` rule.
+The pinned DGBAS observations remain reference data because observations are not a
+mapping.
+
+`exiobase_price_factor_source_identity.csv` records audited provider statistical
+identities needed when a published EXIOBASE3rx label is not equivalent to a
+current ISO3/M49 unit.  Resolved rows currently record Mainland Tanzania (UNSD 835)
+and Zanzibar (UNSD 836).  This identity mapping is audit/source-of-truth data for
+the pending corrected RoW domain; the current weighted-factor builder does not yet
+apply it.  An unresolved row is deliberately disabled and its loader rejects any
+attempt to enable it without changing `resolution_status` and supplying a provider
+identity.
+
+The Netherlands-Antilles row remains unresolved.  The published 214x49 bridge
+already contains Curacao and Sint Maarten, UNSD 530 does not validate the proposed
+BES-residual interpretation, and the official EXIOBASE3rx 2009/2012/2013/2015
+`IO.gdp` objects are legacy MATLAB MCOS `table` values that SciPy, pymatreader,
+Python mat-io, and an MCOS-enabled MATIO reader could not decode.  Until MATLAB or
+a trustworthy converted extract establishes the year-specific active identity,
+that mapping must stay disabled.  This patch does not change the existing RoW
+factor aggregation or claim that the static 170-country bridge is simultaneously
+active in every year.
