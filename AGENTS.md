@@ -39,6 +39,27 @@ scientific authority rather than reasoning about the library in isolation.
 - `F_Y` stays on the destination final-demand-category axis and never receives a product projection or a RoW-import counterpart.
 - Obsolete loader/result APIs, singleton/plural EXIO region-slice wrappers, legacy source/result types, and derived scope caches remain deleted. Do not recreate compatibility aliases without an explicit external contract.
 
+<!-- ecolecon-contract-first-production-debugging -->
+## Contract-first production debugging
+
+For a real-data MRIO production failure, follow
+`../ecolecon-agent-memory/coding/contract-first-scientific-debugging.md` before
+changing scientific semantics, mappings, denominators, missingness, tolerances, or
+validators. Search Methods/specifications, tests, current call sites, and repository
+history for the same invariant first. If it was already accepted elsewhere, treat
+the failure as a cross-layer regression and add a spanning contract test rather than
+inventing a local rule.
+
+For broad heterogeneous domains such as all environmental extensions, multiple
+geographies, or multiple years, do not use the fail-fast production path as the
+primary discovery mechanism. Run the non-fail-fast support/state census first.
+Environmental extension work must follow
+`docs/ai/environmental_support_census.md` and use
+`scripts/audit_environmental_support.py` before changing donor-support semantics.
+Do not add geography-specific branches unless the published accounting or physical
+boundary itself is geography-specific.
+<!-- /ecolecon-contract-first-production-debugging -->
+
 ## EXIO low-RAM zip-stream contract
 
 > [!IMPORTANT]

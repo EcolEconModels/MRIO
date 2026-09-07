@@ -926,3 +926,32 @@ IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of natio
 Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
 and are reaggregated by summing physical numerators and their matching monetary
 denominators before deriving intensity. Aggregate exports exclude intra-scope trade.
+
+<!-- ecolecon-environmental-support-census-contract -->
+## Environmental support state-space preflight
+
+Broad extension selections must be audited as a complete support state space before
+changing donor-support rules. The read-only census is specified in
+`../ai/environmental_support_census.md` and implemented by
+`../../scripts/audit_environmental_support.py`.
+
+For production `F`, physical numerator evidence and the EXIO monetary-output
+denominator are extensive primitives and are projected before division. A nonzero
+raw or mapped `F` at zero donor `x` therefore means the donor coefficient is
+undefined; it is not by itself invalid source evidence and must not be silently
+zeroed. Under the current strict method, a **positive-output target** still requires
+a positive mapped donor denominator before a coefficient can be transferred. A
+zero-output target with nonzero `F` and zero donor `x` is a valid diagnostic state
+with unavailable intensity, not a new physical zero.
+
+`F_Y` remains a separate direct-final-demand boundary: because no product projection
+creates a later denominator, nonzero `F_Y` at zero monetary final demand remains a
+fail-closed source/support state. External-import direct coefficients likewise
+require positive mapped production output for every origin/target carrying nonzero
+mapped import use.
+
+The census must enumerate all such states and their source lineage without stopping
+at the first stressor. If it reveals a positive-target unsupported state whose
+scientific treatment is not already specified, implementation must stop for method
+review rather than weaken the validator.
+<!-- /ecolecon-environmental-support-census-contract -->

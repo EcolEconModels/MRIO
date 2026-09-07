@@ -879,3 +879,26 @@ boundary. Each split `split_info.json` records the exact EXIO source ZIP SHA-256
 when present, SHA-256 digests for the region-scope, split, and EXIO-to-Eurostat mapping
 CSVs. The configured DOI remains a source locator rather than byte-level provenance.
 Aggregate exports exclude intra-scope trade.
+
+<!-- ecolecon-environmental-support-census-workflow -->
+## Non-fail-fast environmental support audit
+
+Before a broad `--environmental-all-extensions` acceptance run is used to motivate
+scientific or denominator changes, run `scripts/audit_environmental_support.py`
+against a previously successful monetary DOM/IMP split. The audit reconstructs the
+persisted flow-specific EXIO-to-emitted-sector projection, streams every complete
+`F`/`F_Y` extension group, and writes support-state and exception-lineage artifacts
+outside canonical production outputs.
+
+The audit is deliberately non-fail-fast. It distinguishes supported coefficients,
+zero/zero donor states, nonzero physical donor evidence at zero output, missing
+projection support, positive-target donor-support blockers, external-import
+nonzero-use/non-positive-output pairs, and direct-final-demand zero-denominator
+contradictions. Production code must not be changed until the complete census has
+shown whether the first traceback is representative or only one member of a larger
+state class.
+
+This diagnostic does not replace final production validation and cannot authorize a
+new scientific treatment. It is the preflight required by the contract-first
+debugging policy in `../ecolecon-agent-memory/coding/contract-first-scientific-debugging.md`.
+<!-- /ecolecon-environmental-support-census-workflow -->
