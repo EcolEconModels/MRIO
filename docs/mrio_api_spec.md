@@ -624,38 +624,64 @@ members, missing years, duplicate observations, non-positive source weights, or 
 incomplete 49-region result fail; no source member is silently dropped or
 interpolated.
 
-For ordinary countries the builder uses the UNSD AMA GDP implicit-price-deflator
-series in its US-dollar basis and the ECB annual-average USD/EUR reference rate.
-If `u_t` is USD per EUR, the common-base-EUR factor is
+For ordinary countries the production builder uses paired UNSD AMA GDP levels in US
+dollars: GDP at current prices $C_{c,t}$ and GDP at the provider's common
+constant-price reference $K_{c,t}$ (currently 2020 prices).  If $u_t$ is annual
+USD per EUR, the common-base-EUR factor is
 
 \[
 \phi^{EUR}_{c,t\to b}
-=\frac{P^{USD}_{c,b}}{P^{USD}_{c,t}}\frac{u_t}{u_b}.
+=\frac{C_{c,b}/K_{c,b}}{C_{c,t}/K_{c,t}}\frac{u_t}{u_b}.
 \]
 
-This removes the exchange-rate movement embedded in the USD-basis current-price
-series before applying the factor to the EUR-valued MRIO. The supporting UNSD
-current-price GDP rows are fetched from the same dynamically discovered broad GDP /
-deflator series and are retained only as aggregation weights. Raw
-`/Metadata/fiscalyearnotes` provenance is cached with those rows; the API does not
-pretend that every provider observation is a calendar-year statistic or silently
-calendarize fiscal-year countries.
+The constant-price reference normalization cancels from the ratio for one country.
+The direct published USD implicit-deflator API remains available as an independent
+audit path rather than a second production implementation; the completed source
+audit found the direct and $C/K$ factors identical to numerical precision over
+2,299 overlapping country-years (maximum relative discrepancy $6.66\times10^{-16}$).
+Raw fiscal-year notes remain provenance; the API does not silently calendarize
+fiscal-year countries.
 
-The five EXIOBASE Rest-of-World factors are constructed from the pinned EXIOBASE
-classification authority (`EXIOBASE/00-class`, commit
-`768ff12b3c1e449e89d4310a44db9c5dc2266652`). ISO3-to-M49 concordance is read from
-the UN M49 overview rather than duplicated in MRIO. For a RoW bucket `R`, the
-factor uses current-USD GDP weights in the source year,
+The five EXIOBASE Rest-of-World factors use the packaged recovered EXIOBASE3rx
+214-to-49 regional bridge from Bjelle et al. (2020), Additional file 2
+(`40008_2020_182_MOESM2_ESM.xlsx`, "Concordance matrices for regions, land use
+types and industries"), not the secondary `country_coverage_matrix.csv`
+classification universe.  The committed file
+`src/ecolecon_mrio/mappings/exiobase3rx_to_exiobase3_regions.csv` is the exact
+four-column audit extraction (`source_country`, `source_iso3`,
+`target_exio_region`, `weight`), SHA-256 `92e9b95d240b338c0a6a8c06f2c4768149d81092839ef4581d780a1ce119f972`.  It was created by
+extracting the published `Countries` one-hot 214-by-49 regional concordance,
+preserving the source-country labels and target membership, and retaining the ISO3
+annotations established in the recovery audit; Netherlands Antilles and Zanzibar
+intentionally have blank `source_iso3` cells rather than invented modern ISO3
+replacements.
+
+Springer Nature lists Additional file 2 under the article's Supplementary
+Information immediately above the article's CC BY 4.0 rights statement.  The
+derived CSV is redistributed with attribution to Bjelle et al., DOI
+`10.1186/s40008-020-0182-y`, under CC BY 4.0; this documentation identifies the
+extraction/reformatting change.  The static bridge contains 170 former-RoW source
+identities: `WA=45`, `WL=43`, `WE=14`, `WF=53`, `WM=15`.
+A separate year-bounded identity mapping resolves provider statistical units and
+historical aggregate aliases.  For the audited 2012--2022 sensitivity, Mainland
+Tanzania uses UNSD 835, Zanzibar uses 836, and the EXIOBASE3rx `ANT` row is inactive
+throughout because it overlaps the separately published Curaçao and Sint Maarten
+rows; BES is not introduced.
+
+For a RoW bucket $R$, current-USD and constant-price-USD GDP are extensive and are
+summed over the exact effective member set before the implicit deflator is formed,
 
 \[
-\phi^{EUR}_{R,t}
-=\frac{\sum_{c\in R} GDP^{cur,USD}_{c,t}\,\phi^{EUR}_{c,t}}
-       {\sum_{c\in R} GDP^{cur,USD}_{c,t}}.
+C_{R,t}=\sum_{c\in R} C_{c,t},\qquad
+K_{R,t}=\sum_{c\in R} K_{c,t},\qquad
+\phi^{EUR}_{R,t\to b}
+=\frac{C_{R,b}/K_{R,b}}{C_{R,t}/K_{R,t}}\frac{u_t}{u_b}.
 \]
 
-Current-USD weights are proportional to current-EUR weights within a year because
-the USD/EUR conversion is common across countries. An unweighted mean of country
-price indices or factors is not used.
+The implementation requires the same audited effective member set in every
+requested/base year and complete positive finite $C$ and $K$ observations.  It
+never averages country factors, drops a missing member, interpolates, or
+renormalizes around missing data.
 
 Taiwan (`TW`) remains an explicit EXIOBASE country and is not substituted by the
 UNSD China observation. For the project's fixed 2012--2022 sensitivity, its
@@ -711,21 +737,18 @@ Taiwan choice is therefore a mapping row rather than an `if iso3 == "TWN"` rule.
 The pinned DGBAS observations remain reference data because observations are not a
 mapping.
 
-`exiobase_price_factor_source_identity.csv` records audited provider statistical
-identities needed when a published EXIOBASE3rx label is not equivalent to a
-current ISO3/M49 unit.  Resolved rows currently record Mainland Tanzania (UNSD 835)
-and Zanzibar (UNSD 836).  This identity mapping is audit/source-of-truth data for
-the pending corrected RoW domain; the current weighted-factor builder does not yet
-apply it.  An unresolved row is deliberately disabled and its loader rejects any
-attempt to enable it without changing `resolution_status` and supplying a provider
-identity.
+`exiobase3rx_to_exiobase3_regions.csv` is the immutable recovered extraction of
+the published regional bridge used by the installed library; runtime validation
+normalizes its raw four-column schema in memory but does not rewrite the mapping.
+`exiobase_price_factor_source_identity.csv` is a separate mapping layer for
+provider statistical identities and audited historical aliases; the code does not
+contain country-name branches for these choices.
 
-The Netherlands-Antilles row remains unresolved.  The published 214x49 bridge
-already contains Curacao and Sint Maarten, UNSD 530 does not validate the proposed
-BES-residual interpretation, and the official EXIOBASE3rx 2009/2012/2013/2015
-`IO.gdp` objects are legacy MATLAB MCOS `table` values that SciPy, pymatreader,
-Python mat-io, and an MCOS-enabled MATIO reader could not decode.  Until MATLAB or
-a trustworthy converted extract establishes the year-specific active identity,
-that mapping must stay disabled.  This patch does not change the existing RoW
-factor aggregation or claim that the static 170-country bridge is simultaneously
-active in every year.
+The source-identity mapping resolves Mainland Tanzania to UNSD 835 and Zanzibar to
+836.  It marks `ANT` inactive for the full 2012--2022 sensitivity domain.  That
+choice is not inferred from a generic zero-GDP rule: MATLAB exports of the official
+EXIOBASE3rx files show that in 2009 `ANT` GDP is essentially exactly Curaçao plus
+Sint Maarten, the overlap persists in 2012, `ANT` is zero in 2013/2015, and BES is
+absent.  Other zero-GDP 3rx rows are therefore not automatically removed.  The
+runtime resolver applies only explicit mapping rows and fails closed for any
+non-current source identity lacking an audited provider rule.

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 import urllib.request
 
+import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.data import default_data_root
@@ -534,39 +535,44 @@ def price_adjustment_factors(
     return factors
 
 # ecolecon-exiobase-eur-price-factors
-# Supporting UNSD current-USD GDP rows used only as transparent RoW weights.
-def _is_current_usd_gdp_record(record: Mapping[str, Any]) -> bool:
-    """Identify aggregate GDP-at-current-prices observations reported in US dollars."""
+UNSD_AMA_DOWNLOADS_URL = "https://unstats.un.org/unsd/snaama/downloads"
+
+
+def _gdp_usd_level_basis(record: Mapping[str, Any]) -> str | None:
+    """Classify aggregate GDP-level observations in USD as current or constant prices."""
 
     item_name = str(_mapping_get(record, "itemName") or "").strip()
     unit = str(_mapping_get(record, "unit") or "").strip()
     text = f"{item_name} {unit}".casefold()
     gdp_named = "gross domestic product" in text or "gdp" in text
     usd_named = "us dollar" in text or "u.s. dollar" in text or " usd" in f" {text}"
-    excluded = any(token in text for token in ("per capita", "constant", "deflator", "growth rate"))
-    return bool(gdp_named and "current" in text and usd_named and not excluded)
+    excluded = any(token in text for token in ("per capita", "deflator", "growth rate", "index", "gni"))
+    if not (gdp_named and usd_named and not excluded):
+        return None
+    if "constant" in text:
+        return "constant"
+    if "current" in text:
+        return "current"
+    return None
 
 
-def _current_usd_gdp_cache_path(
-    *,
-    storage_folder: Path,
-    years: tuple[int, ...],
-    country_codes: tuple[int, ...] | None,
+def _gdp_usd_levels_cache_path(
+    *, storage_folder: Path, years: tuple[int, ...], country_codes: tuple[int, ...] | None
 ) -> Path:
-    """Build a deterministic support-cache path independent of provider response order."""
+    """Build one deterministic cache key for paired current/constant USD GDP levels."""
 
     request_key = {
         "provider": "unsd_ama",
-        "indicator": "gdp_current_prices_usd_support",
+        "indicator": "gdp_current_and_constant_usd_levels",
         "schema": 1,
         "years": list(years),
         "country_codes": "all" if country_codes is None else list(country_codes),
     }
     digest = hashlib.sha256(json.dumps(request_key, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    return storage_folder / f"gdp_current_prices_usd_{years[0]}_{years[-1]}_{digest}.json"
+    return storage_folder / f"gdp_usd_levels_{years[0]}_{years[-1]}_{digest}.json"
 
 
-def download_unsd_ama_current_usd_gdp(
+def download_unsd_ama_gdp_usd_levels(
     *,
     years: Sequence[int],
     country_codes: Sequence[int] | None = None,
@@ -574,28 +580,25 @@ def download_unsd_ama_current_usd_gdp(
     force_download: bool = False,
     timeout_s: int = 120,
 ) -> Path:
-    """Download/cache current-USD GDP rows needed to GDP-weight EXIOBASE RoW factors.
+    """Download/cache aggregate GDP at current and constant prices in US dollars.
 
-    The broad UNSD GDP/deflator series is requested using the same discovered
-    series metadata as ``download_unsd_ama_gdp_deflators``.  This support cache is
-    separate so the original deflator-cache schema remains stable.  Raw fiscal-year
-    notes are retained as provenance; no calendarization is invented here.
+    Both level families are selected from the same dynamically discovered broad
+    UNSD AMA GDP series used by the deflator API. The provider's constant-price
+    reference is common across countries in one release (currently 2020); the
+    runtime schema deliberately calls the column ``constant_usd_gdp`` because the
+    aggregate deflator ratio is invariant to the common fixed-price reference year.
     """
 
     years_norm = _normalise_years(years)
     codes_norm = _normalise_country_codes(country_codes)
     root = default_price_index_storage_folder() if storage_folder is None else Path(storage_folder)
     root.mkdir(parents=True, exist_ok=True)
-    support_path = _current_usd_gdp_cache_path(
-        storage_folder=root,
-        years=years_norm,
-        country_codes=codes_norm,
-    )
-    if support_path.exists() and not force_download:
-        return support_path
+    path = _gdp_usd_levels_cache_path(storage_folder=root, years=years_norm, country_codes=codes_norm)
+    if path.exists() and not force_download:
+        return path
 
-    # Reuse the already-validated country domain and dynamically discovered broad
-    # GDP/deflator series instead of creating a second provider metadata pathway.
+    # Reuse the existing authoritative country/series discovery rather than owning
+    # a second mutable list of provider series ids.
     deflator_path = download_unsd_ama_gdp_deflators(
         years=years_norm,
         country_codes=codes_norm,
@@ -615,27 +618,33 @@ def download_unsd_ama_current_usd_gdp(
     if not requested_codes:
         raise PriceIndexParseError("Supporting UNSD deflator cache contains no countries")
 
-    current_records: list[dict[str, Any]] = []
+    level_records: list[dict[str, Any]] = []
+    observed_bases: set[str] = set()
     for series in selected_series:
-        code = _series_code(series)
+        series_code = _series_code(series)
         response = _http_json(
-            f"{UNSD_AMA_API_BASE}/Data/basic/{code}",
+            f"{UNSD_AMA_API_BASE}/Data/basic/{series_code}",
             payload={"paramCodes": list(requested_codes), "years": list(years_norm)},
             timeout_s=timeout_s,
         )
-        records = _normalise_json_records(response, context=f"UNSD current-GDP series {code}")
-        current_records.extend(record for record in records if _is_current_usd_gdp_record(record))
-    if not current_records:
+        records = _normalise_json_records(response, context=f"UNSD GDP-level series {series_code}")
+        for record in records:
+            basis = _gdp_usd_level_basis(record)
+            if basis is not None:
+                level_records.append(record)
+                observed_bases.add(basis)
+    if observed_bases != {"current", "constant"}:
         raise PriceIndexParseError(
-            "UNSD GDP/deflator series returned no aggregate GDP-at-current-prices US-dollar rows; "
-            "the provider item schema may have changed"
+            "UNSD broad GDP series did not expose both current- and constant-price USD GDP levels; "
+            f"observed={sorted(observed_bases)!r}"
         )
 
     fiscal_year_notes = _http_json(f"{UNSD_AMA_API_BASE}/Metadata/fiscalyearnotes", timeout_s=timeout_s)
     payload_out = {
         "provider": "UNSD AMA",
         "api_base": UNSD_AMA_API_BASE,
-        "indicator": "GDP at current prices, US dollars",
+        "indicator": "GDP at current and constant prices, US dollars",
+        "downloads_page": UNSD_AMA_DOWNLOADS_URL,
         "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
         "request": {
             "years": list(years_norm),
@@ -644,74 +653,80 @@ def download_unsd_ama_current_usd_gdp(
         "countries": countries,
         "series": selected_series,
         "fiscal_year_notes": fiscal_year_notes,
-        "records": current_records,
+        "records": level_records,
         "source_deflator_cache": str(deflator_path),
     }
-    temp_path = support_path.with_suffix(support_path.suffix + ".tmp")
-    temp_path.write_text(
-        json.dumps(payload_out, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temp_path.replace(support_path)
-    return support_path
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(payload_out, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp.replace(path)
+    return path
 
 
-def read_unsd_ama_current_usd_gdp(raw_path: str | Path) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Parse one UNSD support cache into unique positive current-USD GDP weights."""
+def read_unsd_ama_gdp_usd_levels(raw_path: str | Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Parse one paired UNSD GDP-level cache without inventing missing observations."""
 
     path = Path(raw_path)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise PriceIndexParseError(f"Cannot read cached UNSD current-USD GDP JSON {path}: {exc}") from exc
+        raise PriceIndexParseError(f"Cannot read cached UNSD GDP-level JSON {path}: {exc}") from exc
     if not isinstance(payload, dict):
-        raise PriceIndexParseError(f"Cached UNSD current-USD GDP payload must be a JSON object: {path}")
-    records = _normalise_json_records(payload.get("records"), context="cached UNSD current-USD GDP records")
-    parsed: list[dict[str, Any]] = []
+        raise PriceIndexParseError(f"Cached UNSD GDP-level payload must be a JSON object: {path}")
+    records = _normalise_json_records(payload.get("records"), context="cached UNSD GDP-level records")
+
+    by_key: dict[tuple[int, int], dict[str, Any]] = {}
     for record in records:
-        code_value = _mapping_get(record, "countryCode")
-        year_value = _mapping_get(record, "fiscalYear", "year")
+        basis = _gdp_usd_level_basis(record)
+        if basis is None:
+            raise PriceIndexParseError(f"Cached GDP-level row is no longer classifiable: {record!r}")
+        code_raw = _mapping_get(record, "countryCode")
+        year_raw = _mapping_get(record, "fiscalYear", "year")
         value_raw = _mapping_get(record, "observationValue", "value")
-        if code_value is None or year_value is None or value_raw is None:
-            raise PriceIndexParseError(f"UNSD current-USD GDP row lacks country/year/value: {record!r}")
-        m49 = int(code_value)
-        year = int(year_value)
+        if code_raw is None or year_raw is None or value_raw is None:
+            raise PriceIndexParseError(f"UNSD GDP-level row lacks country/year/value: {record!r}")
+        m49 = int(code_raw)
+        year = int(year_raw)
         try:
             value = float(value_raw)
         except (TypeError, ValueError) as exc:
-            raise PriceIndexParseError(f"UNSD current-USD GDP value is non-numeric: {value_raw!r}") from exc
+            raise PriceIndexParseError(f"UNSD GDP-level value is non-numeric: {value_raw!r}") from exc
         if not math.isfinite(value) or value <= 0.0:
             raise PriceIndexParseError(
-                f"UNSD current-USD GDP must be positive and finite, got {value!r} for m49={m49}, year={year}"
+                f"UNSD GDP-level value must be positive and finite, got {value!r} for m49={m49}, year={year}, basis={basis}"
             )
-        if not _is_current_usd_gdp_record(record):
-            raise PriceIndexParseError(f"Cached support row no longer classifies as current-USD GDP: {record!r}")
-        parsed.append(
+        key = (m49, year)
+        row = by_key.setdefault(
+            key,
             {
                 "m49": m49,
                 "country_name": str(_mapping_get(record, "countryName") or "").strip(),
                 "year": year,
-                "current_usd_gdp": value,
-                "source_series_id": int(float(_mapping_get(record, "serieCode", "seriesCode") or -1)),
-                "source_series_name": str(_mapping_get(record, "serieName", "seriesName") or "").strip(),
-                "source_item_id": int(float(_mapping_get(record, "itemId") or -1)),
-                "source_item_name": str(_mapping_get(record, "itemName") or "").strip(),
-                "source_unit": str(_mapping_get(record, "unit") or "").strip(),
-                "observation_note": str(_mapping_get(record, "observationNote") or "").strip(),
-            }
+                "current_usd_gdp": np.nan,
+                "constant_usd_gdp": np.nan,
+                "current_source_item_name": "",
+                "constant_source_item_name": "",
+                "current_source_unit": "",
+                "constant_source_unit": "",
+            },
         )
-    frame = pd.DataFrame(parsed)
+        column = f"{basis}_usd_gdp"
+        if math.isfinite(float(row[column])):
+            raise PriceIndexParseError(f"Duplicate UNSD GDP-level observation for m49={m49}, year={year}, basis={basis}")
+        row[column] = value
+        row[f"{basis}_source_item_name"] = str(_mapping_get(record, "itemName") or "").strip()
+        row[f"{basis}_source_unit"] = str(_mapping_get(record, "unit") or "").strip()
+
+    frame = pd.DataFrame(by_key.values())
     if frame.empty:
-        raise PriceIndexParseError(f"Cached UNSD current-USD GDP payload contains no observations: {path}")
-    duplicated = frame.duplicated(subset=["m49", "year"], keep=False)
-    if bool(duplicated.any()):
-        sample = frame.loc[duplicated, ["m49", "year", "source_item_name"]].head(10)
-        raise PriceIndexParseError(f"Duplicate UNSD current-USD GDP observations:\n{sample.to_string(index=False)}")
+        raise PriceIndexParseError(f"Cached UNSD GDP-level payload contains no observations: {path}")
+    if frame.duplicated(subset=["m49", "year"]).any():
+        raise PriceIndexParseError("Parsed UNSD GDP levels duplicate an M49/year row")
     frame = frame.sort_values(["m49", "year"], kind="stable").reset_index(drop=True)
     metadata = {
         "provider": payload.get("provider", "UNSD AMA"),
         "api_base": payload.get("api_base", UNSD_AMA_API_BASE),
-        "indicator": payload.get("indicator", "GDP at current prices, US dollars"),
+        "indicator": payload.get("indicator", "GDP at current and constant prices, US dollars"),
+        "downloads_page": payload.get("downloads_page", UNSD_AMA_DOWNLOADS_URL),
         "retrieved_at_utc": payload.get("retrieved_at_utc"),
         "fiscal_year_notes": payload.get("fiscal_year_notes"),
         "raw_path": str(path),
@@ -721,7 +736,7 @@ def read_unsd_ama_current_usd_gdp(raw_path: str | Path) -> tuple[pd.DataFrame, d
     return frame, metadata
 
 
-def load_unsd_ama_current_usd_gdp(
+def load_unsd_ama_gdp_usd_levels(
     *,
     years: Sequence[int],
     country_codes: Sequence[int] | None = None,
@@ -729,14 +744,13 @@ def load_unsd_ama_current_usd_gdp(
     force_download: bool = False,
     timeout_s: int = 120,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Download if necessary, then return current-USD GDP support weights and provenance."""
+    """Download if necessary, then return paired UNSD current/constant USD GDP levels."""
 
-    raw_path = download_unsd_ama_current_usd_gdp(
+    raw_path = download_unsd_ama_gdp_usd_levels(
         years=years,
         country_codes=country_codes,
         storage_folder=storage_folder,
         force_download=force_download,
         timeout_s=timeout_s,
     )
-    return read_unsd_ama_current_usd_gdp(raw_path)
-# /ecolecon-exiobase-eur-price-factors
+    return read_unsd_ama_gdp_usd_levels(raw_path)

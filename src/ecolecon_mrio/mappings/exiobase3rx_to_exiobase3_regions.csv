@@ -1,0 +1,215 @@
+source_country,source_iso3,target_exio_region,weight
+Afghanistan,AFG,WA,1.0
+Albania,ALB,WE,1.0
+Algeria,DZA,WF,1.0
+Andorra,AND,WE,1.0
+Angola,AGO,WF,1.0
+Anguilla,AIA,WL,1.0
+Antigua and Barbuda,ATG,WL,1.0
+Argentina,ARG,WL,1.0
+Armenia,ARM,WA,1.0
+Aruba,ABW,WL,1.0
+Australia,AUS,AUS,1.0
+Austria,AUT,AUT,1.0
+Azerbaijan,AZE,WA,1.0
+Bahamas,BHS,WL,1.0
+Bahrain,BHR,WM,1.0
+Bangladesh,BGD,WA,1.0
+Barbados,BRB,WL,1.0
+Belarus,BLR,WE,1.0
+Belgium,BEL,BEL,1.0
+Belize,BLZ,WL,1.0
+Benin,BEN,WF,1.0
+Bermuda,BMU,WL,1.0
+Bhutan,BTN,WA,1.0
+Bolivia,BOL,WL,1.0
+Bosnia and Herzegovina,BIH,WE,1.0
+Botswana,BWA,WF,1.0
+Brazil,BRA,BRA,1.0
+British Virgin Islands,VGB,WL,1.0
+Brunei Darussalam,BRN,WA,1.0
+Bulgaria,BGR,BGR,1.0
+Burkina Faso,BFA,WF,1.0
+Burundi,BDI,WF,1.0
+Cabo Verde,CPV,WF,1.0
+Cambodia,KHM,WA,1.0
+Cameroon,CMR,WF,1.0
+Canada,CAN,CAN,1.0
+Cayman Islands,CYM,WL,1.0
+Central African Republic,CAF,WF,1.0
+Chad,TCD,WF,1.0
+Chile,CHL,WL,1.0
+China,CHN,CHN,1.0
+Hong Kong,HKG,WA,1.0
+Macao,MAC,WA,1.0
+Colombia,COL,WL,1.0
+Comoros,COM,WF,1.0
+Congo Republic,COG,WF,1.0
+Cook Islands,COK,WA,1.0
+Costa Rica,CRI,WL,1.0
+Croatia,HRV,HRV,1.0
+Cuba,CUB,WL,1.0
+Curacao,CUW,WL,1.0
+Cyprus,CYP,CYP,1.0
+Czech Republic,CZE,CZE,1.0
+Cote d'Ivoire,CIV,WF,1.0
+North Korea,PRK,WA,1.0
+DR Congo,COD,WF,1.0
+Denmark,DNK,DNK,1.0
+Djibouti,DJI,WF,1.0
+Dominica,DMA,WL,1.0
+Dominican Republic,DOM,WL,1.0
+Ecuador,ECU,WL,1.0
+Egypt,EGY,WM,1.0
+El Salvador,SLV,WL,1.0
+Equatorial Guinea,GNQ,WF,1.0
+Eritrea,ERI,WF,1.0
+Estonia,EST,EST,1.0
+Ethiopia,ETH,WF,1.0
+Fiji,FJI,WA,1.0
+Finland,FIN,FIN,1.0
+Netherlands Antilles,,WL,1.0
+France,FRA,FRA,1.0
+French Polynesia,PYF,WA,1.0
+Gabon,GAB,WF,1.0
+Gambia,GMB,WF,1.0
+Georgia,GEO,WA,1.0
+Germany,DEU,DEU,1.0
+Ghana,GHA,WF,1.0
+Greece,GRC,GRC,1.0
+Greenland,GRL,WL,1.0
+Grenada,GRD,WL,1.0
+Guatemala,GTM,WL,1.0
+Guinea,GIN,WF,1.0
+Guinea-Bissau,GNB,WF,1.0
+Guyana,GUY,WL,1.0
+Haiti,HTI,WL,1.0
+Honduras,HND,WL,1.0
+Hungary,HUN,HUN,1.0
+Iceland,ISL,WE,1.0
+India,IND,IND,1.0
+Indonesia,IDN,IDN,1.0
+Iran,IRN,WM,1.0
+Iraq,IRQ,WM,1.0
+Ireland,IRL,IRL,1.0
+Israel,ISR,WM,1.0
+Italy,ITA,ITA,1.0
+Jamaica,JAM,WL,1.0
+Japan,JPN,JPN,1.0
+Jordan,JOR,WM,1.0
+Kazakhstan,KAZ,WA,1.0
+Kenya,KEN,WF,1.0
+Kiribati,KIR,WA,1.0
+Kosovo,XKX,WE,1.0
+Kuwait,KWT,WM,1.0
+Kyrgyz Republic,KGZ,WA,1.0
+Laos,LAO,WA,1.0
+Latvia,LVA,LVA,1.0
+Lebanon,LBN,WM,1.0
+Lesotho,LSO,WF,1.0
+Liberia,LBR,WF,1.0
+Libya,LBY,WF,1.0
+Liechtenstein,LIE,WE,1.0
+Lithuania,LTU,LTU,1.0
+Luxembourg,LUX,LUX,1.0
+Madagascar,MDG,WF,1.0
+Malawi,MWI,WF,1.0
+Malaysia,MYS,WA,1.0
+Maldives,MDV,WA,1.0
+Mali,MLI,WF,1.0
+Malta,MLT,MLT,1.0
+Marshall Islands,MHL,WA,1.0
+Mauritania,MRT,WF,1.0
+Mauritius,MUS,WF,1.0
+Mexico,MEX,MEX,1.0
+"Micronesia, Fed. Sts.",FSM,WA,1.0
+Monaco,MCO,WE,1.0
+Mongolia,MNG,WA,1.0
+Montenegro,MNE,WE,1.0
+Montserrat,MSR,WL,1.0
+Morocco,MAR,WF,1.0
+Mozambique,MOZ,WF,1.0
+Myanmar,MMR,WA,1.0
+Namibia,NAM,WF,1.0
+Nauru,NRU,WA,1.0
+Nepal,NPL,WA,1.0
+Netherlands,NLD,NLD,1.0
+New Caledonia,NCL,WA,1.0
+New Zealand,NZL,WA,1.0
+Nicaragua,NIC,WL,1.0
+Niger,NER,WF,1.0
+Nigeria,NGA,WF,1.0
+Norway,NOR,NOR,1.0
+Oman,OMN,WM,1.0
+Pakistan,PAK,WA,1.0
+Palau,PLW,WA,1.0
+Panama,PAN,WL,1.0
+Papua New Guinea,PNG,WA,1.0
+Paraguay,PRY,WL,1.0
+Peru,PER,WL,1.0
+Philippines,PHL,WA,1.0
+Poland,POL,POL,1.0
+Portugal,PRT,PRT,1.0
+Puerto Rico,PRI,WL,1.0
+Qatar,QAT,WM,1.0
+South Korea,KOR,KOR,1.0
+Moldova,MDA,WE,1.0
+Romania,ROU,ROU,1.0
+Russia,RUS,RUS,1.0
+Rwanda,RWA,WF,1.0
+St. Kitts and Nevis,KNA,WL,1.0
+St. Lucia,LCA,WL,1.0
+Samoa,WSM,WA,1.0
+San Marino,SMR,WE,1.0
+Sao Tome and Principe,STP,WF,1.0
+Saudi Arabia,SAU,WM,1.0
+Senegal,SEN,WF,1.0
+Serbia,SRB,WE,1.0
+Seychelles,SYC,WF,1.0
+Sierra Leone,SLE,WF,1.0
+Singapore,SGP,WA,1.0
+Sint Maarten,SXM,WL,1.0
+Slovakia,SVK,SVK,1.0
+Slovenia,SVN,SVN,1.0
+Solomon Islands,SLB,WA,1.0
+Somalia,SOM,WF,1.0
+South Africa,ZAF,ZAF,1.0
+South Sudan,SSD,WF,1.0
+Spain,ESP,ESP,1.0
+Sri Lanka,LKA,WA,1.0
+St. Vincent and the Grenadines,VCT,WL,1.0
+Palestine,PSE,WM,1.0
+Sudan,SDN,WF,1.0
+Suriname,SUR,WL,1.0
+Swaziland,SWZ,WF,1.0
+Sweden,SWE,SWE,1.0
+Switzerland,CHE,CHE,1.0
+Syria,SYR,WM,1.0
+Macedonia,MKD,WE,1.0
+Tajikistan,TJK,WA,1.0
+Thailand,THA,WA,1.0
+Timor-Leste,TLS,WA,1.0
+Togo,TGO,WF,1.0
+Tonga,TON,WA,1.0
+Trinidad and Tobago,TTO,WL,1.0
+Tunisia,TUN,WF,1.0
+Turkey,TUR,TUR,1.0
+Turkmenistan,TKM,WA,1.0
+Turks and Caicos Islands,TCA,WL,1.0
+Tuvalu,TUV,WA,1.0
+Tanzania,TZA,WF,1.0
+Uganda,UGA,WF,1.0
+Ukraine,UKR,WE,1.0
+United Arab Emirates,ARE,WM,1.0
+United Kingdom,GBR,GBR,1.0
+United States,USA,USA,1.0
+Uruguay,URY,WL,1.0
+Uzbekistan,UZB,WA,1.0
+Vanuatu,VUT,WA,1.0
+Venezuela,VEN,WL,1.0
+Vietnam,VNM,WA,1.0
+Yemen,YEM,WM,1.0
+Zambia,ZMB,WF,1.0
+Zanzibar,,WF,1.0
+Zimbabwe,ZWE,WF,1.0
+Taiwan,TWN,TWN,1.0

@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from html.parser import HTMLParser
 from importlib import resources
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -31,8 +32,7 @@ from ecolecon_mrio.mapping_csv import read_mapping_csv
 from ecolecon_mrio.price_indices import (
     PriceIndexHTTPError,
     PriceIndexParseError,
-    load_unsd_ama_current_usd_gdp,
-    load_unsd_ama_gdp_deflators,
+    load_unsd_ama_gdp_usd_levels,
     price_adjustment_factors,
 )
 
@@ -42,17 +42,13 @@ ECB_USD_EUR_URL = (
     "?format=csvdata"
 )
 UNSD_M49_URL = "https://unstats.un.org/unsd/methodology/m49/overview/"
-EXIOBASE_META_COMMIT = "768ff12b3c1e449e89d4310a44db9c5dc2266652"
-EXIOBASE_COUNTRY_COVERAGE_URL = (
-    "https://raw.githubusercontent.com/EXIOBASE/00-class/"
-    f"{EXIOBASE_META_COMMIT}/class/country_axes/country_coverage_matrix.csv"
-)
 DGBAS_TABLE_ID = "A018102050"
 DGBAS_METADATA_URL = f"https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/{DGBAS_TABLE_ID}/all"
 DGBAS_SNAPSHOT_RESOURCE = "reference_data/taiwan_dgbas_gdp_deflator_2012_2022.json"
 PRICE_FACTOR_SOURCE_POLICY_RESOURCE = "mappings/exiobase_price_factor_source_policy.csv"
 PRICE_FACTOR_SOURCE_IDENTITY_RESOURCE = "mappings/exiobase_price_factor_source_identity.csv"
-PRICE_FACTOR_METHOD_UNSD = "unsd_ama_usd_deflator_common_eur"
+EXIOBASE3RX_BRIDGE_RESOURCE = "mappings/exiobase3rx_to_exiobase3_regions.csv"
+PRICE_FACTOR_METHOD_UNSD = "unsd_ama_usd_levels_common_eur"
 PRICE_FACTOR_METHOD_TAIWAN = "taiwan_dgbas_cbc_common_eur"
 PRICE_FACTOR_SOURCE_POLICY_COLUMNS = (
     "kind", "source_code", "source_label", "target_code", "target_label",
@@ -65,10 +61,12 @@ PRICE_FACTOR_SOURCE_IDENTITY_COLUMNS = (
     "resolution_status", "enabled", "provenance", "certainty",
     "official_source", "notes",
 )
+EXIOBASE3RX_BRIDGE_COLUMNS = (
+    "source_country", "source_iso3", "target_exio_region", "weight",
+)
 PINNED_TAIWAN_DGBAS_YEARS = tuple(range(2012, 2023))
 CBC_TWD_USD_ANNUAL_URL = "https://www.cbc.gov.tw/en/cp-480-1879-66035-2.html"
-ROW_CODE_MAP = {"WWA": "WA", "WWL": "WL", "WWE": "WE", "WWF": "WF", "WWM": "WM"}
-EXPECTED_ROW_REGIONS = frozenset(ROW_CODE_MAP.values())
+EXPECTED_ROW_REGIONS = frozenset({"WA", "WL", "WE", "WF", "WM"})
 EXPECTED_EXIOBASE3_REGION_COUNT = 49
 
 
@@ -242,47 +240,6 @@ def _read_unsd_m49_iso3(path: Path) -> pd.DataFrame:
         raise PriceIndexParseError(f"UN M49 parser found only {len(pairs)} ISO3 mappings")
     return pd.DataFrame({"iso3": list(pairs), "m49": list(pairs.values())}).sort_values("iso3").reset_index(drop=True)
 
-
-def _read_exiobase3_membership(path: Path) -> pd.DataFrame:
-    """Read the pinned EXIOBASE 44-country plus five-RoW legacy geography."""
-
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
-    required = {"ISO3", "EXIO3", "EXIO3_3L"}
-    missing = sorted(required.difference(frame.columns))
-    if missing:
-        raise PriceIndexParseError(f"EXIOBASE country coverage CSV missing columns: {missing}")
-    rows: list[dict[str, str]] = []
-    for _, row in frame.iterrows():
-        iso3 = str(row["ISO3"]).strip().upper()
-        explicit = str(row["EXIO3"]).strip().upper()
-        level3 = str(row["EXIO3_3L"]).strip().upper()
-        if not re.fullmatch(r"[A-Z]{3}", iso3):
-            continue
-        if explicit:
-            if not re.fullmatch(r"[A-Z]{2}", explicit):
-                raise PriceIndexParseError(f"Invalid EXIOBASE explicit region code {explicit!r} for {iso3}")
-            exio_region = explicit
-            region_kind = "country"
-        elif level3 in ROW_CODE_MAP:
-            exio_region = ROW_CODE_MAP[level3]
-            region_kind = "row"
-        else:
-            continue
-        rows.append({"iso3": iso3, "exio_region": exio_region, "region_kind": region_kind})
-    result = pd.DataFrame(rows)
-    if result.empty or result["iso3"].duplicated().any():
-        raise PriceIndexParseError("EXIOBASE legacy membership must contain unique ISO3 rows")
-    country_counts = result.loc[result["region_kind"] == "country"].groupby("exio_region")["iso3"].nunique()
-    if len(country_counts) != 44 or not bool((country_counts == 1).all()):
-        raise PriceIndexParseError(f"Expected 44 singleton EXIOBASE country regions, got {len(country_counts)}")
-    row_regions = set(result.loc[result["region_kind"] == "row", "exio_region"])
-    if row_regions != set(EXPECTED_ROW_REGIONS):
-        raise PriceIndexParseError(f"Expected RoW regions {sorted(EXPECTED_ROW_REGIONS)}, got {sorted(row_regions)}")
-    if result["exio_region"].nunique() != EXPECTED_EXIOBASE3_REGION_COUNT:
-        raise PriceIndexParseError("EXIOBASE membership does not resolve to exactly 49 regions")
-    return result.sort_values(["region_kind", "exio_region", "iso3"], kind="stable").reset_index(drop=True)
-
-
 def _mapping_enabled_column(frame: pd.DataFrame, *, mapping_name: str) -> pd.DataFrame:
     """Normalize an explicit mapping ``enabled`` column without permissive blanks."""
 
@@ -392,9 +349,8 @@ def _resolve_price_factor_source_policy(
         )
     return selected.iloc[0]
 
-
 def _read_price_factor_source_identity_mapping(path: Path) -> pd.DataFrame:
-    """Read audited historical/provider identities without activating unresolved rows."""
+    """Read year-bounded provider identities and explicit inactive historical aliases."""
 
     frame = read_mapping_csv(
         path,
@@ -403,34 +359,42 @@ def _read_price_factor_source_identity_mapping(path: Path) -> pd.DataFrame:
     )
     frame = _mapping_enabled_column(frame, mapping_name="price-factor source identity mapping")
     frame = _mapping_year_columns(frame, mapping_name="price-factor source identity mapping")
+    frame["source_code"] = frame["source_code"].astype(str).str.strip().str.upper()
+    frame["target_code"] = frame["target_code"].astype(str).str.strip().str.upper()
+    frame["provider_system"] = frame["provider_system"].astype(str).str.strip()
+    frame["provider_code"] = frame["provider_code"].astype(str).str.strip()
     frame["resolution_status"] = frame["resolution_status"].astype(str).str.strip().str.casefold()
-    allowed_status = {"resolved", "unresolved"}
+    allowed_status = {"resolved", "inactive", "unresolved"}
     invalid_status = sorted(set(frame["resolution_status"]).difference(allowed_status))
     if invalid_status:
         raise PriceIndexParseError(
             f"price-factor source identity mapping has unsupported resolution_status values: {invalid_status}"
         )
+    invalid_targets = sorted(set(frame["target_code"]).difference(EXPECTED_ROW_REGIONS))
+    if invalid_targets:
+        raise PriceIndexParseError(f"price-factor source identity mapping has invalid RoW targets: {invalid_targets}")
     unresolved_enabled = frame["enabled"].astype(bool) & frame["resolution_status"].eq("unresolved")
     if bool(unresolved_enabled.any()):
         labels = frame.loc[unresolved_enabled, "source_label"].astype(str).tolist()
-        raise PriceIndexParseError(
-            f"unresolved price-factor source identities cannot be enabled: {labels}"
-        )
+        raise PriceIndexParseError(f"unresolved price-factor source identities cannot be enabled: {labels}")
+    inactive = frame["resolution_status"].eq("inactive")
+    if bool((inactive & (frame["provider_system"].ne("") | frame["provider_code"].ne(""))).any()):
+        raise PriceIndexParseError("inactive source identities must not carry provider identities")
     resolved_enabled = frame["enabled"].astype(bool) & frame["resolution_status"].eq("resolved")
-    incomplete = resolved_enabled & (
-        frame["provider_system"].astype(str).str.strip().eq("")
-        | frame["provider_code"].astype(str).str.strip().eq("")
-    )
+    incomplete = resolved_enabled & (frame["provider_system"].eq("") | frame["provider_code"].eq(""))
     if bool(incomplete.any()):
         labels = frame.loc[incomplete, "source_label"].astype(str).tolist()
         raise PriceIndexParseError(
             f"enabled resolved source identities require provider_system and provider_code: {labels}"
         )
+    unsd = resolved_enabled & frame["provider_system"].eq("UNSD_AMA")
+    bad_unsd = unsd & ~frame["provider_code"].str.fullmatch(r"\d{3}")
+    if bool(bad_unsd.any()):
+        raise PriceIndexParseError("resolved UNSD_AMA source identities require three-digit provider codes")
     _reject_overlapping_mapping_intervals(
         frame, source_column="source_code", mapping_name="price-factor source identity mapping"
     )
     return frame.reset_index(drop=True)
-
 
 def _load_price_factor_source_identity_mapping() -> pd.DataFrame:
     """Load audited source-identity mappings, including disabled unresolved evidence rows."""
@@ -591,91 +555,220 @@ def _taiwan_common_eur_factor(
         raise ValueError(f"Taiwan common-EUR factor is invalid for year {year}: {factor!r}")
     return factor
 
+def _read_exiobase3rx_region_bridge(path: Path) -> pd.DataFrame:
+    """Read and normalize the recovered four-column EXIOBASE3rx 214-to-49 bridge.
 
-def aggregate_country_price_factors_to_exiobase3_regions(
-    country_factors: pd.Series,
-    current_usd_gdp: pd.Series,
-    membership: pd.DataFrame,
+    The installed CSV is intentionally the exact audited extraction artifact:
+    ``source_country, source_iso3, target_exio_region, weight``. The loader derives
+    an internal source key from ISO3 when present and otherwise from the unique
+    historical source label; provider exceptions remain in the separate
+    source-identity mapping.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    if list(frame.columns) != list(EXIOBASE3RX_BRIDGE_COLUMNS):
+        raise PriceIndexParseError(
+            "EXIOBASE3rx bridge must retain the audited four-column extraction schema"
+        )
+    if len(frame) != 214 or frame["source_country"].astype(str).nunique() != 214:
+        raise PriceIndexParseError(
+            "EXIOBASE3rx bridge must contain exactly 214 unique source-country labels"
+        )
+    source_iso3 = frame["source_iso3"].astype(str).str.strip().str.upper()
+    nonblank_iso3 = source_iso3.loc[source_iso3.ne("")]
+    if len(nonblank_iso3) != 212 or nonblank_iso3.nunique() != 212:
+        raise PriceIndexParseError(
+            "EXIOBASE3rx bridge must retain 212 unique nonblank ISO3 annotations"
+        )
+    blank_labels = set(frame.loc[source_iso3.eq(""), "source_country"].astype(str))
+    if blank_labels != {"Netherlands Antilles", "Zanzibar"}:
+        raise PriceIndexParseError(
+            f"EXIOBASE3rx bridge has unexpected blank source_iso3 identities: {sorted(blank_labels)!r}"
+        )
+    weights = cast(pd.Series, pd.to_numeric(frame["weight"], errors="raise")).astype(float)
+    if (
+        not np.isfinite(weights.to_numpy()).all()
+        or not np.allclose(weights.to_numpy(), 1.0, rtol=0.0, atol=0.0)
+    ):
+        raise PriceIndexParseError(
+            "EXIOBASE3rx bridge must remain a one-to-one weight=1 concordance"
+        )
+
+    target_code = frame["target_exio_region"].astype(str).str.strip().str.upper()
+    if target_code.nunique() != EXPECTED_EXIOBASE3_REGION_COUNT:
+        raise PriceIndexParseError(
+            "EXIOBASE3rx bridge must resolve to exactly 49 legacy target regions"
+        )
+    row_counts = (
+        target_code.loc[target_code.isin(list(EXPECTED_ROW_REGIONS))]
+        .value_counts()
+        .to_dict()
+    )
+    expected = {"WA": 45, "WL": 43, "WE": 14, "WF": 53, "WM": 15}
+    if row_counts != expected:
+        raise PriceIndexParseError(
+            f"EXIOBASE3rx bridge RoW counts differ from the audited bridge: {row_counts}"
+        )
+    explicit = target_code.loc[~target_code.isin(list(EXPECTED_ROW_REGIONS))]
+    if explicit.nunique() != 44 or not bool((explicit.value_counts() == 1).all()):
+        raise PriceIndexParseError(
+            "EXIOBASE3rx bridge must contain 44 singleton explicit target regions"
+        )
+
+    source_label = frame["source_country"].astype(str).str.strip()
+    source_code = source_iso3.where(source_iso3.ne(""), source_label.str.upper())
+    normalized = pd.DataFrame(
+        {
+            "source_code": source_code,
+            "source_label": source_label,
+            "source_iso3": source_iso3,
+            "target_code": target_code,
+            "target_label": target_code,
+        }
+    )
+    if normalized["source_code"].nunique() != 214:
+        raise PriceIndexParseError("EXIOBASE3rx normalized source keys must remain unique")
+    return normalized.sort_values(
+        ["target_code", "source_code"], kind="stable"
+    ).reset_index(drop=True)
+
+
+def _load_exiobase3rx_region_bridge() -> pd.DataFrame:
+    """Load the installed published regional bridge used by production price factors."""
+
+    resource = resources.files("ecolecon_mrio").joinpath(EXIOBASE3RX_BRIDGE_RESOURCE)
+    with resources.as_file(resource) as path:
+        return _read_exiobase3rx_region_bridge(path)
+
+
+def _mapping_resource_sha256(resource_name: str) -> str:
+    """Hash one installed mapping so result provenance identifies its exact scientific content."""
+
+    resource = resources.files("ecolecon_mrio").joinpath(resource_name)
+    with resources.as_file(resource) as path:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_source_policy_domain(policy: pd.DataFrame, *, explicit_regions: set[str], years: Sequence[int]) -> None:
+    """Require every exact policy row to name a real explicit region and every year to resolve once."""
+
+    enabled = policy.loc[policy["enabled"].astype(bool)]
+    exact = set(enabled.loc[enabled["source_code"].astype(str) != "*", "source_code"].astype(str))
+    unknown = sorted(exact.difference(explicit_regions))
+    if unknown:
+        raise PriceIndexParseError(f"price-factor source policy names unknown explicit regions: {unknown}")
+    taiwan_rows = enabled.loc[enabled["target_code"].astype(str) == PRICE_FACTOR_METHOD_TAIWAN]
+    if set(taiwan_rows["source_code"].astype(str)) != {"TW"}:
+        raise PriceIndexParseError("Taiwan DGBAS/CBC method must be selected only by the exact TW policy row")
+    for region in sorted(explicit_regions):
+        for year in years:
+            _resolve_price_factor_source_policy(policy, exio_region=region, year=int(year))
+
+
+def _effective_row_members(
+    bridge: pd.DataFrame,
+    identity: pd.DataFrame,
     iso3_to_m49: Mapping[str, int],
     *,
     year: int,
-    source_policy: pd.DataFrame,
-    taiwan_factor: float,
 ) -> pd.DataFrame:
-    """Map country factors using mapped source methods and the existing RoW rule.
+    """Resolve one year's effective published RoW source identities to UNSD statistical units."""
 
-    Exact region policy rows override the wildcard default. Python implements
-    factor methods; mapping data decides which method applies to an explicit
-    EXIOBASE region. The legacy RoW GDP-weighted factor algorithm is unchanged.
-    """
-
-    required = {"iso3", "exio_region", "region_kind"}
-    missing_columns = sorted(required.difference(membership.columns))
-    if missing_columns:
-        raise ValueError(f"membership is missing columns {missing_columns}")
     rows: list[dict[str, object]] = []
-    for region, group in membership.groupby("exio_region", sort=True):
-        kind_values = set(group["region_kind"].astype(str))
-        if len(kind_values) != 1:
-            raise ValueError(f"EXIOBASE region {region!r} mixes country and RoW membership")
-        kind = next(iter(kind_values))
-        members = tuple(group["iso3"].astype(str))
-        if kind == "country":
-            if len(members) != 1:
-                raise ValueError(f"Explicit EXIOBASE region {region!r} must have one country member")
-            iso3 = members[0]
-            policy_row = _resolve_price_factor_source_policy(
-                source_policy, exio_region=str(region), year=int(year)
-            )
-            method = str(policy_row["target_code"])
-            provider = str(policy_row["target_label"])
-            if method == PRICE_FACTOR_METHOD_UNSD:
-                m49 = iso3_to_m49.get(iso3)
-                if m49 is None or m49 not in country_factors.index:
-                    raise ValueError(
-                        f"Missing UNSD common-EUR factor for explicit EXIOBASE member {iso3}"
-                    )
-                factor = float(country_factors.loc[m49])
-            elif method == PRICE_FACTOR_METHOD_TAIWAN:
-                factor = float(taiwan_factor)
-            else:
-                raise ValueError(f"Unsupported mapped price-factor method {method!r}")
-        elif kind == "row":
-            missing_map = [iso3 for iso3 in members if iso3 not in iso3_to_m49]
-            if missing_map:
-                raise ValueError(f"RoW region {region} has ISO3 members absent from UN M49 mapping: {missing_map}")
-            m49_codes = [int(iso3_to_m49[iso3]) for iso3 in members]
-            missing_factor = [iso3 for iso3, m49 in zip(members, m49_codes, strict=True) if m49 not in country_factors.index]
-            missing_gdp = [iso3 for iso3, m49 in zip(members, m49_codes, strict=True) if m49 not in current_usd_gdp.index]
-            if missing_factor or missing_gdp:
+    static = bridge.loc[bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))]
+    for member in static.itertuples(index=False):
+        source_code = str(member.source_code).strip().upper()
+        target_code = str(member.target_code).strip().upper()
+        candidates = identity.loc[
+            identity["enabled"].astype(bool)
+            & identity["source_code"].astype(str).eq(source_code)
+            & (identity["start_year"].astype(int) <= int(year))
+            & (identity["end_year"].astype(int) >= int(year))
+        ]
+        if len(candidates) > 1:
+            raise ValueError(f"Multiple source-identity rules apply to {source_code!r}, year={year}")
+        if len(candidates) == 1:
+            rule = candidates.iloc[0]
+            if str(rule["target_code"]) != target_code:
                 raise ValueError(
-                    f"RoW region {region} has incomplete source coverage; "
-                    f"missing_factor={missing_factor}, missing_current_usd_gdp={missing_gdp}"
+                    f"source-identity rule moves {source_code!r} from published {target_code} to {rule['target_code']!r}"
                 )
-            weights = current_usd_gdp.reindex(m49_codes).astype(float)
-            factors = country_factors.reindex(m49_codes).astype(float)
-            if not np.isfinite(weights.to_numpy()).all() or bool((weights <= 0.0).any()):
-                raise ValueError(f"RoW region {region} has non-positive or non-finite current-USD GDP weights")
-            factor = float(np.average(factors.to_numpy(dtype=float), weights=weights.to_numpy(dtype=float)))
-            provider = "UNSD AMA + ECB; current-USD-GDP weighted"
+            status = str(rule["resolution_status"])
+            if status == "inactive":
+                continue
+            if status != "resolved" or str(rule["provider_system"]) != "UNSD_AMA":
+                raise ValueError(f"Unsupported active source-identity rule for {source_code!r}: {status!r}")
+            m49 = int(str(rule["provider_code"]))
         else:
-            raise ValueError(f"Unsupported EXIOBASE region_kind {kind!r}")
-        if not math.isfinite(factor) or factor <= 0.0:
-            raise ValueError(f"Invalid EXIOBASE factor for region {region!r}: {factor!r}")
+            m49_value = iso3_to_m49.get(source_code)
+            if m49_value is None:
+                raise ValueError(
+                    f"Published RoW source {source_code!r} has no UN M49 identity and no year-specific mapping rule"
+                )
+            m49 = int(m49_value)
         rows.append(
             {
-                "exio_region": str(region),
-                "region_kind": kind,
-                "price_adjustment_factor": factor,
-                "source_country_count": len(members),
-                "source_country_iso3": ";".join(members),
-                "source_provider": provider,
+                "target_code": target_code,
+                "source_code": source_code,
+                "source_label": str(member.source_label),
+                "m49": m49,
             }
         )
-    result = pd.DataFrame(rows).sort_values("exio_region", kind="stable").reset_index(drop=True)
-    if len(result) != EXPECTED_EXIOBASE3_REGION_COUNT or result["exio_region"].nunique() != EXPECTED_EXIOBASE3_REGION_COUNT:
-        raise ValueError(f"Expected exactly 49 EXIOBASE factors, got {len(result)}")
-    return result
+    result = pd.DataFrame(rows)
+    if result.empty or result.duplicated(subset=["target_code", "source_code"]).any():
+        raise ValueError("Effective RoW membership is empty or duplicates source identities")
+    if result.duplicated(subset=["target_code", "m49"]).any():
+        dup = result.loc[result.duplicated(subset=["target_code", "m49"], keep=False)]
+        raise ValueError(f"Effective RoW membership double-counts one UNSD statistical unit:\n{dup.to_string(index=False)}")
+    return result.sort_values(["target_code", "source_code"], kind="stable").reset_index(drop=True)
+
+
+def _require_gdp_level_rows(levels: pd.DataFrame, *, m49_codes: Sequence[int], year: int) -> pd.DataFrame:
+    """Select complete positive current/constant USD GDP levels for an exact member set."""
+
+    required = {"m49", "year", "current_usd_gdp", "constant_usd_gdp"}
+    missing_columns = sorted(required.difference(levels.columns))
+    if missing_columns:
+        raise ValueError(f"UNSD GDP-level table is missing columns {missing_columns}")
+    subset = levels.loc[levels["year"].astype(int) == int(year)].copy()
+    if subset.duplicated(subset=["m49"]).any():
+        raise ValueError(f"UNSD GDP-level table duplicates M49 rows for year {year}")
+    subset = subset.set_index("m49")
+    requested = [int(code) for code in m49_codes]
+    missing = [code for code in requested if code not in subset.index]
+    if missing:
+        raise ValueError(f"UNSD GDP levels are missing required M49 rows for year {year}: {missing}")
+    selected = subset.reindex(requested).loc[:, ["current_usd_gdp", "constant_usd_gdp"]].astype(float)
+    invalid = (~np.isfinite(selected.to_numpy())).any(axis=1) | (selected <= 0.0).any(axis=1)
+    if bool(invalid.any()):
+        bad = selected.index[invalid].tolist()
+        raise ValueError(f"UNSD GDP levels are missing/non-positive/non-finite for year {year}, M49={bad}")
+    return selected
+
+
+def _common_eur_factor_from_usd_levels(
+    levels: pd.DataFrame,
+    usd_per_eur: pd.Series,
+    *,
+    m49_codes: Sequence[int],
+    year: int,
+    base_year: int,
+) -> float:
+    """Form one implicit deflator from extensive USD GDP levels, then convert to a common-EUR gauge."""
+
+    codes = tuple(dict.fromkeys(int(code) for code in m49_codes))
+    if not codes:
+        raise ValueError("GDP-level factor requires at least one source statistical unit")
+    current = _require_gdp_level_rows(levels, m49_codes=codes, year=int(year))
+    base = _require_gdp_level_rows(levels, m49_codes=codes, year=int(base_year))
+    q_t = float(current["current_usd_gdp"].sum()) / float(current["constant_usd_gdp"].sum())
+    q_b = float(base["current_usd_gdp"].sum()) / float(base["constant_usd_gdp"].sum())
+    rates = _require_years(usd_per_eur, [year, base_year], name="ECB USD/EUR")
+    factor = (q_b / q_t) * (float(rates.loc[int(year)]) / float(rates.loc[int(base_year)]))
+    if not math.isfinite(factor) or factor <= 0.0:
+        raise ValueError(f"Invalid common-EUR GDP-level factor for year {year}: {factor!r}")
+    return factor
+
 
 def build_exiobase3_eur_price_factors(
     *,
@@ -685,11 +778,12 @@ def build_exiobase3_eur_price_factors(
     force_download: bool = False,
     timeout_s: int = 120,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Build complete annual EXIOBASE3 factors for a country-GDP-deflator EUR sensitivity.
+    """Build complete legacy EXIOBASE3 factors from audited GDP-level source geography.
 
-    The returned table includes the requested years plus ``base_year`` and exactly
-    49 EXIOBASE regions per year.  No source member is interpolated or omitted.
-    The base-year factors are required to equal one within numerical precision.
+    Ordinary explicit countries and the five RoW aggregates use official UNSD
+    current/constant USD GDP levels plus the ECB annual USD/EUR correction. RoW
+    deflators are formed only after summing extensive levels over the exact audited
+    member set. Taiwan remains on its mapped DGBAS/CBC pathway.
     """
 
     requested_years = tuple(sorted({int(year) for year in years}))
@@ -698,100 +792,165 @@ def build_exiobase3_eur_price_factors(
     all_years = tuple(sorted(set(requested_years) | {int(base_year)}))
     root = default_exiobase3_price_factor_storage_folder() if storage_folder is None else Path(storage_folder)
     root.mkdir(parents=True, exist_ok=True)
+
     source_policy = _load_price_factor_source_policy()
+    identity = _load_price_factor_source_identity_mapping()
+    bridge = _load_exiobase3rx_region_bridge()
+    explicit_bridge = bridge.loc[~bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))].copy()
+    explicit_regions = set(explicit_bridge["target_code"].astype(str))
+    _validate_source_policy_domain(source_policy, explicit_regions=explicit_regions, years=all_years)
 
-    # UNSD owns ordinary-country GDP deflators and current-USD GDP weights.  The
-    # current-GDP helper reuses the deflator request metadata but keeps a separate
-    # small cache so the first public deflator cache contract remains unchanged.
-    price_indices, unsd_deflator_meta = load_unsd_ama_gdp_deflators(
-        years=all_years,
-        country_codes=None,
-        storage_folder=root / "unsd_ama",
+    # Official small geography/exchange-rate sources remain cached text; the 214x49
+    # EXIOBASE3rx bridge itself is packaged mapping data rather than a live runtime download.
+    ecb_path = _cached_text(
+        ECB_USD_EUR_URL,
+        path=root / "ecb" / "usd_per_eur_annual.csv",
         force_download=force_download,
         timeout_s=timeout_s,
     )
-    current_gdp, unsd_gdp_meta = load_unsd_ama_current_usd_gdp(
-        years=all_years,
-        country_codes=None,
-        storage_folder=root / "unsd_ama",
+    m49_path = _cached_text(
+        UNSD_M49_URL,
+        path=root / "unsd_m49" / "overview.html",
         force_download=force_download,
         timeout_s=timeout_s,
     )
-
-    # Small authoritative external geography/exchange-rate sources are cached as
-    # source text, never as derived EXIOBASE matrices or factor tables.
-    ecb_path = _cached_text(ECB_USD_EUR_URL, path=root / "ecb" / "usd_per_eur_annual.csv", force_download=force_download, timeout_s=timeout_s)
-    m49_path = _cached_text(UNSD_M49_URL, path=root / "unsd_m49" / "overview.html", force_download=force_download, timeout_s=timeout_s)
-    exio_path = _cached_text(EXIOBASE_COUNTRY_COVERAGE_URL, path=root / "exiobase_meta" / f"country_coverage_matrix_{EXIOBASE_META_COMMIT[:12]}.csv", force_download=force_download, timeout_s=timeout_s)
-    cbc_path = _cached_text(CBC_TWD_USD_ANNUAL_URL, path=root / "taiwan_cbc" / "ntd_per_usd_annual.html", force_download=force_download, timeout_s=timeout_s)
-
     usd_per_eur = _require_years(_read_ecb_usd_per_eur(ecb_path), all_years, name="ECB USD/EUR")
     m49_table = _read_unsd_m49_iso3(m49_path)
-    membership = _read_exiobase3_membership(exio_path)
-    taiwan_deflator, taiwan_dgbas_metadata = _load_taiwan_dgbas_gdp_deflator(all_years)
-    ntd_per_usd = _require_years(_read_taiwan_ntd_per_usd(cbc_path), all_years, name="Taiwan NTD/USD")
-
     iso3_to_m49 = dict(zip(
         m49_table["iso3"].astype(str).tolist(),
         m49_table["m49"].astype(int).tolist(),
         strict=True,
     ))
-    needed_iso3 = set(
-        membership.loc[membership["region_kind"].astype(str) == "row", "iso3"].astype(str)
-    )
-    country_membership = membership.loc[
-        membership["region_kind"].astype(str) == "country"
-    ]
-    country_regions = country_membership["exio_region"].astype(str).tolist()
-    country_iso3 = country_membership["iso3"].astype(str).tolist()
-    for exio_region, iso3 in zip(country_regions, country_iso3, strict=True):
-        methods = {
-            str(
-                _resolve_price_factor_source_policy(
-                    source_policy, exio_region=exio_region, year=year
-                )["target_code"]
-            )
-            for year in all_years
+
+    effective_by_year = {
+        year: _effective_row_members(bridge, identity, iso3_to_m49, year=year)
+        for year in all_years
+    }
+    reference_members = {
+        (str(target_code), str(source_code), int(m49))
+        for target_code, source_code, m49 in effective_by_year[int(base_year)].loc[
+            :, ["target_code", "source_code", "m49"]
+        ].itertuples(index=False, name=None)
+    }
+    for year, members in effective_by_year.items():
+        observed = {
+            (str(target_code), str(source_code), int(m49))
+            for target_code, source_code, m49 in members.loc[
+                :, ["target_code", "source_code", "m49"]
+            ].itertuples(index=False, name=None)
         }
-        if PRICE_FACTOR_METHOD_UNSD in methods:
-            needed_iso3.add(iso3)
-    missing_m49 = sorted(needed_iso3.difference(iso3_to_m49))
-    if missing_m49:
-        raise ValueError(f"EXIOBASE source members absent from official UN ISO3/M49 table: {missing_m49}")
-    needed_m49 = sorted({iso3_to_m49[iso3] for iso3 in needed_iso3})
+        if observed != reference_members:
+            raise ValueError(
+                "Effective RoW source membership changes inside the requested/base-year domain; "
+                f"year={year}. Add an explicitly audited common identity regime before comparing these years."
+            )
+
+    needed_m49 = {
+        int(m49)
+        for m49 in effective_by_year[int(base_year)]["m49"].tolist()
+    }
+    explicit_m49: dict[str, int] = {}
+    active_methods: dict[int, dict[str, str]] = {}
+    for year in all_years:
+        active_methods[year] = {}
+        for member in explicit_bridge.itertuples(index=False):
+            region = str(member.target_code)
+            method = str(_resolve_price_factor_source_policy(source_policy, exio_region=region, year=year)["target_code"])
+            active_methods[year][region] = method
+            if method == PRICE_FACTOR_METHOD_UNSD:
+                m49 = iso3_to_m49.get(str(member.source_code))
+                if m49 is None:
+                    raise ValueError(f"Explicit EXIOBASE source {member.source_code!r} has no UN M49 mapping")
+                explicit_m49[region] = int(m49)
+                needed_m49.add(int(m49))
+
+    levels, unsd_levels_meta = load_unsd_ama_gdp_usd_levels(
+        years=all_years,
+        country_codes=sorted(needed_m49),
+        storage_folder=root / "unsd_ama",
+        force_download=force_download,
+        timeout_s=timeout_s,
+    )
+
+    needs_taiwan = any(
+        method == PRICE_FACTOR_METHOD_TAIWAN
+        for by_region in active_methods.values()
+        for method in by_region.values()
+    )
+    taiwan_deflator: pd.Series | None = None
+    ntd_per_usd: pd.Series | None = None
+    taiwan_dgbas_metadata: dict[str, Any] | None = None
+    if needs_taiwan:
+        taiwan_deflator, taiwan_dgbas_metadata = _load_taiwan_dgbas_gdp_deflator(all_years)
+        cbc_path = _cached_text(
+            CBC_TWD_USD_ANNUAL_URL,
+            path=root / "taiwan_cbc" / "ntd_per_usd_annual.html",
+            force_download=force_download,
+            timeout_s=timeout_s,
+        )
+        ntd_per_usd = _require_years(_read_taiwan_ntd_per_usd(cbc_path), all_years, name="Taiwan NTD/USD")
 
     outputs: list[pd.DataFrame] = []
     for year in all_years:
-        country_factors = common_eur_price_factors_from_usd(
-            price_indices,
-            usd_per_eur,
-            year=year,
-            base_year=int(base_year),
-            area_codes=needed_m49,
-        )
-        gdp_year = current_gdp.loc[current_gdp["year"].astype(int) == year].set_index("m49")["current_usd_gdp"].astype(float)
-        if gdp_year.index.duplicated().any():
-            raise ValueError(f"UNSD current-USD GDP duplicates M49 rows for year {year}")
-        taiwan_factor = _taiwan_common_eur_factor(
-            taiwan_deflator,
-            ntd_per_usd,
-            usd_per_eur,
-            year=year,
-            base_year=int(base_year),
-        )
-        region = aggregate_country_price_factors_to_exiobase3_regions(
-            country_factors,
-            gdp_year,
-            membership,
-            iso3_to_m49,
-            year=year,
-            source_policy=source_policy,
-            taiwan_factor=taiwan_factor,
-        )
-        region.insert(0, "year", int(year))
-        region.insert(1, "base_year", int(base_year))
-        region.insert(4, "factor_basis", "country_gdp_deflator_common_eur")
-        outputs.append(region)
+        rows: list[dict[str, object]] = []
+        for member in explicit_bridge.sort_values("target_code").itertuples(index=False):
+            region = str(member.target_code)
+            method = active_methods[year][region]
+            if method == PRICE_FACTOR_METHOD_UNSD:
+                m49 = explicit_m49[region]
+                factor = _common_eur_factor_from_usd_levels(
+                    levels, usd_per_eur, m49_codes=[m49], year=year, base_year=int(base_year)
+                )
+                provider = "UNSD AMA current/constant USD GDP levels + ECB"
+            elif method == PRICE_FACTOR_METHOD_TAIWAN:
+                if taiwan_deflator is None or ntd_per_usd is None:
+                    raise ValueError("Mapped Taiwan price-factor method is active but its source inputs were not acquired")
+                factor = _taiwan_common_eur_factor(
+                    taiwan_deflator, ntd_per_usd, usd_per_eur, year=year, base_year=int(base_year)
+                )
+                provider = "DGBAS GDP deflator + CBC NTD/USD + ECB"
+            else:
+                raise ValueError(f"Unsupported mapped explicit-country price-factor method {method!r}")
+            rows.append(
+                {
+                    "exio_region": region,
+                    "region_kind": "country",
+                    "price_adjustment_factor": factor,
+                    "source_country_count": 1,
+                    "source_country_iso3": str(member.source_code),
+                    "source_provider": provider,
+                }
+            )
+
+        effective = effective_by_year[year]
+        for region in sorted(EXPECTED_ROW_REGIONS):
+            group = effective.loc[effective["target_code"].astype(str) == region]
+            if group.empty:
+                raise ValueError(f"Effective RoW region {region} has no source members")
+            factor = _common_eur_factor_from_usd_levels(
+                levels,
+                usd_per_eur,
+                m49_codes=group["m49"].astype(int).tolist(),
+                year=year,
+                base_year=int(base_year),
+            )
+            rows.append(
+                {
+                    "exio_region": region,
+                    "region_kind": "row",
+                    "price_adjustment_factor": factor,
+                    "source_country_count": int(len(group)),
+                    "source_country_iso3": ";".join(group["source_code"].astype(str).tolist()),
+                    "source_provider": "UNSD AMA aggregate current/constant USD GDP levels + ECB",
+                }
+            )
+        region_frame = pd.DataFrame(rows).sort_values("exio_region", kind="stable").reset_index(drop=True)
+        if len(region_frame) != EXPECTED_EXIOBASE3_REGION_COUNT:
+            raise ValueError(f"Expected exactly 49 EXIOBASE factors for year {year}, got {len(region_frame)}")
+        region_frame.insert(0, "year", int(year))
+        region_frame.insert(1, "base_year", int(base_year))
+        region_frame.insert(4, "factor_basis", "country_gdp_deflator_common_eur")
+        outputs.append(region_frame)
 
     result = pd.concat(outputs, ignore_index=True)
     base = result.loc[result["year"] == int(base_year), "price_adjustment_factor"].to_numpy(dtype=float)
@@ -801,23 +960,35 @@ def build_exiobase3_eur_price_factors(
     if len(result) != expected_rows:
         raise ValueError(f"Expected {expected_rows} year-region factor rows, got {len(result)}")
 
+    published_counts = bridge.loc[
+        bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))
+    ].groupby("target_code").size().astype(int).to_dict()
+    effective_counts = {
+        int(year): members.groupby("target_code").size().astype(int).to_dict()
+        for year, members in effective_by_year.items()
+    }
     metadata: dict[str, Any] = {
         "factor_basis": "country_gdp_deflator_common_eur",
+        "row_aggregation": "aggregate current-USD and constant-price-USD GDP levels before implicit deflation",
         "requested_years": list(requested_years),
         "returned_years": list(all_years),
         "base_year": int(base_year),
         "region_count": EXPECTED_EXIOBASE3_REGION_COUNT,
-        "unsd_deflator_metadata": unsd_deflator_meta,
-        "unsd_current_usd_gdp_metadata": unsd_gdp_meta,
+        "unsd_gdp_usd_levels_metadata": unsd_levels_meta,
         "ecb_series": ECB_USD_EUR_SERIES,
         "un_m49_url": UNSD_M49_URL,
-        "exiobase_meta_commit": EXIOBASE_META_COMMIT,
-        "exiobase_country_coverage_url": EXIOBASE_COUNTRY_COVERAGE_URL,
+        "exiobase3rx_bridge_resource": EXIOBASE3RX_BRIDGE_RESOURCE,
+        "exiobase3rx_bridge_sha256": _mapping_resource_sha256(EXIOBASE3RX_BRIDGE_RESOURCE),
         "price_factor_source_policy_resource": PRICE_FACTOR_SOURCE_POLICY_RESOURCE,
+        "price_factor_source_policy_sha256": _mapping_resource_sha256(PRICE_FACTOR_SOURCE_POLICY_RESOURCE),
         "price_factor_source_identity_resource": PRICE_FACTOR_SOURCE_IDENTITY_RESOURCE,
+        "price_factor_source_identity_sha256": _mapping_resource_sha256(PRICE_FACTOR_SOURCE_IDENTITY_RESOURCE),
+        "published_row_member_counts": published_counts,
+        "effective_row_member_counts": effective_counts,
+        "active_methods_by_year": active_methods,
         "taiwan_dgbas_snapshot": taiwan_dgbas_metadata,
-        "taiwan_dgbas_metadata_url": DGBAS_METADATA_URL,
-        "taiwan_cbc_exchange_rate": CBC_TWD_USD_ANNUAL_URL,
+        "taiwan_dgbas_metadata_url": DGBAS_METADATA_URL if needs_taiwan else None,
+        "taiwan_cbc_exchange_rate": CBC_TWD_USD_ANNUAL_URL if needs_taiwan else None,
         "interpretation": "country-level macro GDP-deflator sensitivity; not product-country constant-price EXIOBASE",
     }
     return result.sort_values(["year", "exio_region"], kind="stable").reset_index(drop=True), metadata

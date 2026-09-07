@@ -107,75 +107,69 @@ def test_common_eur_formula_removes_usd_eur_movement() -> None:
     )
     assert result.loc[40] == pytest.approx(1.10 * 1.14 / 1.05)
 
+def test_row_factor_sums_current_and_constant_levels_before_deflation() -> None:
+    """RoW implicit deflation must aggregate extensive GDP levels before forming C/K."""
 
-def test_row_factor_is_current_usd_gdp_weighted_not_unweighted() -> None:
-    """A RoW factor must represent the aggregate monetary row, not an average index number."""
-
-    membership_rows = [
-        {"iso3": "AAA", "exio_region": "ZZ", "region_kind": "country"},
-        {"iso3": "TWN", "exio_region": "TW", "region_kind": "country"},
-        {"iso3": "BBB", "exio_region": "WA", "region_kind": "row"},
-        {"iso3": "CCC", "exio_region": "WA", "region_kind": "row"},
-    ]
-    mapping = {"AAA": 1, "BBB": 2, "CCC": 3}
-    country_factors = {1: 1.0, 2: 0.5, 3: 1.5}
-    gdp = {2: 90.0, 3: 10.0}
-    # Pad the synthetic table to the public 49-region contract.
-    for pos, region in enumerate(_valid_region_codes(42), start=10):
-        iso = _valid_iso3_codes(100)[pos]
-        membership_rows.append({"iso3": iso, "exio_region": region, "region_kind": "country"})
-        mapping[iso] = 1000 + pos
-        country_factors[1000 + pos] = 1.0
-    for pos, (region, iso) in enumerate(zip(("WL", "WE", "WF", "WM"), ("DDD", "EEE", "FFF", "GGG"), strict=True), start=2000):
-        membership_rows.append({"iso3": iso, "exio_region": region, "region_kind": "row"})
-        mapping[iso] = pos
-        country_factors[pos] = 1.0
-        gdp[pos] = 1.0
-    result = factors.aggregate_country_price_factors_to_exiobase3_regions(
-        pd.Series(country_factors),
-        pd.Series(gdp),
-        pd.DataFrame(membership_rows),
-        mapping,
-        year=2022,
-        source_policy=factors._load_price_factor_source_policy(),
-        taiwan_factor=1.0,
-    )
-    row_factor = float(result.loc[result["exio_region"] == "WA", "price_adjustment_factor"].iloc[0])
-    assert row_factor == pytest.approx(0.6)
-    assert row_factor != pytest.approx(1.0)
-
-
-def test_row_factor_fails_if_one_member_lacks_factor_or_gdp() -> None:
-    """RoW aggregation must not silently drop a member and renormalize the weights."""
-
-    membership = pd.DataFrame(
+    levels = pd.DataFrame(
         [
-            {"iso3": iso, "exio_region": region, "region_kind": "country"}
-            for iso, region in zip(_valid_iso3_codes(44)[:43], _valid_region_codes(43), strict=True)
-        ]
-        + [{"iso3": "TWN", "exio_region": "TW", "region_kind": "country"}]
-        + [
-            {"iso3": iso, "exio_region": region, "region_kind": "row"}
-            for iso, region in zip(("BBB", "CCC", "DDD", "EEE", "FFF"), ("WA", "WL", "WE", "WF", "WM"), strict=True)
+            {"m49": 1, "year": 2020, "current_usd_gdp": 90.0, "constant_usd_gdp": 100.0},
+            {"m49": 2, "year": 2020, "current_usd_gdp": 10.0, "constant_usd_gdp": 5.0},
+            {"m49": 1, "year": 2022, "current_usd_gdp": 120.0, "constant_usd_gdp": 100.0},
+            {"m49": 2, "year": 2022, "current_usd_gdp": 30.0, "constant_usd_gdp": 10.0},
         ]
     )
-    all_iso = [iso for iso in membership["iso3"] if iso != "TWN"]
-    mapping = {iso: pos + 1 for pos, iso in enumerate(all_iso)}
-    country = pd.Series({code: 1.0 for code in mapping.values()})
-    gdp = pd.Series({code: 1.0 for code in mapping.values()})
-    missing_code = mapping["BBB"]
-    gdp = gdp.drop(missing_code)
-    with pytest.raises(ValueError, match="incomplete source coverage"):
-        factors.aggregate_country_price_factors_to_exiobase3_regions(
-            country,
-            gdp,
-            membership,
-            mapping,
-            year=2022,
-            source_policy=factors._load_price_factor_source_policy(),
-            taiwan_factor=1.0,
+    rates = pd.Series({2020: 1.0, 2022: 1.0})
+    factor = factors._common_eur_factor_from_usd_levels(
+        levels, rates, m49_codes=[1, 2], year=2020, base_year=2022
+    )
+    expected = ((150.0 / 110.0) / (100.0 / 105.0))
+    individual = np.array([(120.0 / 100.0) / (90.0 / 100.0), (30.0 / 10.0) / (10.0 / 5.0)])
+    old_weighted = float(np.average(individual, weights=np.array([90.0, 10.0])))
+    assert factor == pytest.approx(expected)
+    assert factor != pytest.approx(old_weighted)
+
+
+def test_row_factor_fails_if_one_required_level_is_missing() -> None:
+    """Missing constant/current GDP for one member must fail rather than drop and renormalize it."""
+
+    levels = pd.DataFrame(
+        [
+            {"m49": 1, "year": 2020, "current_usd_gdp": 90.0, "constant_usd_gdp": 100.0},
+            {"m49": 2, "year": 2020, "current_usd_gdp": 10.0, "constant_usd_gdp": np.nan},
+            {"m49": 1, "year": 2022, "current_usd_gdp": 120.0, "constant_usd_gdp": 100.0},
+            {"m49": 2, "year": 2022, "current_usd_gdp": 30.0, "constant_usd_gdp": 10.0},
+        ]
+    )
+    with pytest.raises(ValueError, match="missing/non-positive/non-finite"):
+        factors._common_eur_factor_from_usd_levels(
+            levels, pd.Series({2020: 1.0, 2022: 1.0}), m49_codes=[1, 2], year=2020, base_year=2022
         )
 
+
+def test_published_bridge_and_effective_antilles_identity_are_data_owned() -> None:
+    """The packaged bridge is 214->49; ANT is an inactive WL alias while CUW/SXM remain distinct."""
+
+    bridge = factors._load_exiobase3rx_region_bridge()
+    assert len(bridge) == 214
+    assert bridge["target_code"].nunique() == 49
+    counts = bridge.loc[
+        bridge["target_code"].isin(list(factors.EXPECTED_ROW_REGIONS))
+    ].groupby("target_code").size().to_dict()
+    assert counts == {"WA": 45, "WL": 43, "WE": 14, "WF": 53, "WM": 15}
+    assert bridge.loc[bridge["source_code"].isin(["CUW", "SXM"]), "target_code"].tolist().count("WL") == 2
+    ant_bridge = bridge.loc[bridge["source_label"] == "Netherlands Antilles"]
+    assert len(ant_bridge) == 1
+    assert ant_bridge.iloc[0]["source_code"] == "NETHERLANDS ANTILLES"
+    assert ant_bridge.iloc[0]["target_code"] == "WL"
+    assert "BES" not in set(bridge["source_code"])
+    assert factors._mapping_resource_sha256(factors.EXIOBASE3RX_BRIDGE_RESOURCE) == "92e9b95d240b338c0a6a8c06f2c4768149d81092839ef4581d780a1ce119f972"
+
+    identity = factors._load_price_factor_source_identity_mapping()
+    ant = identity.loc[identity["source_code"] == "NETHERLANDS ANTILLES"]
+    assert len(ant) == 1
+    assert ant.iloc[0]["resolution_status"] == "inactive"
+    assert int(ant.iloc[0]["start_year"]) == 2012
+    assert int(ant.iloc[0]["end_year"]) == 2022
 
 def _snapshot_payload() -> dict[str, Any]:
     """Return an independently mutable valid fixture for snapshot validation tests."""
@@ -264,31 +258,45 @@ def test_taiwan_common_eur_formula_and_base_year_identity_are_unchanged() -> Non
         deflator, ntd_per_usd, usd_per_eur, year=2022, base_year=2022
     ) == 1.0
 
-
 def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """The production builder must be complete on 44 countries + 5 RoW and exact at the base year."""
+    """The production builder uses mapped 44+5 geography and is exactly identity in the base year."""
 
     sources, iso_to_m49 = _write_source_fixture(tmp_path)
-    all_m49 = sorted(iso_to_m49.values())
-    price_rows: list[dict[str, object]] = []
-    gdp_rows: list[dict[str, object]] = []
-    for m49 in all_m49:
-        price_rows.extend(
+    ordinary = list(iso_to_m49)
+    explicit_iso = ordinary[:43]
+    row_iso = ordinary[43:48]
+    explicit_regions = _valid_region_codes(43)
+    bridge_rows = [
+        {"source_code": iso, "source_label": iso, "target_code": region, "target_label": region}
+        for iso, region in zip(explicit_iso, explicit_regions, strict=True)
+    ]
+    bridge_rows.append({"source_code": "TWN", "source_label": "Taiwan", "target_code": "TW", "target_label": "TW"})
+    bridge_rows.extend(
+        {"source_code": iso, "source_label": iso, "target_code": region, "target_label": region}
+        for iso, region in zip(row_iso, ("WA", "WL", "WE", "WF", "WM"), strict=True)
+    )
+    bridge = pd.DataFrame(bridge_rows)
+    # Pandas accepts this validated literal-column list; pandas-stubs rejects its Sequence protocol.
+    empty_identity = pd.DataFrame(
+        columns=list(factors.PRICE_FACTOR_SOURCE_IDENTITY_COLUMNS)  # pyright: ignore[reportArgumentType]
+    )
+    monkeypatch.setattr(factors, "_load_exiobase3rx_region_bridge", lambda: bridge)
+    monkeypatch.setattr(factors, "_load_price_factor_source_identity_mapping", lambda: empty_identity)
+
+    level_rows: list[dict[str, object]] = []
+    for m49 in sorted(iso_to_m49.values()):
+        level_rows.extend(
             [
-                {"m49": m49, "year": 2020, "currency_basis": "usd", "price_index": 100.0},
-                {"m49": m49, "year": 2022, "currency_basis": "usd", "price_index": 110.0},
+                {"m49": m49, "year": 2020, "current_usd_gdp": float(100 + m49), "constant_usd_gdp": float(90 + m49)},
+                {"m49": m49, "year": 2022, "current_usd_gdp": float(110 + m49), "constant_usd_gdp": float(95 + m49)},
             ]
         )
-        gdp_rows.extend(
-            [
-                {"m49": m49, "year": 2020, "current_usd_gdp": float(100 + m49)},
-                {"m49": m49, "year": 2022, "current_usd_gdp": float(110 + m49)},
-            ]
-        )
-    price_table = pd.DataFrame(price_rows)
-    gdp_table = pd.DataFrame(gdp_rows)
-    monkeypatch.setattr(factors, "load_unsd_ama_gdp_deflators", lambda **_: (price_table, {"provider": "fake"}))
-    monkeypatch.setattr(factors, "load_unsd_ama_current_usd_gdp", lambda **_: (gdp_table, {"provider": "fake", "fiscal_year_notes": []}))
+    level_table = pd.DataFrame(level_rows)
+    monkeypatch.setattr(
+        factors,
+        "load_unsd_ama_gdp_usd_levels",
+        lambda **_: (level_table, {"provider": "fake", "fiscal_year_notes": []}),
+    )
 
     def fake_cached(url: str, *, path: Path, force_download: bool, timeout_s: int) -> Path:
         del path, force_download, timeout_s
@@ -296,8 +304,6 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
             return sources["ecb"]
         if url == factors.UNSD_M49_URL:
             return sources["m49"]
-        if url == factors.EXIOBASE_COUNTRY_COVERAGE_URL:
-            return sources["exio"]
         if url == factors.CBC_TWD_USD_ANNUAL_URL:
             return sources["cbc"]
         raise AssertionError(url)
@@ -308,11 +314,10 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
     )
     assert len(result) == 98
     assert result.groupby("year")["exio_region"].nunique().to_dict() == {2020: 49, 2022: 49}
-    assert __import__("numpy").allclose(result.loc[result["year"] == 2022, "price_adjustment_factor"].to_numpy(dtype=float), 1.0)
+    assert np.allclose(result.loc[result["year"] == 2022, "price_adjustment_factor"].to_numpy(dtype=float), 1.0)
     assert set(result["factor_basis"]) == {"country_gdp_deflator_common_eur"}
-    assert metadata["exiobase_meta_commit"] == factors.EXIOBASE_META_COMMIT
     assert metadata["region_count"] == 49
-
+    assert metadata["row_aggregation"].startswith("aggregate current-USD")
 
 
 def test_price_factor_source_policy_exact_rule_overrides_wildcard() -> None:
@@ -325,39 +330,46 @@ def test_price_factor_source_policy_exact_rule_overrides_wildcard() -> None:
     assert taiwan["target_code"] == factors.PRICE_FACTOR_METHOD_TAIWAN
 
 
-def test_historical_source_identity_mapping_records_resolved_and_unresolved_evidence() -> None:
-    """Provider identities are data rows; unresolved historical geography stays disabled."""
+def test_source_identity_mapping_resolves_tanzania_zanzibar_and_inactivates_ant() -> None:
+    """Provider statistical-unit decisions and historical alias inactivity live in the mapping CSV."""
 
     mapping = factors._load_price_factor_source_identity_mapping()
-    by_source = mapping.set_index("source_code")
-    assert str(by_source.loc["Tanzania", "provider_code"]) == "835"
-    assert str(by_source.loc["Zanzibar", "provider_code"]) == "836"
-    antilles = by_source.loc["Netherlands Antilles"]
-    assert antilles["resolution_status"] == "unresolved"
-    assert not bool(antilles["enabled"])
+    tanzania = mapping.loc[mapping["source_code"] == "TZA"].iloc[0]
+    assert str(tanzania["provider_code"]) == "835"
+    zanzibar = mapping.loc[mapping["provider_code"].astype(str) == "836"].iloc[0]
+    assert str(zanzibar["target_code"]) == "WF"
+    ant = mapping.loc[mapping["source_code"] == "NETHERLANDS ANTILLES"].iloc[0]
+    assert ant["resolution_status"] == "inactive"
+    assert str(ant["provider_code"]) == ""
+    assert str(ant["target_code"]) == "WL"
 
 
-def test_unresolved_historical_identity_cannot_be_enabled(tmp_path: Path) -> None:
-    """A mapping edit cannot turn unresolved scientific evidence into an executable rule."""
+def test_effective_row_members_drop_ant_without_dropping_cuw_or_sxm() -> None:
+    """The 2012-2022 identity normalization removes only the duplicate ANT alias."""
 
-    mapping = factors._load_price_factor_source_identity_mapping()
-    mapping.loc[mapping["source_code"] == "Netherlands Antilles", "enabled"] = True
-    path = tmp_path / "identity.csv"
-    mapping.to_csv(path, index=False)
-    with pytest.raises(factors.PriceIndexParseError, match="unresolved.*cannot be enabled"):
-        factors._read_price_factor_source_identity_mapping(path)
+    bridge = pd.DataFrame(
+        [
+            {"source_code": "NETHERLANDS ANTILLES", "source_label": "Netherlands Antilles", "target_code": "WL"},
+            {"source_code": "CUW", "source_label": "Curacao", "target_code": "WL"},
+            {"source_code": "SXM", "source_label": "Sint Maarten", "target_code": "WL"},
+        ]
+    )
+    identity = factors._load_price_factor_source_identity_mapping()
+    result = factors._effective_row_members(bridge, identity, {"CUW": 531, "SXM": 534}, year=2012)
+    assert set(result["source_code"]) == {"CUW", "SXM"}
+    assert set(result["m49"]) == {531, 534}
 
 
-def test_unsd_current_usd_gdp_support_reuses_discovered_series_and_keeps_fiscal_notes(
+def test_unsd_gdp_level_support_reuses_discovered_series_and_keeps_fiscal_notes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """RoW weights must come from the same discovered UNSD GDP series with fiscal provenance retained."""
+    """Current and constant USD GDP levels come from one discovered UNSD series with fiscal provenance."""
 
     from ecolecon_mrio import price_indices
 
     deflator = tmp_path / "deflator.json"
     deflator.write_text(
-        __import__("json").dumps(
+        json.dumps(
             {
                 "countries": [{"countryCode": 40, "countryName": "Austria"}],
                 "series": [{"serieCode": 7, "serieName": "GDP and Implicit Price Deflators"}],
@@ -373,33 +385,39 @@ def test_unsd_current_usd_gdp_support_reuses_discovered_series_and_keeps_fiscal_
         calls.append(url)
         if url.endswith("/Data/basic/7"):
             assert payload == {"paramCodes": [40], "years": [2020, 2022]}
-            return [
-                {
-                    "countryCode": 40,
-                    "countryName": "Austria",
-                    "fiscalYear": year,
-                    "serieCode": 7,
-                    "serieName": "GDP and Implicit Price Deflators",
-                    "itemId": 1,
-                    "itemName": "GDP at current prices - US Dollars",
-                    "observationValue": value,
-                    "unit": "Million US Dollars",
-                }
-                for year, value in ((2020, 430000.0), (2022, 470000.0))
-            ]
+            rows = []
+            for year, current, constant in ((2020, 430000.0, 410000.0), (2022, 470000.0, 430000.0)):
+                rows.extend(
+                    [
+                        {
+                            "countryCode": 40, "countryName": "Austria", "fiscalYear": year,
+                            "serieCode": 7, "serieName": "GDP and Implicit Price Deflators",
+                            "itemId": 1, "itemName": "GDP at current prices - US Dollars",
+                            "observationValue": current, "unit": "Million US Dollars",
+                        },
+                        {
+                            "countryCode": 40, "countryName": "Austria", "fiscalYear": year,
+                            "serieCode": 7, "serieName": "GDP and Implicit Price Deflators",
+                            "itemId": 2, "itemName": "GDP at constant prices - US Dollars",
+                            "observationValue": constant, "unit": "Million US Dollars",
+                        },
+                    ]
+                )
+            return rows
         if url.endswith("/Metadata/fiscalyearnotes"):
             return [{"countryCode": 356, "note": "Fiscal year starts 1 April"}]
         raise AssertionError(url)
 
     monkeypatch.setattr(price_indices, "_http_json", fake_http)
-    path = price_indices.download_unsd_ama_current_usd_gdp(
+    path = price_indices.download_unsd_ama_gdp_usd_levels(
         years=[2022, 2020], country_codes=[40], storage_folder=tmp_path / "cache"
     )
-    frame, metadata = price_indices.read_unsd_ama_current_usd_gdp(path)
-    assert frame[["year", "current_usd_gdp"]].values.tolist() == [[2020.0, 430000.0], [2022.0, 470000.0]]
+    frame, metadata = price_indices.read_unsd_ama_gdp_usd_levels(path)
+    assert frame[["year", "current_usd_gdp", "constant_usd_gdp"]].values.tolist() == [
+        [2020.0, 430000.0, 410000.0], [2022.0, 470000.0, 430000.0]
+    ]
     assert metadata["fiscal_year_notes"] == [{"countryCode": 356, "note": "Fiscal year starts 1 April"}]
     assert any(url.endswith("/Metadata/fiscalyearnotes") for url in calls)
-
 
 def test_price_adjustment_rejects_negative_output_even_when_called_directly() -> None:
     """The public transformation must preserve the MRIO non-negative gross-output invariant."""
