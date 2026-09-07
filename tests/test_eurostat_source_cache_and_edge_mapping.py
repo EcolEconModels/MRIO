@@ -838,6 +838,8 @@ def test_validator_numeric_comparisons_preserve_elementwise_relative_tolerance(t
 
     keys = {
         "sector": ["large", "small"],
+        "boundary": ["scope_production", "scope_production"],
+        "denominator_role": ["target_domestic_output", "target_domestic_output"],
         "extension": ["air", "air"],
         "stressor": ["CO2", "CO2"],
         "unit": ["kg", "kg"],
@@ -862,7 +864,9 @@ def test_validator_numeric_comparisons_preserve_elementwise_relative_tolerance(t
         actual, expected, rtol=1e-9, atol=1e-6
     )
     assert failing["ok"] is False
-    assert failing["worst_label"] == ["small", "air", "CO2", "kg"]
+    assert failing["worst_label"] == [
+        "small", "scope_production", "target_domestic_output", "air", "CO2", "kg"
+    ]
     assert failing["worst_field"] == "value"
     assert failing["worst_tolerance"] == pytest.approx(1.01e-6)
 
@@ -876,6 +880,15 @@ def test_validator_numeric_comparisons_preserve_elementwise_relative_tolerance(t
     assert not _compare_environmental_extensions(
         mismatched_nan, expected, rtol=1e-9, atol=1e-6
     )["ok"]
+    for field, changed in (
+        ("boundary", "external_imports_direct"),
+        ("denominator_role", "target_import_use"),
+    ):
+        mismatched_group = actual.copy()
+        mismatched_group.loc[1, field] = changed
+        assert not _compare_environmental_extensions(
+            mismatched_group, expected, rtol=1e-9, atol=1e-6
+        )["ok"]
 
     ratio_path = tmp_path / "ratio.csv"
     pd.DataFrame(
@@ -898,6 +911,19 @@ def test_validator_numeric_comparisons_preserve_elementwise_relative_tolerance(t
     frame_expected = pd.DataFrame([[1.0e11]], index=["A"], columns=["A"])
     assert _compare_numeric_frames(
         frame_actual, frame_expected, rtol=1e-9, atol=1e-6
+    )["ok"]
+    exact = _compare_numeric_frames(
+        pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert exact["ok"] and exact["max_normalized_gap"] == 0.0
+    assert not _compare_numeric_frames(
+        pd.DataFrame([[1.0]], index=["A"], columns=["A"]),
+        pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        rtol=0.0,
+        atol=0.0,
     )["ok"]
 
 
@@ -1244,3 +1270,29 @@ def test_phase7_environmental_grid_validates_negative_import_use_ratio(tmp_path)
     )
     assert bad["ok"] is False
     assert "nonzero-denominator intensity does not equal value/output" in bad["errors"]
+
+
+@pytest.mark.parametrize("role", ["target_import_use", "target_total_use"])
+def test_environmental_grid_allows_signed_zero_denominator_cancellation(tmp_path, role) -> None:
+    from scripts.validate_many_many_pipeline_outputs import _validate_environmental_grid
+
+    path = tmp_path / "environmental_extensions.csv"
+    frame = pd.DataFrame(
+        {
+            "sector_position": [1], "sector": ["A"], "boundary": ["signed_use"],
+            "denominator_role": [role], "extension": ["air"], "stressor": ["CO2"],
+            "unit": ["kg"], "value": [3.0], "monetary_output": [0.0], "intensity": [np.nan],
+        }
+    )
+    frame.to_csv(path, index=False)
+    groups = frame.loc[:, ["boundary", "denominator_role", "extension", "stressor", "unit"]]
+    assert _validate_environmental_grid(
+        environmental_path=path, raw_path=None, output=pd.Series({"A": 0.0}),
+        rtol=1e-9, atol=1e-6, production_groups=groups,
+    )["ok"]
+    frame.loc[0, "denominator_role"] = "target_domestic_output"
+    frame.to_csv(path, index=False)
+    assert not _validate_environmental_grid(
+        environmental_path=path, raw_path=None, output=pd.Series({"A": 0.0}),
+        rtol=1e-9, atol=1e-6, production_groups=frame.loc[:, ["boundary", "denominator_role", "extension", "stressor", "unit"]],
+    )["ok"]

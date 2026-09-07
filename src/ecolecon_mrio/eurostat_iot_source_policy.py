@@ -357,9 +357,8 @@ AT_2021_NAIO_10_CP1700_PROFILE = EurostatIOTSourceProfile(
             code="TS_BP",
             role="total_supply_at_basic_prices_control",
             blocks=("V", "M"),
-            # The code appears in both presentations, but its equation is flow-specific:
-            # TOTAL is P1 + P7 while DOM is the domestic-output P1 control.
-            flows=("DOM", "TOTAL"),
+            # The AT reviewed source observes this total-supply control only in TOTAL.
+            flows=("TOTAL",),
             authority="source_code_and_label",
             equation_authorized=True,
         ),
@@ -473,6 +472,21 @@ def validate_source_profile_schema(
 ) -> InvariantReport:
     """Validate only the reviewed source schema, not unresolved economic equations."""
     checks: list[InvariantCheck] = []
+    for evidence in profile.role_evidence:
+        if not {"V", "M"}.intersection(evidence.blocks):
+            continue
+        for flow in evidence.flows:
+            expected_rows = profile.expected_supplementary_rows.get(flow, ())
+            checks.append(
+                _check(
+                    check_id=f"profile.role_evidence.{evidence.code.lower()}.{flow.lower()}",
+                    flow_role=flow,
+                    block="V|M",
+                    ok=evidence.code in expected_rows,
+                    affected_labels=() if evidence.code in expected_rows else (evidence.code,),
+                    explanation="Observed V/M role evidence must be present in the profile's reviewed source rows.",
+                )
+            )
     reference_products: pd.Index | None = None
     for flow in profile.flow_roles:
         parsed = variants.get(flow)

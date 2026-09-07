@@ -8,6 +8,7 @@ from ecolecon_mrio.eurostat_iot_source_policy import (
     AT_2021_NAIO_10_CP1700_EVIDENCE,
     NAIO_10_CP1700_ACCOUNTING_POLICY,
     EurostatIOTSourceProfile,
+    SourceRoleEvidence,
     validate_source_profile_schema,
 )
 
@@ -33,7 +34,7 @@ def _profile() -> EurostatIOTSourceProfile:
             "IMP": ("CPA_TOTAL",),
             "TOTAL": ("P1", "P7", "TS_BP"),
         },
-        role_evidence=base.role_evidence,
+        role_evidence=(),
         unresolved_questions=base.unresolved_questions,
     )
 
@@ -99,6 +100,18 @@ def test_profile_schema_rejects_supplementary_row_drift() -> None:
     report = validate_source_profile_schema(variants, profile=_profile())
     failed = {check.check_id for check in report.checks if check.status == "fail"}
     assert failed == {"profile.supplementary_v.total", "profile.supplementary_m.total"}
+
+
+def test_profile_schema_rejects_role_evidence_absent_from_observed_flow() -> None:
+    profile = _profile()
+    profile = EurostatIOTSourceProfile(
+        **{**profile.__dict__, "role_evidence": (
+            SourceRoleEvidence("TS_BP", "control", ("V", "M"), ("DOM",), "source_code_and_label", True),
+        )}
+    )
+    report = validate_source_profile_schema(_variants(), profile=profile)
+    failed = {check.check_id for check in report.checks if check.status == "fail"}
+    assert failed == {"profile.role_evidence.ts_bp.dom"}
 
 
 def test_profile_schema_rejects_final_demand_drift() -> None:

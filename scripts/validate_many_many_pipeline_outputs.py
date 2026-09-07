@@ -94,6 +94,8 @@ def _compare_labelled_numeric_frames(
     atol: float,
 ) -> dict[str, Any]:
     """Compare aligned labelled extensive values under the symmetric rtol+atol contract."""
+    if not np.isfinite(rtol) or rtol < 0.0 or not np.isfinite(atol) or atol < 0.0:
+        raise ValueError("rtol and atol must be finite and non-negative")
     if not actual.index.is_unique or not actual.columns.is_unique:
         return _comparison_failure(reason="actual labels are not unique")
     if not expected.index.is_unique or not expected.columns.is_unique:
@@ -132,7 +134,10 @@ def _compare_labelled_numeric_frames(
         jointly_missing, 0.0, np.maximum(np.abs(actual_values), np.abs(expected_values))
     )
     tolerance = atol + rtol * scale
-    normalized = np.divide(abs_gap, tolerance, out=np.full_like(abs_gap, np.inf), where=tolerance > 0.0)
+    normalized = np.full_like(abs_gap, np.inf)
+    positive_tolerance = tolerance > 0.0
+    np.divide(abs_gap, tolerance, out=normalized, where=positive_tolerance)
+    normalized[~positive_tolerance & (abs_gap == 0.0)] = 0.0
     relative = np.divide(abs_gap, scale, out=np.zeros_like(abs_gap), where=scale > 0.0)
     worst_position = np.unravel_index(int(np.argmax(normalized)), normalized.shape)
     row_position, column_position = worst_position
@@ -206,7 +211,9 @@ def _compare_environmental_extensions(
     rtol: float,
     atol: float,
 ) -> dict[str, Any]:
-    key_cols = ["sector", "extension", "stressor", "unit"]
+    key_cols = [
+        "sector", "boundary", "denominator_role", "extension", "stressor", "unit"
+    ]
     value_cols = ["value", "monetary_output"]
     required = set(key_cols + value_cols)
     if not required.issubset(actual.columns) or not required.issubset(expected.columns):
@@ -398,7 +405,11 @@ def _validate_environmental_grid(
             errors.append("nonzero-denominator intensity does not equal value/output")
     zero_output_estimates = finite_value & monetary.eq(0.0)
     if bool(zero_output_estimates.any()):
-        zero_values = value.loc[zero_output_estimates]
+        signed_zero_denominator = zero_output_estimates & observed[
+            "denominator_role"
+        ].isin({"target_import_use", "target_total_use"})
+        ordinary_zero_denominator = zero_output_estimates & ~signed_zero_denominator
+        zero_values = value.loc[ordinary_zero_denominator]
         zero_intensities = intensity.loc[zero_output_estimates]
         if not np.allclose(
             zero_values.to_numpy(dtype="float64"),
@@ -406,7 +417,7 @@ def _validate_environmental_grid(
             rtol=rtol,
             atol=atol,
         ):
-            errors.append("zero-output supported estimates must have value=0")
+            errors.append("ordinary zero-output estimates must have value=0")
         if bool(zero_intensities.notna().any()):
             errors.append("zero-output supported estimates must have intensity=NA")
 

@@ -257,12 +257,29 @@ def _frame_comparison_check(
         f"{observed.index[int(row)]}|{observed.columns[int(column)]}"
         for row, column in failed_positions[:50]
     )
-    finite_gaps = gaps[np.isfinite(gaps)]
-    finite_tolerances = tolerance[np.isfinite(tolerance)]
-    published, calculated, signed_gap, relative_gap = _gap_diagnostics(
-        observed_values,
-        derived_values,
-    )
+    candidate = (~passed) & finite if len(failed_positions) else finite
+    if candidate.any():
+        normalized = np.full(gaps.shape, -np.inf, dtype="float64")
+        positive_tolerance = candidate & (tolerance > 0.0)
+        normalized[positive_tolerance] = gaps[positive_tolerance] / tolerance[positive_tolerance]
+        zero_tolerance = candidate & ~positive_tolerance
+        normalized[zero_tolerance] = np.where(gaps[zero_tolerance] > 0.0, np.inf, 0.0)
+        row, column = np.unravel_index(int(np.argmax(normalized)), normalized.shape)
+        published = float(observed_values[row, column])
+        calculated = float(derived_values[row, column])
+        signed_gap = float(observed_values[row, column] - derived_values[row, column])
+        denominator = max(abs(published), abs(calculated))
+        relative_gap = 0.0 if denominator == 0.0 else signed_gap / denominator
+        max_abs_gap = float(gaps[row, column])
+        max_tolerance = float(tolerance[row, column])
+    elif len(failed_positions):
+        published = calculated = signed_gap = relative_gap = None
+        max_abs_gap = float("inf")
+        max_tolerance = float(atol)
+    else:
+        published = calculated = signed_gap = relative_gap = None
+        max_abs_gap = 0.0
+        max_tolerance = float(atol)
     return InvariantCheck(
         check_id=check_id,
         category=category,
@@ -270,8 +287,8 @@ def _frame_comparison_check(
         severity="error",
         flow_role=flow_role,
         block=block,
-        max_abs_gap=float(finite_gaps.max()) if finite_gaps.size else float("inf"),
-        tolerance=float(finite_tolerances.max()) if finite_tolerances.size else float(atol),
+        max_abs_gap=max_abs_gap,
+        tolerance=max_tolerance,
         affected_labels=failed_labels,
         explanation=explanation,
         published=published,

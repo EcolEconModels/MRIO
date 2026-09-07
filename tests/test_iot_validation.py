@@ -666,6 +666,28 @@ def test_comparison_reports_the_failed_cells_local_tolerance() -> None:
     assert check.tolerance == pytest.approx(0.00000100100001)
 
 
+def test_frame_comparison_reports_one_failed_cell_consistently() -> None:
+    observed = pd.DataFrame([[1_000_000_000.0, 1.0]], index=["row"], columns=["large", "small"])
+    derived = pd.DataFrame([[1_000_000_000.5, 1.00001]], index=["row"], columns=["large", "small"])
+    check = iot_validation_module._frame_comparison_check(
+        check_id="audit.frame.local_tolerance", category="full_table", block="M",
+        observed=observed, derived=derived, rtol=1e-9, atol=1e-6, explanation="test",
+    )
+    assert check.status == "fail"
+    assert check.affected_labels == ("row|small",)
+    assert check.published == pytest.approx(1.0)
+    assert check.derived == pytest.approx(1.00001)
+    assert check.max_abs_gap == pytest.approx(0.00001)
+    assert check.tolerance == pytest.approx(0.00000100100001)
+
+    missing = pd.DataFrame([[np.nan]], index=["row"], columns=["column"])
+    all_missing = iot_validation_module._frame_comparison_check(
+        check_id="audit.frame.missing", category="full_table", block="M",
+        observed=missing, derived=missing.copy(), rtol=0.0, atol=0.0, explanation="test",
+    )
+    assert all_missing.status == "pass" and all_missing.max_abs_gap == 0.0
+
+
 def test_generated_comparison_preserves_matching_missing_cells() -> None:
     observed = pd.Series([1.0, np.nan], index=pd.Index(["value", "not_applicable"]))
     matching = iot_validation_module._comparison_check(
