@@ -653,53 +653,107 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
 
 
 
-def test_write_sfc_workbook_rejects_numeric_primitive_without_sdmx_cell(
+def test_write_sfc_workbook_template_numeric_cells_are_not_source_applicability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import ecolecon_mrio.eurostat_iot as eurostat_iot
     from scripts import aggregate_iot_by_mapping as mod
 
-    template_path = tmp_path / "template.xlsx"
-    _build_template(
-        template_path,
-        product_labels=(
-            "Food, beverages and tobacco products",
-            "Chemicals and chemical products",
-        ),
-    )
-    parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
+    template_path=tmp_path/"template.xlsx"
+    _build_template(template_path,product_labels=(
+        "Food, beverages and tobacco products", "Chemicals and chemical products",
+    ))
+    parsed,z_before,y_before,z_after,y_after,mapping_df=_build_lineage_toy_case()
     assert parsed.V is not None and parsed.M is not None
-    parsed = replace(
-        parsed,
-        V=parsed.V.drop(index="D21X31"),
-        M=parsed.M.drop(index="D21X31"),
+    parsed=replace(parsed,V=parsed.V.drop(index="D21X31"),M=parsed.M.drop(index="D21X31"))
+    monkeypatch.setattr(eurostat_iot,"load_eurostat_iot",lambda **_: parsed)
+    monkeypatch.setattr(mod,"_write_excel_mapping_sheet",lambda *args,**kwargs: None)
+    v_after,m_after=_matching_transformed_supplementary(parsed,z_after.columns)
+    out_path=tmp_path/"out.xlsx"
+    mod._write_sfc_workbook(
+        out_path=out_path,template_xlsx=template_path,eurostat_dataset="naio_10_cp1700",
+        eurostat_filters={"geo":"AT","time":"2021","freq":"A","unit":"MIO_EUR"},
+        eurostat_row_dim="prd_ava",eurostat_col_dim="prd_use",eurostat_storage_folder=tmp_path,
+        variant_dim="stk_flow",variant_value="TOTAL",Z_before=z_before,Y_before=y_before,
+        Z_after=z_after,Y_after=y_after,V_after=v_after,M_after=m_after,mapping_df=mapping_df,
+        mapping_from_col="from_sector",mapping_to_col="to_sector",verbose=False,
+        output_after=flow_use_total(z_after,y_after),
     )
-    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
-    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
-    v_after, m_after = _matching_transformed_supplementary(parsed, z_after.columns)
+    assert out_path.is_file()
 
-    with pytest.raises(ValueError, match="numeric primitive cells absent from SDMX"):
+
+def test_sfc_layout_template_sentinels_cannot_affect_generated_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+
+    labels=("Food, beverages and tobacco products","Chemicals and chemical products")
+    normal=tmp_path/"normal.xlsx"; sentinel=tmp_path/"sentinel.xlsx"
+    _build_template(normal,product_labels=labels); _build_template(sentinel,product_labels=labels)
+    wb=load_workbook(sentinel); ws=wb["Sheet 1"]
+    ws["A1"]="STALE AUSTRIA TEMPLATE"; ws["B1"]=2021
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value,(int,float)): cell.value=9.87654321e123
+    stale=wb.create_sheet("STALE NUMERICAL SOURCE"); stale["A1"]=123456789.0
+    wb.save(sentinel); wb.close()
+
+    parsed,z_before,y_before,z_after,y_after,mapping_df=_build_lineage_toy_case()
+    monkeypatch.setattr(eurostat_iot,"load_eurostat_iot",lambda **_: parsed)
+    monkeypatch.setattr(mod,"_write_excel_mapping_sheet",lambda *args,**kwargs: None)
+    v_after,m_after=_matching_transformed_supplementary(parsed,z_after.columns)
+    def generate(template,out):
         mod._write_sfc_workbook(
-            out_path=tmp_path / "out.xlsx",
-            template_xlsx=template_path,
-            eurostat_dataset="naio_10_cp1700",
-            eurostat_filters={"geo": "AT", "time": "2021"},
-            eurostat_row_dim="prd_ava",
-            eurostat_col_dim="prd_use",
-            eurostat_storage_folder=tmp_path,
-            variant_dim="stk_flow",
-            variant_value="TOTAL",
-            Z_before=z_before,
-            Y_before=y_before,
-            Z_after=z_after,
-            Y_after=y_after,
-            V_after=v_after,
-            M_after=m_after,
-            mapping_df=mapping_df,
-            mapping_from_col="from_sector",
-            mapping_to_col="to_sector",
-            verbose=False,
-            output_after=flow_use_total(z_after, y_after),
+            out_path=out,template_xlsx=template,eurostat_dataset="naio_10_cp1700",
+            eurostat_filters={"geo":"EU27_2020","time":"2023","freq":"A","unit":"MIO_EUR"},
+            eurostat_row_dim="prd_ava",eurostat_col_dim="prd_use",eurostat_storage_folder=tmp_path,
+            variant_dim="stk_flow",variant_value="TOTAL",Z_before=z_before,Y_before=y_before,
+            Z_after=z_after,Y_after=y_after,V_after=v_after,M_after=m_after,mapping_df=mapping_df,
+            mapping_from_col="from_sector",mapping_to_col="to_sector",verbose=False,
+            output_after=flow_use_total(z_after,y_after),
+        )
+    normal_out=tmp_path/"normal_out.xlsx"; sentinel_out=tmp_path/"sentinel_out.xlsx"
+    generate(normal,normal_out); generate(sentinel,sentinel_out)
+    a=load_workbook(normal_out,data_only=False); b=load_workbook(sentinel_out,data_only=False)
+    assert a.sheetnames == b.sheetnames
+    assert "STALE NUMERICAL SOURCE" not in b.sheetnames
+    av=[[c.value for c in row] for row in a["Sheet 1"].iter_rows()]
+    bv=[[c.value for c in row] for row in b["Sheet 1"].iter_rows()]
+    assert av == bv
+    assert b["Sheet 1"]["A1"].value is None and b["Sheet 1"]["B1"].value is None
+    summary=b["Summary"]
+    md={str(summary.cell(r,1).value):summary.cell(r,2).value for r in range(2,summary.max_row+1)}
+    assert md["Dataset"] == "naio_10_cp1700"
+    assert md["Geo"] == "EU27_2020" and md["Time"] == "2023"
+    assert md["Frequency"] == "A" and md["Unit"] == "MIO_EUR"
+    assert md["Stock or flow"] == "TOTAL"
+    assert "no template numerical evidence" in str(md["Template contract"])
+    a.close(); b.close()
+
+
+def test_sfc_workbook_rejects_incomplete_authoritative_output_vector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+    template_path=tmp_path/"template.xlsx"
+    _build_template(template_path,product_labels=(
+        "Food, beverages and tobacco products","Chemicals and chemical products",
+    ))
+    parsed,z_before,y_before,z_after,y_after,mapping_df=_build_lineage_toy_case()
+    monkeypatch.setattr(eurostat_iot,"load_eurostat_iot",lambda **_: parsed)
+    monkeypatch.setattr(mod,"_write_excel_mapping_sheet",lambda *args,**kwargs: None)
+    v_after,m_after=_matching_transformed_supplementary(parsed,z_after.columns)
+    incomplete=flow_use_total(z_after,y_after).iloc[:-1]
+    with pytest.raises(ValueError,match="must cover the transformed product axis exactly"):
+        mod._write_sfc_workbook(
+            out_path=tmp_path/"bad.xlsx",template_xlsx=template_path,eurostat_dataset="naio_10_cp1700",
+            eurostat_filters={"geo":"AT","time":"2021"},eurostat_row_dim="prd_ava",
+            eurostat_col_dim="prd_use",eurostat_storage_folder=tmp_path,variant_dim="stk_flow",
+            variant_value="TOTAL",Z_before=z_before,Y_before=y_before,Z_after=z_after,Y_after=y_after,
+            V_after=v_after,M_after=m_after,mapping_df=mapping_df,mapping_from_col="from_sector",
+            mapping_to_col="to_sector",verbose=False,output_after=incomplete,
         )
 
 
@@ -774,11 +828,15 @@ def test_write_excel_mapping_sheet_requires_co2_for_non_import_flow() -> None:
 
 
 def test_generated_workbook_metadata_is_rebuilt() -> None:
-    """Guardrail: generated metadata sheets do not preserve template data."""
+    """Guardrail: layout templates cannot seed or mutate canonical data."""
     source = Path(__file__).resolve().parents[1] / "scripts" / "aggregate_iot_by_mapping.py"
     text = source.read_text(encoding="utf-8")
-    assert 'for sheet_name in ("Mapping", "Aggregation", "Summary", "Structure")' in text
+    assert "for sheet_name in list(wb.sheetnames)" in text
+    assert 'if sheet_name != "Sheet 1"' in text
     assert 'ws_sum = wb.create_sheet("Summary")' in text
+    assert "numeric primitive cells absent from SDMX" not in text
+    assert "template_v_values" not in text and "template_m_values" not in text
+    assert "res = _reorder_aggregation_result(res, official_order)" not in text
     assert "_supplementary_fd_row_from_current_shares" not in text
     assert 'output_after=res.x' in text
 

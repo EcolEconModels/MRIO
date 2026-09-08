@@ -16,11 +16,12 @@ def test_at_fuels_runner_preserves_year_and_parent_lineage_contracts() -> None:
         encoding="utf-8"
     )
 
-    assert "IOT_Austria_${EUROSTAT_TIME}_Eurostat.xlsx" in text
+    assert "SFC_LAYOUT_TEMPLATE_XLSX" in text
+    assert "IOT_Austria_${EUROSTAT_TIME}_Eurostat.xlsx" not in text
+    assert "IOT_Austria_2021_Eurostat.xlsx" in text
     assert '"source_parent_code": str(aggregate_code)' in text
     assert '"source_parent_code",' in text
     assert "capital_stock_${EUROSTAT_TIME}.xlsx" in text
-    assert "IOT_Austria_2021_Eurostat.xlsx" not in text
 
 
 def test_at_fuels_runner_exposes_archive_extensions_and_eurostat_only_refresh() -> None:
@@ -53,15 +54,13 @@ def test_fuels_wrapper_defaults_to_reviewed_official_direct_concordance() -> Non
     assert REVIEWED_OFFICIAL_DIRECT_CPA65 not in green_brown
 
 
-def test_non_at_workbook_requires_explicit_template() -> None:
-    """EU/group workbook export cannot silently reuse the Austrian default template."""
-    text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(
-        encoding="utf-8"
-    )
-    assert 'TEMPLATE_XLSX_EXPLICIT="${TEMPLATE_XLSX:-}"' in text
-    assert text.count('TEMPLATE_XLSX_EXPLICIT="${TEMPLATE_XLSX:-}"') == 1
-    assert '"$EUROSTAT_GEO" != "AT"' in text
-    assert "Explicit TEMPLATE_XLSX is required" in text
+def test_layout_template_is_reusable_and_group_workbook_export_remains_opt_in() -> None:
+    text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(encoding="utf-8")
+    assert "SFC_LAYOUT_TEMPLATE_XLSX" in text
+    assert 'TEMPLATE_XLSX="$SFC_LAYOUT_TEMPLATE_XLSX"' in text
+    assert "Explicit TEMPLATE_XLSX is required" not in text
+    assert 'if [[ -z "$REGION_SCOPE_MAPPING_CSV" && "$EUROSTAT_GEO" == "AT" ]]' in text
+    assert 'SFC_ARGS=(--write-sfc-workbook --sfc-template-xlsx "$SFC_LAYOUT_TEMPLATE_XLSX")' in text
 
 
 

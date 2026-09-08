@@ -307,3 +307,8 @@ IOT is the directly published Eurostat `geo=EU27_2020` table, not a sum of natio
 Eurostat IOTs. DOM, IMP/RoW and TOTAL environmental sidecars keep distinct boundaries
 and are reaggregated by summing physical numerators and their matching monetary
 denominators before deriving intensity. Aggregate exports exclude intra-scope trade.
+
+<!-- sfc-layout-template-isolation -->
+### SFC layout template
+
+`at_2021_fuels.sh` and `at_2021_fuels_more.sh` use `SFC_LAYOUT_TEMPLATE_XLSX` for optional Eurostat-shaped workbook output (`TEMPLATE_XLSX` remains a compatibility alias). The default `tmp/IOT_Austria_2021_Eurostat.xlsx` contributes formatting/static labels only; its numerical cells and filled/blank pattern are erased and cannot affect a different geography/year. Grouped/non-AT runs keep workbook export off by default; set `WRITE_SFC_WORKBOOK=1` to request one explicitly.

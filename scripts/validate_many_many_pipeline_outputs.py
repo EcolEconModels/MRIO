@@ -389,6 +389,25 @@ def _validate_environmental_grid(
     missing_value = value.isna()
     if bool(intensity.loc[missing_value].notna().any()):
         errors.append("value=NA requires intensity=NA")
+
+    # DOM is the strict target-side production boundary: positive activity must
+    # have environmental evidence. IMP/TOTAL may propagate unavailable origin
+    # evidence under the documented no-imputation contract.
+    positive_domestic_unavailable = (
+        observed["denominator_role"].astype(str).eq("target_domestic_output")
+        & monetary.gt(0.0)
+        & missing_value
+    )
+    if bool(positive_domestic_unavailable.any()):
+        bad = (
+            observed.loc[positive_domestic_unavailable, "sector"]
+            .astype(str).drop_duplicates().head(20).tolist()
+        )
+        errors.append(
+            "positive target domestic output requires available environmental "
+            f"evidence; sectors={bad!r}"
+        )
+
     finite_value = value.notna()
     nonzero_denominator = monetary.ne(0.0)
     ratio_rows = finite_value & nonzero_denominator
@@ -421,12 +440,37 @@ def _validate_environmental_grid(
         if bool(zero_intensities.notna().any()):
             errors.append("zero-output supported estimates must have intensity=NA")
 
+    nonzero_denominator_unavailable = (
+        cast(pd.Series, missing_value)
+        & cast(pd.Series, monetary.notna())
+        & cast(pd.Series, monetary.ne(0.0))
+    )
+    unavailable_sectors = sorted(
+        observed.loc[nonzero_denominator_unavailable, "sector"]
+        .astype(str).drop_duplicates().tolist()
+    )
+    total_abs_monetary_mass = float(canonical.abs().sum())
+    unavailable_abs_monetary_mass = float(
+        canonical.reindex(unavailable_sectors).fillna(0.0).abs().sum()
+    )
+    unavailable_abs_monetary_share = (
+        unavailable_abs_monetary_mass / total_abs_monetary_mass
+        if total_abs_monetary_mass > 0.0 else 0.0
+    )
     return {
         "ok": not errors,
         "errors": errors,
         "n_groups": int(len(groups)),
         "n_sectors": int(len(canonical)),
         "n_rows": int(len(observed)),
+        "n_nonzero_denominator_unavailable_rows": int(
+            nonzero_denominator_unavailable.sum()
+        ),
+        "n_nonzero_denominator_unavailable_sectors": len(unavailable_sectors),
+        "nonzero_denominator_unavailable_sector_sample": unavailable_sectors[:50],
+        "nonzero_denominator_unavailable_abs_monetary_mass": unavailable_abs_monetary_mass,
+        "total_abs_monetary_mass": total_abs_monetary_mass,
+        "nonzero_denominator_unavailable_abs_monetary_share": unavailable_abs_monetary_share,
     }
 
 

@@ -527,6 +527,19 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
                 "monetary_output": float(x.loc["S@CPA_C20"]),
                 "intensity": 0.5,
             },
+            # Positive-output edge children must carry supported DOM evidence.
+            # S@CPA_C21 uses the same raw-S donor coefficient as S@CPA_C20.
+            {
+                "boundary": "scope_production",
+                "denominator_role": "target_domestic_output",
+                "sector": "S@CPA_C21",
+                "extension": "air_emissions",
+                "stressor": "CO2",
+                "unit": "kg",
+                "value": 0.5 * float(x.loc["S@CPA_C21"]),
+                "monetary_output": float(x.loc["S@CPA_C21"]),
+                "intensity": 0.5,
+            },
             {
                 "boundary": "scope_production",
                 "denominator_role": "target_domestic_output",
@@ -938,7 +951,7 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
         _validate_environmental_grid,
     )
 
-    output = pd.Series({"A": 10.0, "B": 0.0, "C": 5.0, "D": 0.0})
+    output = pd.Series({"A": 10.0, "B": 0.0, "C": 0.0, "D": 0.0})
     actual = pd.DataFrame(
         {
             "sector": ["A", "B"],
@@ -1002,8 +1015,41 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
             atol=1e-6,
         )
 
-    assert validate(completed)["ok"] is True
+    valid_result = validate(completed)
+    assert valid_result["ok"] is True
+    assert valid_result["n_nonzero_denominator_unavailable_rows"] == 0
 
+    # Phase-7 independently protects the same state machine as the producer.
+    positive_output = output.copy()
+    positive_output.loc["C"] = 5.0
+    positive_missing = _complete_environmental_extension_sector_grid(
+        actual,
+        output=positive_output,
+        production_groups=raw.loc[
+            raw["kind"].eq("F"), ["extension", "stressor", "unit"]
+        ].assign(
+            boundary="scope_production",
+            denominator_role="target_domestic_output",
+        ),
+    )
+    assert positive_missing is not None
+    positive_missing.to_csv(grid_path, index=False)
+    positive_result = _validate_environmental_grid(
+        environmental_path=grid_path, raw_path=raw_path, output=positive_output,
+        rtol=1e-9, atol=1e-6,
+    )
+    assert positive_result["ok"] is False
+    assert any(
+        "positive target domestic output requires available environmental evidence" in e
+        for e in positive_result["errors"]
+    )
+    assert positive_result["n_nonzero_denominator_unavailable_rows"] == 1
+    assert positive_result["n_nonzero_denominator_unavailable_sectors"] == 1
+    assert positive_result["nonzero_denominator_unavailable_sector_sample"] == ["C"]
+    assert positive_result["nonzero_denominator_unavailable_abs_monetary_share"] == pytest.approx(5.0/15.0)
+
+    # Restore the base valid grid for the remaining mutation checks.
+    completed.to_csv(grid_path, index=False)
     missing_row = completed.loc[~completed["sector"].eq("C")].copy()
     assert validate(missing_row)["ok"] is False
 
@@ -1026,6 +1072,36 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
     bad_zero_intensity = completed.copy()
     bad_zero_intensity.loc[bad_zero_intensity["sector"].eq("B"), "intensity"] = 0.0
     assert validate(bad_zero_intensity)["ok"] is False
+
+
+
+def test_environmental_grid_reports_nonzero_import_unavailability_without_failing(tmp_path):
+    from scripts.validate_many_many_pipeline_outputs import _validate_environmental_grid
+
+    path = tmp_path / "environmental_extensions.csv"
+    output = pd.Series({"A": 20.0, "B": -5.0, "C": 0.0}, dtype="float64")
+    frame = pd.DataFrame({
+        "sector_position": [1,2,3], "sector": ["A","B","C"],
+        "boundary": ["external_imports_direct"]*3,
+        "denominator_role": ["target_import_use"]*3,
+        "extension": ["air"]*3, "stressor": ["CO2"]*3, "unit": ["kg"]*3,
+        "value": [float("nan"), -2.5, float("nan")],
+        "monetary_output": [20.0, -5.0, 0.0],
+        "intensity": [float("nan"), 0.5, float("nan")],
+    })
+    frame.to_csv(path,index=False)
+    groups=frame.loc[:,["boundary","denominator_role","extension","stressor","unit"]].drop_duplicates()
+    result=_validate_environmental_grid(
+        environmental_path=path,raw_path=None,output=output,rtol=1e-9,atol=1e-6,
+        production_groups=groups,
+    )
+    assert result["ok"] is True
+    assert result["n_nonzero_denominator_unavailable_rows"] == 1
+    assert result["n_nonzero_denominator_unavailable_sectors"] == 1
+    assert result["nonzero_denominator_unavailable_sector_sample"] == ["A"]
+    assert result["nonzero_denominator_unavailable_abs_monetary_mass"] == 20.0
+    assert result["total_abs_monetary_mass"] == 25.0
+    assert result["nonzero_denominator_unavailable_abs_monetary_share"] == pytest.approx(0.8)
 
 
 def test_flow_identity_tolerance_is_strict_for_internal_additivity():

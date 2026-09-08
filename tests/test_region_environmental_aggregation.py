@@ -161,6 +161,44 @@ def test_zero_output_production_donor_survives_retarget_and_reaggregation() -> N
     assert float(parent["intensity"]) == pytest.approx(0.8)
 
 
+
+def test_many_to_many_zero_output_production_donor_state_machine() -> None:
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+    from ecolecon_mrio.region_aggregation import (
+        _environmental_account_to_split_sidecar, _retarget_direct_environmental_account,
+    )
+    basis=pd.MultiIndex.from_tuples([("AT","k1"),("AT","k2")],names=["region","sector"])
+    F=pd.Series([2.0,8.0],index=basis,dtype="float64"); x=pd.Series([0.0,10.0],index=basis,dtype="float64")
+    projection=pd.DataFrame([[0.6,0.0],[0.4,1.0]],index=["a","b"],columns=["k1","k2"],dtype="float64")
+    donor=aggregate_scope_production_extension(
+        F,x,scope=RegionScope(code="AT",members=("AT",)),extension="air",stressor="CH4",unit="kg",
+        product_projection=projection,
+    ).set_index("axis_label")
+    assert float(donor.loc["a","value"]) == pytest.approx(1.2)
+    assert float(donor.loc["a","monetary_denominator"]) == 0.0 and pd.isna(donor.loc["a","intensity"])
+    assert float(donor.loc["b","value"]) == pytest.approx(8.8)
+    assert float(donor.loc["b","intensity"]) == pytest.approx(0.88)
+    target=_retarget_direct_environmental_account(
+        donor.reset_index().loc[:,ACCOUNT_COLUMNS],target_denominator=pd.Series([0.0,20.0],index=["a","b"]),
+        boundary="scope_production",denominator_role="target_domestic_output",
+    )
+    tb=target.set_index("axis_label")
+    assert pd.isna(tb.loc["a","value"]) and pd.isna(tb.loc["a","intensity"])
+    assert float(tb.loc["b","value"]) == pytest.approx(17.6)
+    agg=aggregate_environmental_extensions(
+        _environmental_account_to_split_sidecar(target),{"a":"parent","b":"parent"},
+        output=pd.Series([0.0,20.0],index=["a","b"],dtype="float64"),
+    )
+    assert agg is not None
+    row=agg.set_index("sector").loc["parent"]
+    assert float(row["value"]) == pytest.approx(17.6) and float(row["intensity"]) == pytest.approx(0.88)
+    with pytest.raises(ValueError,match="Positive target domestic output requires a defined mapped production donor coefficient"):
+        _retarget_direct_environmental_account(
+            donor.reset_index().loc[:,ACCOUNT_COLUMNS],target_denominator=pd.Series([1.0,20.0],index=["a","b"]),
+            boundary="scope_production",denominator_role="target_domestic_output",
+        )
+
+
 def test_projection_must_be_complete_nonnegative_partition() -> None:
     F, x = _production_vectors()
     bad = _projection()

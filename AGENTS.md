@@ -136,3 +136,10 @@ export. Environmental DOM uses scope-production coefficients; IMP uses the WP3
 origin-retaining external-import coefficient; TOTAL is the exact target DOM+IMP
 extensive combination. Direct `F_Y` remains a final-demand-category account and is
 not given a RoW product decomposition.
+
+<!-- sfc-layout-template-isolation -->
+### Presentation/template isolation
+- A workbook/report declared layout-only may supply styles, static labels, and display order only. Numeric cells, formulas, filled/blank patterns, stale geography/year metadata, and auxiliary sheets are not scientific evidence.
+- Optional presentation export must not mutate canonical arrays, values, labels, ordering, mappings, denominators, applicability, or schemas.
+- Require an adversarial sentinel-template regression: alter every forbidden template value/metadata item while retaining the allowed layout; canonical scientific artifacts must remain identical and stale content must not survive.
+- If filled/blank state is scientifically meaningful, promote it to an explicit versioned source-policy artifact rather than reading it implicitly from a presentation file.

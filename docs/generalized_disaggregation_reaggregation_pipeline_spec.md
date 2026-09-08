@@ -913,3 +913,12 @@ This diagnostic does not replace final production validation and cannot authoriz
 new scientific treatment. It is the preflight required by the contract-first
 debugging policy in `../ecolecon-agent-memory/coding/contract-first-scientific-debugging.md`.
 <!-- /ecolecon-environmental-support-census-workflow -->
+
+<!-- sfc-layout-template-isolation -->
+## SFC workbook layout-template isolation
+
+The optional Eurostat-shaped XLSX is a presentation export, not an input to the scientific transformation. `Z`, `Y`, `x`, `A`, `V`, `M`, environmental accounts and mapping weights are computed independently of workbook export. Enabling XLSX export must not reorder or mutate canonical CSV artifacts.
+
+`SFC_LAYOUT_TEMPLATE_XLSX` may supply only styles, static display labels and workbook display order. Numerical cells, formulas, filled/blank patterns, geography/year metadata and inherited auxiliary sheets have no evidentiary role. The writer captures allowed labels, erases every template cell value, removes inherited sheets, and rebuilds current dataset/geography/year/frequency/unit/flow metadata before serializing current transformed arrays. `TEMPLATE_XLSX` remains a compatibility alias.
+
+The default file `tmp/IOT_Austria_2021_Eurostat.xlsx` is therefore a reusable historical **layout source**, not an Austria-2021 numerical source. A sentinel-template regression must prove this isolation.
