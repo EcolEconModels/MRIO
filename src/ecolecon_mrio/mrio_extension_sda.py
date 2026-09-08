@@ -524,7 +524,12 @@ def _compute_extension_sda_pair_result_from_intensity_states(
     _emit(progress, f"validate MRIO and extension intensity states for {start.year}-{end.year}")
     if not start.index.equals(end.index):
         raise ValueError("MRIO year-state indexes do not match")
-    valuation_basis, price_base_year = _require_same_mrio_year_state_valuation(start, end)
+    (
+        valuation_basis,
+        price_base_year,
+        price_factor_panel_years,
+        price_factor_table_sha256,
+    ) = _require_same_mrio_year_state_valuation(start, end)
     idx = require_region_sector_multiindex(start.index)
     require_same_unit_string(start.monetary_unit, end.monetary_unit, context="MRIO year-state monetary units")
     _validate_loaded_intensity_state(mrio_state=start, intensity_state=start_state, index=idx, name="start intensity state")
@@ -672,6 +677,8 @@ def _compute_extension_sda_pair_result_from_intensity_states(
             "intensity_state_source": "precomputed_extension_intensity_states",
             "valuation_basis": valuation_basis,
             "price_base_year": price_base_year,
+            "price_factor_panel_years": price_factor_panel_years,
+            "price_factor_table_sha256": price_factor_table_sha256,
             "reconstruction": {
                 "leontief_extension_delta": "sda_intensity_delta + sda_structure_delta + sda_demand_delta + sda_residual",
                 "stabilized_extension_delta": "leontief_extension_delta + reported_x_identity_gap_delta",
@@ -808,15 +815,17 @@ def load_mrio_extension_year_state(
     reject_all_zero: bool = True,
     verbose: bool = False,
     price_base_year: int | None = None,
+    price_factor_years: Sequence[int] | None = None,
     price_factor_storage_folder: str | Path | None = None,
     price_factor_force_download: bool = False,
     price_factor_timeout_s: int = 120,
 ) -> MrioExtensionYearState:
     """Load one MRIO year plus a physical production extension row.
 
-    Monetary valuation controls are forwarded only to ``load_mrio_year_state``.
-    The physical ``F`` row is never deflated; its direct intensity is recomputed
-    against the returned, possibly price-adjusted, monetary output vector.
+    Monetary valuation controls, including the common factor-panel year domain,
+    are forwarded only to ``load_mrio_year_state``. The physical ``F`` row is never
+    deflated; its direct intensity is recomputed against the returned, possibly
+    price-adjusted, monetary output vector.
     """
 
     if str(kind) != "F":
@@ -833,6 +842,7 @@ def load_mrio_extension_year_state(
         doi=doi_value,
         verbose=bool(verbose),
         price_base_year=None if price_base_year is None else int(price_base_year),
+        price_factor_years=price_factor_years,
         price_factor_storage_folder=price_factor_storage_folder,
         price_factor_force_download=bool(price_factor_force_download),
         price_factor_timeout_s=int(price_factor_timeout_s),

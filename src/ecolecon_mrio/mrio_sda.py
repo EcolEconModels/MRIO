@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Sequence, cast
 import gc
 import warnings
 
@@ -129,33 +129,59 @@ def require_same_unit_string(unit_a: str, unit_b: str, *, context: str) -> str:
     return left
 
 
-def _mrio_year_state_valuation_signature(state: MrioYearState) -> tuple[str, int | None]:
-    """Return and validate the monetary valuation signature stored on a year state."""
+def _mrio_year_state_valuation_signature(
+    state: MrioYearState,
+) -> tuple[str, int | None, tuple[int, ...] | None, str | None]:
+    """Return the fail-closed monetary valuation and factor-panel signature."""
 
     basis = str(state.metadata.get("valuation_basis", "current_price"))
     raw_base = state.metadata.get("price_base_year")
+    raw_panel = state.metadata.get("price_factor_panel_years")
+    raw_sha = state.metadata.get("price_factor_table_sha256")
     if basis == "current_price":
-        if raw_base is not None:
-            raise ValueError("current-price MRIO year state cannot declare price_base_year")
-        return basis, None
+        if raw_base is not None or raw_panel is not None or raw_sha is not None:
+            raise ValueError(
+                "current-price MRIO year state cannot declare common-EUR base/panel provenance"
+            )
+        return basis, None, None, None
     if basis == "country_gdp_deflator_common_eur":
         if raw_base is None:
             raise ValueError("common-EUR MRIO year state must declare price_base_year")
-        return basis, int(raw_base)
+        base_year = int(raw_base)
+        if not isinstance(raw_panel, (list, tuple)):
+            raise ValueError("common-EUR MRIO year state must declare price_factor_panel_years")
+        if any(isinstance(item, bool) for item in raw_panel):
+            raise ValueError("price_factor_panel_years must contain integer years, not booleans")
+        try:
+            panel_years = tuple(int(item) for item in raw_panel)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("price_factor_panel_years must contain integer years") from exc
+        if not panel_years or panel_years != tuple(sorted(set(panel_years))):
+            raise ValueError("price_factor_panel_years must be non-empty, unique, and sorted")
+        if int(state.year) not in panel_years or base_year not in panel_years:
+            raise ValueError(
+                "common-EUR MRIO year state's factor panel must contain both its state year and base year"
+            )
+        factor_sha = str(raw_sha).strip().lower() if isinstance(raw_sha, str) else ""
+        if len(factor_sha) != 64 or any(char not in "0123456789abcdef" for char in factor_sha):
+            raise ValueError(
+                "common-EUR MRIO year state must declare a 64-hex price_factor_table_sha256"
+            )
+        return basis, base_year, panel_years, factor_sha
     raise ValueError(f"Unsupported MRIO year-state valuation_basis {basis!r}")
 
 
 def _require_same_mrio_year_state_valuation(
     start: MrioYearState,
     end: MrioYearState,
-) -> tuple[str, int | None]:
-    """Reject SDA pairs that mix current-price and price-adjusted monetary states."""
+) -> tuple[str, int | None, tuple[int, ...] | None, str | None]:
+    """Reject SDA pairs that mix monetary valuation or common factor-panel provenance."""
 
     start_signature = _mrio_year_state_valuation_signature(start)
     end_signature = _mrio_year_state_valuation_signature(end)
     if start_signature != end_signature:
         raise ValueError(
-            "MRIO year-state valuation bases do not match: "
+            "MRIO year-state valuation signatures do not match: "
             f"{start_signature!r} != {end_signature!r}"
         )
     return start_signature
@@ -435,6 +461,7 @@ def _load_sda_year_matrices(
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
     price_base_year: int | None = None,
+    price_factor_years: Sequence[int] | None = None,
     price_factor_storage_folder: str | Path | None = None,
     price_factor_force_download: bool = False,
     price_factor_timeout_s: int = 120,
@@ -451,6 +478,7 @@ def _load_sda_year_matrices(
         int(year),
         matrices=("Z", "x", "Y"),
         price_base_year=None if price_base_year is None else int(price_base_year),
+        price_factor_years=price_factor_years,
         force_download=bool(force_download),
         data_root=data_root,
         verbose=bool(verbose),
@@ -572,6 +600,7 @@ def load_mrio_year_state(
     monetary_unit: str | None = None,
     monetary_unit_source: str | None = None,
     price_base_year: int | None = None,
+    price_factor_years: Sequence[int] | None = None,
     price_factor_storage_folder: str | Path | None = None,
     price_factor_force_download: bool = False,
     price_factor_timeout_s: int = 120,
@@ -581,6 +610,8 @@ def load_mrio_year_state(
     ``price_base_year=None`` preserves current-price behavior. Supplying a base
     year applies the EXIOBASE3 country-GDP/common-EUR row factors to primitive
     monetary ``Z``, ``x`` and ``Y`` before ``A`` and non-export ``y`` are derived.
+    Multi-year callers should pass the same ``price_factor_years`` domain to every
+    state so strict pair APIs can enforce one common factor-table provenance.
     """
 
     from ecolecon_mrio.data import exiobase3_monetary_unit
@@ -609,6 +640,7 @@ def load_mrio_year_state(
         download_timeout_seconds=download_timeout_seconds,
         download_retries=int(download_retries),
         price_base_year=None if price_base_year is None else int(price_base_year),
+        price_factor_years=price_factor_years,
         price_factor_storage_folder=price_factor_storage_folder,
         price_factor_force_download=bool(price_factor_force_download),
         price_factor_timeout_s=int(price_factor_timeout_s),
@@ -643,7 +675,12 @@ def compute_output_sda_pair_result_from_states(
 
     if not start.index.equals(end.index):
         raise ValueError("MRIO year-state indexes do not match")
-    valuation_basis, price_base_year = _require_same_mrio_year_state_valuation(start, end)
+    (
+        valuation_basis,
+        price_base_year,
+        price_factor_panel_years,
+        price_factor_table_sha256,
+    ) = _require_same_mrio_year_state_valuation(start, end)
     unit = require_same_unit_string(
         start.monetary_unit,
         end.monetary_unit,
@@ -677,6 +714,8 @@ def compute_output_sda_pair_result_from_states(
             "end_metadata": end.metadata,
             "valuation_basis": valuation_basis,
             "price_base_year": price_base_year,
+            "price_factor_panel_years": price_factor_panel_years,
+            "price_factor_table_sha256": price_factor_table_sha256,
         }
     )
     return result

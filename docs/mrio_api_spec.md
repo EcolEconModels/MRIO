@@ -737,8 +737,9 @@ expands them over the canonical `(region, sector)` basis, and
 Derived `A` or `y` are never deflated after construction.
 
 The returned `MrioYearState.metadata` records `valuation_basis`, `price_base_year`,
-source/factor provenance, and the canonical factor-table SHA. Strict SDA pair
-helpers reject mixed valuation bases or different common-EUR base years.
+the common factor-panel year domain, source/factor provenance, and the canonical
+factor-table SHA. Strict SDA pair helpers reject mixed valuation bases, different
+common-EUR base years, or different factor-panel domains/SHAs.
 `load_mrio_extension_year_state(...)` forwards the monetary valuation controls to
 that same year-state loader but never transforms physical `F`; direct extension
 intensity is recomputed as physical `F` divided by the selected monetary `x`.
@@ -763,6 +764,17 @@ analyses use the same valuation owner as SDA while preserving the source-ZIP-onl
 selective low-memory contract. `load_mrio_year_state(...)` composes this helper for
 `Z/x/Y` and derives `A` and non-export `y` afterward; it no longer implements a
 parallel factor-construction/row-scaling path.
+
+For a multi-year common-EUR analysis, callers pass the same `price_factor_years`
+to every valued primitive/year-state request. The base year is added to that domain
+automatically. Each returned state records the complete `price_factor_panel_years`
+and canonical `price_factor_table_sha256`; strict output and extension SDA pairs
+require both endpoints to have the same valuation basis, base year, panel years,
+and factor-table SHA. A single-year common-EUR state may omit `price_factor_years`,
+but two such independently scoped states will fail the strict pair guard unless
+they were built from one explicitly shared panel. MRIO owns no downstream analysis
+output path; callers should keep current-price and sensitivity artifacts in separate
+run/output roots.
 <!-- /ecolecon-valued-primitive-loader -->
 
 ## Price-factor mapping data contract

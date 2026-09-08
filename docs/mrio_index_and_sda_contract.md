@@ -102,8 +102,9 @@ Z/x/Y and rebuilding A/y with local reindex or fill-zero logic.
 `price_base_year=None` is the existing current-price state. With a base year, MRIO
 loads primitive `Z`, `x`, and `Y`, applies the validated EXIOBASE3
 country-GDP/common-EUR row factors, and only then derives sparse `A` and non-export
-`y`. The state records `valuation_basis` and `price_base_year`; strict output and
-extension SDA pair boundaries reject mismatched valuation signatures.
+`y`. The state records `valuation_basis`, `price_base_year`, the common factor-panel
+year domain, and canonical factor-table SHA; strict output and extension SDA pair
+boundaries reject mismatched valuation signatures.
 
 Production-side physical extension rows remain unchanged. A price-adjusted
 `MrioExtensionYearState` therefore recomputes its direct coefficient `q=F/x`
@@ -132,4 +133,12 @@ Extension SDA pair results preserve the checked `valuation_basis` and
 `price_base_year` in result metadata. Physical production extension `F` remains
 untransformed; only its direct intensity changes through the selected monetary
 `x` denominator.
+
+Panel analyses must pass one shared `price_factor_years` sequence through every
+valued primitive, `load_mrio_year_state(...)`, and `load_mrio_extension_year_state(...)`
+call. Returned common-EUR states record the full factor-panel year domain and the
+canonical factor-table SHA. Strict monetary and extension pair APIs compare that
+full signature, so matching base years alone cannot combine independently scoped
+or differently sourced factor tables. This is a valuation/provenance contract only;
+MRIO does not choose downstream analysis or figure output directories.
 <!-- /ecolecon-valued-primitive-loader -->

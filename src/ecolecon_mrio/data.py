@@ -1083,6 +1083,7 @@ def load_exiobase3_iot_matrices_in_price_basis(
     *,
     matrices: Sequence[str],
     price_base_year: int | None = None,
+    price_factor_years: Sequence[int] | None = None,
     force_download: bool = False,
     data_root: str | Path | None = None,
     verbose: bool = False,
@@ -1104,7 +1105,9 @@ def load_exiobase3_iot_matrices_in_price_basis(
     ``load_mrio_iot_matrices`` EXIOBASE source-account boundary. Supplying a base
     year builds the audited 49-region country-GDP/common-EUR factors and applies
     the existing row transformation only to the requested primitive ``Z``/``x``/``Y``
-    accounts. Derived ``A``/``y`` and physical extensions remain outside this API.
+    accounts. For multi-year work, ``price_factor_years`` declares the common
+    factor-panel domain that every year state must reuse; the base year is included
+    automatically. Derived ``A``/``y`` and physical extensions remain outside this API.
     """
 
     requested = _normalize_iot_matrix_requests(matrices)
@@ -1113,6 +1116,23 @@ def load_exiobase3_iot_matrices_in_price_basis(
         if doi is None or not str(doi).strip()
         else str(doi).strip()
     )
+    factor_years: tuple[int, ...] | None = None
+    if price_base_year is None:
+        if price_factor_years is not None:
+            raise ValueError("price_factor_years requires price_base_year")
+    else:
+        factor_years = (
+            (int(year),)
+            if price_factor_years is None
+            else tuple(sorted({int(item) for item in price_factor_years}))
+        )
+        if not factor_years:
+            raise ValueError("price_factor_years must contain at least one year when provided")
+        if int(year) not in factor_years:
+            raise ValueError(
+                f"loaded EXIOBASE year {int(year)} is outside declared price_factor_years {factor_years!r}"
+            )
+
     loaded, basis, metadata = load_mrio_iot_matrices(
         "exiobase",
         int(year),
@@ -1139,13 +1159,37 @@ def load_exiobase3_iot_matrices_in_price_basis(
     from ecolecon_mrio.exiobase_price_factors import build_exiobase3_eur_price_factors
     from ecolecon_mrio.price_adjustment import adjust_mrio_iot_prices, expand_region_price_factors
 
+    assert factor_years is not None
     factor_table, factor_metadata = build_exiobase3_eur_price_factors(
-        years=[int(year)],
+        years=factor_years,
         base_year=int(price_base_year),
         storage_folder=price_factor_storage_folder,
         force_download=bool(price_factor_force_download),
         timeout_s=int(price_factor_timeout_s),
     )
+    expected_panel_years = tuple(sorted(set(factor_years) | {int(price_base_year)}))
+    if "year" not in factor_table.columns:
+        raise ValueError("EXIOBASE price-factor table is missing required year column")
+    table_panel_years = tuple(sorted({int(item) for item in factor_table["year"].tolist()}))
+    if table_panel_years != expected_panel_years:
+        raise ValueError(
+            "EXIOBASE price-factor table year domain differs from the declared factor panel: "
+            f"expected={expected_panel_years!r}, observed={table_panel_years!r}"
+        )
+    raw_returned_years = factor_metadata.get("returned_years")
+    if not isinstance(raw_returned_years, (list, tuple)):
+        raise ValueError("EXIOBASE price-factor metadata must record returned_years")
+    metadata_panel_years = tuple(int(item) for item in raw_returned_years)
+    if metadata_panel_years != expected_panel_years:
+        raise ValueError(
+            "EXIOBASE price-factor metadata year domain differs from the declared factor panel: "
+            f"expected={expected_panel_years!r}, observed={metadata_panel_years!r}"
+        )
+    raw_factor_sha = factor_metadata.get("factor_table_sha256")
+    factor_sha = str(raw_factor_sha).strip().lower() if isinstance(raw_factor_sha, str) else ""
+    if len(factor_sha) != 64 or any(char not in "0123456789abcdef" for char in factor_sha):
+        raise ValueError("EXIOBASE price-factor metadata must contain a 64-hex factor_table_sha256")
+
     selected = factor_table.loc[
         factor_table["year"].astype(int).eq(int(year)),
         ["exio_region", "price_adjustment_factor"],
@@ -1181,8 +1225,9 @@ def load_exiobase3_iot_matrices_in_price_basis(
         {
             "valuation_basis": "country_gdp_deflator_common_eur",
             "price_base_year": int(price_base_year),
+            "price_factor_panel_years": list(expected_panel_years),
             "price_factor_metadata": factor_metadata,
-            "price_factor_table_sha256": factor_metadata.get("factor_table_sha256"),
+            "price_factor_table_sha256": factor_sha,
         }
     )
     return adjusted, basis, valuation_metadata

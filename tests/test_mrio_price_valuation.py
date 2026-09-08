@@ -14,6 +14,11 @@ from scipy.sparse import csr_matrix
 from ecolecon_mrio import mrio_extension_sda, mrio_sda
 
 
+PANEL_YEARS = (2020, 2021, 2022)
+PANEL_SHA = "a" * 64
+ALT_PANEL_SHA = "b" * 64
+
+
 def _index() -> pd.MultiIndex:
     return pd.MultiIndex.from_tuples(
         [("AA", "s1"), ("BB", "s1")],
@@ -21,17 +26,35 @@ def _index() -> pd.MultiIndex:
     )
 
 
-def _state(*, valuation_basis: str, price_base_year: int | None) -> mrio_sda.MrioYearState:
+def _state(
+    *,
+    valuation_basis: str,
+    price_base_year: int | None,
+    year: int = 2020,
+    price_factor_panel_years: tuple[int, ...] = PANEL_YEARS,
+    price_factor_table_sha256: str = PANEL_SHA,
+) -> mrio_sda.MrioYearState:
     idx = _index()
+    metadata: dict[str, Any] = {
+        "valuation_basis": valuation_basis,
+        "price_base_year": price_base_year,
+    }
+    if valuation_basis == "country_gdp_deflator_common_eur":
+        metadata.update(
+            {
+                "price_factor_panel_years": list(price_factor_panel_years),
+                "price_factor_table_sha256": price_factor_table_sha256,
+            }
+        )
     return mrio_sda.MrioYearState(
-        year=2020,
+        year=int(year),
         A=csr_matrix((2, 2), dtype=float),
         x=pd.Series([1.0, 1.0], index=idx),
         y=pd.Series([1.0, 1.0], index=idx),
         index=idx,
         monetary_unit="MEUR",
         monetary_unit_source="test",
-        metadata={"valuation_basis": valuation_basis, "price_base_year": price_base_year},
+        metadata=metadata,
     )
 
 
@@ -58,7 +81,8 @@ def test_load_year_state_adjusts_primitives_before_deriving_a_and_y(
             {
                 "valuation_basis": "country_gdp_deflator_common_eur",
                 "price_base_year": 2022,
-                "price_factor_table_sha256": "fixture-sha",
+                "price_factor_panel_years": list(PANEL_YEARS),
+                "price_factor_table_sha256": PANEL_SHA,
             },
         )
 
@@ -84,6 +108,7 @@ def test_load_year_state_adjusts_primitives_before_deriving_a_and_y(
         monetary_unit="MEUR",
         monetary_unit_source="test",
         price_base_year=2022,
+        price_factor_years=PANEL_YEARS,
         price_factor_storage_folder=tmp_path,
         price_factor_force_download=True,
         price_factor_timeout_s=77,
@@ -93,10 +118,12 @@ def test_load_year_state_adjusts_primitives_before_deriving_a_and_y(
     np.testing.assert_allclose(seen["Y"], np.array([[10.0], [18.0]]))
     assert state.metadata["valuation_basis"] == "country_gdp_deflator_common_eur"
     assert state.metadata["price_base_year"] == 2022
-    assert state.metadata["price_factor_table_sha256"] == "fixture-sha"
+    assert state.metadata["price_factor_panel_years"] == list(PANEL_YEARS)
+    assert state.metadata["price_factor_table_sha256"] == PANEL_SHA
     _, kwargs = calls["valued_loader"]
     assert kwargs["matrices"] == ("Z", "x", "Y")
     assert kwargs["price_base_year"] == 2022
+    assert kwargs["price_factor_years"] == PANEL_YEARS
     assert kwargs["price_factor_storage_folder"] == tmp_path
     assert kwargs["price_factor_force_download"] is True
     assert kwargs["price_factor_timeout_s"] == 77
@@ -147,7 +174,7 @@ def test_default_year_state_remains_current_price(monkeypatch: pytest.MonkeyPatc
 def test_sda_state_pair_rejects_mixed_valuation_before_solving() -> None:
     raw = _state(valuation_basis="current_price", price_base_year=None)
     adjusted = _state(valuation_basis="country_gdp_deflator_common_eur", price_base_year=2022)
-    with pytest.raises(ValueError, match="valuation bases do not match"):
+    with pytest.raises(ValueError, match="valuation signatures do not match"):
         mrio_sda.compute_output_sda_pair_result_from_states(raw, adjusted)
 
 
@@ -177,17 +204,20 @@ def test_extension_loader_forwards_price_controls_only_to_monetary_state(
         2020,
         extension="air_emissions",
         price_base_year=2022,
+        price_factor_years=PANEL_YEARS,
         price_factor_storage_folder=tmp_path,
         price_factor_force_download=True,
         price_factor_timeout_s=77,
     )
     _, mrio_kwargs = calls["mrio"]
     assert mrio_kwargs["price_base_year"] == 2022
+    assert mrio_kwargs["price_factor_years"] == PANEL_YEARS
     assert mrio_kwargs["price_factor_storage_folder"] == tmp_path
     assert mrio_kwargs["price_factor_force_download"] is True
     assert mrio_kwargs["price_factor_timeout_s"] == 77
     _, extension_kwargs = calls["extension"]
     assert "price_base_year" not in extension_kwargs
+    assert "price_factor_years" not in extension_kwargs
     assert "price_factor_storage_folder" not in extension_kwargs
     assert bundle.extension_row is extension_row
     assert bundle.intensity_state is intensity_state
@@ -261,7 +291,10 @@ def test_valued_primitive_loader_adjusts_requested_x_and_y(
     monkeypatch.setattr(
         exiobase_price_factors,
         "build_exiobase3_eur_price_factors",
-        lambda **kwargs: (factor_table, {"factor_table_sha256": "fixture-sha"}),
+        lambda **kwargs: (
+            factor_table,
+            {"factor_table_sha256": PANEL_SHA, "returned_years": [2020, 2022]},
+        ),
     )
 
     matrices, basis, metadata = data.load_exiobase3_iot_matrices_in_price_basis(
@@ -284,7 +317,8 @@ def test_valued_primitive_loader_adjusts_requested_x_and_y(
     assert set(matrices) == {"x", "Y"}
     assert metadata["valuation_basis"] == "country_gdp_deflator_common_eur"
     assert metadata["price_base_year"] == 2022
-    assert metadata["price_factor_table_sha256"] == "fixture-sha"
+    assert metadata["price_factor_panel_years"] == [2020, 2022]
+    assert metadata["price_factor_table_sha256"] == PANEL_SHA
 
 
 def test_valued_primitive_loader_rejects_factor_region_mismatch(
@@ -309,9 +343,11 @@ def test_valued_primitive_loader_rejects_factor_region_mismatch(
                 [
                     {"year": 2020, "exio_region": "AA", "price_adjustment_factor": 2.0},
                     {"year": 2020, "exio_region": "CC", "price_adjustment_factor": 3.0},
+                    {"year": 2022, "exio_region": "AA", "price_adjustment_factor": 1.0},
+                    {"year": 2022, "exio_region": "CC", "price_adjustment_factor": 1.0},
                 ]
             ),
-            {"factor_table_sha256": "fixture-sha"},
+            {"factor_table_sha256": PANEL_SHA, "returned_years": [2020, 2022]},
         ),
     )
     with pytest.raises(ValueError, match="must exactly match"):
@@ -327,18 +363,10 @@ def test_extension_sda_result_records_common_eur_valuation() -> None:
     start = _state(
         valuation_basis="country_gdp_deflator_common_eur", price_base_year=2022
     )
-    end = mrio_sda.MrioYearState(
+    end = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
         year=2021,
-        A=csr_matrix((2, 2), dtype=float),
-        x=pd.Series([1.0, 1.0], index=idx),
-        y=pd.Series([1.0, 1.0], index=idx),
-        index=idx,
-        monetary_unit="MEUR",
-        monetary_unit_source="test",
-        metadata={
-            "valuation_basis": "country_gdp_deflator_common_eur",
-            "price_base_year": 2022,
-        },
     )
     start_f = pd.Series([1.0, 1.0], index=idx, name="CO2")
     end_f = pd.Series([1.0, 1.0], index=idx, name="CO2")
@@ -361,3 +389,134 @@ def test_extension_sda_result_records_common_eur_valuation() -> None:
     )
     assert result.metadata["valuation_basis"] == "country_gdp_deflator_common_eur"
     assert result.metadata["price_base_year"] == 2022
+    assert result.metadata["price_factor_panel_years"] == PANEL_YEARS
+    assert result.metadata["price_factor_table_sha256"] == PANEL_SHA
+
+
+def test_current_price_rejects_factor_panel_years_before_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A factor-panel domain without a common-EUR base year is a configuration error."""
+
+    from ecolecon_mrio import data
+
+    def forbidden_raw_loader(*args: Any, **kwargs: Any):
+        raise AssertionError(f"invalid valuation config must fail before EXIO loading: {args}, {kwargs}")
+
+    monkeypatch.setattr(data, "load_mrio_iot_matrices", forbidden_raw_loader)
+    with pytest.raises(ValueError, match="price_factor_years requires price_base_year"):
+        data.load_exiobase3_iot_matrices_in_price_basis(
+            2020,
+            matrices=("x",),
+            price_factor_years=PANEL_YEARS,
+        )
+
+
+def test_valued_primitive_loader_uses_one_declared_factor_panel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every year selection must build from the caller-declared common panel domain."""
+
+    from ecolecon_mrio import data, exiobase_price_factors
+
+    idx = _index()
+    raw_x = pd.Series([10.0, 20.0], index=idx, name="x")
+    monkeypatch.setattr(
+        data,
+        "load_mrio_iot_matrices",
+        lambda *args, **kwargs: ({"x": raw_x}, idx, {"fixture": True}),
+    )
+    factor_table = pd.DataFrame(
+        [
+            {"year": year, "exio_region": region, "price_adjustment_factor": factor}
+            for year, factors_by_region in (
+                (2020, {"AA": 2.0, "BB": 3.0}),
+                (2021, {"AA": 1.5, "BB": 2.0}),
+                (2022, {"AA": 1.0, "BB": 1.0}),
+            )
+            for region, factor in factors_by_region.items()
+        ]
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_builder(**kwargs: Any):
+        calls.append(dict(kwargs))
+        return (
+            factor_table,
+            {"factor_table_sha256": PANEL_SHA, "returned_years": list(PANEL_YEARS)},
+        )
+
+    monkeypatch.setattr(exiobase_price_factors, "build_exiobase3_eur_price_factors", fake_builder)
+    matrices, _, metadata = data.load_exiobase3_iot_matrices_in_price_basis(
+        2020,
+        matrices=("x",),
+        price_base_year=2022,
+        price_factor_years=PANEL_YEARS,
+    )
+    assert len(calls) == 1
+    assert tuple(calls[0]["years"]) == PANEL_YEARS
+    assert calls[0]["base_year"] == 2022
+    adjusted_x = matrices["x"]
+    assert isinstance(adjusted_x, pd.Series)
+    pd.testing.assert_series_equal(
+        adjusted_x,
+        pd.Series([20.0, 60.0], index=idx, name="x"),
+    )
+    assert metadata["price_factor_panel_years"] == list(PANEL_YEARS)
+    assert metadata["price_factor_table_sha256"] == PANEL_SHA
+
+
+def test_common_eur_pair_rejects_mismatched_factor_table_sha() -> None:
+    """A common base year is insufficient when endpoint factor panels differ."""
+
+    start = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
+        year=2020,
+    )
+    end = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
+        year=2021,
+        price_factor_table_sha256=ALT_PANEL_SHA,
+    )
+    with pytest.raises(ValueError, match="valuation signatures do not match"):
+        mrio_sda.compute_output_sda_pair_result_from_states(start, end)
+
+
+def test_common_eur_pair_rejects_mismatched_factor_panel_years() -> None:
+    """Endpoints must name the same factor-panel domain even if a SHA is reused."""
+
+    start = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
+        year=2020,
+    )
+    end = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
+        year=2021,
+        price_factor_panel_years=(2020, 2021, 2022, 2023),
+    )
+    with pytest.raises(ValueError, match="valuation signatures do not match"):
+        mrio_sda.compute_output_sda_pair_result_from_states(start, end)
+
+
+def test_output_sda_result_records_common_factor_panel_provenance() -> None:
+    """Output-SDA results must carry the exact checked panel domain and factor SHA."""
+
+    start = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
+        year=2020,
+    )
+    end = _state(
+        valuation_basis="country_gdp_deflator_common_eur",
+        price_base_year=2022,
+        year=2021,
+    )
+    result = mrio_sda.compute_output_sda_pair_result_from_states(start, end)
+    assert result.metadata["valuation_basis"] == "country_gdp_deflator_common_eur"
+    assert result.metadata["price_base_year"] == 2022
+    assert result.metadata["price_factor_panel_years"] == PANEL_YEARS
+    assert result.metadata["price_factor_table_sha256"] == PANEL_SHA
