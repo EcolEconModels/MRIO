@@ -171,6 +171,18 @@ def test_published_bridge_and_effective_antilles_identity_are_data_owned() -> No
     assert int(ant.iloc[0]["start_year"]) == 2012
     assert int(ant.iloc[0]["end_year"]) == 2022
 
+
+def test_pinned_00_class_crosswalk_is_explicit_country_only(tmp_path: Path) -> None:
+    """The pinned 00-class parser returns exactly 44 explicit runtime-code mappings."""
+
+    sources, _ = _write_source_fixture(tmp_path)
+    crosswalk = factors._read_exiobase3_explicit_region_crosswalk(sources["exio"])
+    assert len(crosswalk) == 44
+    assert crosswalk["iso3"].nunique() == 44
+    assert crosswalk["exio_region"].nunique() == 44
+    assert crosswalk.loc[crosswalk["iso3"].eq("TWN"), "exio_region"].tolist() == ["TW"]
+
+
 def _snapshot_payload() -> dict[str, Any]:
     """Return an independently mutable valid fixture for snapshot validation tests."""
 
@@ -259,24 +271,24 @@ def test_taiwan_common_eur_formula_and_base_year_identity_are_unchanged() -> Non
     ) == 1.0
 
 def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """The production builder uses mapped 44+5 geography and is exactly identity in the base year."""
+    """The production builder compiles published ISO3 targets to runtime EXIO codes."""
 
     sources, iso_to_m49 = _write_source_fixture(tmp_path)
     ordinary = list(iso_to_m49)
     explicit_iso = ordinary[:43]
     row_iso = ordinary[43:48]
-    explicit_regions = _valid_region_codes(43)
     bridge_rows = [
-        {"source_code": iso, "source_label": iso, "target_code": region, "target_label": region}
-        for iso, region in zip(explicit_iso, explicit_regions, strict=True)
+        {"source_code": iso, "source_label": iso, "source_iso3": iso, "target_code": iso, "target_label": iso}
+        for iso in explicit_iso
     ]
-    bridge_rows.append({"source_code": "TWN", "source_label": "Taiwan", "target_code": "TW", "target_label": "TW"})
+    bridge_rows.append(
+        {"source_code": "TWN", "source_label": "Taiwan", "source_iso3": "TWN", "target_code": "TWN", "target_label": "TWN"}
+    )
     bridge_rows.extend(
-        {"source_code": iso, "source_label": iso, "target_code": region, "target_label": region}
+        {"source_code": iso, "source_label": iso, "source_iso3": iso, "target_code": region, "target_label": region}
         for iso, region in zip(row_iso, ("WA", "WL", "WE", "WF", "WM"), strict=True)
     )
     bridge = pd.DataFrame(bridge_rows)
-    # Pandas accepts this validated literal-column list; pandas-stubs rejects its Sequence protocol.
     empty_identity = pd.DataFrame(
         columns=list(factors.PRICE_FACTOR_SOURCE_IDENTITY_COLUMNS)  # pyright: ignore[reportArgumentType]
     )
@@ -292,10 +304,15 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
             ]
         )
     level_table = pd.DataFrame(level_rows)
+    raw_levels = tmp_path / "gdp_levels_source.json"
+    raw_levels.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         factors,
         "load_unsd_ama_gdp_usd_levels",
-        lambda **_: (level_table, {"provider": "fake", "fiscal_year_notes": []}),
+        lambda **_: (
+            level_table,
+            {"provider": "fake", "fiscal_year_notes": [], "raw_path": str(raw_levels)},
+        ),
     )
 
     def fake_cached(url: str, *, path: Path, force_download: bool, timeout_s: int) -> Path:
@@ -304,6 +321,8 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
             return sources["ecb"]
         if url == factors.UNSD_M49_URL:
             return sources["m49"]
+        if url == factors.EXIOBASE_COUNTRY_COVERAGE_URL:
+            return sources["exio"]
         if url == factors.CBC_TWD_USD_ANNUAL_URL:
             return sources["cbc"]
         raise AssertionError(url)
@@ -314,10 +333,21 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
     )
     assert len(result) == 98
     assert result.groupby("year")["exio_region"].nunique().to_dict() == {2020: 49, 2022: 49}
-    assert np.allclose(result.loc[result["year"] == 2022, "price_adjustment_factor"].to_numpy(dtype=float), 1.0)
+    assert all(len(str(code)) == 2 for code in result["exio_region"])
+    assert "TW" in set(result["exio_region"])
+    assert "TWN" not in set(result["exio_region"])
+    assert np.allclose(
+        result.loc[result["year"] == 2022, "price_adjustment_factor"].to_numpy(dtype=float),
+        1.0,
+    )
     assert set(result["factor_basis"]) == {"country_gdp_deflator_common_eur"}
     assert metadata["region_count"] == 49
-    assert metadata["row_aggregation"].startswith("aggregate current-USD")
+    assert metadata["exiobase_00_class_role"].endswith("not RoW membership")
+    assert metadata["factor_table_sha256"]
+    assert metadata["source_sha256"]["exiobase_00_class_explicit_crosswalk"]
+
+
+
 
 
 def test_price_factor_source_policy_exact_rule_overrides_wildcard() -> None:

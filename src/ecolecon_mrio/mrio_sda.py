@@ -129,6 +129,39 @@ def require_same_unit_string(unit_a: str, unit_b: str, *, context: str) -> str:
     return left
 
 
+def _mrio_year_state_valuation_signature(state: MrioYearState) -> tuple[str, int | None]:
+    """Return and validate the monetary valuation signature stored on a year state."""
+
+    basis = str(state.metadata.get("valuation_basis", "current_price"))
+    raw_base = state.metadata.get("price_base_year")
+    if basis == "current_price":
+        if raw_base is not None:
+            raise ValueError("current-price MRIO year state cannot declare price_base_year")
+        return basis, None
+    if basis == "country_gdp_deflator_common_eur":
+        if raw_base is None:
+            raise ValueError("common-EUR MRIO year state must declare price_base_year")
+        return basis, int(raw_base)
+    raise ValueError(f"Unsupported MRIO year-state valuation_basis {basis!r}")
+
+
+def _require_same_mrio_year_state_valuation(
+    start: MrioYearState,
+    end: MrioYearState,
+) -> tuple[str, int | None]:
+    """Reject SDA pairs that mix current-price and price-adjusted monetary states."""
+
+    start_signature = _mrio_year_state_valuation_signature(start)
+    end_signature = _mrio_year_state_valuation_signature(end)
+    if start_signature != end_signature:
+        raise ValueError(
+            "MRIO year-state valuation bases do not match: "
+            f"{start_signature!r} != {end_signature!r}"
+        )
+    return start_signature
+
+
+
 
 
 def _ensure_finite_array(values: np.ndarray, *, name: str) -> np.ndarray:
@@ -401,13 +434,19 @@ def _load_sda_year_matrices(
     download_chunk_mb: int = 1,
     download_timeout_seconds: float | None = None,
     download_retries: int = 3,
+    price_base_year: int | None = None,
+    price_factor_storage_folder: str | Path | None = None,
+    price_factor_force_download: bool = False,
+    price_factor_timeout_s: int = 120,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load primitive EXIOBASE IOT accounts and derive the strict SDA state."""
+    """Load primitive EXIOBASE accounts, optionally revalue them, then derive A/y."""
+
     from ecolecon_mrio.data import (
         derive_A_from_Z_and_x,
         derive_nonexport_final_demand_from_Y,
         load_mrio_iot_matrices,
     )
+    from ecolecon_mrio.price_adjustment import adjust_mrio_iot_prices, expand_region_price_factors
 
     load_kwargs: dict[str, Any] = {
         "data_root": data_root,
@@ -430,6 +469,47 @@ def _load_sda_year_matrices(
     Z = cast(csr_matrix, matrices["Z"])
     x = cast(pd.Series, matrices["x"])
     Y = cast(pd.DataFrame, matrices["Y"])
+    state_metadata: dict[str, Any] = dict(metadata or {})
+
+    if price_base_year is None:
+        state_metadata.update({"valuation_basis": "current_price", "price_base_year": None})
+    else:
+        from ecolecon_mrio.exiobase_price_factors import build_exiobase3_eur_price_factors
+
+        factor_table, factor_metadata = build_exiobase3_eur_price_factors(
+            years=[int(year)],
+            base_year=int(price_base_year),
+            storage_folder=price_factor_storage_folder,
+            force_download=bool(price_factor_force_download),
+            timeout_s=int(price_factor_timeout_s),
+        )
+        selected = factor_table.loc[
+            factor_table["year"].astype(int).eq(int(year)),
+            ["exio_region", "price_adjustment_factor"],
+        ]
+        if len(selected) != 49 or selected["exio_region"].nunique() != 49:
+            raise ValueError(f"Expected 49 EXIOBASE price factors for year {year}, got {len(selected)}")
+        region_factors = selected.set_index("exio_region")["price_adjustment_factor"].astype(float)
+        row_factors = expand_region_price_factors(idx, region_factors)
+        adjusted = adjust_mrio_iot_prices(
+            {"Z": Z, "x": x, "Y": Y},
+            basis_index=idx,
+            row_factors=row_factors,
+        )
+        Z = cast(csr_matrix, adjusted["Z"])
+        x = cast(pd.Series, adjusted["x"])
+        Y = cast(pd.DataFrame, adjusted["Y"])
+        state_metadata.update(
+            {
+                "valuation_basis": "country_gdp_deflator_common_eur",
+                "price_base_year": int(price_base_year),
+                "price_factor_metadata": factor_metadata,
+                "price_factor_table_sha256": factor_metadata.get("factor_table_sha256"),
+            }
+        )
+
+    # Ordering invariant: derive coefficients and non-export demand only after any
+    # primitive monetary row scaling. Physical extension rows are not handled here.
     A = derive_A_from_Z_and_x(Z, x, basis_index=idx, copy=False)
     y = derive_nonexport_final_demand_from_Y(Y)
     return (
@@ -437,8 +517,11 @@ def _load_sda_year_matrices(
         _strict_float_series(x, index=idx, name=f"x_{int(year)}"),
         _strict_float_series(y, index=idx, name=f"y_{int(year)}"),
         idx,
-        dict(metadata or {}),
+        state_metadata,
     )
+
+
+
 
 def _build_output_sda_result(
     *,
@@ -525,8 +608,18 @@ def load_mrio_year_state(
     download_retries: int = 3,
     monetary_unit: str | None = None,
     monetary_unit_source: str | None = None,
+    price_base_year: int | None = None,
+    price_factor_storage_folder: str | Path | None = None,
+    price_factor_force_download: bool = False,
+    price_factor_timeout_s: int = 120,
 ) -> MrioYearState:
-    """Load one sparse, strictly validated MRIO year state for SDA/analysis reuse."""
+    """Load one sparse MRIO year state, optionally in a common-EUR price basis.
+
+    ``price_base_year=None`` preserves current-price behavior. Supplying a base
+    year applies the EXIOBASE3 country-GDP/common-EUR row factors to primitive
+    monetary ``Z``, ``x`` and ``Y`` before ``A`` and non-export ``y`` are derived.
+    """
+
     from ecolecon_mrio.data import exiobase3_monetary_unit
 
     unit = str(monetary_unit).strip() if monetary_unit is not None else ""
@@ -552,6 +645,10 @@ def load_mrio_year_state(
         download_chunk_mb=int(download_chunk_mb),
         download_timeout_seconds=download_timeout_seconds,
         download_retries=int(download_retries),
+        price_base_year=None if price_base_year is None else int(price_base_year),
+        price_factor_storage_folder=price_factor_storage_folder,
+        price_factor_force_download=bool(price_factor_force_download),
+        price_factor_timeout_s=int(price_factor_timeout_s),
     )
     return MrioYearState(
         year=int(year),
@@ -570,6 +667,9 @@ def load_mrio_year_state(
     )
 
 
+
+
+
 def compute_output_sda_pair_result_from_states(
     start: MrioYearState,
     end: MrioYearState,
@@ -580,6 +680,7 @@ def compute_output_sda_pair_result_from_states(
 
     if not start.index.equals(end.index):
         raise ValueError("MRIO year-state indexes do not match")
+    valuation_basis, price_base_year = _require_same_mrio_year_state_valuation(start, end)
     unit = require_same_unit_string(
         start.monetary_unit,
         end.monetary_unit,
@@ -611,6 +712,8 @@ def compute_output_sda_pair_result_from_states(
             "forms_sparse_delta_A": False,
             "start_metadata": start.metadata,
             "end_metadata": end.metadata,
+            "valuation_basis": valuation_basis,
+            "price_base_year": price_base_year,
         }
     )
     return result

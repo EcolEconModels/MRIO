@@ -1,13 +1,13 @@
 """Build complete EXIOBASE3 macro price-adjustment factors in a common EUR basis.
 
-This module completes the country-level GDP-deflator sensitivity boundary without
-changing the primitive monetary row-scaling algorithm.  It combines the UNSD AMA
-USD-basis GDP deflator with the ECB annual USD/EUR rate for ordinary countries,
-uses the official Taiwan DGBAS GDP deflator plus Taiwan central-bank NTD/USD rate
-for Taiwan, and aggregates country factors to the five legacy EXIOBASE Rest-of-
-World buckets with current-USD GDP weights.
+The published Bjelle et al. EXIOBASE3rx 214-to-49 bridge owns Rest-of-World
+membership. Ordinary countries and RoW aggregates use paired UNSD AMA current and
+constant USD GDP levels; RoW levels are summed before the implicit deflator is
+formed. The bridge's 44 explicit targets are ISO3 codes and are translated to the
+runtime two-letter EXIOBASE3 region codes through a pinned 00-class crosswalk.
+Taiwan keeps the separately audited DGBAS/CBC route selected by mapping policy.
 
-The result remains a country-level macro sensitivity.  It does not reconstruct
+The result remains a country-level macro sensitivity. It does not reconstruct
 product-by-country constant-price EXIOBASE tables and cannot remove within-country
 relative-price movements.
 """
@@ -42,6 +42,16 @@ ECB_USD_EUR_URL = (
     "?format=csvdata"
 )
 UNSD_M49_URL = "https://unstats.un.org/unsd/methodology/m49/overview/"
+EXIOBASE_META_COMMIT = "768ff12b3c1e449e89d4310a44db9c5dc2266652"
+EXIOBASE_COUNTRY_COVERAGE_URL = (
+    "https://raw.githubusercontent.com/EXIOBASE/00-class/"
+    f"{EXIOBASE_META_COMMIT}/class/country_axes/country_coverage_matrix.csv"
+)
+EXIOBASE3RX_BRIDGE_SHA256 = "92e9b95d240b338c0a6a8c06f2c4768149d81092839ef4581d780a1ce119f972"
+EXIOBASE3RX_BRIDGE_DOI = "10.1186/s40008-020-0182-y"
+EXIOBASE3RX_BRIDGE_SUPPLEMENT = "40008_2020_182_MOESM2_ESM.xlsx"
+EXIOBASE3RX_BRIDGE_LICENSE = "CC BY 4.0"
+EXIOBASE3RX_BRIDGE_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 DGBAS_TABLE_ID = "A018102050"
 DGBAS_METADATA_URL = f"https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/{DGBAS_TABLE_ID}/all"
 DGBAS_SNAPSHOT_RESOURCE = "reference_data/taiwan_dgbas_gdp_deflator_2012_2022.json"
@@ -634,11 +644,89 @@ def _read_exiobase3rx_region_bridge(path: Path) -> pd.DataFrame:
 
 
 def _load_exiobase3rx_region_bridge() -> pd.DataFrame:
-    """Load the installed published regional bridge used by production price factors."""
+    """Load the exact installed Bjelle-derived regional bridge used by production factors."""
 
     resource = resources.files("ecolecon_mrio").joinpath(EXIOBASE3RX_BRIDGE_RESOURCE)
     with resources.as_file(resource) as path:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != EXIOBASE3RX_BRIDGE_SHA256:
+            raise PriceIndexParseError(
+                "Packaged EXIOBASE3rx bridge differs from the audited Bjelle-derived artifact: "
+                f"expected {EXIOBASE3RX_BRIDGE_SHA256}, got {digest}"
+            )
         return _read_exiobase3rx_region_bridge(path)
+
+
+
+
+def _read_exiobase3_explicit_region_crosswalk(path: Path) -> pd.DataFrame:
+    """Read only the pinned 00-class ISO3-to-runtime-EXIO explicit-country crosswalk.
+
+    The published EXIOBASE3rx bridge owns WA/WL/WE/WF/WM membership. This helper
+    intentionally ignores 00-class RoW classification fields and returns only rows
+    with a non-empty two-letter ``EXIO3`` runtime region code.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    required = {"ISO3", "EXIO3"}
+    missing = sorted(required.difference(frame.columns))
+    if missing:
+        raise PriceIndexParseError(f"EXIOBASE 00-class country coverage CSV missing columns: {missing}")
+    selected = frame.loc[
+        frame["ISO3"].astype(str).str.fullmatch(r"[A-Z]{3}", na=False)
+        & frame["EXIO3"].astype(str).str.fullmatch(r"[A-Z]{2}", na=False),
+        ["ISO3", "EXIO3"],
+    ].copy()
+    selected.columns = ["iso3", "exio_region"]
+    selected["iso3"] = selected["iso3"].astype(str).str.strip().str.upper()
+    selected["exio_region"] = selected["exio_region"].astype(str).str.strip().str.upper()
+    if len(selected) != 44 or selected["iso3"].nunique() != 44 or selected["exio_region"].nunique() != 44:
+        raise PriceIndexParseError(
+            "Pinned EXIOBASE 00-class explicit-country crosswalk must contain exactly 44 one-to-one ISO3->EXIO3 rows"
+        )
+    if selected.loc[selected["iso3"].eq("TWN"), "exio_region"].tolist() != ["TW"]:
+        raise PriceIndexParseError("Pinned EXIOBASE 00-class crosswalk must map TWN to TW")
+    return selected.sort_values("iso3", kind="stable").reset_index(drop=True)
+
+
+def _compile_exiobase3_bridge_runtime_targets(
+    bridge: pd.DataFrame,
+    explicit_crosswalk: pd.DataFrame,
+) -> pd.DataFrame:
+    """Translate the bridge's 44 explicit ISO3 targets to runtime EXIO region codes."""
+
+    explicit = dict(
+        zip(
+            explicit_crosswalk["iso3"].astype(str),
+            explicit_crosswalk["exio_region"].astype(str),
+            strict=True,
+        )
+    )
+    published_explicit = set(
+        bridge.loc[~bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS)), "target_code"].astype(str)
+    )
+    if published_explicit != set(explicit):
+        missing = sorted(published_explicit.difference(explicit))
+        extra = sorted(set(explicit).difference(published_explicit))
+        raise PriceIndexParseError(
+            "Published EXIOBASE3rx explicit targets and pinned 00-class crosswalk disagree; "
+            f"missing={missing}, extra={extra}"
+        )
+    result = bridge.copy()
+    is_row = result["target_code"].isin(list(EXPECTED_ROW_REGIONS))
+    result["published_target_code"] = result["target_code"].astype(str)
+    result.loc[~is_row, "target_code"] = result.loc[~is_row, "target_code"].map(explicit)
+    result.loc[~is_row, "target_label"] = result.loc[~is_row, "target_code"]
+    if bool(result["target_code"].isna().any()):
+        raise PriceIndexParseError("Compiled bridge contains missing runtime EXIO target codes")
+    if result["target_code"].nunique() != EXPECTED_EXIOBASE3_REGION_COUNT:
+        raise PriceIndexParseError("Compiled EXIOBASE3rx bridge must resolve to exactly 49 runtime regions")
+    explicit_groups = result.loc[~is_row].groupby("target_code").size()
+    if len(explicit_groups) != 44 or not bool((explicit_groups == 1).all()):
+        raise PriceIndexParseError("Compiled bridge must contain 44 singleton explicit runtime EXIO regions")
+    return result.sort_values(["target_code", "source_code"], kind="stable").reset_index(drop=True)
+
+
 
 
 def _mapping_resource_sha256(resource_name: str) -> str:
@@ -780,10 +868,12 @@ def build_exiobase3_eur_price_factors(
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Build complete legacy EXIOBASE3 factors from audited GDP-level source geography.
 
-    Ordinary explicit countries and the five RoW aggregates use official UNSD
-    current/constant USD GDP levels plus the ECB annual USD/EUR correction. RoW
-    deflators are formed only after summing extensive levels over the exact audited
-    member set. Taiwan remains on its mapped DGBAS/CBC pathway.
+    The Bjelle-derived bridge owns the published 214-country membership. Its 44
+    explicit ISO3 targets are translated through the pinned 00-class ``ISO3`` to
+    ``EXIO3`` crosswalk; 00-class never supplies RoW membership. Ordinary explicit
+    countries and the five RoW aggregates use UNSD current/constant USD GDP levels
+    plus the ECB annual USD/EUR correction. RoW levels are summed before implicit
+    deflation. Taiwan remains on its mapped DGBAS/CBC route.
     """
 
     requested_years = tuple(sorted({int(year) for year in years}))
@@ -795,13 +885,11 @@ def build_exiobase3_eur_price_factors(
 
     source_policy = _load_price_factor_source_policy()
     identity = _load_price_factor_source_identity_mapping()
-    bridge = _load_exiobase3rx_region_bridge()
-    explicit_bridge = bridge.loc[~bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))].copy()
-    explicit_regions = set(explicit_bridge["target_code"].astype(str))
-    _validate_source_policy_domain(source_policy, explicit_regions=explicit_regions, years=all_years)
+    published_bridge = _load_exiobase3rx_region_bridge()
 
-    # Official small geography/exchange-rate sources remain cached text; the 214x49
-    # EXIOBASE3rx bridge itself is packaged mapping data rather than a live runtime download.
+    # External source files are small, cached provenance inputs. The 00-class file
+    # is used only to translate explicit ISO3 targets to runtime two-letter EXIO
+    # codes; its EXIO3_3L / RoW fields have no membership authority here.
     ecb_path = _cached_text(
         ECB_USD_EUR_URL,
         path=root / "ecb" / "usd_per_eur_annual.csv",
@@ -814,14 +902,28 @@ def build_exiobase3_eur_price_factors(
         force_download=force_download,
         timeout_s=timeout_s,
     )
+    exio_path = _cached_text(
+        EXIOBASE_COUNTRY_COVERAGE_URL,
+        path=root / "exiobase_meta" / f"country_coverage_matrix_{EXIOBASE_META_COMMIT[:12]}.csv",
+        force_download=force_download,
+        timeout_s=timeout_s,
+    )
+
     usd_per_eur = _require_years(_read_ecb_usd_per_eur(ecb_path), all_years, name="ECB USD/EUR")
     m49_table = _read_unsd_m49_iso3(m49_path)
-    iso3_to_m49 = dict(zip(
-        m49_table["iso3"].astype(str).tolist(),
-        m49_table["m49"].astype(int).tolist(),
-        strict=True,
-    ))
+    explicit_crosswalk = _read_exiobase3_explicit_region_crosswalk(exio_path)
+    bridge = _compile_exiobase3_bridge_runtime_targets(published_bridge, explicit_crosswalk)
+    explicit_bridge = bridge.loc[~bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))].copy()
+    explicit_regions = set(explicit_bridge["target_code"].astype(str))
+    _validate_source_policy_domain(source_policy, explicit_regions=explicit_regions, years=all_years)
 
+    iso3_to_m49 = dict(
+        zip(
+            m49_table["iso3"].astype(str).tolist(),
+            m49_table["m49"].astype(int).tolist(),
+            strict=True,
+        )
+    )
     effective_by_year = {
         year: _effective_row_members(bridge, identity, iso3_to_m49, year=year)
         for year in all_years
@@ -845,17 +947,16 @@ def build_exiobase3_eur_price_factors(
                 f"year={year}. Add an explicitly audited common identity regime before comparing these years."
             )
 
-    needed_m49 = {
-        int(m49)
-        for m49 in effective_by_year[int(base_year)]["m49"].tolist()
-    }
+    needed_m49 = {int(m49) for m49 in effective_by_year[int(base_year)]["m49"].tolist()}
     explicit_m49: dict[str, int] = {}
     active_methods: dict[int, dict[str, str]] = {}
     for year in all_years:
         active_methods[year] = {}
         for member in explicit_bridge.itertuples(index=False):
             region = str(member.target_code)
-            method = str(_resolve_price_factor_source_policy(source_policy, exio_region=region, year=year)["target_code"])
+            method = str(
+                _resolve_price_factor_source_policy(source_policy, exio_region=region, year=year)["target_code"]
+            )
             active_methods[year][region] = method
             if method == PRICE_FACTOR_METHOD_UNSD:
                 m49 = iso3_to_m49.get(str(member.source_code))
@@ -880,6 +981,7 @@ def build_exiobase3_eur_price_factors(
     taiwan_deflator: pd.Series | None = None
     ntd_per_usd: pd.Series | None = None
     taiwan_dgbas_metadata: dict[str, Any] | None = None
+    cbc_path: Path | None = None
     if needs_taiwan:
         taiwan_deflator, taiwan_dgbas_metadata = _load_taiwan_dgbas_gdp_deflator(all_years)
         cbc_path = _cached_text(
@@ -945,14 +1047,17 @@ def build_exiobase3_eur_price_factors(
                 }
             )
         region_frame = pd.DataFrame(rows).sort_values("exio_region", kind="stable").reset_index(drop=True)
-        if len(region_frame) != EXPECTED_EXIOBASE3_REGION_COUNT:
+        if len(region_frame) != EXPECTED_EXIOBASE3_REGION_COUNT or region_frame["exio_region"].nunique() != EXPECTED_EXIOBASE3_REGION_COUNT:
             raise ValueError(f"Expected exactly 49 EXIOBASE factors for year {year}, got {len(region_frame)}")
+        if any(len(str(code)) != 2 for code in region_frame["exio_region"]):
+            raise ValueError("Production factor table must expose runtime two-letter EXIOBASE region codes")
         region_frame.insert(0, "year", int(year))
         region_frame.insert(1, "base_year", int(base_year))
         region_frame.insert(4, "factor_basis", "country_gdp_deflator_common_eur")
         outputs.append(region_frame)
 
     result = pd.concat(outputs, ignore_index=True)
+    result = result.sort_values(["year", "exio_region"], kind="stable").reset_index(drop=True)
     base = result.loc[result["year"] == int(base_year), "price_adjustment_factor"].to_numpy(dtype=float)
     if len(base) != EXPECTED_EXIOBASE3_REGION_COUNT or not np.allclose(base, 1.0, rtol=0.0, atol=1.0e-12):
         raise ValueError("EXIOBASE common-EUR base-year factors must equal one for all 49 regions")
@@ -960,13 +1065,32 @@ def build_exiobase3_eur_price_factors(
     if len(result) != expected_rows:
         raise ValueError(f"Expected {expected_rows} year-region factor rows, got {len(result)}")
 
-    published_counts = bridge.loc[
-        bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))
+    raw_gdp_path = Path(str(unsd_levels_meta.get("raw_path", "")))
+    if not raw_gdp_path.is_file():
+        raise ValueError("UNSD GDP-level metadata must identify the exact cached source bytes through raw_path")
+    published_counts = published_bridge.loc[
+        published_bridge["target_code"].isin(list(EXPECTED_ROW_REGIONS))
     ].groupby("target_code").size().astype(int).to_dict()
     effective_counts = {
         int(year): members.groupby("target_code").size().astype(int).to_dict()
         for year, members in effective_by_year.items()
     }
+    source_sha256: dict[str, str] = {
+        "bjelle_exiobase3rx_bridge": _mapping_resource_sha256(EXIOBASE3RX_BRIDGE_RESOURCE),
+        "price_factor_source_policy": _mapping_resource_sha256(PRICE_FACTOR_SOURCE_POLICY_RESOURCE),
+        "price_factor_source_identity": _mapping_resource_sha256(PRICE_FACTOR_SOURCE_IDENTITY_RESOURCE),
+        "unsd_gdp_usd_levels_cache": hashlib.sha256(raw_gdp_path.read_bytes()).hexdigest(),
+        "ecb_usd_per_eur": hashlib.sha256(ecb_path.read_bytes()).hexdigest(),
+        "un_m49_overview": hashlib.sha256(m49_path.read_bytes()).hexdigest(),
+        "exiobase_00_class_explicit_crosswalk": hashlib.sha256(exio_path.read_bytes()).hexdigest(),
+    }
+    if needs_taiwan:
+        if cbc_path is None:
+            raise AssertionError("Taiwan CBC path is missing after conditional source acquisition")
+        source_sha256["taiwan_dgbas_snapshot"] = _mapping_resource_sha256(DGBAS_SNAPSHOT_RESOURCE)
+        source_sha256["taiwan_cbc_ntd_per_usd"] = hashlib.sha256(cbc_path.read_bytes()).hexdigest()
+
+    factor_bytes = result.to_csv(index=False, lineterminator="\n").encode("utf-8")
     metadata: dict[str, Any] = {
         "factor_basis": "country_gdp_deflator_common_eur",
         "row_aggregation": "aggregate current-USD and constant-price-USD GDP levels before implicit deflation",
@@ -974,11 +1098,20 @@ def build_exiobase3_eur_price_factors(
         "returned_years": list(all_years),
         "base_year": int(base_year),
         "region_count": EXPECTED_EXIOBASE3_REGION_COUNT,
+        "factor_row_count": int(len(result)),
+        "factor_table_sha256": hashlib.sha256(factor_bytes).hexdigest(),
         "unsd_gdp_usd_levels_metadata": unsd_levels_meta,
         "ecb_series": ECB_USD_EUR_SERIES,
         "un_m49_url": UNSD_M49_URL,
+        "exiobase_meta_commit": EXIOBASE_META_COMMIT,
+        "exiobase_country_coverage_url": EXIOBASE_COUNTRY_COVERAGE_URL,
+        "exiobase_00_class_role": "explicit ISO3 target to runtime EXIO code only; not RoW membership",
         "exiobase3rx_bridge_resource": EXIOBASE3RX_BRIDGE_RESOURCE,
-        "exiobase3rx_bridge_sha256": _mapping_resource_sha256(EXIOBASE3RX_BRIDGE_RESOURCE),
+        "exiobase3rx_bridge_sha256": EXIOBASE3RX_BRIDGE_SHA256,
+        "exiobase3rx_bridge_doi": EXIOBASE3RX_BRIDGE_DOI,
+        "exiobase3rx_bridge_supplement": EXIOBASE3RX_BRIDGE_SUPPLEMENT,
+        "exiobase3rx_bridge_license": EXIOBASE3RX_BRIDGE_LICENSE,
+        "exiobase3rx_bridge_license_url": EXIOBASE3RX_BRIDGE_LICENSE_URL,
         "price_factor_source_policy_resource": PRICE_FACTOR_SOURCE_POLICY_RESOURCE,
         "price_factor_source_policy_sha256": _mapping_resource_sha256(PRICE_FACTOR_SOURCE_POLICY_RESOURCE),
         "price_factor_source_identity_resource": PRICE_FACTOR_SOURCE_IDENTITY_RESOURCE,
@@ -986,9 +1119,11 @@ def build_exiobase3_eur_price_factors(
         "published_row_member_counts": published_counts,
         "effective_row_member_counts": effective_counts,
         "active_methods_by_year": active_methods,
+        "taiwan_sources_used": bool(needs_taiwan),
         "taiwan_dgbas_snapshot": taiwan_dgbas_metadata,
         "taiwan_dgbas_metadata_url": DGBAS_METADATA_URL if needs_taiwan else None,
         "taiwan_cbc_exchange_rate": CBC_TWD_USD_ANNUAL_URL if needs_taiwan else None,
+        "source_sha256": source_sha256,
         "interpretation": "country-level macro GDP-deflator sensitivity; not product-country constant-price EXIOBASE",
     }
-    return result.sort_values(["year", "exio_region"], kind="stable").reset_index(drop=True), metadata
+    return result, metadata

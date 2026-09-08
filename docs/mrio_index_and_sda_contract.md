@@ -95,3 +95,17 @@ all-zero-row rejection policy.
 timeout and retry controls needed by low-memory source-ZIP callers. Downstream
 analysis should therefore reuse this strict compact state rather than reloading
 Z/x/Y and rebuilding A/y with local reindex or fill-zero logic.
+
+## Monetary valuation of strict year states
+
+`load_mrio_year_state(...)` has one optional price-sensitivity mode. The default
+`price_base_year=None` is the existing current-price state. With a base year, MRIO
+loads primitive `Z`, `x`, and `Y`, applies the validated EXIOBASE3
+country-GDP/common-EUR row factors, and only then derives sparse `A` and non-export
+`y`. The state records `valuation_basis` and `price_base_year`; strict output and
+extension SDA pair boundaries reject mismatched valuation signatures.
+
+Production-side physical extension rows remain unchanged. A price-adjusted
+`MrioExtensionYearState` therefore recomputes its direct coefficient `q=F/x`
+against the revalued monetary output while preserving the source physical `F`
+values and units.

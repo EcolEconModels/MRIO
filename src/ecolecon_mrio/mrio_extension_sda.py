@@ -37,6 +37,7 @@ from ecolecon_mrio.exiobase3_extensions import (
 )
 from ecolecon_mrio.mrio_sda import (
     MrioYearState,
+    _require_same_mrio_year_state_valuation,
     _solve_sparse_leontief_many,
     _strict_float_series,
     require_region_sector_multiindex,
@@ -523,6 +524,7 @@ def _compute_extension_sda_pair_result_from_intensity_states(
     _emit(progress, f"validate MRIO and extension intensity states for {start.year}-{end.year}")
     if not start.index.equals(end.index):
         raise ValueError("MRIO year-state indexes do not match")
+    _require_same_mrio_year_state_valuation(start, end)
     idx = require_region_sector_multiindex(start.index)
     require_same_unit_string(start.monetary_unit, end.monetary_unit, context="MRIO year-state monetary units")
     _validate_loaded_intensity_state(mrio_state=start, intensity_state=start_state, index=idx, name="start intensity state")
@@ -803,13 +805,16 @@ def load_mrio_extension_year_state(
     tau: float = 1.0e-8,
     reject_all_zero: bool = True,
     verbose: bool = False,
+    price_base_year: int | None = None,
+    price_factor_storage_folder: str | Path | None = None,
+    price_factor_force_download: bool = False,
+    price_factor_timeout_s: int = 120,
 ) -> MrioExtensionYearState:
-    """Load one MRIO year plus the raw and stabilized production extension row.
+    """Load one MRIO year plus a physical production extension row.
 
-    This convenience boundary keeps EXIOBASE source-zip discovery in MRIO while
-    still reading only the sparse MRIO matrices and the selected extension row.
-    It intentionally supports only ``kind='F'`` because ``F_Y`` is indexed by final
-    demand categories and is not a production intensity over sectors.
+    Monetary valuation controls are forwarded only to ``load_mrio_year_state``.
+    The physical ``F`` row is never deflated; its direct intensity is recomputed
+    against the returned, possibly price-adjusted, monetary output vector.
     """
 
     if str(kind) != "F":
@@ -825,6 +830,10 @@ def load_mrio_extension_year_state(
         force_download=bool(force_download),
         doi=doi_value,
         verbose=bool(verbose),
+        price_base_year=None if price_base_year is None else int(price_base_year),
+        price_factor_storage_folder=price_factor_storage_folder,
+        price_factor_force_download=bool(price_factor_force_download),
+        price_factor_timeout_s=int(price_factor_timeout_s),
     )
     extension_row = load_exiobase3_extension_row_with_unit_for_year(
         int(year),

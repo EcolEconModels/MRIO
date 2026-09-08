@@ -645,8 +645,12 @@ fiscal-year countries.
 The five EXIOBASE Rest-of-World factors use the packaged recovered EXIOBASE3rx
 214-to-49 regional bridge from Bjelle et al. (2020), Additional file 2
 (`40008_2020_182_MOESM2_ESM.xlsx`, "Concordance matrices for regions, land use
-types and industries"), not the secondary `country_coverage_matrix.csv`
-classification universe.  The committed file
+types and industries"). The bridge is the sole RoW-membership authority. Its 44
+explicit targets are published as ISO3 labels; the pinned EXIOBASE `00-class`
+`country_coverage_matrix.csv` at commit
+`768ff12b3c1e449e89d4310a44db9c5dc2266652` is used only as the explicit
+ISO3-to-runtime-`EXIO3` crosswalk (for example `AUT -> AT` and `TWN -> TW`). Its
+`EXIO3_3L`/RoW classification fields are never used to redefine membership.  The committed file
 `src/ecolecon_mrio/mappings/exiobase3rx_to_exiobase3_regions.csv` is the exact
 four-column audit extraction (`source_country`, `source_iso3`,
 `target_exio_region`, `weight`), SHA-256 `92e9b95d240b338c0a6a8c06f2c4768149d81092839ef4581d780a1ce119f972`.  It was created by
@@ -712,13 +716,32 @@ Physical environmental extensions remain outside the transformation.
 UNSD AMA is described here as a global national-accounts series, not as a claim
 that every country-year observation is a direct national-statistical submission:
 UNSD supplements official submissions with secondary sources and estimates where
-needed. Source URLs, the pinned EXIOBASE classification commit, fiscal-year notes,
+needed. Source URLs, the pinned EXIOBASE explicit-country crosswalk commit, exact source hashes, fiscal-year notes,
 and the Taiwan pinned-source identity are retained in returned provenance metadata.
 
 This remains a **country-GDP-deflator sensitivity**, not a reconstruction of
 product-by-country constant-price EXIOBASE. A common factor within an explicit
 country leaves that country's domestic block of `A` unchanged and therefore does
 not remove within-country relative-price changes between products.
+
+
+### Valuation-aware strict year states
+
+`load_mrio_year_state(...)` remains the single compact SDA state boundary. With
+`price_base_year=None` it preserves current-price behavior. Supplying a base year
+selects the EXIOBASE3 country-GDP-deflator/common-EUR sensitivity: the builder
+constructs the exact 49 runtime-region factors, `expand_region_price_factors(...)`
+expands them over the canonical `(region, sector)` basis, and
+`adjust_mrio_iot_prices(...)` transforms primitive `Z`, `x`, and `Y` before
+`derive_A_from_Z_and_x(...)` and `derive_nonexport_final_demand_from_Y(...)` run.
+Derived `A` or `y` are never deflated after construction.
+
+The returned `MrioYearState.metadata` records `valuation_basis`, `price_base_year`,
+source/factor provenance, and the canonical factor-table SHA. Strict SDA pair
+helpers reject mixed valuation bases or different common-EUR base years.
+`load_mrio_extension_year_state(...)` forwards the monetary valuation controls to
+that same year-state loader but never transforms physical `F`; direct extension
+intensity is recomputed as physical `F` divided by the selected monetary `x`.
 <!-- /ecolecon-exiobase-eur-price-factors -->
 
 ## Price-factor mapping data contract
