@@ -94,6 +94,53 @@ The output directory contains:
 raw scope-level donor sectors, projection weights, and weighted `F/x`
 contributions. This is the first artifact to inspect for a case such as Gas Coke.
 
+<!-- environmental-magnitude-diagnostic-v1 -->
+## Magnitude and signed-cancellation trace
+
+`scripts/diagnose_environmental_extension_magnitudes.py` is a second-stage,
+read-only diagnostic for a successful split whose environmental sidecars are
+algebraically valid but numerically implausible. It reuses this census's exact
+source-ZIP provenance check, persisted product projection, coded EXIO output, and
+scope helpers rather than creating a second mapping or source-loading authority.
+It never rewrites canonical split, aggregate, or environmental artifacts.
+
+For DOM and every selected production `F` stressor already present in the target
+sidecar, the trace records raw global and scope physical totals, mapped `F`, mapped
+EXIO `x`, the mapped donor coefficient, the authoritative target flow denominator,
+and the implied versus persisted target physical value and intensity. It also reads
+the same `F` table through the hardened variable-offset parser in `temporal.py` and
+compares the resulting numeric row against the production extension reader on the
+canonical EXIO basis.
+
+For IMP it retains each external origin and records the exact current calculation
+
+$$
+N_a=\sum_o (\bar F_{oa}/\bar x_{oa})\bar u_{oa},\qquad
+D_a=\sum_o\bar u_{oa},\qquad
+G_a=\sum_o|\bar u_{oa}|,
+$$
+
+along with the conditioning diagnostic
+
+$$
+\kappa_a=|D_a|/G_a.
+$$
+
+The command reports, but does not adjudicate, very small $\kappa_a$, extreme
+absolute intensities, source-reader disagreement, non-positive mapped production
+output at an actively used origin, and mismatches between reconstructed and
+persisted target sidecars. `--intensity-threshold` and
+`--cancellation-ratio-threshold` are report-only thresholds. They are not
+production tolerances, scientific validity cutoffs, or changes to signed-flow
+semantics.
+
+The explicit audit output directory receives
+`production_magnitude_trace.csv`, `import_magnitude_trace.csv`,
+`import_origin_trace.csv`, `source_reader_comparison.csv`, `source_errors.csv`, and
+`magnitude_summary.json`. The origin trace is limited to target rows carrying at
+least one diagnostic flag; the DOM/IMP magnitude tables enumerate every selected
+sidecar stressor/sector combination.
+
 ## non-fail-fast and strict modes
 
 Without `--strict`, the command writes the complete census and exits successfully
