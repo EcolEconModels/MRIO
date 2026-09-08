@@ -39,10 +39,18 @@ These are the mapping CSVs used by code and by humans:
   - split manifest for the fuels pipeline
 - `scripts/pipelines/fuels_more_split.csv`
   - expanded split manifest for the fuels-more pipeline
+- `scripts/pipelines/biofuels_split.csv`
+  - minimal biofuels split manifest retaining the three liquid biofuels and biogas
+- `scripts/pipelines/biofuels_feedstocks_split.csv`
+  - biofuels-plus-feedstocks split manifest for conventional feedstocks and explicit waste/treatment proxies
 - `scripts/pipelines/fuels_reaggregation.csv`
   - fuels reaggregation table
 - `scripts/pipelines/fuels_more_reaggregation.csv`
   - expanded fuels reaggregation table
+- `scripts/pipelines/biofuels_reaggregation.csv`
+  - minimal biofuels reaggregation table
+- `scripts/pipelines/biofuels_feedstocks_reaggregation.csv`
+  - conventional-feedstock plus waste/treatment-proxy reaggregation table
 - `scripts/pipelines/energy_green_brown_split.csv`
   - split manifest for the analytical green/brown energy view
 - `scripts/pipelines/energy_green_brown_reaggregation.csv`
@@ -79,6 +87,64 @@ and p24.i (other liquid biofuels) map to `ENERGY_GREEN`; other C20 products rema
 unchanged.
 
 Ambiguous carriers such as nuclear, biomass/waste, electricity network services, and gas distribution should be documented in the reaggregation notes rather than silently mixed into the concordance layer.
+
+
+## Optional concordance-specific reaggregation rules
+
+The normal production contract is one shared EXIOBASE3-to-Eurostat concordance plus
+one split manifest and one reaggregation table for the analytical pipeline. The
+closure generator also accepts `--rule-csv` / `--override-csv` as an **optional**
+exception layer. The generic workbook wrapper therefore leaves `REAGG_RULE_CSV`
+empty by default; a pipeline must opt in explicitly when a route-specific overlay
+is genuinely required.
+
+Use an exception rule only when an emitted concordance edge needs an analytical
+route that should not live in the canonical base reaggregation recipe, for example
+a temporary comparison against an alternate concordance topology. Ordinary
+analytical distinctions belong in `<pipeline>_reaggregation.csv`. The former fuels
+rules for `p10.f@CPA_C19`, `p10.h@CPA_C19`, and `p23.3` are now canonical fuels and
+fuels-more reaggregation rows rather than an always-on overlay.
+
+Missing edges are not silently guessed across classifications. A materialized
+`source@target` edge has one unambiguous selected CPA target, so if neither an exact
+nor compatible analytical route exists the closure generator can safely return
+that edge to its own CPA target. By contrast, a raw child with multiple active CPA
+targets cannot be inferred and remains review-required; the generator fails unless
+that review state is explicitly allowed. An analytically intended special bucket
+must therefore be present in the base reaggregation table or an explicit rule.
+
+## Biofuels and biofuels-feedstocks scope
+
+`biofuels` opens only `CPA_C20` and `CPA_D`. It retains EXIO-native Biogasoline,
+Biodiesels, Other Liquid Biofuels, and Biogas as separate analytical outputs and
+reaggregates the remaining children of those parents into residual sectors.
+
+`biofuels_feedstocks` is deliberately **not** reaggregated into one
+"conventional" and one "advanced" feedstock sector. Oil seeds and vegetable oils,
+or sugar crops and processed sugar, are different stages of the same supply chain;
+merging them would internalize real intermediate transactions. Likewise, separate
+food-waste treatment routes are retained because incineration, composting,
+wastewater treatment, landfill, and biogasification are distinct incumbent or
+counterfactual destinations.
+
+The feedstock view retains conventional crop/intermediate candidates (wheat,
+other cereals, oil seeds, sugar crops, vegetable oils/fats, sugar), explicit manure
+and sewage-sludge treatment products, secondary wood material, and selected
+food/paper/wood waste-treatment routes. These are EXIO-native commodities or
+treatment-pathway proxies. They must **not** be interpreted as a complete physical
+inventory of advanced-biofuel feedstocks, sustainable availability, legal RED
+eligibility, or cradle-to-grave fuel lifecycle intensity. In particular, the
+current EXIO product classification does not identify straw/crop residues or used
+cooking oil as clean standalone commodities; generic crops, primary wood/straw
+products, and oil/hazardous waste are not relabelled to fill those gaps.
+
+Environmental extensions remain meaningful for the represented economic sectors
+and treatment pathways because the generic split/reaggregation machinery carries
+physical numerators and matching monetary denominators through the same sector
+projection. Missing feedstock sectors are a coverage limitation, not a reason to
+manufacture proxy intensities. Future sustainable crop-residue and source-specific
+food/hospitality-waste potentials should enter as explicit external physical
+satellite evidence rather than being inferred from the monetary mapping.
 
 ## CSV Schemas
 

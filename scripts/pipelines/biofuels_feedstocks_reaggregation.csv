@@ -1,0 +1,86 @@
+source_code,source_label,target_code,target_label,enabled,notes
+p01.a,Paddy rice,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual primary agricultural product; not relabelled as a biofuel feedstock or residue.
+p01.b,Wheat,C_WHEA,Wheat,True,Conventional crop feedstock candidate retained separately; this is the primary wheat product and not a crop-residue proxy.
+p01.c,Cereal grains nec,C_CEREAL_NEC,Cereal grains nec,True,Conventional crop feedstock candidate retained separately; includes non-wheat cereals but does not identify residues such as straw.
+p01.d,"Vegetables, fruit, nuts",CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual primary agricultural product; not relabelled as food waste.
+p01.e,Oil seeds,C_OIL_SEEDS,Oil seeds,True,Conventional biodiesel feedstock candidate retained separately; upstream of processed vegetable oils/fats.
+p01.f,"Sugar cane, sugar beet",C_SUGB,"Sugar cane, sugar beet",True,Conventional ethanol feedstock candidate retained separately.
+p01.g,Plant-based fibers,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Primary plant-fibre product; retained in the residual rather than asserted to be Annex-IX residue material.
+p01.h,Crops nec,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual primary crop product; not used as a proxy for missing crop residues.
+p01.i,Cattle,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product.
+p01.j,Pigs,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product.
+p01.k,Poultry,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product.
+p01.l,Meat animals nec,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product.
+p01.m,Animal products nec,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product; not used as a proxy for eligible animal-fat feedstocks.
+p01.n,Raw milk,CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product.
+p01.o,"Wool, silk-worm cocoons",CPA_A01_others,"CPA_A01: Products of crop and animal production, hunting and related services_others",True,Residual agricultural product.
+p01.w.1,Manure (conventional treatment),C_MANURE_CONVENTIONAL,Manure (conventional treatment),True,Advanced-feedstock-relevant treatment proxy retained to represent the incumbent non-biogas manure pathway; it is not a direct measure of physical manure availability or legal eligibility.
+p01.w.2,Manure (biogas treatment),C_MANB,Manure (biogas treatment),True,Advanced-feedstock-relevant treatment proxy retained separately; it is not a direct measure of physical manure availability or a lifecycle biofuel intensity.
+p15.a,Products of meat cattle,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product; not relabelled as food waste.
+p15.b,Products of meat pigs,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product; not relabelled as food waste.
+p15.c,Products of meat poultry,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product; not relabelled as food waste.
+p15.d,Meat products nec,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product; not relabelled as an eligible animal-fat feedstock.
+p15.e,products of Vegetable oils and fats,C_VOIL,products of Vegetable oils and fats,True,Conventional biodiesel intermediate retained separately from upstream oil seeds; this EXIO product is not used-cooking-oil evidence.
+p15.f,Dairy products,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product; not relabelled as food waste.
+p15.g,Processed rice,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product.
+p15.h,Sugar,C_SUGAR,Sugar,True,Conventional ethanol intermediate retained separately from upstream sugar crops.
+p15.i,Food products nec,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual food product; not relabelled as industrial food waste.
+p15.j,Beverages,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual beverage product; not relabelled as beverage-industry waste.
+p15.k,Fish products,CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual processed food product.
+p16,Tobacco products (16),CPA_C10-12_others,"CPA_C10-12: Food products, beverages and tobacco products_others",True,Residual CPA_C10-12 product.
+p20,Wood and products of wood and cork (except furniture); articles of straw and plaiting materials (20),CPA_C16_others,CPA_C16: Wood and products of wood and cork; articles of straw and plaiting materials_others,True,Residual manufactured wood/straw product; not used as a raw-straw or crop-residue proxy.
+p20.w,"Wood material for treatment, Re-processing of secondary wood material into new wood material",C_WOOW,"Wood material for treatment, Re-processing of secondary wood material into new wood material",True,Secondary lignocellulosic-material proxy retained for future advanced-biofuel scenarios; this treatment/reprocessing commodity is not a direct sustainable-availability estimate.
+p24.a,"Plastics, basic",CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product; retained only to close the parent after isolating liquid biofuels.
+p24.a.w,"Secondary plastic for treatment, Re-processing of secondary plastic into new plastic",CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product; not treated as a biofuel feedstock.
+p24.b,N-fertiliser,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product.
+p24.c,P- and other fertiliser,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product.
+p24.d,Chemicals nec,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product. The reviewed concordance is multi-target for p24.d; the CPA_C20 edge is materialized separately.
+p24.d@CPA_C20,Chemicals nec allocated to CPA_C20,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Explicit current edge-child route for the CPA_C20 share of multi-target p24.d.
+p24.e,Charcoal,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product; charcoal is not one of the retained liquid-biofuel outputs.
+p24.f,Additives/Blending Components,CPA_C20_others,CPA_C20: Chemicals and chemical products_others,True,Residual C20 product.
+p24.g,Biogasoline,CPA_C20_BIOGASOLINE,CPA_C20: Biogasoline,True,EXIO-native liquid biofuel output retained as its own analytical sector.
+p24.h,Biodiesels,CPA_C20_BIODIESEL,CPA_C20: Biodiesel,True,EXIO-native liquid biofuel output retained as its own analytical sector.
+p24.i,Other Liquid Biofuels,CPA_C20_OTHER_LIQUID_BIOFUELS,CPA_C20: Other liquid biofuels,True,EXIO-native liquid biofuel output retained as its own analytical sector.
+p40.11.a,Electricity by coal,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.b,Electricity by gas,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.c,Electricity by nuclear,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.d,Electricity by hydro,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.e,Electricity by wind,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.f,Electricity by petroleum and other oil derivatives,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.g,Electricity by biomass and waste,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; biomass/waste electricity is not treated as a feedstock commodity.
+p40.11.h,Electricity by solar photovoltaic,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.i,Electricity by solar thermal,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.j,"Electricity by tide, wave, ocean",CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.k,Electricity by Geothermal,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.11.l,Electricity nec,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D product; feedstocks keeps only biogas separately.
+p40.12,Transmission services of electricity,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D service; feedstocks keeps only biogas separately.
+p40.13,Distribution and trade services of electricity,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D service; feedstocks keeps only biogas separately.
+p40.2.a,Coke oven gas,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual gaseous fuel; not biogas.
+p40.2.b,Blast Furnace Gas,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual gaseous fuel; not biogas.
+p40.2.c,Oxygen Steel Furnace Gas,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual gaseous fuel; not biogas.
+p40.2.d,Gas Works Gas,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual gaseous fuel; not biogas.
+p40.2.e,Biogas,CPA_D_BIOGAS,CPA_D: BioGas,True,EXIO-native biogas output retained as its own analytical sector.
+p40.2.1,Distribution services of gaseous fuels through mains,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual distribution service; it is not itself biogas production.
+p40.3,Steam and hot water supply services,CPA_D_others,"CPA_D: Electricity, gas, steam and air-conditioning_others",True,Residual CPA_D service; feedstocks keeps only biogas separately.
+p37,Secondary raw materials,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Generic secondary-raw-material product is too heterogeneous to identify a biofuel feedstock.
+p37.w.1,"Bottles for treatment, Recycling of bottles by direct reuse",CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Residual waste-management product; not a biofuel feedstock proxy.
+p90.1.a,Food waste for treatment: incineration,C_FOOD_WASTE_INCINERATION,Food waste for treatment: incineration,True,Advanced-feedstock-relevant counterfactual treatment pathway. Retained to measure the incumbent destination of food waste; not a direct physical availability estimate.
+p90.1.b,Paper waste for treatment: incineration,C_PAPER_WASTE_INCINERATION,Paper waste for treatment: incineration,True,Lignocellulosic-waste treatment proxy retained as a possible future diversion pathway; not proof of technical or sustainable biofuel availability.
+p90.1.c,Plastic waste for treatment: incineration,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Residual waste-treatment product; not a biofuel feedstock proxy.
+p90.1.d,Intert/metal waste for treatment: incineration,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Residual waste-treatment product; not a biofuel feedstock proxy.
+p90.1.e,Textiles waste for treatment: incineration,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Heterogeneous textile waste is kept residual rather than asserted to be eligible cellulosic feedstock.
+p90.1.f,Wood waste for treatment: incineration,C_WOOD_WASTE_INCINERATION,Wood waste for treatment: incineration,True,Lignocellulosic-waste treatment proxy retained as a possible future diversion pathway; not a direct sustainable-availability estimate.
+p90.1.g,Oil/hazardous waste for treatment: incineration,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Too heterogeneous to use as a used-cooking-oil proxy; kept explicitly in the residual.
+p90.2.a,Food waste for treatment: biogasification and land application,C_BIOF,Food waste for treatment: biogasification and land application,True,Existing food-waste biogasification treatment pathway retained separately; this is treatment-pathway evidence rather than raw feedstock availability.
+p90.2.b,Paper waste for treatment: biogasification and land application,C_BIOP,Paper waste for treatment: biogasification and land application,True,Existing paper-waste biogasification treatment pathway retained as a lignocellulosic-waste proxy; not direct feedstock availability.
+p90.2.c,Sewage sludge for treatment: biogasification and land application,C_BIOS,Sewage sludge for treatment: biogasification and land application,True,Advanced-feedstock-relevant sewage-sludge treatment pathway retained separately; not a direct measure of physical sludge potential or legal eligibility.
+p90.3.a,Food waste for treatment: composting and land application,C_FOOD_WASTE_COMPOSTING,Food waste for treatment: composting and land application,True,Advanced-feedstock-relevant counterfactual treatment pathway retained so future scenarios can represent diversion away from composting.
+p90.3.b,Paper and wood waste for treatment: composting and land application,C_PAPER_WOOD_WASTE_COMPOSTING,Paper and wood waste for treatment: composting and land application,True,Lignocellulosic-waste counterfactual treatment pathway retained separately.
+p90.4.a,Food waste for treatment: waste water treatment,C_FOOD_WASTE_WASTEWATER,Food waste for treatment: waste water treatment,True,Advanced-feedstock-relevant counterfactual treatment pathway retained so future scenarios can represent diversion away from wastewater treatment.
+p90.4.b,Other waste for treatment: waste water treatment,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Heterogeneous other-waste treatment is kept residual rather than asserted to be a biofuel feedstock.
+p90.5.a,Food waste for treatment: landfill,C_FOOD_WASTE_LANDFILL,Food waste for treatment: landfill,True,Advanced-feedstock-relevant counterfactual treatment pathway retained so future scenarios can represent diversion away from landfill.
+p90.5.b,Paper for treatment: landfill,C_PAPER_WASTE_LANDFILL,Paper waste for treatment: landfill,True,Lignocellulosic-waste counterfactual treatment pathway retained separately.
+p90.5.c,Plastic waste for treatment: landfill,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Residual waste-treatment product; not a biofuel feedstock proxy.
+p90.5.d,Inert/metal/hazardous waste for treatment: landfill,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Residual waste-treatment product; not a biofuel feedstock proxy.
+p90.5.e,Textiles waste for treatment: landfill,CPA_E37-39_others,"CPA_E37-39: Sewerage; waste collection, treatment and disposal; remediation and other waste management services_others",True,Heterogeneous textile waste is kept residual rather than asserted to be eligible cellulosic feedstock.
+p90.5.f,Wood waste for treatment: landfill,C_WOOD_WASTE_LANDFILL,Wood waste for treatment: landfill,True,Lignocellulosic-waste counterfactual treatment pathway retained separately.

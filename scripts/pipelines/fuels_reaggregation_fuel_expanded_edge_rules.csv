@@ -1,4 +1,0 @@
-source_code,source_label,target_code,target_label,enabled,notes
-p10.f@CPA_C19,Lignite/Brown Coal allocated from CPA_C19 edge,CPA_C19_COAL,CPA_C19: Coal,True,Intentional fuel-expanded route rule: keep lignite/brown coal with the coal bucket.
-p10.h@CPA_C19,Peat allocated from CPA_C19 edge,CPA_C19_COAL,CPA_C19: Coal,True,Intentional fuel-expanded route rule: keep peat with the coal bucket.
-p23.3,Nuclear fuel,CPA_C24_NUCLEAR_FUEL,CPA_C24: Nuclear fuel,True,Reviewed fuels route: p23.3 Nuclear fuel is statistically assigned to CPA_C24 Basic metals and kept as an explicit nuclear-fuel analytical bucket.

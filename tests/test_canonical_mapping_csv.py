@@ -151,29 +151,32 @@ def test_read_canonical_aggregation_mapping(tmp_path: Path) -> None:
 def test_committed_fuels_labels_do_not_stack_prefixes() -> None:
     from pathlib import Path
 
-    from ecolecon_mrio.canonical_mapping_csv import load_canonical_mapping_frame
     from ecolecon_mrio.mapping_csv import load_split_manifest_frame
 
     eurostat_dictionary_path = Path("scripts/mappings/eurostat_cpa65_products_dictionary.csv")
     split_paths = [
         Path("scripts/pipelines/fuels_split.csv"),
         Path("scripts/pipelines/fuels_more_split.csv"),
+        Path("scripts/pipelines/biofuels_split.csv"),
+        Path("scripts/pipelines/biofuels_feedstocks_split.csv"),
         Path("scripts/pipelines/energy_green_brown_split.csv"),
     ]
     reaggregation_paths = [
         Path("scripts/pipelines/fuels_reaggregation.csv"),
         Path("scripts/pipelines/fuels_more_reaggregation.csv"),
+        Path("scripts/pipelines/biofuels_reaggregation.csv"),
+        Path("scripts/pipelines/biofuels_feedstocks_reaggregation.csv"),
         Path("scripts/pipelines/energy_green_brown_reaggregation.csv"),
     ]
 
     for mapping_path in split_paths:
         frame = load_split_manifest_frame(mapping_path, eurostat_dictionary_path)
-        assert frame["source_label"].map(lambda value: str(value).count("::") == 0).all()
+        assert bool(frame["source_label"].map(lambda value: str(value).count("::") == 0).all())
 
     for mapping_path in reaggregation_paths:
         frame = pd.read_csv(mapping_path, dtype=str).fillna("")
-        assert frame["source_label"].map(lambda value: str(value).count("::") <= 1).all()
-        assert frame["target_label"].map(lambda value: str(value).count("::") <= 1).all()
+        assert bool(frame["source_label"].map(lambda value: str(value).count("::") <= 1).all())
+        assert bool(frame["target_label"].map(lambda value: str(value).count("::") <= 1).all())
 
 
 def test_validate_canonical_chain_rejects_missing_coverage(tmp_path: Path) -> None:

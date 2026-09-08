@@ -4,11 +4,12 @@ set -euo pipefail
 # Year-parameterised pipeline: canonical split -> canonical reaggregation.
 #
 # Required / important env vars:
-#   OUTPUT_SUFFIX=fuels_more|fuels|...
+#   OUTPUT_SUFFIX=fuels_more|fuels|biofuels|biofuels_feedstocks|...
 # Optional overrides:
 #   SPLIT_MAPPING_CSV=scripts/pipelines/fuels_split.csv
 #   REAGG_MAPPING_CSV=scripts/pipelines/fuels_reaggregation.csv
 #   CONCORDANCE_CSV=scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv
+#   REAGG_RULE_CSV=scripts/pipelines/<exception_rules>.csv  # optional, empty by default
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"
@@ -87,7 +88,7 @@ IDENTITY_MAPPING_CSV="$(mktemp)"
 SPLIT_MAPPING_CSV="${SPLIT_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_split.csv}"
 REAGG_MAPPING_CSV="${REAGG_MAPPING_CSV:-$ROOT_DIR/scripts/pipelines/${OUTPUT_SUFFIX}_reaggregation.csv}"
 CONCORDANCE_CSV="${CONCORDANCE_CSV:-$ROOT_DIR/scripts/mappings/exio_to_eurostat_cpa65_products_official_direct_reviewed.csv}"
-REAGG_RULE_CSV="${REAGG_RULE_CSV:-$ROOT_DIR/scripts/pipelines/fuels_reaggregation_fuel_expanded_edge_rules.csv}"
+REAGG_RULE_CSV="${REAGG_RULE_CSV:-}"
 CLOSED_REAGG_MAPPING_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed.csv"
 CLOSED_REAGG_REVIEW_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed_review.csv"
 CLOSED_REAGG_MANIFEST_JSON="$GENERATED_MAPPINGS_OUT/reaggregation_closed_manifest.json"
@@ -122,10 +123,19 @@ fi
 for mapping_csv in "$SPLIT_MAPPING_CSV" "$REAGG_MAPPING_CSV"; do
   if [[ ! -f "$mapping_csv" ]]; then
     echo "ERROR: Canonical mapping CSV not found: $mapping_csv" >&2
-    echo "Use the committed canonical fuels CSVs under scripts/pipelines/." >&2
+    echo "Use the committed canonical pipeline CSVs under scripts/pipelines/." >&2
     exit 1
   fi
 done
+
+REAGG_RULE_ARGS=()
+if [[ -n "$REAGG_RULE_CSV" ]]; then
+  [[ -f "$REAGG_RULE_CSV" ]] || {
+    echo "ERROR: Optional reaggregation rule CSV not found: $REAGG_RULE_CSV" >&2
+    exit 1
+  }
+  REAGG_RULE_ARGS=(--rule-csv "$REAGG_RULE_CSV")
+fi
 
 cleanup_identity_mapping() {
   rm -f "$IDENTITY_MAPPING_CSV"
@@ -157,7 +167,7 @@ set -x
   --split-mapping-csv "$SPLIT_MAPPING_CSV" \
   --base-reagg-csv "$REAGG_MAPPING_CSV" \
   --concordance-csv "$CONCORDANCE_CSV" \
-  --rule-csv "$REAGG_RULE_CSV" \
+  "${REAGG_RULE_ARGS[@]}" \
   --out-csv "$CLOSED_REAGG_MAPPING_CSV" \
   --review-csv "$CLOSED_REAGG_REVIEW_CSV" \
   --manifest-json "$CLOSED_REAGG_MANIFEST_JSON"

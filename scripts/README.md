@@ -54,9 +54,13 @@ The workflow depends on the following checked-in concordance files under `script
 | `exio_energy_split_cpa_no_electricity_source.csv` | checked in | Alternate split map without electricity-by-source detail. |
 | `pipelines/fuels_split.csv` | user-editable | Split manifest for the canonical fuels workflow. |
 | `pipelines/fuels_more_split.csv` | user-editable | Expanded split manifest for the fuels-more workflow. |
+| `pipelines/biofuels_split.csv` | user-editable | Minimal split manifest for Biogasoline, Biodiesels, Other Liquid Biofuels, and Biogas. |
+| `pipelines/biofuels_feedstocks_split.csv` | user-editable | Split manifest adding conventional feedstocks and explicit secondary/waste-treatment proxies without inventing missing crop-residue sectors. |
 | `pipelines/energy_green_brown_split.csv` | user-editable | Split manifest for the analytical green/brown energy view. |
 | `pipelines/fuels_reaggregation.csv` | user-editable | Reaggregation table for the canonical fuels workflow. |
 | `pipelines/fuels_more_reaggregation.csv` | user-editable | Expanded reaggregation table for the fuels-more workflow. |
+| `pipelines/biofuels_reaggregation.csv` | user-editable | Reaggregation recipe retaining the three EXIO liquid biofuels and Biogas. |
+| `pipelines/biofuels_feedstocks_reaggregation.csv` | user-editable | Feedstock recipe retaining supply-chain stages and waste-treatment counterfactuals separately. |
 | `pipelines/energy_green_brown_reaggregation.csv` | user-editable | Reaggregation table for the analytical green/brown energy view. |
 | `energy_balance_to_cpa65_products_mapping.csv` | checked in | Legacy filename retained for compatibility; direct-combustion bridge from raw Eurostat energy-balance rows, many of which are defined on the activity side in NACE terms, to the repo's 65-product CPA-based IO targets plus households, including explicit refinery and electricity/heat transformation rows where applicable. |
 | `siec_to_primary_energy_sources.csv` | checked in | Map Eurostat SIEC carriers into the model’s primary-source carrier basis. |
@@ -65,6 +69,31 @@ The workflow depends on the following checked-in concordance files under `script
 The canonical mapping CSV schema is mandatory for runtime use. Legacy lightweight mapping files are not supported. Static concordances stay under `scripts/mappings/`; split and reaggregation helper tables are sourced only from `scripts/pipelines/` and should not be duplicated elsewhere. For split and reaggregation tables, `source_code` is the runtime key; labels are descriptive metadata only.
 
 Terminology note: Eurostat's NACE classification is for economic activities, while CPA is for products by activity. The energy-balance bridge in this repo therefore uses NACE only on the source-definition side of some correspondence logic; its operative targets are the repo's 65-product CPA-based IO rows plus households. The retained `nace2` naming in one bridge filename and one shell script path is historical compatibility naming rather than the operative target classification.
+
+
+### Optional reaggregation exception overlays
+
+`pipelines/at_2021_workbook_reaggregation.sh` derives its split and base
+reaggregation paths from `OUTPUT_SUFFIX`. `REAGG_RULE_CSV` is an optional explicit
+override and is empty by default. The closure generator already knows how to send a
+materialized `source@CPA_target` edge back to its selected CPA target when no
+special analytical route is declared; unmaterialized raw multi-target children
+remain review-required and fail closed. Pipeline-specific analytical buckets should
+therefore live in the canonical reaggregation CSV, while an exception overlay is
+reserved for a genuine concordance-route comparison or other reviewed exceptional
+case.
+
+The canonical `fuels` and `fuels_more` recipes now directly own the former
+lignite/peat edge routes and the reviewed nuclear-fuel analytical route. The
+generic runner no longer injects a fuels-specific exception file into unrelated
+pipelines such as `biofuels` or `biofuels_feedstocks`.
+
+The biofuels-feedstocks recipe intentionally preserves upstream and downstream
+supply-chain stages and separate waste-treatment pathways. Its EXIO-native waste
+rows are treatment/economic proxies, not physical sustainable feedstock
+availability; missing straw/crop-residue and used-cooking-oil commodities require
+future external physical satellite evidence rather than relabelling generic EXIO
+products.
 
 ## Reproducible Commands
 
