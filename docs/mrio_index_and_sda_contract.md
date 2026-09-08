@@ -109,3 +109,27 @@ Production-side physical extension rows remain unchanged. A price-adjusted
 `MrioExtensionYearState` therefore recomputes its direct coefficient `q=F/x`
 against the revalued monetary output while preserving the source physical `F`
 values and units.
+
+<!-- ecolecon-valued-primitive-loader -->
+## Selective valued primitive accounts
+
+`load_mrio_iot_matrices(...)` remains the raw provider/source-account API and never
+changes valuation. EXIOBASE callers that need only selected monetary primitives in
+the common-EUR sensitivity use
+`load_exiobase3_iot_matrices_in_price_basis(...)`. The latter preserves selective
+`Z`/`x`/`Y` loading and the source-ZIP-only cache policy, but centralizes the
+optional row revaluation before any caller derives coefficients or aggregates final
+demand categories.
+
+This distinction is required for analyses that need the full final-demand matrix
+`Y` (for example consumption/GFCF versus inventories/valuables partitions) and for
+x-only historical stages: neither should reconstruct price factors downstream or
+load a full SDA state merely to obtain one primitive account. `load_mrio_year_state`
+therefore reuses the valued primitive helper for `Z/x/Y` and derives `A/y` only from
+its returned accounts.
+
+Extension SDA pair results preserve the checked `valuation_basis` and
+`price_base_year` in result metadata. Physical production extension `F` remains
+untransformed; only its direct intensity changes through the selected monetary
+`x` denominator.
+<!-- /ecolecon-valued-primitive-loader -->

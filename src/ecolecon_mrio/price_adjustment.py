@@ -167,7 +167,9 @@ def adjust_mrio_iot_prices(
                 raise ValueError("x contains non-finite or non-numeric values")
             if bool((numeric_values < 0.0).any()):
                 raise ValueError("x must be non-negative")
-            adjusted[name] = numeric.mul(factors)
+            scaled_x = numeric.mul(factors)
+            scaled_x.name = value.name
+            adjusted[name] = scaled_x
         elif name == "Z":
             if issparse(value):
                 matrix = _scale_sparse_rows(value, factors=factor_values, expected_rows=len(index), name="Z")

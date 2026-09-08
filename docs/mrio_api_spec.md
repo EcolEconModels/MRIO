@@ -744,6 +744,27 @@ that same year-state loader but never transforms physical `F`; direct extension
 intensity is recomputed as physical `F` divided by the selected monetary `x`.
 <!-- /ecolecon-exiobase-eur-price-factors -->
 
+<!-- ecolecon-valued-primitive-loader -->
+### Selective valued primitive EXIOBASE accounts
+
+`load_exiobase3_iot_matrices_in_price_basis(...)` is the shared selective monetary
+boundary for analyses that need primitive `x`, `Y`, or `Z` rather than a compact
+SDA state. With `price_base_year=None` it delegates unchanged to the canonical raw
+EXIOBASE `load_mrio_iot_matrices(...)` source-account loader and records
+`valuation_basis=current_price`. With a base year it builds the same audited
+country-GDP/common-EUR factors used by `load_mrio_year_state(...)`, requires their
+runtime region labels to match the loaded MRIO basis exactly, expands them over the
+producer rows, and applies `adjust_mrio_iot_prices(...)` only to the requested
+primitive accounts.
+
+The helper does not derive `A`, sum final demand to `y`, load physical extensions,
+or create a derived MRIO matrix cache. This makes x-only historical projections and Y-category
+analyses use the same valuation owner as SDA while preserving the source-ZIP-only,
+selective low-memory contract. `load_mrio_year_state(...)` composes this helper for
+`Z/x/Y` and derives `A` and non-export `y` afterward; it no longer implements a
+parallel factor-construction/row-scaling path.
+<!-- /ecolecon-valued-primitive-loader -->
+
 ## Price-factor mapping data contract
 
 Scientific geography and source-selection facts for macro price factors are mapping

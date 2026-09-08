@@ -524,7 +524,7 @@ def _compute_extension_sda_pair_result_from_intensity_states(
     _emit(progress, f"validate MRIO and extension intensity states for {start.year}-{end.year}")
     if not start.index.equals(end.index):
         raise ValueError("MRIO year-state indexes do not match")
-    _require_same_mrio_year_state_valuation(start, end)
+    valuation_basis, price_base_year = _require_same_mrio_year_state_valuation(start, end)
     idx = require_region_sector_multiindex(start.index)
     require_same_unit_string(start.monetary_unit, end.monetary_unit, context="MRIO year-state monetary units")
     _validate_loaded_intensity_state(mrio_state=start, intensity_state=start_state, index=idx, name="start intensity state")
@@ -670,6 +670,8 @@ def _compute_extension_sda_pair_result_from_intensity_states(
             "cache_policy": "source_zip_only",
             "reject_all_zero": {"start": start_reject_all_zero, "end": end_reject_all_zero},
             "intensity_state_source": "precomputed_extension_intensity_states",
+            "valuation_basis": valuation_basis,
+            "price_base_year": price_base_year,
             "reconstruction": {
                 "leontief_extension_delta": "sda_intensity_delta + sda_structure_delta + sda_demand_delta + sda_residual",
                 "stabilized_extension_delta": "leontief_extension_delta + reported_x_identity_gap_delta",

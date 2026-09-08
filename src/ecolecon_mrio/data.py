@@ -1076,3 +1076,113 @@ def load_mrio_iot_matrices(
         "index_columns": ["region", "sector"],
     }
     return result, basis, metadata
+
+
+def load_exiobase3_iot_matrices_in_price_basis(
+    year: int,
+    *,
+    matrices: Sequence[str],
+    price_base_year: int | None = None,
+    force_download: bool = False,
+    data_root: str | Path | None = None,
+    verbose: bool = False,
+    allow_download_missing: bool = True,
+    resume_downloads: bool = True,
+    show_download_progress: bool = True,
+    download_chunk_mb: int = 1,
+    download_timeout_seconds: float | None = None,
+    download_retries: int = 3,
+    doi: str | None = None,
+    exio_system: str = "pxp",
+    price_factor_storage_folder: str | Path | None = None,
+    price_factor_force_download: bool = False,
+    price_factor_timeout_s: int = 120,
+) -> tuple[dict[str, csr_matrix | pd.Series | pd.DataFrame], pd.MultiIndex, dict[str, Any]]:
+    """Load selective EXIOBASE3 primitives in current prices or one common-EUR basis.
+
+    ``price_base_year=None`` is a selective pass-through to the canonical raw
+    ``load_mrio_iot_matrices`` EXIOBASE source-account boundary. Supplying a base
+    year builds the audited 49-region country-GDP/common-EUR factors and applies
+    the existing row transformation only to the requested primitive ``Z``/``x``/``Y``
+    accounts. Derived ``A``/``y`` and physical extensions remain outside this API.
+    """
+
+    requested = _normalize_iot_matrix_requests(matrices)
+    doi_value = (
+        DEFAULT_EXIOBASE3_DOI
+        if doi is None or not str(doi).strip()
+        else str(doi).strip()
+    )
+    loaded, basis, metadata = load_mrio_iot_matrices(
+        "exiobase",
+        int(year),
+        matrices=requested,
+        force_download=bool(force_download),
+        data_root=data_root,
+        verbose=bool(verbose),
+        allow_download_missing=bool(allow_download_missing),
+        resume_downloads=bool(resume_downloads),
+        show_download_progress=bool(show_download_progress),
+        download_chunk_mb=int(download_chunk_mb),
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=int(download_retries),
+        doi=doi_value,
+        exio_system=str(exio_system),
+    )
+    valuation_metadata: dict[str, Any] = dict(metadata or {})
+    if price_base_year is None:
+        valuation_metadata.update(
+            {"valuation_basis": "current_price", "price_base_year": None}
+        )
+        return loaded, basis, valuation_metadata
+
+    from ecolecon_mrio.exiobase_price_factors import build_exiobase3_eur_price_factors
+    from ecolecon_mrio.price_adjustment import adjust_mrio_iot_prices, expand_region_price_factors
+
+    factor_table, factor_metadata = build_exiobase3_eur_price_factors(
+        years=[int(year)],
+        base_year=int(price_base_year),
+        storage_folder=price_factor_storage_folder,
+        force_download=bool(price_factor_force_download),
+        timeout_s=int(price_factor_timeout_s),
+    )
+    selected = factor_table.loc[
+        factor_table["year"].astype(int).eq(int(year)),
+        ["exio_region", "price_adjustment_factor"],
+    ].copy()
+    if selected.empty or bool(selected["exio_region"].duplicated().any()):
+        raise ValueError(
+            f"EXIOBASE price-factor table must contain one unique region factor for year {year}"
+        )
+    region_factors = selected.set_index("exio_region")["price_adjustment_factor"].astype(float)
+    basis_regions = {str(region) for region in basis.get_level_values("region")}
+    factor_regions = {str(region) for region in region_factors.index}
+    if factor_regions != basis_regions:
+        raise ValueError(
+            "EXIOBASE price-factor regions must exactly match the loaded MRIO region basis; "
+            f"missing={sorted(basis_regions - factor_regions)}, "
+            f"extra={sorted(factor_regions - basis_regions)}"
+        )
+    row_factors = expand_region_price_factors(basis, region_factors)
+    adjusted = cast(
+        dict[str, csr_matrix | pd.Series | pd.DataFrame],
+        adjust_mrio_iot_prices(
+            loaded,
+            basis_index=basis,
+            row_factors=row_factors,
+        ),
+    )
+    _validate_requested_iot_primitives(
+        adjusted,
+        basis,
+        context="exiobase_common_eur",
+    )
+    valuation_metadata.update(
+        {
+            "valuation_basis": "country_gdp_deflator_common_eur",
+            "price_base_year": int(price_base_year),
+            "price_factor_metadata": factor_metadata,
+            "price_factor_table_sha256": factor_metadata.get("factor_table_sha256"),
+        }
+    )
+    return adjusted, basis, valuation_metadata

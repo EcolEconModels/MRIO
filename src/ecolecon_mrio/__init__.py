@@ -12,6 +12,7 @@ from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import (
     load_mrio,
     load_mrio_iot_matrices,
+    load_exiobase3_iot_matrices_in_price_basis,
     derive_A_from_Z_and_x,
     derive_nonexport_final_demand_from_Y,
     ensure_exiobase_year_zip,
@@ -190,6 +191,7 @@ from .energy_balance_pxp import (
 __all__ = [
     "load_mrio",
     "load_mrio_iot_matrices",
+    "load_exiobase3_iot_matrices_in_price_basis",
     "derive_A_from_Z_and_x",
     "derive_nonexport_final_demand_from_Y",
     "ensure_exiobase_year_zip",

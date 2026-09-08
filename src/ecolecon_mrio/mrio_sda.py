@@ -439,77 +439,40 @@ def _load_sda_year_matrices(
     price_factor_force_download: bool = False,
     price_factor_timeout_s: int = 120,
 ) -> tuple[csr_matrix, pd.Series, pd.Series, pd.MultiIndex, dict[str, Any]]:
-    """Load primitive EXIOBASE accounts, optionally revalue them, then derive A/y."""
+    """Load one valued primitive EXIOBASE state, then derive strict sparse A/y."""
 
     from ecolecon_mrio.data import (
         derive_A_from_Z_and_x,
         derive_nonexport_final_demand_from_Y,
-        load_mrio_iot_matrices,
+        load_exiobase3_iot_matrices_in_price_basis,
     )
-    from ecolecon_mrio.price_adjustment import adjust_mrio_iot_prices, expand_region_price_factors
 
-    load_kwargs: dict[str, Any] = {
-        "data_root": data_root,
-        "allow_download_missing": bool(allow_download_missing),
-        "force_download": bool(force_download),
-        "exio_system": str(system),
-        "verbose": bool(verbose),
-        "resume_downloads": bool(resume_downloads),
-        "show_download_progress": bool(show_download_progress),
-        "download_chunk_mb": int(download_chunk_mb),
-        "download_timeout_seconds": download_timeout_seconds,
-        "download_retries": int(download_retries),
-    }
-    if doi is not None and str(doi).strip():
-        load_kwargs["doi"] = str(doi).strip()
-    matrices, index, metadata = load_mrio_iot_matrices(
-        "exiobase", int(year), matrices=("Z", "x", "Y"), **load_kwargs
+    matrices, index, metadata = load_exiobase3_iot_matrices_in_price_basis(
+        int(year),
+        matrices=("Z", "x", "Y"),
+        price_base_year=None if price_base_year is None else int(price_base_year),
+        force_download=bool(force_download),
+        data_root=data_root,
+        verbose=bool(verbose),
+        allow_download_missing=bool(allow_download_missing),
+        resume_downloads=bool(resume_downloads),
+        show_download_progress=bool(show_download_progress),
+        download_chunk_mb=int(download_chunk_mb),
+        download_timeout_seconds=download_timeout_seconds,
+        download_retries=int(download_retries),
+        doi=doi,
+        exio_system=str(system),
+        price_factor_storage_folder=price_factor_storage_folder,
+        price_factor_force_download=bool(price_factor_force_download),
+        price_factor_timeout_s=int(price_factor_timeout_s),
     )
     idx = require_region_sector_multiindex(index)
     Z = cast(csr_matrix, matrices["Z"])
     x = cast(pd.Series, matrices["x"])
     Y = cast(pd.DataFrame, matrices["Y"])
-    state_metadata: dict[str, Any] = dict(metadata or {})
 
-    if price_base_year is None:
-        state_metadata.update({"valuation_basis": "current_price", "price_base_year": None})
-    else:
-        from ecolecon_mrio.exiobase_price_factors import build_exiobase3_eur_price_factors
-
-        factor_table, factor_metadata = build_exiobase3_eur_price_factors(
-            years=[int(year)],
-            base_year=int(price_base_year),
-            storage_folder=price_factor_storage_folder,
-            force_download=bool(price_factor_force_download),
-            timeout_s=int(price_factor_timeout_s),
-        )
-        selected = factor_table.loc[
-            factor_table["year"].astype(int).eq(int(year)),
-            ["exio_region", "price_adjustment_factor"],
-        ]
-        if len(selected) != 49 or selected["exio_region"].nunique() != 49:
-            raise ValueError(f"Expected 49 EXIOBASE price factors for year {year}, got {len(selected)}")
-        region_factors = selected.set_index("exio_region")["price_adjustment_factor"].astype(float)
-        row_factors = expand_region_price_factors(idx, region_factors)
-        adjusted = adjust_mrio_iot_prices(
-            {"Z": Z, "x": x, "Y": Y},
-            basis_index=idx,
-            row_factors=row_factors,
-        )
-        Z = cast(csr_matrix, adjusted["Z"])
-        x = cast(pd.Series, adjusted["x"])
-        Y = cast(pd.DataFrame, adjusted["Y"])
-        state_metadata.update(
-            {
-                "valuation_basis": "country_gdp_deflator_common_eur",
-                "price_base_year": int(price_base_year),
-                "price_factor_metadata": factor_metadata,
-                "price_factor_table_sha256": factor_metadata.get("factor_table_sha256"),
-            }
-        )
-
-    # Ordering invariant: derive coefficients and non-export demand only after any
-    # primitive monetary row scaling. Physical extension rows are not handled here.
+    # Ordering invariant: the primitive loader owns any monetary row revaluation;
+    # coefficients and non-export demand are derived only from its returned basis.
     A = derive_A_from_Z_and_x(Z, x, basis_index=idx, copy=False)
     y = derive_nonexport_final_demand_from_Y(Y)
     return (
@@ -517,7 +480,7 @@ def _load_sda_year_matrices(
         _strict_float_series(x, index=idx, name=f"x_{int(year)}"),
         _strict_float_series(y, index=idx, name=f"y_{int(year)}"),
         idx,
-        state_metadata,
+        dict(metadata or {}),
     )
 
 
