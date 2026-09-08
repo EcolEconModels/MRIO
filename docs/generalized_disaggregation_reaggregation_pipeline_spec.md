@@ -880,6 +880,17 @@ when present, SHA-256 digests for the region-scope, split, and EXIO-to-Eurostat 
 CSVs. The configured DOI remains a source locator rather than byte-level provenance.
 Aggregate exports exclude intra-scope trade.
 
+Production environmental retargeting preserves the same donor-support state machine as
+the underlying EXIO extension method. A finite production ``F`` numerator at zero mapped
+donor output is valid donor provenance with an undefined coefficient. If authoritative
+target DOM output is also zero, the model-facing target ``value`` and ``intensity`` are
+missing, not zero; if target output is positive, the run fails for missing donor support.
+Only a defined donor coefficient applied to zero target output creates an observed
+``value=0`` target estimate. Subsequent environmental reaggregation excludes unavailable
+zero-output children while still requiring complete support from every positive-output
+source contributing to a represented aggregate target. The IMP signed-denominator and
+``F_Y`` contracts remain separate and unchanged.
+
 <!-- ecolecon-environmental-support-census-workflow -->
 ## Non-fail-fast environmental support audit
 

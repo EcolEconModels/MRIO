@@ -742,14 +742,22 @@ before an intensity is derived. For production ``F``, the extensive numerator an
 EXIO monetary denominator are projected through \(P\) before division. A nonzero raw
 ``F`` observation with zero raw sector output is therefore retained as donor evidence,
 while its raw intensity is undefined. It fails only if a required positive-output split
-child has no positive mapped donor denominator. For direct final-demand ``F_Y``, the
-category coefficient is reported without sector projection, so a nonzero physical
-observation with zero category monetary denominator is inconsistent and must fail. At
-projection, every positive-output split child whose coefficient is used must have
-usable donor support. At reaggregation, each supported extension/stressor/unit must
-cover every positive-output source sector contributing to each aggregate target it
-represents. This target-local closure prevents a partial physical numerator from
-being divided by the full canonical monetary-output denominator.
+child has no positive mapped donor denominator. The target-side availability state is
+therefore explicit: a defined mapped coefficient applied to zero target output gives
+``value=0`` and missing intensity; an undefined mapped coefficient with zero target
+output gives missing ``value`` and intensity rather than a fabricated physical zero;
+and an undefined mapped coefficient with positive target output is a fail-closed donor-
+support error. The raw/mapped physical numerator remains donor provenance in the
+undefined-coefficient cases and is never overwritten merely to create a target ratio.
+For direct final-demand ``F_Y``, the category coefficient is reported without sector
+projection, so a nonzero physical observation with zero category monetary denominator
+is inconsistent and must fail. At projection, every positive-output split child whose
+coefficient is used must have usable donor support. At reaggregation, each supported
+extension/stressor/unit must cover every positive-output source sector contributing to
+each aggregate target it represents. Zero-output unavailable children do not enter the
+physical sum and do not poison a supported positive-output counterpart. This target-
+local closure prevents a partial physical numerator from being divided by the full
+canonical monetary-output denominator.
 
 Scientific availability and the final model sector axis are separate contracts.
 Unsplit target sectors are singleton sectors and retain their identity. A sparse

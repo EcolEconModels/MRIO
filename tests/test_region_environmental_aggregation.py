@@ -81,6 +81,86 @@ def test_scope_production_sums_extensive_accounts_before_projection_and_division
     np.testing.assert_allclose(out["intensity"], [22.0 / 140.0, 8.0 / 60.0])
 
 
+def test_zero_output_production_donor_survives_retarget_and_reaggregation() -> None:
+    """Zero-output donor evidence stays unavailable unless a coefficient exists."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+    from ecolecon_mrio.region_aggregation import (
+        _environmental_account_to_split_sidecar,
+        _retarget_direct_environmental_account,
+    )
+
+    basis = pd.MultiIndex.from_product(
+        [("AT",), ("k1", "k2")], names=["region", "sector"]
+    )
+    F = pd.Series([2.0, 8.0], index=basis, dtype="float64")
+    x = pd.Series([0.0, 10.0], index=basis, dtype="float64")
+    projection = pd.DataFrame(
+        [[1.0, 0.0], [0.0, 1.0]],
+        index=pd.Index(["a", "b"]),
+        columns=pd.Index(["k1", "k2"]),
+        dtype="float64",
+    )
+
+    donor = aggregate_scope_production_extension(
+        F,
+        x,
+        scope=RegionScope(code="AT", members=("AT",)),
+        extension="air",
+        stressor="CH4",
+        unit="kg",
+        product_projection=projection,
+    ).set_index("axis_label")
+    assert float(donor.loc["a", "value"]) == 2.0
+    assert float(donor.loc["a", "monetary_denominator"]) == 0.0
+    assert pd.isna(donor.loc["a", "intensity"])
+    assert float(donor.loc["b", "intensity"]) == pytest.approx(0.8)
+
+    target = _retarget_direct_environmental_account(
+        donor.reset_index().loc[:, ACCOUNT_COLUMNS],
+        target_denominator=pd.Series([0.0, 20.0], index=["a", "b"]),
+        boundary="scope_production",
+        denominator_role="target_domestic_output",
+    )
+    target_by_sector = target.set_index("axis_label")
+    assert pd.isna(target_by_sector.loc["a", "value"])
+    assert pd.isna(target_by_sector.loc["a", "intensity"])
+    assert float(target_by_sector.loc["a", "monetary_denominator"]) == 0.0
+    assert float(target_by_sector.loc["b", "value"]) == pytest.approx(16.0)
+    assert float(target_by_sector.loc["b", "intensity"]) == pytest.approx(0.8)
+
+    zero_target = _retarget_direct_environmental_account(
+        donor.reset_index().loc[:, ACCOUNT_COLUMNS],
+        target_denominator=pd.Series([0.0, 0.0], index=["a", "b"]),
+        boundary="scope_production",
+        denominator_role="target_domestic_output",
+    ).set_index("axis_label")
+    assert pd.isna(zero_target.loc["a", "value"])
+    assert float(zero_target.loc["b", "value"]) == 0.0
+    assert pd.isna(zero_target.loc["b", "intensity"])
+
+    with pytest.raises(
+        ValueError, match="Positive target domestic output requires a defined mapped production donor coefficient"
+    ):
+        _retarget_direct_environmental_account(
+            donor.reset_index().loc[:, ACCOUNT_COLUMNS],
+            target_denominator=pd.Series([5.0, 20.0], index=["a", "b"]),
+            boundary="scope_production",
+            denominator_role="target_domestic_output",
+        )
+
+    sidecar = _environmental_account_to_split_sidecar(target)
+    aggregated = aggregate_environmental_extensions(
+        sidecar,
+        {"a": "parent", "b": "parent"},
+        output=pd.Series([0.0, 20.0], index=["a", "b"], dtype="float64"),
+    )
+    assert aggregated is not None
+    parent = aggregated.set_index("sector").loc["parent"]
+    assert float(parent["value"]) == pytest.approx(16.0)
+    assert float(parent["monetary_output"]) == pytest.approx(20.0)
+    assert float(parent["intensity"]) == pytest.approx(0.8)
+
+
 def test_projection_must_be_complete_nonnegative_partition() -> None:
     F, x = _production_vectors()
     bad = _projection()
@@ -436,7 +516,7 @@ def test_public_total_supply_propagates_unavailable_positive_import_evidence() -
     assert float(row_b["intensity"]) == 1.75
 
 
-def test_public_environmental_account_rejects_infinite_zero_denominator_intensity() -> None:
+def test_public_environmental_account_rejects_infinite_intensity_but_preserves_zero_output_donor() -> None:
     production = pd.DataFrame(
         {
             "axis_position": [1],
@@ -466,14 +546,27 @@ def test_public_environmental_account_rejects_infinite_zero_denominator_intensit
 
     production["intensity"] = np.nan
     production["value"] = 1.0
-    with pytest.raises(ValueError, match="nonzero physical value at zero monetary denominator"):
-        combine_total_supply_extension_direct(
-            production_account=production,
-            import_account=imports,
-            target_domestic_output=pd.Series([0.0], index=["a"]),
-            target_import_supply=pd.Series([0.0], index=["a"]),
-            target_total_supply=pd.Series([0.0], index=["a"]),
-        )
+    unavailable = combine_total_supply_extension_direct(
+        production_account=production,
+        import_account=imports,
+        target_domestic_output=pd.Series([0.0], index=["a"]),
+        target_import_supply=pd.Series([0.0], index=["a"]),
+        target_total_supply=pd.Series([0.0], index=["a"]),
+    ).iloc[0]
+    assert float(unavailable["monetary_denominator"]) == 0.0
+    assert pd.isna(unavailable["value"])
+    assert pd.isna(unavailable["intensity"])
+
+    imports.loc[0, ["value", "monetary_denominator", "intensity"]] = [5.0, 10.0, 0.5]
+    import_only = combine_total_supply_extension_direct(
+        production_account=production,
+        import_account=imports,
+        target_domestic_output=pd.Series([0.0], index=["a"]),
+        target_import_supply=pd.Series([20.0], index=["a"]),
+        target_total_supply=pd.Series([20.0], index=["a"]),
+    ).iloc[0]
+    assert float(import_only["value"]) == pytest.approx(10.0)
+    assert float(import_only["intensity"]) == pytest.approx(0.5)
 
 def test_retarget_direct_environmental_account_accepts_signed_import_use() -> None:
     from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account
@@ -505,6 +598,15 @@ def test_retarget_direct_environmental_account_accepts_signed_import_use() -> No
     ).iloc[0]
     assert float(unavailable["monetary_denominator"]) == 20.0
     assert pd.isna(unavailable["value"]) and pd.isna(unavailable["intensity"])
+
+    unavailable_zero_mass = _retarget_direct_environmental_account(
+        donor, target_denominator=pd.Series([0.0], index=["a"]),
+        boundary="external_imports_direct", denominator_role="target_import_use",
+        allow_signed_denominator=True,
+    ).iloc[0]
+    assert float(unavailable_zero_mass["monetary_denominator"]) == 0.0
+    assert pd.isna(unavailable_zero_mass["value"])
+    assert pd.isna(unavailable_zero_mass["intensity"])
 
 def test_public_total_combiner_accepts_signed_target_import_use() -> None:
     production = pd.DataFrame(

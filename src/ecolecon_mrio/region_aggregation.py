@@ -936,6 +936,22 @@ def aggregate_scope_final_demand_extension(
     )
 
 
+def _environmental_donor_allows_zero_denominator_value(
+    *, boundary: str, denominator_role: str
+) -> bool:
+    """Return whether finite donor F may coexist with a zero monetary denominator.
+
+    Production F/x and signed external-import direct accounts are extensive donor
+    evidence.  Their numerator remains valid when the coefficient is undefined at
+    zero denominator; target retargeting decides whether that missing coefficient is
+    harmless zero-mass evidence or a positive-mass support failure.
+    """
+    return (boundary, denominator_role) in {
+        ("scope_production", "scope_production_output"),
+        ("external_imports_direct", "scope_external_import_use"),
+    }
+
+
 def _validated_environmental_account_group(
     account: pd.DataFrame,
     *,
@@ -1131,12 +1147,19 @@ def combine_total_supply_extension_direct(
         production_account,
         expected_boundary="scope_production",
         expected_denominator_role="scope_production_output",
+        allow_zero_denominator_nonzero_value=_environmental_donor_allows_zero_denominator_value(
+            boundary="scope_production",
+            denominator_role="scope_production_output",
+        ),
     )
     imp_labels, imp_values, imp_den, imp_identity = _validated_environmental_account_group(
         import_account,
         expected_boundary="external_imports_direct",
         expected_denominator_role="scope_external_import_use",
-        allow_zero_denominator_nonzero_value=True,
+        allow_zero_denominator_nonzero_value=_environmental_donor_allows_zero_denominator_value(
+            boundary="external_imports_direct",
+            denominator_role="scope_external_import_use",
+        ),
     )
     if imp_labels != prod_labels:
         raise ValueError("Production and import environmental accounts must use the same target-product axis.")
@@ -1397,11 +1420,15 @@ def _retarget_direct_environmental_account(
     denominator_role: str,
     allow_signed_denominator: bool = False,
 ) -> pd.DataFrame:
+    source_boundary = str(account["boundary"].iloc[0])
+    source_denominator_role = str(account["denominator_role"].iloc[0])
     labels, _values, _denominator, identity = _validated_environmental_account_group(
         account,
-        expected_boundary=str(account["boundary"].iloc[0]),
-        expected_denominator_role=str(account["denominator_role"].iloc[0]),
-        allow_zero_denominator_nonzero_value=denominator_role == "target_import_use",
+        expected_boundary=source_boundary,
+        expected_denominator_role=source_denominator_role,
+        allow_zero_denominator_nonzero_value=_environmental_donor_allows_zero_denominator_value(
+            boundary=source_boundary, denominator_role=source_denominator_role
+        ),
     )
     target = cast(pd.Series, target_denominator.copy().astype("float64"))
     target.index = pd.Index([str(v) for v in target.index])
@@ -1422,11 +1449,29 @@ def _retarget_direct_environmental_account(
         pd.to_numeric(account["intensity"], errors="coerce"),
     ).to_numpy(dtype="float64")
     target_values = target.to_numpy(dtype="float64")
-    # A donor coefficient may be undefined even when the authoritative target
-    # monetary control is nonzero. Preserve the signed use denominator and propagate
-    # unavailable evidence rather than silently replacing it with physical zero.
-    active = target_values != 0.0 if allow_signed else target_values > 0.0
-    physical = np.where(active, coeff * target_values, 0.0)
+    coefficient_available = np.isfinite(coeff)
+
+    # Scope-production donor F is extensive evidence even when mapped donor output
+    # is zero.  The coefficient is then unavailable.  A positive domestic target
+    # output genuinely requires that coefficient and remains fail-closed; a zero-mass
+    # target keeps value/intensity unavailable rather than fabricating physical zero.
+    if denominator_role == "target_domestic_output":
+        unsupported_positive = (target_values > 0.0) & ~coefficient_available
+        if bool(unsupported_positive.any()):
+            bad = [labels[pos] for pos in np.flatnonzero(unsupported_positive)[:10]]
+            raise ValueError(
+                "Positive target domestic output requires a defined mapped production "
+                f"donor coefficient: sectors={bad!r}."
+            )
+
+    # A supported coefficient applied to zero target mass is an actual physical zero.
+    # An unavailable coefficient remains unavailable even when target mass is zero.
+    # Signed import targets retain the same state distinction without turning a
+    # missing coefficient into a domestic or zero proxy.
+    physical = np.full(len(labels), np.nan, dtype="float64")
+    physical[coefficient_available] = (
+        coeff[coefficient_available] * target_values[coefficient_available]
+    )
     extension, stressor, unit = identity
     return _environmental_account_frame(
         axis_labels=labels,
