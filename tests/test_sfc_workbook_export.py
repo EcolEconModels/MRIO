@@ -307,11 +307,11 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
         ],
         index=[
             "D21X31",
-            "Value added, gross",
-            "Output",
-            "Total intermediate consumption /final use",
-            "Imports of goods and services",
-            "Total supply at basic prices",
+            "B1G",
+            "P1",
+            "P2_ADJ",
+            "P7",
+            "TS_BP",
         ],
         columns=z_after.columns,
     )
@@ -321,7 +321,7 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
             [999.0, 999.0, 999.0, 999.0, 999.0],
             [float("nan")] * 5,
         ],
-        index=["D21X31", "Total intermediate consumption /final use", "Imports of goods and services"],
+        index=["D21X31", "P2_ADJ", "P7"],
         columns=["P3", "P5", "P6", "TU", "TFU"],
     )
 
@@ -692,7 +692,7 @@ def test_sfc_layout_template_sentinels_cannot_affect_generated_output(
     normal=tmp_path/"normal.xlsx"; sentinel=tmp_path/"sentinel.xlsx"
     _build_template(normal,product_labels=labels); _build_template(sentinel,product_labels=labels)
     wb=load_workbook(sentinel); ws=wb["Sheet 1"]
-    ws["A1"]="STALE AUSTRIA TEMPLATE"; ws["B1"]=2021
+    ws["A1"]="STALE AUSTRIA TEMPLATE"; ws["B1"]=2021; ws["A2"]="=1+2"
     for row in ws.iter_rows():
         for cell in row:
             if isinstance(cell.value,(int,float)): cell.value=9.87654321e123
@@ -722,6 +722,7 @@ def test_sfc_layout_template_sentinels_cannot_affect_generated_output(
     bv=[[c.value for c in row] for row in b["Sheet 1"].iter_rows()]
     assert av == bv
     assert b["Sheet 1"]["A1"].value is None and b["Sheet 1"]["B1"].value is None
+    assert b["Sheet 1"]["A2"].value is None
     summary=b["Summary"]
     md={str(summary.cell(r,1).value):summary.cell(r,2).value for r in range(2,summary.max_row+1)}
     assert md["Dataset"] == "naio_10_cp1700"
@@ -730,6 +731,131 @@ def test_sfc_layout_template_sentinels_cannot_affect_generated_output(
     assert md["Stock or flow"] == "TOTAL"
     assert "no template numerical evidence" in str(md["Template contract"])
     a.close(); b.close()
+
+
+
+def test_historical_layout_cannot_define_current_product_schema_or_csv_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Workbook toggle and stale Austria product labels cannot alter current CSV outputs."""
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template = tmp_path / "austria_layout.xlsx"
+    _build_template(
+        template,
+        product_labels=(
+            "Food, beverages and tobacco products",
+            "Imputed rents of owner-occupied dwellings",
+        ),
+    )
+    parsed, z_before, y_before, _, _, _ = _build_lineage_toy_case()
+    parsed = replace(parsed, V=None, M=None)
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+
+    indir = tmp_path / "input"
+    indir.mkdir()
+    z_before.to_csv(indir / "Z_split.csv")
+    y_before.to_csv(indir / "Y_split.csv")
+    flow_use_total(z_before, y_before).rename("x").to_csv(indir / "x_split.csv")
+
+    mapping_csv = tmp_path / "mapping.csv"
+    pd.DataFrame(
+        {
+            "mapping_set": ["test", "test", "test"],
+            "source_code": ["p15.j", "p16", "p24.g"],
+            "target_code": [
+                "CPA_C10-12_FOOD_AND_BEVERAGES",
+                "CPA_C10-12_TOBACCO_PRODUCTS",
+                "CPA_C20_BIOGASOLINE",
+            ],
+            "source_parent_code": ["CPA_C10-12", "CPA_C10-12", "CPA_C20"],
+            "enabled": [True, True, True],
+            "notes": ["", "", ""],
+        }
+    ).to_csv(mapping_csv, index=False)
+
+    filters = '{"geo":"EU27_2020","time":"2021","freq":"A","unit":"MIO_EUR","stk_flow":"TOTAL"}'
+    common = [
+        "--indir", str(indir),
+        "--mapping-csv", str(mapping_csv),
+        "--no-xlsx",
+        "--eurostat-dataset", "naio_10_cp1700",
+        "--eurostat-filters", filters,
+        "--eurostat-row-dim", "prd_ava",
+        "--eurostat-col-dim", "prd_use",
+    ]
+    without_workbook = tmp_path / "without_workbook"
+    with_workbook = tmp_path / "with_workbook"
+    assert mod.main([*common, "--outdir", str(without_workbook)]) == 0
+    assert mod.main(
+        [
+            *common,
+            "--outdir", str(with_workbook),
+            "--write-sfc-workbook",
+            "--sfc-template-xlsx", str(template),
+            "--sfc-outname", "presentation.xlsx",
+        ]
+    ) == 0
+
+    off_csv = sorted(path.name for path in without_workbook.glob("*.csv"))
+    on_csv = sorted(path.name for path in with_workbook.glob("*.csv"))
+    assert off_csv == on_csv
+    assert "sector_contract.csv" in off_csv
+    assert "source_sector_contract.csv" not in off_csv
+    for name in off_csv:
+        assert (without_workbook / name).read_bytes() == (with_workbook / name).read_bytes()
+    assert (with_workbook / "presentation.xlsx").is_file()
+
+
+
+def test_sfc_supplementary_alignment_rejects_template_label_as_code_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A presentation label must not repair a transformed V row-code mismatch."""
+    import ecolecon_mrio.eurostat_iot as eurostat_iot
+    from scripts import aggregate_iot_by_mapping as mod
+
+    template = tmp_path / "template.xlsx"
+    _build_template(
+        template,
+        product_labels=(
+            "Food, beverages and tobacco products",
+            "Chemicals and chemical products",
+        ),
+    )
+    parsed, z_before, y_before, z_after, y_after, mapping_df = _build_lineage_toy_case()
+    monkeypatch.setattr(eurostat_iot, "load_eurostat_iot", lambda **_: parsed)
+    monkeypatch.setattr(mod, "_write_excel_mapping_sheet", lambda *args, **kwargs: None)
+    v_after, m_after = _matching_transformed_supplementary(parsed, z_after.columns)
+    v_after = v_after.rename(index={"D21X31": "Taxes less subsidies on products"})
+
+    with pytest.raises(
+        ValueError, match="Transformed V is missing source supplementary row 'D21X31'"
+    ):
+        mod._write_sfc_workbook(
+            out_path=tmp_path / "bad.xlsx",
+            template_xlsx=template,
+            eurostat_dataset="naio_10_cp1700",
+            eurostat_filters={"geo": "AT", "time": "2021"},
+            eurostat_row_dim="prd_ava",
+            eurostat_col_dim="prd_use",
+            eurostat_storage_folder=tmp_path,
+            variant_dim="stk_flow",
+            variant_value="TOTAL",
+            Z_before=z_before,
+            Y_before=y_before,
+            Z_after=z_after,
+            Y_after=y_after,
+            V_after=v_after,
+            M_after=m_after,
+            mapping_df=mapping_df,
+            mapping_from_col="from_sector",
+            mapping_to_col="to_sector",
+            verbose=False,
+            output_after=flow_use_total(z_after, y_after),
+        )
 
 
 def test_sfc_workbook_rejects_incomplete_authoritative_output_vector(
@@ -836,7 +962,9 @@ def test_generated_workbook_metadata_is_rebuilt() -> None:
     assert 'ws_sum = wb.create_sheet("Summary")' in text
     assert "numeric primitive cells absent from SDMX" not in text
     assert "template_v_values" not in text and "template_m_values" not in text
-    assert "res = _reorder_aggregation_result(res, official_order)" not in text
+    assert "_reorder_aggregation_result" not in text
+    assert "normalise_supplementary_row_label" not in text
+    assert "template_xlsx=None" in text
     assert "_supplementary_fd_row_from_current_shares" not in text
     assert 'output_after=res.x' in text
 
@@ -881,34 +1009,6 @@ def test_identity_mapping_parent_lineage_keeps_template_alignment() -> None:
     }
 
 
-def test_official_order_applies_to_every_sector_axis_and_metadata() -> None:
-    from ecolecon_mrio.iot_aggregation import AggregationResult
-    from scripts.aggregate_iot_by_mapping import _reorder_aggregation_result
-
-    source_order = pd.Index(["child_b", "child_a"])
-    result = AggregationResult(
-        Z=pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], index=source_order, columns=source_order),
-        Y=pd.DataFrame({"P6": [5.0, 6.0]}, index=source_order),
-        x=pd.Series([7.0, 8.0], index=source_order),
-        A=pd.DataFrame([[0.1, 0.2], [0.3, 0.4]], index=source_order, columns=source_order),
-        V=pd.DataFrame([[9.0, 10.0]], index=["D1"], columns=source_order),
-        M=pd.DataFrame([[11.0]], index=["D1"], columns=["P6"]),
-        aggregated_sector_value_per_physical_input=pd.DataFrame(
-            {"aggregated_sector": ["child_b", "child_a"], "value": [1.0, 2.0]}
-        ),
-    )
-    ordered = _reorder_aggregation_result(result, ["child_a", "child_b"])
-    assert ordered.Z.index.tolist() == ["child_a", "child_b"]
-    assert ordered.Z.columns.tolist() == ["child_a", "child_b"]
-    assert ordered.Y.index.tolist() == ["child_a", "child_b"]
-    assert ordered.x.index.tolist() == ["child_a", "child_b"]
-    assert ordered.A.index.tolist() == ["child_a", "child_b"]
-    assert ordered.A.columns.tolist() == ["child_a", "child_b"]
-    assert ordered.V is not None and ordered.V.columns.tolist() == ["child_a", "child_b"]
-    metadata = ordered.aggregated_sector_value_per_physical_input
-    assert metadata is not None
-    assert metadata["aggregated_sector"].tolist() == ["child_a", "child_b"]
-
 
 def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
     from scripts.aggregate_iot_by_mapping import _missing_sfc_co2_reason
@@ -930,7 +1030,7 @@ def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
 def test_template_alignment_failure_is_independent_of_verbose() -> None:
     from scripts.aggregate_iot_by_mapping import _resolve_product_template_alignment
 
-    with pytest.raises(ValueError, match="Could not resolve official template parents"):
+    with pytest.raises(ValueError, match="Could not resolve current Eurostat parents"):
         _resolve_product_template_alignment(
             template_xlsx=Path("template.xlsx"),
             base_product_codes=["CPA_A"],

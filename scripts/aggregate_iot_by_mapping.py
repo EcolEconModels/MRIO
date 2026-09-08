@@ -6,7 +6,6 @@ from __future__ import annotations
 import copy
 import json
 import time
-from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO, Mapping, Sequence, cast
 
@@ -14,7 +13,6 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.iot_aggregation import (
-    AggregationResult,
     aggregate_environmental_extensions,
     aggregate_iot,
 )
@@ -24,9 +22,6 @@ from ecolecon_mrio.iot_flow_semantics import (
     _normalize_nonnegative_accounting_control,
     atomic_final_demand,
     flow_use_total,
-)
-from ecolecon_mrio.iot_identities import (
-    normalise_supplementary_row_label,
 )
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 
@@ -1248,17 +1243,34 @@ def _codes_for_template_labels(
     return ordered
 
 
+
+def _current_eurostat_product_codes(parsed: ParsedEurostatIOT) -> list[str]:
+    """Return the current parsed Eurostat product axis and verify metadata agrees."""
+    matrix_rows = list(map(str, parsed.Z.index))
+    matrix_columns = list(map(str, parsed.Z.columns))
+    metadata_products = list(
+        map(str, parsed.meta.get("identified_industry_columns", []))
+    )
+    if not metadata_products:
+        raise ValueError("Current Eurostat parse does not expose an identified product domain.")
+    if matrix_rows != matrix_columns or metadata_products != matrix_rows:
+        raise ValueError(
+            "Current Eurostat product domain differs between parsed Z and SDMX metadata."
+        )
+    return matrix_rows
+
 def _official_template_schema(
     template_xlsx: Path | BinaryIO,
     *,
     parsed: ParsedEurostatIOT,
 ) -> tuple[list[str], list[str], list[str]]:
-    """Read display schema from a presentation-only workbook template.
+    """Read current source codes plus presentation-only template row/column slots.
 
-    Only layout, styles and static labels/order are reusable. Numeric cells,
-    formulas, numeric-cell presence, stale geography/year metadata and auxiliary
-    sheets are not scientific evidence and cannot affect canonical CSV outputs.
-    Current SDMX metadata resolves template labels to stable codes.
+    The parsed Eurostat Z axis owns product identity and order. Historical template
+    product labels may describe another geography/schema and therefore cannot
+    select, rename or reject current products. Final-demand and supplementary
+    template labels remain presentation slots, but resolve only to current SDMX
+    codes; numeric cells, formulas and filled/blank state remain non-evidence.
     """
     import openpyxl
 
@@ -1270,30 +1282,12 @@ def _official_template_schema(
     layout = _template_table_layout(worksheet)
     row_labels = parsed.meta.get("dimensions", {}).get(parsed.meta.get("row_dim", "prd_ava"), {})
     col_labels = parsed.meta.get("dimensions", {}).get(parsed.meta.get("col_dim", "prd_use"), {})
-    base_products = list(map(str, parsed.meta.get("identified_industry_columns", [])))
-    if not base_products:
-        workbook.close()
-        raise ValueError("SDMX parse did not expose the product domain needed by the template")
-
-    # Product row and column labels must independently resolve to the same
-    # official parent order before any split children are inserted.
-    product_row_labels = [
-        worksheet.cell(row=row, column=1).value
-        for row in range(int(layout["first_product_row"]), int(layout["last_product_row"]) + 1)
-    ]
-    product_col_labels = [
-        worksheet.cell(row=int(layout["header_row"]), column=column).value
-        for column in range(int(layout["first_product_col"]), int(layout["last_product_col"]) + 1)
-    ]
-    product_rows = _codes_for_template_labels(
-        product_row_labels, candidate_codes=base_products, label_by_code=row_labels, block="product rows",
-    )
-    product_columns = _codes_for_template_labels(
-        product_col_labels, candidate_codes=base_products, label_by_code=row_labels, block="product columns",
-    )
-    if product_rows != product_columns:
-        workbook.close()
-        raise ValueError("Official template product row and column order differs")
+    # Economic product identity/order is current-source evidence, not a historical
+    # workbook property. This is what lets a CPA65 Austria layout safely present
+    # the consolidated CPA64 EU27 source axis without treating stale geography-
+    # specific product labels as schema requirements.
+    product_rows = _current_eurostat_product_codes(parsed)
+    base_products = product_rows
 
     fd_candidates = [
         str(code) for code in parsed.meta.get("identified_final_demand_columns", [])
@@ -1392,7 +1386,7 @@ def _resolve_product_template_alignment(
     mapping_to_col: str = "to_sector",
     verbose: bool,
 ) -> tuple[Path | None, list[str], dict[str, str], dict[str, tuple[str, ...]]]:
-    """Order output products by template parent and mapping-row child order."""
+    """Order output products by current Eurostat parent and mapping-row child order."""
     input_product_order = list(map(str, output_product_codes))
     output_set = set(input_product_order)
     base_codes = [str(code) for code in base_product_codes]
@@ -1426,14 +1420,14 @@ def _resolve_product_template_alignment(
 
     missing = [code for code in input_product_order if code not in parents_by_output]
     if missing:
-        raise ValueError(f"Could not resolve official template parents for output products: {missing!r}")
+        raise ValueError(f"Could not resolve current Eurostat parents for output products: {missing!r}")
     ambiguous = {code: parents for code, parents in parents_by_output.items() if len(parents) != 1}
     if ambiguous:
-        raise ValueError(f"Output products span multiple official template parents: {ambiguous!r}")
+        raise ValueError(f"Output products span multiple current Eurostat parents: {ambiguous!r}")
     primary_parent_by_output = {code: parents[0] for code, parents in parents_by_output.items()}
 
-    # Mapping rows are the authoritative child sequence inside each official
-    # template parent. Unsplit products follow in their original source order.
+    # Mapping rows are the authoritative child sequence inside each current Eurostat
+    # parent. Unsplit products follow in their original source order.
     mapped_child_order: dict[str, list[str]] = {parent: [] for parent in base_codes}
     if mapping_df is not None and mapping_from_col in mapping_df.columns and mapping_to_col in mapping_df.columns:
         for _, row in mapping_df.iterrows():
@@ -1452,54 +1446,8 @@ def _resolve_product_template_alignment(
             if primary_parent_by_output[output_code] == parent and output_code not in product_order:
                 product_order.append(output_code)
     if set(product_order) != output_set or len(product_order) != len(input_product_order):
-        raise ValueError("Template/mapping product ordering lost or duplicated output products")
+        raise ValueError("Current-source/mapping product ordering lost or duplicated output products")
     return template_xlsx, product_order, primary_parent_by_output, parents_by_output
-
-
-def _reorder_sector_metadata(
-    frame: pd.DataFrame | None,
-    product_order: Sequence[str],
-    *,
-    sector_col: str = "aggregated_sector",
-    drop_unemitted: bool = False,
-) -> pd.DataFrame | None:
-    """Stably order long-form sector metadata by the canonical product domain."""
-    if frame is None or sector_col not in frame.columns:
-        return frame
-    order = list(map(str, product_order))
-    ranks = {code: position for position, code in enumerate(order)}
-    out = frame.copy()
-    out["__official_order"] = out[sector_col].astype(str).map(ranks)
-    if drop_unemitted:
-        out = out.loc[out["__official_order"].notna()].copy()
-    if out["__official_order"].isna().any():
-        missing = sorted(
-            out.loc[out["__official_order"].isna(), sector_col].astype(str).unique()
-        )
-        raise ValueError(f"Sector metadata contains products outside official order: {missing!r}")
-    return (
-        out.sort_values("__official_order", kind="stable")
-        .drop(columns="__official_order")
-        .reset_index(drop=True)
-    )
-
-def _reorder_aggregation_result(
-    result: AggregationResult, product_order: Sequence[str]
-) -> AggregationResult:
-    """Apply one canonical product order to every sector-indexed result block."""
-    order = list(map(str, product_order))
-    return replace(
-        result,
-        Z=result.Z.loc[order, order],
-        Y=result.Y.loc[order, :],
-        x=result.x.reindex(order),
-        A=result.A.loc[order, order],
-        V=None if result.V is None else result.V.loc[:, order],
-        aggregated_sector_value_per_physical_input=_reorder_sector_metadata(
-            result.aggregated_sector_value_per_physical_input, order
-        ),
-    )
-
 
 
 
@@ -1670,7 +1618,7 @@ def _write_sector_contract(
     """Write the downstream sector-interface contract for one emitted IO system.
 
     The contract carries only structural identifiers: the canonical output
-    position, the emitted sector, and its pre-split CPA65 parent.  Monetary P1
+    position, the emitted sector, and its current published Eurostat parent. Monetary P1
     remains in the exported workbook so a consumer cannot accidentally pair a
     stale value vector with a newer workbook.
     """
@@ -1678,7 +1626,7 @@ def _write_sector_contract(
     for position, sector_id in enumerate(product_order, start=1):
         parent_id = parent_by_sector.get(str(sector_id))
         if parent_id is None:
-            raise ValueError(f"Sector contract is missing a CPA65 parent for {sector_id!r}.")
+            raise ValueError(f"Sector contract is missing a current Eurostat parent for {sector_id!r}.")
         # CPA product codes are structurally aligned to their NACE letter.
         parts = str(parent_id).split("_", maxsplit=1)
         if len(parts) != 2 or not parts[1] or not parts[1][0].isalpha():
@@ -2049,22 +1997,14 @@ def _write_sfc_workbook(
     lower_row_vectors: dict[str, pd.Series] = {}
     lower_fd_vectors: dict[str, pd.Series] = {}
 
-    def _match_row(frame: pd.DataFrame | None, row_code: str, row_label: str) -> str | None:
+    def _match_row(frame: pd.DataFrame | None, row_code: str) -> str | None:
         if frame is None:
             return None
         index = [str(code) for code in frame.index]
         exact = [code for code in index if code == row_code]
         if len(exact) > 1:
             raise ValueError(f"Ambiguous supplementary row code {row_code!r}")
-        if exact:
-            return exact[0]
-        target = normalise_supplementary_row_label(row_label)
-        label_matches = [code for code in index if normalise_supplementary_row_label(code) == target]
-        if len(label_matches) > 1:
-            raise ValueError(
-                f"Ambiguous supplementary row label for {row_code!r} ({row_label!r}): {label_matches!r}"
-            )
-        return label_matches[0] if label_matches else None
+        return exact[0] if exact else None
 
     flow_role = str(variant_value or "TOTAL").upper()
     if flow_role not in {"DOM", "IMP", "TOTAL"}:
@@ -2123,10 +2063,10 @@ def _write_sfc_workbook(
         if template_row_label is None or not str(template_row_label).strip():
             raise ValueError(f"Official template supplementary label disappeared for {row_code!r}")
         row_label = str(template_row_label).strip()
-        source_v_row = _match_row(parsed_v, row_code, row_label)
-        source_m_row = _match_row(parsed_m, row_code, row_label)
-        output_v_row = _match_row(V_ord, row_code, row_label)
-        output_m_row = _match_row(M_ord, row_code, row_label)
+        source_v_row = _match_row(parsed_v, row_code)
+        source_m_row = _match_row(parsed_m, row_code)
+        output_v_row = _match_row(V_ord, row_code)
+        output_m_row = _match_row(M_ord, row_code)
         # Current SDMX/source policy plus transformed V/M exclusively own
         # applicability. Template filled/blank patterns are not source evidence.
         source_v_applicable = source_v_row is not None
@@ -2589,22 +2529,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         export_context: tuple[Path, dict, str | None] | None = None
         sector_parent_by_output: dict[str, str] | None = None
-        if args.write_sfc_workbook:
-            if not (
-                args.sfc_template_xlsx
-                and args.eurostat_dataset
-                and args.eurostat_filters
-                and args.eurostat_row_dim
-                and args.eurostat_col_dim
-            ):
-                raise SystemExit(
-                    "--write-sfc-workbook requires --sfc-template-xlsx, "
-                    "--eurostat-dataset, --eurostat-filters, --eurostat-row-dim, "
-                    "and --eurostat-col-dim."
-                )
+        source_parent_order: list[str] | None = None
+        source_schema_args = (
+            args.eurostat_dataset,
+            args.eurostat_filters,
+            args.eurostat_row_dim,
+            args.eurostat_col_dim,
+        )
+        if args.write_sfc_workbook and (
+            not args.sfc_template_xlsx or not all(source_schema_args)
+        ):
+            raise SystemExit(
+                "--write-sfc-workbook requires --sfc-template-xlsx, "
+                "--eurostat-dataset, --eurostat-filters, --eurostat-row-dim, "
+                "and --eurostat-col-dim."
+            )
+
+        # Current Eurostat source metadata owns sector lineage independently of the
+        # optional presentation path. Pipeline callers already provide this context
+        # even when XLSX export is disabled, so workbook on/off cannot change the
+        # canonical sector-contract artifact.
+        if all(source_schema_args):
             from ecolecon_mrio.eurostat_iot import load_eurostat_iot
 
-            template = Path(args.sfc_template_xlsx)
             eurostat_filters = _parse_json_arg(str(args.eurostat_filters))
             variant = _infer_variant_value(
                 out_base=out_base,
@@ -2624,11 +2571,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 force_download=False,
                 force_reparse=False,
             )
-            base_products, _, _ = _official_template_schema(
-                template, parsed=parsed_schema
-            )
-            _, _workbook_product_order, sector_parent_by_output, _ = _resolve_product_template_alignment(
-                template_xlsx=template,
+            base_products = _current_eurostat_product_codes(parsed_schema)
+            _, _, sector_parent_by_output, _ = _resolve_product_template_alignment(
+                template_xlsx=None,
                 base_product_codes=base_products,
                 output_product_codes=res.Z.index.astype(str).tolist(),
                 mapping_df=mapping_df_for_run,
@@ -2636,8 +2581,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mapping_to_col="to_sector",
                 verbose=args.verbose,
             )
-            # Workbook order is presentation-only; never mutate canonical CSV order.
-            export_context = (template, eurostat_filters, variant)
+            source_parent_order = base_products
+            if args.write_sfc_workbook:
+                export_context = (Path(args.sfc_template_xlsx), eurostat_filters, variant)
         _clear_managed_aggregation_outputs(out_base)
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
@@ -2689,11 +2635,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parent_by_sector=sector_parent_by_output,
                 verbose=args.verbose,
             )
-            _write_source_sector_contract(
-                out_path=out_base / "source_sector_contract.csv",
-                parent_order=list(dict.fromkeys(sector_parent_by_output[code] for code in res.Z.index.astype(str))),
-                verbose=args.verbose,
-            )
+            if source_parent_order is None:
+                raise RuntimeError("Sector lineage was resolved without a current source-parent order.")
+            from ecolecon_mrio.eurostat_target_product_schema import CPA65_CODES
+
+            if tuple(source_parent_order) == CPA65_CODES:
+                _write_source_sector_contract(
+                    out_path=out_base / "source_sector_contract.csv",
+                    parent_order=source_parent_order,
+                    verbose=args.verbose,
+                )
+            else:
+                _vprint(
+                    args.verbose,
+                    "Skipping source_sector_contract.csv: current Eurostat product domain is not CPA65.",
+                )
         _write_series_csv(flow_use_total(res.Z, res.Y), out_base / "use_total_agg.csv", verbose=args.verbose)
         _write_df_csv(res.A, out_base / "A_agg.csv", verbose=args.verbose)
         if res.V is not None:
