@@ -346,6 +346,7 @@ def test_write_sfc_workbook_serializes_canonical_supplementary_rows(tmp_path: Pa
     )
 
     mod._write_sfc_workbook(
+        parsed=parsed,
         out_path=out_path,
         template_xlsx=template_path,
         eurostat_dataset="naio_10_cp1700",
@@ -487,6 +488,7 @@ def test_write_sfc_workbook_raises_on_validation_failure(tmp_path: Path, monkeyp
 
     with pytest.raises(ValueError, match="Parent final-demand reconstruction failed"):
         mod._write_sfc_workbook(
+            parsed=parsed,
             out_path=out_path,
             template_xlsx=template_path,
             eurostat_dataset="naio_10_cp1700",
@@ -577,6 +579,7 @@ def test_write_sfc_workbook_passes_strict_lineage_validation(tmp_path: Path, mon
     )
 
     mod._write_sfc_workbook(
+        parsed=parsed,
         out_path=out_path,
         template_xlsx=template_path,
         eurostat_dataset="naio_10_cp1700",
@@ -629,6 +632,7 @@ def test_write_sfc_workbook_fails_when_lineage_parent_total_drifts(tmp_path: Pat
 
     with pytest.raises(ValueError, match="Parent final-demand reconstruction failed"):
         mod._write_sfc_workbook(
+            parsed=parsed,
             out_path=out_path,
             template_xlsx=template_path,
             eurostat_dataset="naio_10_cp1700",
@@ -671,6 +675,7 @@ def test_write_sfc_workbook_template_numeric_cells_are_not_source_applicability(
     v_after,m_after=_matching_transformed_supplementary(parsed,z_after.columns)
     out_path=tmp_path/"out.xlsx"
     mod._write_sfc_workbook(
+        parsed=parsed,
         out_path=out_path,template_xlsx=template_path,eurostat_dataset="naio_10_cp1700",
         eurostat_filters={"geo":"AT","time":"2021","freq":"A","unit":"MIO_EUR"},
         eurostat_row_dim="prd_ava",eurostat_col_dim="prd_use",eurostat_storage_folder=tmp_path,
@@ -705,6 +710,7 @@ def test_sfc_layout_template_sentinels_cannot_affect_generated_output(
     v_after,m_after=_matching_transformed_supplementary(parsed,z_after.columns)
     def generate(template,out):
         mod._write_sfc_workbook(
+            parsed=parsed,
             out_path=out,template_xlsx=template,eurostat_dataset="naio_10_cp1700",
             eurostat_filters={"geo":"EU27_2020","time":"2023","freq":"A","unit":"MIO_EUR"},
             eurostat_row_dim="prd_ava",eurostat_col_dim="prd_use",eurostat_storage_folder=tmp_path,
@@ -835,6 +841,7 @@ def test_sfc_supplementary_alignment_rejects_template_label_as_code_fallback(
         ValueError, match="Transformed V is missing source supplementary row 'D21X31'"
     ):
         mod._write_sfc_workbook(
+            parsed=parsed,
             out_path=tmp_path / "bad.xlsx",
             template_xlsx=template,
             eurostat_dataset="naio_10_cp1700",
@@ -874,6 +881,7 @@ def test_sfc_workbook_rejects_incomplete_authoritative_output_vector(
     incomplete=flow_use_total(z_after,y_after).iloc[:-1]
     with pytest.raises(ValueError,match="must cover the transformed product axis exactly"):
         mod._write_sfc_workbook(
+            parsed=parsed,
             out_path=tmp_path/"bad.xlsx",template_xlsx=template_path,eurostat_dataset="naio_10_cp1700",
             eurostat_filters={"geo":"AT","time":"2021"},eurostat_row_dim="prd_ava",
             eurostat_col_dim="prd_use",eurostat_storage_folder=tmp_path,variant_dim="stk_flow",

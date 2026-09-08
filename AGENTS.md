@@ -139,7 +139,7 @@ not given a RoW product decomposition.
 
 <!-- sfc-layout-template-isolation -->
 ### Presentation/template isolation
-- A workbook/report declared layout-only may supply styles, static labels, and display order only. Numeric cells, formulas, filled/blank patterns, stale geography/year metadata, and auxiliary sheets are not scientific evidence.
+- A workbook/report declared layout-only may supply visual styles and geometry only. Current parsed source metadata and transformed arrays own every axis code, order, display label, applicability and value; template text, formulas, numbers, filled/blank patterns, geography/year metadata and auxiliary sheets have no schema authority.
 - Optional presentation export must not mutate canonical arrays, values, labels, ordering, mappings, denominators, applicability, or schemas.
 - Require an adversarial sentinel-template regression: alter every forbidden template value/metadata item while retaining the allowed layout; canonical scientific artifacts must remain identical and stale content must not survive.
 - If filled/blank state is scientifically meaningful, promote it to an explicit versioned source-policy artifact rather than reading it implicitly from a presentation file.

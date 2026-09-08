@@ -7,7 +7,7 @@ import copy
 import json
 import time
 from pathlib import Path
-from typing import BinaryIO, Mapping, Sequence, cast
+from typing import Mapping, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -1118,8 +1118,10 @@ def _template_table_layout(ws) -> dict:
     }
 
 
-def _reshape_template_table(ws, *, target_n_products: int) -> dict:
-    """Resize only the product block while retaining official workbook styling."""
+def _reshape_template_table(
+    ws, *, target_n_products: int, target_n_final_demand: int, target_n_supplementary: int
+) -> dict:
+    """Resize style geometry to current source-owned product, FD and V/M axes."""
     layout = _template_table_layout(ws)
     current_n_products = int(layout["n_products"])
     delta = int(target_n_products) - current_n_products
@@ -1191,57 +1193,29 @@ def _reshape_template_table(ws, *, target_n_products: int) -> dict:
                 cell_range.max_row -= deleted
             if cell_range.min_col <= cell_range.max_col and cell_range.min_row <= cell_range.max_row:
                 ws.merge_cells(str(cell_range))
+    layout = _template_table_layout(ws)
+    fd_delta = int(target_n_final_demand) - int(layout["n_fd"])
+    fd_boundary = int(layout["first_fd_col"]) + min(int(layout["n_fd"]), target_n_final_demand)
+    if fd_delta > 0:
+        ws.insert_cols(fd_boundary, amount=fd_delta)
+        for column in range(fd_boundary, fd_boundary + fd_delta):
+            for row in range(1, ws.max_row + 1):
+                ws.cell(row, column)._style = copy.copy(ws.cell(row, fd_boundary - 1)._style)
+    elif fd_delta < 0:
+        ws.delete_cols(fd_boundary, amount=-fd_delta)
+    layout = _template_table_layout(ws)
+    current_supplementary = 0
+    for row in range(int(layout["va_row"]), ws.max_row + 1):
+        if ws.cell(row, 1).value is None or not str(ws.cell(row, 1).value).strip():
+            break
+        current_supplementary += 1
+    supplementary_delta = int(target_n_supplementary) - current_supplementary
+    supplementary_boundary = int(layout["va_row"]) + min(current_supplementary, target_n_supplementary)
+    if supplementary_delta > 0:
+        ws.insert_rows(supplementary_boundary, amount=supplementary_delta)
+    elif supplementary_delta < 0:
+        ws.delete_rows(supplementary_boundary, amount=-supplementary_delta)
     return _template_table_layout(ws)
-
-
-def _normalise_template_label(value: object) -> str:
-    """Normalise an official workbook label without weakening code uniqueness."""
-    return " ".join(str(value).strip().casefold().split())
-
-
-_OFFICIAL_TEMPLATE_FD_CODES: dict[str, tuple[str, ...]] = {
-    _normalise_template_label("Gross capital formation"): ("P5", "P51G"),
-    _normalise_template_label("Exports to EU members states"): ("P6_B0",),
-    _normalise_template_label("Exports to non-member of the EU"): ("P6_D0",),
-    _normalise_template_label("Exports to members of the euro area"): ("P6_U2",),
-    _normalise_template_label("Exports to non-members of the euro area"): ("P6_U3",),
-}
-
-_OFFICIAL_TEMPLATE_SUPPLEMENTARY_CODES: dict[str, tuple[str, ...]] = {
-    _normalise_template_label("Imports of goods and services from the EU Member States"): ("P7_B0",),
-    _normalise_template_label("Imports of goods and services from the institutions of the EU"): ("P7_D0",),
-    _normalise_template_label("Imports of goods and services from members of the Monetary Union"): ("P7_U2",),
-    _normalise_template_label("Imports of goods and services from non-members of the Monetary Union"): ("P7_U3",),
-}
-
-
-def _codes_for_template_labels(
-    labels: Sequence[object], *, candidate_codes: Sequence[str], label_by_code: Mapping[str, object],
-    block: str, official_aliases: Mapping[str, Sequence[str]] | None = None,
-) -> list[str]:
-    """Resolve one ordered template block through the official SDMX codelist."""
-    candidates: dict[str, list[str]] = {}
-    for code in map(str, candidate_codes):
-        label = _normalise_template_label(label_by_code.get(code, code))
-        candidates.setdefault(label, []).append(code)
-    ordered: list[str] = []
-    for raw_label in labels:
-        label = _normalise_template_label(raw_label)
-        aliases = [] if official_aliases is None else list(official_aliases.get(label, ()))
-        matches = [code for code in aliases if code in candidate_codes and code not in ordered][:1]
-        if not matches:
-            matches = [code for code in candidates.get(label, []) if code not in ordered]
-        if len(matches) != 1:
-            raise ValueError(
-                f"Official template {block} label {raw_label!r} resolves to "
-                f"{matches!r}; expected exactly one SDMX code."
-            )
-        ordered.append(matches[0])
-    if len(ordered) != len(set(ordered)):
-        duplicates = sorted({code for code in ordered if ordered.count(code) > 1})
-        raise ValueError(f"Official template {block} contains duplicate codes: {duplicates!r}")
-    return ordered
-
 
 
 def _current_eurostat_product_codes(parsed: ParsedEurostatIOT) -> list[str]:
@@ -1259,67 +1233,21 @@ def _current_eurostat_product_codes(parsed: ParsedEurostatIOT) -> list[str]:
         )
     return matrix_rows
 
-def _official_template_schema(
-    template_xlsx: Path | BinaryIO,
-    *,
+
+def _current_eurostat_display_schema(
     parsed: ParsedEurostatIOT,
 ) -> tuple[list[str], list[str], list[str]]:
-    """Read current source codes plus presentation-only template row/column slots.
-
-    The parsed Eurostat Z axis owns product identity and order. Historical template
-    product labels may describe another geography/schema and therefore cannot
-    select, rename or reject current products. Final-demand and supplementary
-    template labels remain presentation slots, but resolve only to current SDMX
-    codes; numeric cells, formulas and filled/blank state remain non-evidence.
-    """
-    import openpyxl
-
-    workbook = openpyxl.load_workbook(template_xlsx, data_only=False, read_only=True)
-    if "Sheet 1" not in workbook.sheetnames:
-        workbook.close()
-        raise ValueError(f"Official template lacks 'Sheet 1': {template_xlsx}")
-    worksheet = workbook["Sheet 1"]
-    layout = _template_table_layout(worksheet)
-    row_labels = parsed.meta.get("dimensions", {}).get(parsed.meta.get("row_dim", "prd_ava"), {})
-    col_labels = parsed.meta.get("dimensions", {}).get(parsed.meta.get("col_dim", "prd_use"), {})
-    # Economic product identity/order is current-source evidence, not a historical
-    # workbook property. This is what lets a CPA65 Austria layout safely present
-    # the consolidated CPA64 EU27 source axis without treating stale geography-
-    # specific product labels as schema requirements.
-    product_rows = _current_eurostat_product_codes(parsed)
-    base_products = product_rows
-
-    fd_candidates = [
-        str(code) for code in parsed.meta.get("identified_final_demand_columns", [])
+    """Return current source-owned workbook axes, excluding only Y's TOTAL control."""
+    products = _current_eurostat_product_codes(parsed)
+    final_demand = [
+        str(code)
+        for code in parsed.meta.get("identified_final_demand_columns", [])
         if str(code) != "TOTAL"
     ]
-    fd_labels = [
-        worksheet.cell(row=int(layout["header_row"]), column=column).value
-        for column in range(int(layout["first_fd_col"]), int(layout["last_fd_col"]) + 1)
-    ]
-    final_demand = _codes_for_template_labels(
-        fd_labels, candidate_codes=fd_candidates, label_by_code=col_labels,
-        block="final-demand columns", official_aliases=_OFFICIAL_TEMPLATE_FD_CODES,
-    )
-
-    # The first blank label terminates the supplementary table; footer text such
-    # as “Special value” is metadata rather than an economic row.
-    supplementary_labels: list[object] = []
-    for row in range(int(layout["va_row"]), worksheet.max_row + 1):
-        value = worksheet.cell(row=row, column=1).value
-        if value is None or not str(value).strip():
-            break
-        supplementary_labels.append(value)
-    supplementary_candidates = [str(code) for code in row_labels if str(code) not in set(base_products)]
-    supplementary = _codes_for_template_labels(
-        supplementary_labels,
-        candidate_codes=supplementary_candidates,
-        label_by_code=row_labels,
-        block="supplementary rows",
-        official_aliases=_OFFICIAL_TEMPLATE_SUPPLEMENTARY_CODES,
-    )
-    workbook.close()
-    return product_rows, final_demand, supplementary
+    supplementary = list(map(str, parsed.meta.get("identified_supplementary_rows", [])))
+    if not final_demand or not supplementary:
+        raise ValueError("Current Eurostat parse does not expose final-demand and supplementary axes.")
+    return products, final_demand, supplementary
 
 
 
@@ -1758,6 +1686,7 @@ def _legacy_co2_final_demand_view(
 
 def _write_sfc_workbook(
     *,
+    parsed: ParsedEurostatIOT,
     out_path: Path,
     template_xlsx: Path | None,
     eurostat_dataset: str,
@@ -1790,8 +1719,6 @@ def _write_sfc_workbook(
 
     import openpyxl
 
-    from ecolecon_mrio.eurostat_iot import load_eurostat_iot
-
     number_format = "0.00"
 
     def _write_num(ws, *, row: int, col: int, value: float) -> None:
@@ -1802,26 +1729,15 @@ def _write_sfc_workbook(
     filt = dict(eurostat_filters)
     if variant_value is not None:
         filt[variant_dim] = str(variant_value)
-
-    parsed = load_eurostat_iot(
-        dataset=eurostat_dataset,
-        filters=filt,
-        row_dim=eurostat_row_dim,
-        col_dim=eurostat_col_dim,
-        storage_folder=eurostat_storage_folder,
-        force_download=False,
-        force_reparse=False,
-    )
     dims = parsed.meta.get("dimensions", {})
     row_labels = dims.get(eurostat_row_dim, {})
+    col_labels = dims.get(eurostat_col_dim, {})
     if template_xlsx is None:
         raise ValueError("Official Eurostat template is required for SFC workbook export")
     if not template_xlsx.is_file():
         raise FileNotFoundError(f"Official Eurostat template not found: {template_xlsx}")
     template_bytes = template_xlsx.read_bytes()
-    base_product_codes, fd_codes_order_no_total, source_rows = _official_template_schema(
-        BytesIO(template_bytes), parsed=parsed
-    )
+    base_product_codes, fd_codes_order_no_total, source_rows = _current_eurostat_display_schema(parsed)
 
     target_label_by_output: dict[str, str] = {}
     if "target_label" in mapping_df.columns and mapping_to_col in mapping_df.columns:
@@ -1887,8 +1803,12 @@ def _write_sfc_workbook(
         raise ValueError(f"Template workbook missing required sheet 'Sheet 1': {template_xlsx}")
     ws = wb["Sheet 1"]
     layout = _template_table_layout(ws)
-    if int(layout["n_products"]) != len(product_codes_order):
-        layout = _reshape_template_table(ws, target_n_products=len(product_codes_order))
+    layout = _reshape_template_table(
+        ws,
+        target_n_products=len(product_codes_order),
+        target_n_final_demand=len(fd_codes_order_no_total),
+        target_n_supplementary=len(source_rows),
+    )
 
     hr = int(layout["header_row"])
     tr = int(layout["total_row"])
@@ -1899,20 +1819,7 @@ def _write_sfc_workbook(
     lower_start = int(layout["va_row"])
 
     if len(source_rows) != len(set(source_rows)):
-        raise ValueError(f"Official template supplementary rows are not unique: {source_rows!r}")
-    for j, code in enumerate(fd_codes_order_no_total):
-        if ws.cell(row=hr, column=c_fd0 + j).value is None:
-            raise ValueError(f"Official template header disappeared for final-demand code {code!r}")
-    official_fd_labels = [
-        ws.cell(row=hr, column=c_fd0 + j).value
-        for j in range(len(fd_codes_order_no_total))
-    ]
-    official_supplementary_labels = [
-        ws.cell(row=lower_start + offset, column=1).value
-        for offset in range(len(source_rows))
-    ]
-    if any(v is None or not str(v).strip() for v in official_supplementary_labels):
-        raise ValueError("Official template contains blank supplementary labels.")
+        raise ValueError(f"Current Eurostat supplementary rows are not unique: {source_rows!r}")
 
     # Hard taint boundary: preserve formatting/merges/dimensions, but erase every
     # template cell value before generated economic data are written.
@@ -1927,8 +1834,8 @@ def _write_sfc_workbook(
     for j, code in enumerate(product_codes_order):
         label = target_label_by_output.get(code) or _pretty_sector_label(row_labels.get(code, str(code)))
         ws.cell(row=hr, column=c_prod0 + j).value = label
-    for j, label in enumerate(official_fd_labels):
-        ws.cell(row=hr, column=c_fd0 + j).value = label
+    for j, code in enumerate(fd_codes_order_no_total):
+        ws.cell(row=hr, column=c_fd0 + j).value = _pretty_sector_label(col_labels.get(code, code))
 
     sector_label_map = {
         str(code): target_label_by_output.get(str(code), _pretty_sector_label(row_labels.get(str(code), str(code))))
@@ -2059,10 +1966,7 @@ def _write_sfc_workbook(
 
     for offset, row_code in enumerate(source_rows):
         target_r = lower_start + offset
-        template_row_label = official_supplementary_labels[offset]
-        if template_row_label is None or not str(template_row_label).strip():
-            raise ValueError(f"Official template supplementary label disappeared for {row_code!r}")
-        row_label = str(template_row_label).strip()
+        row_label = _pretty_sector_label(row_labels.get(row_code, row_code))
         source_v_row = _match_row(parsed_v, row_code)
         source_m_row = _match_row(parsed_m, row_code)
         output_v_row = _match_row(V_ord, row_code)
@@ -2192,11 +2096,11 @@ def _write_sfc_workbook(
             raise ValueError(f"Workbook round-trip lost product-column order at {product_code!r}")
         if ws_reopened.cell(row=r0 + j, column=1).value != expected_label:
             raise ValueError(f"Workbook round-trip lost product-row order at {product_code!r}")
-    for j, expected_label in enumerate(official_fd_labels):
+    for j, fd_code in enumerate(fd_codes_order_no_total):
+        expected_label = _pretty_sector_label(col_labels.get(fd_code, fd_code))
         if ws_reopened.cell(row=hr, column=c_fd0 + j).value != expected_label:
             raise ValueError(
-                f"Workbook round-trip lost official final-demand order at "
-                f"{fd_codes_order_no_total[j]!r}"
+                f"Workbook round-trip lost current final-demand order at {fd_code!r}"
             )
 
     def _assert_roundtrip_value(label: str, actual: object, expected: float) -> None:
@@ -2527,7 +2431,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             compute_sector_value_per_physical_input=disaggregated_values is not None,
             disaggregated_sector_value_per_physical_input=disaggregated_values,
         )
-        export_context: tuple[Path, dict, str | None] | None = None
+        export_context: tuple[Path, dict, str | None, ParsedEurostatIOT] | None = None
         sector_parent_by_output: dict[str, str] | None = None
         source_parent_order: list[str] | None = None
         source_schema_args = (
@@ -2583,7 +2487,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             source_parent_order = base_products
             if args.write_sfc_workbook:
-                export_context = (Path(args.sfc_template_xlsx), eurostat_filters, variant)
+                export_context = (
+                    Path(args.sfc_template_xlsx), eurostat_filters, variant, parsed_schema
+                )
         _clear_managed_aggregation_outputs(out_base)
         _vprint(args.verbose, f"Returned: aggregate_iot ({t.elapsed_s():.2f}s)")
 
@@ -2712,7 +2618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.write_sfc_workbook:
             assert export_context is not None
-            template, eurostat_filters, variant = export_context
+            template, eurostat_filters, variant, parsed_schema = export_context
             out_name = str(args.sfc_outname).format(variant=(variant or "single"))
             out_path = out_base / out_name
             out_path.unlink(missing_ok=True)
@@ -2720,6 +2626,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _vprint(args.verbose, "Calling: write SFC workbook ...")
             t2 = _Timer()
             _write_sfc_workbook(
+                parsed=parsed_schema,
                 out_path=out_path,
                 template_xlsx=template,
                 eurostat_dataset=str(args.eurostat_dataset),
