@@ -409,50 +409,56 @@ def test_effective_row_members_resolve_kosovo_provider_code_without_m49_iso3() -
     ]
 
 
-def test_unsd_gdp_level_support_reuses_discovered_series_and_keeps_fiscal_notes(
+def test_unsd_gdp_level_support_discovers_separate_live_series_and_keeps_provenance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Current and constant USD GDP levels come from one discovered UNSD series with fiscal provenance."""
+    """Current/constant USD GDP levels are selected from their own live AMA series metadata."""
 
     from ecolecon_mrio import price_indices
 
-    deflator = tmp_path / "deflator.json"
-    deflator.write_text(
-        json.dumps(
-            {
-                "countries": [{"countryCode": 40, "countryName": "Austria"}],
-                "series": [{"serieCode": 7, "serieName": "GDP and Implicit Price Deflators"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(price_indices, "download_unsd_ama_gdp_deflators", lambda **_: deflator)
     calls: list[str] = []
 
     def fake_http(url: str, *, payload=None, timeout_s: int = 120):
         del timeout_s
         calls.append(url)
-        if url.endswith("/Data/basic/7"):
+        if url.endswith("/Country?countriesOnly=true"):
+            return [{"countryCode": 40, "countryName": "Austria", "currencyName": "Euro", "isCountry": True}]
+        if url.endswith("/Series"):
+            return [
+                {"serieCode": 2, "groupId": 101, "serieName": "GDP, at current prices - US Dollars"},
+                {"serieCode": 4, "groupId": 102, "serieName": "GDP, at constant 2020 prices - US Dollars"},
+                {"serieCode": 7, "groupId": 103, "serieName": "GDP and Implicit Price Deflators"},
+            ]
+        if url.endswith("/Data/basic/2") or url.endswith("/Data/basic/4"):
             assert payload == {"paramCodes": [40], "years": [2020, 2022]}
-            rows = []
-            for year, current, constant in ((2020, 430000.0, 410000.0), (2022, 470000.0, 430000.0)):
-                rows.extend(
-                    [
-                        {
-                            "countryCode": 40, "countryName": "Austria", "fiscalYear": year,
-                            "serieCode": 7, "serieName": "GDP and Implicit Price Deflators",
-                            "itemId": 1, "itemName": "GDP at current prices - US Dollars",
-                            "observationValue": current, "unit": "Million US Dollars",
-                        },
-                        {
-                            "countryCode": 40, "countryName": "Austria", "fiscalYear": year,
-                            "serieCode": 7, "serieName": "GDP and Implicit Price Deflators",
-                            "itemId": 2, "itemName": "GDP at constant prices - US Dollars",
-                            "observationValue": constant, "unit": "Million US Dollars",
-                        },
-                    ]
-                )
-            return rows
+            current = url.endswith("/Data/basic/2")
+            series_code = 2 if current else 4
+            series_name = (
+                "GDP, at current prices - US Dollars"
+                if current
+                else "GDP, at constant 2020 prices - US Dollars"
+            )
+            values = (
+                {2020: 434397601557.6887, 2022: 473221298968.2164}
+                if current
+                else {2020: 434397601557.6887, 2022: 480081041607.46857}
+            )
+            return [
+                {
+                    "countryCode": 40,
+                    "countryName": "Austria",
+                    "fiscalYear": year,
+                    "serieCode": series_code,
+                    "serieName": series_name,
+                    "itemId": 9,
+                    "itemName": "Gross Domestic Product (GDP)",
+                    "observationValue": value,
+                    "unit": "US$",
+                }
+                for year, value in values.items()
+            ]
+        if url.endswith("/Data/lastupdated"):
+            return "2026-01-28"
         if url.endswith("/Metadata/fiscalyearnotes"):
             return [{"countryCode": 356, "note": "Fiscal year starts 1 April"}]
         raise AssertionError(url)
@@ -463,10 +469,38 @@ def test_unsd_gdp_level_support_reuses_discovered_series_and_keeps_fiscal_notes(
     )
     frame, metadata = price_indices.read_unsd_ama_gdp_usd_levels(path)
     assert frame[["year", "current_usd_gdp", "constant_usd_gdp"]].values.tolist() == [
-        [2020.0, 430000.0, 410000.0], [2022.0, 470000.0, 430000.0]
+        [2020.0, 434397601557.6887, 434397601557.6887],
+        [2022.0, 473221298968.2164, 480081041607.46857],
     ]
+    assert metadata["data_last_updated"] == "2026-01-28"
     assert metadata["fiscal_year_notes"] == [{"countryCode": 356, "note": "Fiscal year starts 1 April"}]
-    assert any(url.endswith("/Metadata/fiscalyearnotes") for url in calls)
+    assert any(url.endswith("/Data/basic/2") for url in calls)
+    assert any(url.endswith("/Data/basic/4") for url in calls)
+    assert not any(url.endswith("/Data/basic/7") for url in calls)
+
+
+def test_unsd_gdp_level_series_discovery_uses_metadata_not_numeric_ids() -> None:
+    """Provider ids may change; official series semantics select the two GDP level families."""
+
+    from ecolecon_mrio import price_indices
+
+    selected = price_indices._select_gdp_usd_level_series(
+        [
+            {"serieCode": 902, "serieName": "GDP, at current prices - US Dollars"},
+            {"serieCode": 904, "serieName": "GDP, at constant 2020 prices - US Dollars"},
+            {"serieCode": 999, "serieName": "GDP and Implicit Price Deflators"},
+        ]
+    )
+    assert [price_indices._series_code(row) for row in selected] == [902, 904]
+
+    with pytest.raises(price_indices.PriceIndexParseError, match="exactly one aggregate GDP level series"):
+        price_indices._select_gdp_usd_level_series(
+            [
+                {"serieCode": 2, "serieName": "GDP, at current prices - US Dollars"},
+                {"serieCode": 22, "serieName": "GDP, at current prices - US Dollars"},
+                {"serieCode": 4, "serieName": "GDP, at constant 2020 prices - US Dollars"},
+            ]
+        )
 
 def test_price_adjustment_rejects_negative_output_even_when_called_directly() -> None:
     """The public transformation must preserve the MRIO non-negative gross-output invariant."""

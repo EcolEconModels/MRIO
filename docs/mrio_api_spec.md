@@ -626,8 +626,12 @@ interpolated.
 
 For ordinary countries the production builder uses paired UNSD AMA GDP levels in US
 dollars: GDP at current prices $C_{c,t}$ and GDP at the provider's common
-constant-price reference $K_{c,t}$ (currently 2020 prices).  If $u_t$ is annual
-USD per EUR, the common-base-EUR factor is
+constant-price reference $K_{c,t}$ (currently 2020 prices). The two level families
+are discovered independently from the official AMA `/Series` metadata because the
+live provider exposes them as separate series; current versus constant basis is
+owned by the series name rather than inferred from the generic GDP observation row
+or pinned numeric series/group ids. If $u_t$ is annual USD per EUR, the
+common-base-EUR factor is
 
 \[
 \phi^{EUR}_{c,t\to b}
