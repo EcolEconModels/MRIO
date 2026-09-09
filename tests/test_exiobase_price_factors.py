@@ -360,7 +360,7 @@ def test_price_factor_source_policy_exact_rule_overrides_wildcard() -> None:
     assert taiwan["target_code"] == factors.PRICE_FACTOR_METHOD_TAIWAN
 
 
-def test_source_identity_mapping_resolves_tanzania_zanzibar_and_inactivates_ant() -> None:
+def test_source_identity_mapping_resolves_tanzania_zanzibar_kosovo_and_inactivates_ant() -> None:
     """Provider statistical-unit decisions and historical alias inactivity live in the mapping CSV."""
 
     mapping = factors._load_price_factor_source_identity_mapping()
@@ -368,6 +368,11 @@ def test_source_identity_mapping_resolves_tanzania_zanzibar_and_inactivates_ant(
     assert str(tanzania["provider_code"]) == "835"
     zanzibar = mapping.loc[mapping["provider_code"].astype(str) == "836"].iloc[0]
     assert str(zanzibar["target_code"]) == "WF"
+    kosovo = mapping.loc[mapping["source_code"] == "XKX"].iloc[0]
+    assert str(kosovo["provider_system"]) == "UNSD_AMA"
+    assert str(kosovo["provider_code"]) == "412"
+    assert str(kosovo["target_code"]) == "WE"
+    assert str(kosovo["resolution_status"]) == "resolved"
     ant = mapping.loc[mapping["source_code"] == "NETHERLANDS ANTILLES"].iloc[0]
     assert ant["resolution_status"] == "inactive"
     assert str(ant["provider_code"]) == ""
@@ -388,6 +393,20 @@ def test_effective_row_members_drop_ant_without_dropping_cuw_or_sxm() -> None:
     result = factors._effective_row_members(bridge, identity, {"CUW": 531, "SXM": 534}, year=2012)
     assert set(result["source_code"]) == {"CUW", "SXM"}
     assert set(result["m49"]) == {531, 534}
+
+
+def test_effective_row_members_resolve_kosovo_provider_code_without_m49_iso3() -> None:
+    """XKX stays in published WE while resolving to the official UNSD AMA Kosovo provider code."""
+
+    bridge = pd.DataFrame(
+        [{"source_code": "XKX", "source_label": "Kosovo", "target_code": "WE"}]
+    )
+    identity = factors._load_price_factor_source_identity_mapping()
+    result = factors._effective_row_members(bridge, identity, {}, year=2022)
+    # Pandas runtime supports orient="records"; the installed stub omits this overload.
+    assert result[["target_code", "source_code", "m49"]].to_dict(orient="records") == [  # pyright: ignore[reportCallIssue]
+        {"target_code": "WE", "source_code": "XKX", "m49": 412}
+    ]
 
 
 def test_unsd_gdp_level_support_reuses_discovered_series_and_keeps_fiscal_notes(

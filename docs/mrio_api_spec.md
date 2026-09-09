@@ -668,9 +668,12 @@ extraction/reformatting change.  The static bridge contains 170 former-RoW sourc
 identities: `WA=45`, `WL=43`, `WE=14`, `WF=53`, `WM=15`.
 A separate year-bounded identity mapping resolves provider statistical units and
 historical aggregate aliases.  For the audited 2012--2022 sensitivity, Mainland
-Tanzania uses UNSD 835, Zanzibar uses 836, and the EXIOBASE3rx `ANT` row is inactive
-throughout because it overlaps the separately published Curaçao and Sint Maarten
-rows; BES is not introduced.
+Tanzania uses UNSD AMA provider code 835, Zanzibar uses 836, and Kosovo's published
+EXIOBASE3rx pseudo-ISO code `XKX` uses UNSD AMA provider code 412 while remaining in
+its published `WE` membership. The UN M49 overview has no ISO-alpha3 `XKX` entry, so
+this provider identity is explicit mapping data rather than an inferred M49 alias.
+The EXIOBASE3rx `ANT` row is inactive throughout because it overlaps the separately
+published Curaçao and Sint Maarten rows; BES is not introduced.
 
 For a RoW bucket $R$, current-USD and constant-price-USD GDP are extensive and are
 summed over the exact effective member set before the implicit deflator is formed,
