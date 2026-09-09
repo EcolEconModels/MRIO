@@ -547,7 +547,9 @@ def _gdp_usd_level_basis(record: Mapping[str, Any]) -> str | None:
     text = f"{series_name} {item_name} {unit}".casefold()
     gdp_named = "gross domestic product" in text or "gdp" in text
     usd_named = "us dollar" in text or "u.s. dollar" in text or " usd" in f" {text}"
-    excluded = any(token in text for token in ("per capita", "deflator", "growth rate", "index", "gni"))
+    excluded = any(
+        token in text for token in ("per capita", "deflator", "growth rate", "index", "gni", "expenditure")
+    )
     if not (gdp_named and usd_named and not excluded):
         return None
     if "constant" in text:

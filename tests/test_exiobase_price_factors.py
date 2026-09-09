@@ -428,6 +428,8 @@ def test_unsd_gdp_level_support_discovers_separate_live_series_and_keeps_provena
                 {"serieCode": 2, "groupId": 101, "serieName": "GDP, at current prices - US Dollars"},
                 {"serieCode": 4, "groupId": 102, "serieName": "GDP, at constant 2020 prices - US Dollars"},
                 {"serieCode": 7, "groupId": 103, "serieName": "GDP and Implicit Price Deflators"},
+                {"serieCode": 12, "serieName": "GDP by Expenditure, at current prices - US Dollars"},
+                {"serieCode": 14, "serieName": "GDP by Expenditure, at constant 2020 prices - US Dollars"},
             ]
         if url.endswith("/Data/basic/2") or url.endswith("/Data/basic/4"):
             assert payload == {"paramCodes": [40], "years": [2020, 2022]}
@@ -477,6 +479,8 @@ def test_unsd_gdp_level_support_discovers_separate_live_series_and_keeps_provena
     assert any(url.endswith("/Data/basic/2") for url in calls)
     assert any(url.endswith("/Data/basic/4") for url in calls)
     assert not any(url.endswith("/Data/basic/7") for url in calls)
+    assert not any(url.endswith("/Data/basic/12") for url in calls)
+    assert not any(url.endswith("/Data/basic/14") for url in calls)
 
 
 def test_unsd_gdp_level_series_discovery_uses_metadata_not_numeric_ids() -> None:
@@ -489,9 +493,14 @@ def test_unsd_gdp_level_series_discovery_uses_metadata_not_numeric_ids() -> None
             {"serieCode": 902, "serieName": "GDP, at current prices - US Dollars"},
             {"serieCode": 904, "serieName": "GDP, at constant 2020 prices - US Dollars"},
             {"serieCode": 999, "serieName": "GDP and Implicit Price Deflators"},
+            {"serieCode": 912, "serieName": "GDP by Expenditure, at current prices - US Dollars"},
+            {"serieCode": 914, "serieName": "GDP by Expenditure, at constant 2020 prices - US Dollars"},
         ]
     )
     assert [price_indices._series_code(row) for row in selected] == [902, 904]
+    assert price_indices._gdp_usd_level_basis(
+        {"serieName": "GDP by Expenditure, at current prices - US Dollars"}
+    ) is None
 
     with pytest.raises(price_indices.PriceIndexParseError, match="exactly one aggregate GDP level series"):
         price_indices._select_gdp_usd_level_series(

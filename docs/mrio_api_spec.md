@@ -630,7 +630,9 @@ constant-price reference $K_{c,t}$ (currently 2020 prices). The two level famili
 are discovered independently from the official AMA `/Series` metadata because the
 live provider exposes them as separate series; current versus constant basis is
 owned by the series name rather than inferred from the generic GDP observation row
-or pinned numeric series/group ids. If $u_t$ is annual USD per EUR, the
+or pinned numeric series/group ids. GDP-by-expenditure series are explicitly
+outside this aggregate-GDP source boundary even where they contain a total-GDP item;
+numeric series/group ids remain runtime provenance rather than configuration. If $u_t$ is annual USD per EUR, the
 common-base-EUR factor is
 
 \[
