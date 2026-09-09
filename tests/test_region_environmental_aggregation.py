@@ -169,7 +169,7 @@ def test_many_to_many_zero_output_production_donor_state_machine() -> None:
     )
     basis=pd.MultiIndex.from_tuples([("AT","k1"),("AT","k2")],names=["region","sector"])
     F=pd.Series([2.0,8.0],index=basis,dtype="float64"); x=pd.Series([0.0,10.0],index=basis,dtype="float64")
-    projection=pd.DataFrame([[0.6,0.0],[0.4,1.0]],index=["a","b"],columns=["k1","k2"],dtype="float64")
+    projection=pd.DataFrame([[0.6,0.0],[0.4,1.0]],index=pd.Index(["a","b"]),columns=pd.Index(["k1","k2"]),dtype="float64")
     donor=aggregate_scope_production_extension(
         F,x,scope=RegionScope(code="AT",members=("AT",)),extension="air",stressor="CH4",unit="kg",
         product_projection=projection,
@@ -676,3 +676,90 @@ def test_public_total_combiner_accepts_signed_target_import_use() -> None:
         target_total_supply=pd.Series([120.0], index=["a"]),
     ).iloc[0]
     assert pd.isna(unavailable["value"]) and pd.isna(unavailable["intensity"])
+
+
+def test_target_environmental_sidecar_includes_scope_final_demand_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DOM target artifact exposes already-aggregated F_Y beside production F."""
+    from ecolecon_mrio.exiobase3_extensions import ExtensionRowResult
+    from ecolecon_mrio import exiobase3 as exio_mod
+    from ecolecon_mrio import exiobase3_extensions as ext_mod
+    from ecolecon_mrio import region_aggregation as region_mod
+
+    basis = pd.MultiIndex.from_tuples([("AT", "k1")], names=["region", "sector"])
+    source_output = pd.Series([10.0], index=basis, dtype="float64", name="x")
+    projection = pd.DataFrame(
+        [[1.0]], index=pd.Index(["CPA_X"]), columns=pd.Index(["k1"]), dtype="float64"
+    )
+
+    def fake_rows(
+        container,
+        *,
+        extension,
+        kind="F",
+        keywords=(),
+        region=None,
+        system="pxp",
+        basis_index=None,
+        require_unit=True,
+    ):
+        del container, keywords, region, system, basis_index, require_unit
+        if kind == "F":
+            values = pd.Series([2.0], index=basis, dtype="float64")
+        else:
+            values = pd.Series(
+                [3.0, 4.0],
+                index=pd.MultiIndex.from_tuples(
+                    [("AT", "HH"), ("AT", "GOV")],
+                    names=["region", "final_demand_category"],
+                ),
+                dtype="float64",
+            )
+        return (
+            ExtensionRowResult(
+                year=None,
+                values=values,
+                stressor="CO2",
+                unit="kg",
+                unit_source="test",
+                extension=str(extension),
+                kind=str(kind),
+                metadata={},
+            ),
+        )
+
+    monkeypatch.setattr(ext_mod, "load_exiobase3_extension_rows_with_units", fake_rows)
+    monkeypatch.setattr(
+        exio_mod,
+        "read_exiobase3_scope_final_demand_totals",
+        lambda **kwargs: pd.Series(
+            [100.0, 50.0],
+            index=pd.Index(["HH", "GOV"], name="final_demand_category"),
+            dtype="float64",
+        ),
+    )
+
+    target, raw = region_mod.build_scope_target_environmental_extensions(
+        source_zip="unused.zip",
+        scope=RegionScope(code="AT", members=("AT",)),
+        flow="internal",
+        source_output=source_output,
+        source_basis=basis,
+        product_projection=projection,
+        target_denominator=pd.Series([20.0], index=pd.Index(["CPA_X"]), dtype="float64"),
+        extension_requests={"air": ("CO2",)},
+    )
+
+    assert target["boundary"].tolist() == [
+        "scope_production",
+        "scope_final_demand_direct",
+        "scope_final_demand_direct",
+    ]
+    fy = target.loc[target["boundary"].eq("scope_final_demand_direct")].reset_index(drop=True)
+    assert fy["sector"].tolist() == ["HH", "GOV"]
+    assert fy["denominator_role"].unique().tolist() == ["scope_final_demand"]
+    np.testing.assert_allclose(fy["value"], [3.0, 4.0])
+    np.testing.assert_allclose(fy["monetary_output"], [100.0, 50.0])
+    assert raw is not None
+    assert raw["kind"].tolist() == ["F", "F_Y", "F_Y"]

@@ -1487,7 +1487,7 @@ def _retarget_direct_environmental_account(
 
 
 def _environmental_account_to_split_sidecar(account: pd.DataFrame) -> pd.DataFrame:
-    """Convert canonical WP3 account rows to the current model-facing sector schema."""
+    """Convert canonical WP3 account rows to the compatibility target-side schema."""
     required = set(_ENVIRONMENTAL_ACCOUNT_COLUMNS)
     if set(account.columns) != required:
         raise ValueError("Environmental account does not match the canonical WP3 schema.")
@@ -1542,12 +1542,13 @@ def build_scope_target_environmental_extensions(
     extension_requests: Mapping[str, Sequence[str]],
     system: str = "pxp",
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    """Build target DOM/IMP environmental sidecars and optional scope F_Y evidence.
+    """Build target DOM/IMP environmental sidecars and scope F_Y evidence.
 
     DOM uses scope-production coefficients; IMP uses origin-retaining direct import
     coefficients. The coefficient is formed on EXIO evidence first and only then
     applied to the authoritative Eurostat flow denominator. Direct F_Y is emitted
-    only for the internal/DOM call because it has no import-origin decomposition.
+    only for the internal/DOM call because it has no import-origin decomposition;
+    its final-demand categories are appended to the same target-side long table.
     """
     if flow not in {"internal", "external_imports"}:
         raise ValueError("Target environmental split sidecars support only internal/DOM or external-import/IMP flows.")
@@ -1690,6 +1691,11 @@ def build_scope_target_environmental_extensions(
                     stressor=row.stressor,
                     unit=row.unit,
                 )
+                # F_Y already has the correct scope/category account. The compatibility
+                # target sidecar overloads ``sector`` with this category axis so model
+                # consumers can read one environmental_extensions.csv; it is never
+                # product-projected or sector-reaggregated.
+                target_rows.append(_environmental_account_to_split_sidecar(fy_account))
                 raw_rows.append(_environmental_account_to_raw_sidecar(fy_account, kind="F_Y"))
 
     if not target_rows:

@@ -810,7 +810,7 @@ def _read_generated_variants(
 
 
 def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
-    """Build TOTAL direct-use extensions from DOM output and signed IMP use."""
+    """Build TOTAL product extensions and carry destination-scope F_Y unchanged."""
     dom_path = dirs["DOM"] / "environmental_extensions.csv"
     imp_path = dirs["IMP"] / "environmental_extensions.csv"
     if not dom_path.exists() and not imp_path.exists():
@@ -821,13 +821,32 @@ def _derive_total_environmental_extensions(dirs: Mapping[str, Path]) -> None:
         )
     dom = pd.read_csv(dom_path)
     imp = pd.read_csv(imp_path)
+    dom_final_mask = dom["boundary"].astype(str).eq("scope_final_demand_direct")
+    dom_final_demand = dom.loc[dom_final_mask].copy()
+    dom_product = dom.loc[~dom_final_mask].copy()
+    if not dom_final_demand.empty and set(
+        dom_final_demand["denominator_role"].astype(str)
+    ) != {"scope_final_demand"}:
+        raise ValueError(
+            "DOM scope_final_demand_direct rows must use denominator_role='scope_final_demand'."
+        )
+    if bool(imp["boundary"].astype(str).eq("scope_final_demand_direct").any()):
+        raise ValueError(
+            "IMP must not contain scope_final_demand_direct rows; F_Y has no import-origin counterpart."
+        )
+
     dom_use = _read_series(dirs["DOM"] / "use_total_split.csv")
     imp_use = _read_series(dirs["IMP"] / "use_total_split.csv")
-    total = _combine_target_supply_extension_sidecars_direct(
-        dom,
+    total_product = _combine_target_supply_extension_sidecars_direct(
+        dom_product,
         imp,
         target_domestic_output=dom_use,
         target_import_use=imp_use,
+    )
+    total = (
+        pd.concat([total_product, dom_final_demand], ignore_index=True)
+        if not dom_final_demand.empty
+        else total_product
     )
     total.to_csv(dirs["TOTAL"] / "environmental_extensions.csv", index=False)
 

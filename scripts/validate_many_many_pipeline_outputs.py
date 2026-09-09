@@ -23,6 +23,7 @@ from ecolecon_mrio.mapping_csv import read_aggregation_mapping
 from scripts.aggregate_iot_by_mapping import (
     _augment_mapping_from_split_child_edges,
     _load_split_selected_children,
+    _partition_environmental_extensions_for_sector_reaggregation,
     _production_environmental_group_domain,
 )
 
@@ -265,6 +266,71 @@ def _check_ratio_file(
     }
 
 
+def _expected_final_demand_environmental_grid(raw: pd.DataFrame) -> pd.DataFrame:
+    """Convert raw F_Y provenance into the exact target-side passthrough view."""
+    required = {
+        "source_label",
+        "extension",
+        "kind",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_denominator",
+        "intensity",
+    }
+    missing = required - set(raw.columns)
+    if missing:
+        raise ValueError(
+            "Raw environmental sidecar is missing F_Y passthrough columns: "
+            f"{sorted(missing)!r}."
+        )
+    fy = raw.loc[raw["kind"].astype(str).eq("F_Y")].copy()
+    if fy.empty:
+        return pd.DataFrame(columns=_ENVIRONMENTAL_GRID_COLUMNS)
+    out = fy.rename(
+        columns={"source_label": "sector", "monetary_denominator": "monetary_output"}
+    ).copy()
+    out.insert(2, "boundary", "scope_final_demand_direct")
+    out.insert(3, "denominator_role", "scope_final_demand")
+    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    out.insert(
+        0,
+        "sector_position",
+        out.groupby(group_cols, sort=False, dropna=False).cumcount().add(1).astype("int64"),
+    )
+    return out.loc[:, _ENVIRONMENTAL_GRID_COLUMNS].reset_index(drop=True)
+
+
+def _compare_final_demand_environmental_passthrough(
+    observed: pd.DataFrame | None,
+    expected: pd.DataFrame,
+    *,
+    rtol: float,
+    atol: float,
+) -> dict[str, Any]:
+    actual = (
+        pd.DataFrame(columns=_ENVIRONMENTAL_GRID_COLUMNS)
+        if observed is None
+        else observed.loc[:, _ENVIRONMENTAL_GRID_COLUMNS].copy()
+    )
+    key_cols = [
+        "sector_position",
+        "sector",
+        "boundary",
+        "denominator_role",
+        "extension",
+        "stressor",
+        "unit",
+    ]
+    value_cols = ["value", "monetary_output", "intensity"]
+    return _compare_labelled_numeric_frames(
+        actual.set_index(key_cols)[value_cols],
+        expected.set_index(key_cols)[value_cols],
+        rtol=rtol,
+        atol=atol,
+    )
+
+
 def _validate_environmental_grid(
     *,
     environmental_path: Path,
@@ -274,7 +340,7 @@ def _validate_environmental_grid(
     atol: float,
     production_groups: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
-    """Validate the public production-group by final-sector storage contract."""
+    """Validate the product grid plus unchanged direct-final-demand passthrough."""
     errors: list[str] = []
     if not environmental_path.is_file():
         return {"ok": False, "errors": [f"Missing {environmental_path}"]}
@@ -303,6 +369,16 @@ def _validate_environmental_grid(
     if list(observed.columns) != _ENVIRONMENTAL_GRID_COLUMNS:
         errors.append(f"environmental schema={list(observed.columns)!r}")
         return {"ok": False, "errors": errors}
+
+    observed_all = observed.copy()
+    observed_sector, observed_final_demand = (
+        _partition_environmental_extensions_for_sector_reaggregation(observed)
+    )
+    observed = (
+        observed_sector
+        if observed_sector is not None
+        else pd.DataFrame(columns=_ENVIRONMENTAL_GRID_COLUMNS)
+    )
 
     if production_groups is None:
         assert raw is not None
@@ -457,12 +533,38 @@ def _validate_environmental_grid(
         unavailable_abs_monetary_mass / total_abs_monetary_mass
         if total_abs_monetary_mass > 0.0 else 0.0
     )
+
+    if raw is None:
+        if observed_final_demand is not None and not observed_final_demand.empty:
+            errors.append(
+                "scope_final_demand_direct rows require raw F_Y provenance for passthrough validation"
+            )
+    else:
+        try:
+            expected_final_demand = _expected_final_demand_environmental_grid(raw)
+            final_demand_comparison = _compare_final_demand_environmental_passthrough(
+                observed_final_demand,
+                expected_final_demand,
+                rtol=rtol,
+                atol=atol,
+            )
+            if not bool(final_demand_comparison["ok"]):
+                errors.append(
+                    "scope_final_demand_direct rows are not an unchanged F_Y passthrough: "
+                    f"{final_demand_comparison.get('reason', final_demand_comparison)!r}"
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            errors.append(f"F_Y passthrough validation failed: {exc}")
+
     return {
         "ok": not errors,
         "errors": errors,
         "n_groups": int(len(groups)),
         "n_sectors": int(len(canonical)),
-        "n_rows": int(len(observed)),
+        "n_rows": int(len(observed_all)),
+        "n_final_demand_rows": int(
+            0 if observed_final_demand is None else len(observed_final_demand)
+        ),
         "n_nonzero_denominator_unavailable_rows": int(
             nonzero_denominator_unavailable.sum()
         ),
@@ -661,31 +763,58 @@ def validate_pipeline_outputs(
             ]
             if target_exists:
                 split_environmental = pd.read_csv(split_environmental_path)
-                expected_environmental = aggregate_environmental_extensions(
-                    split_environmental,
+                split_sector_environmental, split_final_demand_environmental = (
+                    _partition_environmental_extensions_for_sector_reaggregation(
+                        split_environmental
+                    )
+                )
+                expected_sector_environmental = aggregate_environmental_extensions(
+                    split_sector_environmental,
                     mapping,
                     output=split_flow_denominator,
                     keep_unmapped=True,
                     rtol=rtol,
                     atol=atol,
                 )
+                expected_parts = [
+                    part
+                    for part in (
+                        expected_sector_environmental,
+                        split_final_demand_environmental,
+                    )
+                    if part is not None and not part.empty
+                ]
+                expected_environmental = (
+                    pd.concat(expected_parts, ignore_index=True)
+                    if expected_parts
+                    else None
+                )
                 if raw_exists:
+                    if split_sector_environmental is None:
+                        raise ValueError(
+                            "Raw EXIO production provenance requires product-axis target environmental rows."
+                        )
                     production_groups = _production_environmental_group_domain(
                         pd.read_csv(split_raw_environmental_path),
-                        target_environmental_extensions=split_environmental,
+                        target_environmental_extensions=split_sector_environmental,
                     )
                 else:
-                    missing_group_cols = set(group_cols) - set(split_environmental.columns)
-                    if missing_group_cols:
-                        raise ValueError(
-                            "Target environmental sidecar is missing production-group columns: "
-                            f"{sorted(missing_group_cols)!r}"
+                    if split_sector_environmental is None:
+                        production_groups = pd.DataFrame(columns=group_cols)
+                    else:
+                        missing_group_cols = set(group_cols) - set(
+                            split_sector_environmental.columns
                         )
-                    production_groups = (
-                        split_environmental.loc[:, group_cols]
-                        .copy()
-                        .drop_duplicates(ignore_index=True)
-                    )
+                        if missing_group_cols:
+                            raise ValueError(
+                                "Target environmental sidecar is missing production-group columns: "
+                                f"{sorted(missing_group_cols)!r}"
+                            )
+                        production_groups = (
+                            split_sector_environmental.loc[:, group_cols]
+                            .copy()
+                            .drop_duplicates(ignore_index=True)
+                        )
             else:
                 add_check(
                     "environmental_target_sidecar_paired",

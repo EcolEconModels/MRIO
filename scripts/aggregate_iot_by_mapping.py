@@ -1378,6 +1378,95 @@ def _resolve_product_template_alignment(
     return template_xlsx, product_order, primary_parent_by_output, parents_by_output
 
 
+_FINAL_DEMAND_ENVIRONMENTAL_BOUNDARY = "scope_final_demand_direct"
+_FINAL_DEMAND_ENVIRONMENTAL_DENOMINATOR_ROLE = "scope_final_demand"
+
+
+def _partition_environmental_extensions_for_sector_reaggregation(
+    environmental_extensions: pd.DataFrame | None,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """Separate product-axis rows from direct-final-demand rows.
+
+    ``scope_final_demand_direct`` is already on its scientifically correct final-
+    demand-category axis. It must bypass every product mapping while the other
+    target boundaries keep the existing sector reaggregation path.
+    """
+    if environmental_extensions is None or environmental_extensions.empty:
+        return None, None
+    required = {"boundary", "denominator_role"}
+    missing = required - set(environmental_extensions.columns)
+    if missing:
+        raise ValueError(
+            "Target environmental sidecar is missing boundary metadata: "
+            f"{sorted(missing)!r}."
+        )
+    frame = environmental_extensions.copy()
+    final_mask = frame["boundary"].astype(str).eq(_FINAL_DEMAND_ENVIRONMENTAL_BOUNDARY)
+    final_demand = frame.loc[final_mask].copy()
+    sector = frame.loc[~final_mask].copy()
+    if not final_demand.empty:
+        roles = set(final_demand["denominator_role"].astype(str))
+        if roles != {_FINAL_DEMAND_ENVIRONMENTAL_DENOMINATOR_ROLE}:
+            raise ValueError(
+                "scope_final_demand_direct rows must use denominator_role="
+                f"{_FINAL_DEMAND_ENVIRONMENTAL_DENOMINATOR_ROLE!r}."
+            )
+    return (
+        sector if not sector.empty else None,
+        final_demand if not final_demand.empty else None,
+    )
+
+
+def _final_demand_environmental_rows_for_grid(
+    final_demand_environmental_extensions: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    """Add compatibility axis positions while copying F_Y rows unchanged."""
+    if (
+        final_demand_environmental_extensions is None
+        or final_demand_environmental_extensions.empty
+    ):
+        return None
+    required_columns = [
+        "sector",
+        "boundary",
+        "denominator_role",
+        "extension",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_output",
+        "intensity",
+    ]
+    missing = set(required_columns) - set(final_demand_environmental_extensions.columns)
+    if missing:
+        raise ValueError(
+            "Final-demand environmental rows are missing columns: "
+            f"{sorted(missing)!r}."
+        )
+    out = final_demand_environmental_extensions.loc[:, required_columns].copy()
+    group_cols = ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    out.insert(
+        0,
+        "sector_position",
+        out.groupby(group_cols, sort=False, dropna=False).cumcount().add(1).astype("int64"),
+    )
+    return out.loc[
+        :,
+        [
+            "sector_position",
+            "sector",
+            "boundary",
+            "denominator_role",
+            "extension",
+            "stressor",
+            "unit",
+            "value",
+            "monetary_output",
+            "intensity",
+        ],
+    ].reset_index(drop=True)
+
+
 
 def _complete_environmental_extension_sector_grid(
     environmental_extensions: pd.DataFrame | None,
@@ -2498,30 +2587,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"Aggregated output has {len(res.Z.index)} sectors, expected {int(args.expect_n_sectors)}."
             )
 
+        sector_environmental_extensions, final_demand_environmental_extensions = (
+            _partition_environmental_extensions_for_sector_reaggregation(
+                environmental_extensions
+            )
+        )
         aggregated_environmental_extensions_actual = aggregate_environmental_extensions(
-            environmental_extensions,
+            sector_environmental_extensions,
             mapping_for_run,
             output=flow_use_total(Z, Y),
             keep_unmapped=keep_unmapped,
         )
         if exio_environmental_extensions is not None:
-            if environmental_extensions is None:
+            if sector_environmental_extensions is None:
                 raise ValueError(
-                    "Raw EXIO environmental provenance requires paired target environmental_extensions.csv."
+                    "Raw EXIO production provenance requires paired product-axis target environmental rows."
                 )
             production_groups = _production_environmental_group_domain(
                 exio_environmental_extensions,
-                target_environmental_extensions=environmental_extensions,
+                target_environmental_extensions=sector_environmental_extensions,
             )
         else:
             production_groups = (
                 None
-                if environmental_extensions is None
-                else environmental_extensions.loc[
+                if sector_environmental_extensions is None
+                else sector_environmental_extensions.loc[
                     :, ["boundary", "denominator_role", "extension", "stressor", "unit"]
                 ].drop_duplicates(ignore_index=True)
             )
-        aggregated_environmental_extensions = (
+        aggregated_sector_environmental_extensions = (
             None
             if production_groups is None
             else _complete_environmental_extension_sector_grid(
@@ -2529,6 +2623,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output=flow_use_total(res.Z, res.Y),
                 production_groups=production_groups,
             )
+        )
+        final_demand_environmental_grid = _final_demand_environmental_rows_for_grid(
+            final_demand_environmental_extensions
+        )
+        environmental_parts = [
+            part
+            for part in (
+                aggregated_sector_environmental_extensions,
+                final_demand_environmental_grid,
+            )
+            if part is not None and not part.empty
+        ]
+        aggregated_environmental_extensions = (
+            pd.concat(environmental_parts, ignore_index=True)
+            if environmental_parts
+            else None
         )
 
         _write_df_csv(res.Z, out_base / "Z_agg.csv", verbose=args.verbose)
@@ -2600,7 +2710,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         disaggregated_co2 = _legacy_co2_production_view(
-            environmental_extensions,
+            sector_environmental_extensions,
             sector_col="disaggregated_sector",
         )
         aggregated_co2 = _legacy_co2_production_view(

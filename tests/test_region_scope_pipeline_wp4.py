@@ -546,3 +546,116 @@ def test_validator_accepts_imp_target_environmental_grid_without_raw_sidecar(
         mapping_csv=mapping_csv,
     )
     assert report["ok"], report
+
+
+def test_total_environmental_sidecar_carries_dom_final_demand_rows(tmp_path: Path) -> None:
+    """TOTAL combines product rows but copies destination-scope F_Y from DOM."""
+    from scripts.derive_total_iot_flow import _derive_total_environmental_extensions
+
+    dirs = {flow: tmp_path / flow for flow in ("DOM", "IMP", "TOTAL")}
+    for directory in dirs.values():
+        directory.mkdir()
+
+    dom = pd.DataFrame(
+        {
+            "sector": ["S", "HH"],
+            "boundary": ["scope_production", "scope_final_demand_direct"],
+            "denominator_role": ["target_domestic_output", "scope_final_demand"],
+            "extension": ["air", "air"],
+            "stressor": ["CO2", "CO2"],
+            "unit": ["kg", "kg"],
+            "value": [2.0, 4.0],
+            "monetary_output": [10.0, 100.0],
+            "intensity": [0.2, 0.04],
+        }
+    )
+    imp = pd.DataFrame(
+        {
+            "sector": ["S"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_use"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [1.0],
+            "monetary_output": [5.0],
+            "intensity": [0.2],
+        }
+    )
+    dom.to_csv(dirs["DOM"] / "environmental_extensions.csv", index=False)
+    imp.to_csv(dirs["IMP"] / "environmental_extensions.csv", index=False)
+    pd.Series([10.0], index=["S"], name="use_total").to_csv(
+        dirs["DOM"] / "use_total_split.csv"
+    )
+    pd.Series([5.0], index=["S"], name="use_total").to_csv(
+        dirs["IMP"] / "use_total_split.csv"
+    )
+
+    _derive_total_environmental_extensions(dirs)
+    total = pd.read_csv(dirs["TOTAL"] / "environmental_extensions.csv")
+    assert total["boundary"].tolist() == ["total_use_direct", "scope_final_demand_direct"]
+    product = total.iloc[0]
+    assert float(product["value"]) == pytest.approx(3.0)
+    assert float(product["monetary_output"]) == pytest.approx(15.0)
+    fy = total.iloc[1]
+    assert fy["sector"] == "HH"
+    assert fy["denominator_role"] == "scope_final_demand"
+    assert float(fy["value"]) == pytest.approx(4.0)
+    assert float(fy["monetary_output"]) == pytest.approx(100.0)
+
+
+def test_environmental_grid_validates_required_fy_passthrough(tmp_path: Path) -> None:
+    """DOM/TOTAL grid validation requires exact F_Y passthrough from raw provenance."""
+    from scripts.validate_many_many_pipeline_outputs import _validate_environmental_grid
+
+    raw = pd.DataFrame(
+        {
+            "source_label": ["S", "HH"],
+            "extension": ["air", "air"],
+            "kind": ["F", "F_Y"],
+            "stressor": ["CO2", "CO2"],
+            "unit": ["kg", "kg"],
+            "value": [2.0, 4.0],
+            "monetary_denominator": [10.0, 100.0],
+            "intensity": [0.2, 0.04],
+        }
+    )
+    observed = pd.DataFrame(
+        {
+            "sector_position": [1, 1],
+            "sector": ["S", "HH"],
+            "boundary": ["scope_production", "scope_final_demand_direct"],
+            "denominator_role": ["target_domestic_output", "scope_final_demand"],
+            "extension": ["air", "air"],
+            "stressor": ["CO2", "CO2"],
+            "unit": ["kg", "kg"],
+            "value": [2.0, 4.0],
+            "monetary_output": [10.0, 100.0],
+            "intensity": [0.2, 0.04],
+        }
+    )
+    raw_path = tmp_path / "raw.csv"
+    grid_path = tmp_path / "environmental.csv"
+    raw.to_csv(raw_path, index=False)
+    observed.to_csv(grid_path, index=False)
+
+    report = _validate_environmental_grid(
+        environmental_path=grid_path,
+        raw_path=raw_path,
+        output=pd.Series([10.0], index=["S"], dtype="float64"),
+        rtol=1e-9,
+        atol=1e-6,
+    )
+    assert report["ok"], report
+    assert report["n_final_demand_rows"] == 1
+
+    observed.iloc[[0]].to_csv(grid_path, index=False)
+    missing_report = _validate_environmental_grid(
+        environmental_path=grid_path,
+        raw_path=raw_path,
+        output=pd.Series([10.0], index=["S"], dtype="float64"),
+        rtol=1e-9,
+        atol=1e-6,
+    )
+    assert not missing_report["ok"]
+    assert any("scope_final_demand_direct" in error for error in missing_report["errors"])

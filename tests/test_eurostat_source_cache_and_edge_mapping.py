@@ -474,6 +474,8 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     from scripts.aggregate_iot_by_mapping import (
         _augment_mapping_from_split_child_edges,
         _complete_environmental_extension_sector_grid,
+        _final_demand_environmental_rows_for_grid,
+        _partition_environmental_extensions_for_sector_reaggregation,
     )
     from scripts.validate_many_many_pipeline_outputs import validate_pipeline_outputs
 
@@ -550,6 +552,17 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
                 "value": float(x.loc["A"]),
                 "monetary_output": float(x.loc["A"]),
                 "intensity": 1.0,
+            },
+            {
+                "boundary": "scope_final_demand_direct",
+                "denominator_role": "scope_final_demand",
+                "sector": "P3",
+                "extension": "air_emissions",
+                "stressor": "CO2",
+                "unit": "kg",
+                "value": 1.0,
+                "monetary_output": 2.0,
+                "intensity": 0.5,
             }
         ]
     )
@@ -634,8 +647,12 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
     expected.M.to_csv(agg_dir / "M_agg.csv")
     audit.to_csv(agg_dir / "aggregation_edge_mapping_audit.csv", index=False)
 
+    product_environmental, final_demand_environmental = (
+        _partition_environmental_extensions_for_sector_reaggregation(environmental)
+    )
+    assert product_environmental is not None and final_demand_environmental is not None
     expected_environmental = aggregate_environmental_extensions(
-        environmental,
+        product_environmental,
         augmented_mapping,
         output=x,
         keep_unmapped=True,
@@ -652,8 +669,11 @@ def test_phase7_validator_recomputes_edge_reaggregation_outputs(tmp_path):
             denominator_role="target_domestic_output",
         ),
     )
-    assert completed_environmental is not None
-    completed_environmental.to_csv(
+    final_demand_grid = _final_demand_environmental_rows_for_grid(
+        final_demand_environmental
+    )
+    assert completed_environmental is not None and final_demand_grid is not None
+    pd.concat([completed_environmental, final_demand_grid], ignore_index=True).to_csv(
         agg_dir / "environmental_extensions.csv", index=False
     )
     raw_environmental.to_csv(
@@ -920,21 +940,21 @@ def test_validator_numeric_comparisons_preserve_elementwise_relative_tolerance(t
         atol=1e-6,
     )["ok"]
 
-    frame_actual = pd.DataFrame([[1.0e11 + 1.52587890625e-05]], index=["A"], columns=["A"])
-    frame_expected = pd.DataFrame([[1.0e11]], index=["A"], columns=["A"])
+    frame_actual = pd.DataFrame([[1.0e11 + 1.52587890625e-05]], index=pd.Index(["A"]), columns=pd.Index(["A"]))
+    frame_expected = pd.DataFrame([[1.0e11]], index=pd.Index(["A"]), columns=pd.Index(["A"]))
     assert _compare_numeric_frames(
         frame_actual, frame_expected, rtol=1e-9, atol=1e-6
     )["ok"]
     exact = _compare_numeric_frames(
-        pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
-        pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
+        pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
         rtol=0.0,
         atol=0.0,
     )
     assert exact["ok"] and exact["max_normalized_gap"] == 0.0
     assert not _compare_numeric_frames(
-        pd.DataFrame([[1.0]], index=["A"], columns=["A"]),
-        pd.DataFrame([[0.0]], index=["A"], columns=["A"]),
+        pd.DataFrame([[1.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
+        pd.DataFrame([[0.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
         rtol=0.0,
         atol=0.0,
     )["ok"]
@@ -946,6 +966,7 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
     """Phase-7 storage validation must inspect undefined rows, not filter them away."""
     from scripts.aggregate_iot_by_mapping import (
         _complete_environmental_extension_sector_grid,
+        _final_demand_environmental_rows_for_grid,
     )
     from scripts.validate_many_many_pipeline_outputs import (
         _validate_environmental_grid,
@@ -1000,7 +1021,25 @@ def test_environmental_artifact_grid_validator_rejects_alignment_and_na_defects(
             denominator_role="target_domestic_output",
         ),
     )
-    assert completed is not None
+    final_demand = _final_demand_environmental_rows_for_grid(
+        pd.DataFrame(
+            [
+                {
+                    "sector": "P3",
+                    "boundary": "scope_final_demand_direct",
+                    "denominator_role": "scope_final_demand",
+                    "extension": "use_phase_only",
+                    "stressor": "CH4",
+                    "unit": "kg",
+                    "value": 1.0,
+                    "monetary_output": 2.0,
+                    "intensity": 0.5,
+                }
+            ]
+        )
+    )
+    assert completed is not None and final_demand is not None
+    completed = pd.concat([completed, final_demand], ignore_index=True)
     grid_path = tmp_path / "environmental_extensions.csv"
     raw_path = tmp_path / "exio_environmental_extensions.csv"
     raw.to_csv(raw_path, index=False)

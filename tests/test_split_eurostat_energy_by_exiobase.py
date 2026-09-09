@@ -1040,10 +1040,27 @@ def test_split_api_projects_multiple_environmental_extensions(tmp_path) -> None:
     assert float(co2_final_demand["intensity"]) == pytest.approx(0.5)
 
     assert result.environmental_extensions is not None
-    satellite = result.environmental_extensions.set_index("extension")
-    assert float(satellite.loc["air_emissions", "monetary_output"]) == 10.0
-    assert float(satellite.loc["air_emissions", "value"]) == 20.0
-    assert float(satellite.loc["material", "value"]) == 60.0
+    satellite = result.environmental_extensions
+    production = satellite.loc[
+        satellite["boundary"].eq("scope_production")
+    ].set_index("extension")
+    final_demand = satellite.loc[
+        satellite["boundary"].eq("scope_final_demand_direct")
+    ].set_index("extension")
+    assert float(production.loc["air_emissions", "monetary_output"]) == 10.0
+    assert float(production.loc["air_emissions", "value"]) == 20.0
+    assert float(production.loc["material", "value"]) == 60.0
+    assert set(final_demand.index) == {"air_emissions", "material"}
+    assert final_demand.loc["air_emissions", "sector"] == "P3"
+    assert final_demand.loc["air_emissions", "denominator_role"] == "scope_final_demand"
+    assert float(final_demand.loc["air_emissions", "value"]) == 5.0
+    assert float(final_demand.loc["air_emissions", "monetary_output"]) == 10.0
+    assert float(final_demand.loc["air_emissions", "intensity"]) == 0.5
+    assert final_demand.loc["material", "sector"] == "P3"
+    assert final_demand.loc["material", "denominator_role"] == "scope_final_demand"
+    assert float(final_demand.loc["material", "value"]) == 15.0
+    assert float(final_demand.loc["material", "monetary_output"]) == 10.0
+    assert float(final_demand.loc["material", "intensity"]) == 1.5
 
 def test_environmental_extension_cli_selection_prefers_readable_official_names() -> None:
     """Explicit selectors are exact archive directory names, not maintained aliases."""
@@ -1227,11 +1244,11 @@ def test_selected_environmental_extension_requires_F_Y(tmp_path) -> None:
             "\t\tAT\n\t\tP3\n\t\tM.EUR\nAT\tS1\t5\n",
         )
 
-    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=pd.DataFrame([[1.0]], index=['S1'], columns=['S1']), Y=pd.DataFrame({'P3': [5.0]}, index=['S1']), x_scope=pd.Series({'S1': 6.0}, dtype='float64'), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(source)})
+    exio_slice = MrioScopeSlice(scope=RegionScope(code=str('AT'), members=(str('AT'),)), Z=pd.DataFrame([[1.0]], index=pd.Index(['S1']), columns=pd.Index(['S1'])), Y=pd.DataFrame({'P3': [5.0]}, index=pd.Index(['S1'])), x_scope=pd.Series({'S1': 6.0}, dtype='float64'), flow='internal', metadata={"dataset": "exiobase", "year": int(2021), "system": str('pxp'), "source_zip": str(source)})
     with pytest.raises(ValueError, match="kind='F_Y'"):
         split_iot_using_exiobase_split_profiles(
-            eurostat_Z=pd.DataFrame([[1.0]], index=["A"], columns=["A"]),
-            eurostat_Y=pd.DataFrame({"P3": [5.0]}, index=["A"]),
+            eurostat_Z=pd.DataFrame([[1.0]], index=pd.Index(["A"]), columns=pd.Index(["A"])),
+            eurostat_Y=pd.DataFrame({"P3": [5.0]}, index=pd.Index(["A"])),
             exio_slice=exio_slice,
             sector_to_exio_sectors={"A": ["S1"]},
             environmental_extension_requests={"air_emissions": ("CO2",)},

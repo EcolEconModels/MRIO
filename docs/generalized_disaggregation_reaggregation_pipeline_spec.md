@@ -577,8 +577,13 @@ across all EXIO producer origins/products. Because these category coefficients a
 reported directly rather than sector-projected, a nonzero `F_Y` observation with a zero
 category monetary denominator is inconsistent and fails closed. Every selected extension
 must provide both `F.txt` and `F_Y.txt` plus `unit.txt`; missing selected source evidence
-fails closed. Sector reaggregation copies these `F_Y` rows unchanged rather than
-manufacturing a sector-by-final-demand satellite matrix.
+fails closed. The model-facing `environmental_extensions.csv` appends DOM `F_Y`
+rows after the product-axis rows with `boundary=scope_final_demand_direct` and
+`denominator_role=scope_final_demand`; the compatibility `sector` field holds the
+final-demand-category label for those rows. TOTAL carries the same destination-scope
+`F_Y` rows forward unchanged, while IMP has no `F_Y` counterpart. Sector
+reaggregation copies these rows unchanged rather than manufacturing a
+sector-by-final-demand satellite matrix.
 
 The raw `exio_environmental_extensions.csv` remains source-oriented and retains the
 unchanged `source_label,extension,kind,stressor,unit,value,monetary_denominator,intensity`

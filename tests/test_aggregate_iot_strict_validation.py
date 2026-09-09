@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -495,3 +496,63 @@ def test_environmental_grid_preserves_signed_target_import_use() -> None:
     by_sector = completed.set_index("sector")
     assert float(by_sector.loc["A", "monetary_output"]) == pytest.approx(-5.0)
     assert float(by_sector.loc["B", "monetary_output"]) == pytest.approx(15.0)
+
+
+def test_final_demand_environmental_rows_bypass_sector_reaggregation() -> None:
+    """F_Y labels and values bypass the product aggregation mapping unchanged."""
+    from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions
+    from scripts.aggregate_iot_by_mapping import (
+        _complete_environmental_extension_sector_grid,
+        _final_demand_environmental_rows_for_grid,
+        _partition_environmental_extensions_for_sector_reaggregation,
+    )
+
+    mixed = pd.DataFrame(
+        {
+            "sector": ["a", "b", "HH", "GOV"],
+            "boundary": [
+                "scope_production",
+                "scope_production",
+                "scope_final_demand_direct",
+                "scope_final_demand_direct",
+            ],
+            "denominator_role": [
+                "target_domestic_output",
+                "target_domestic_output",
+                "scope_final_demand",
+                "scope_final_demand",
+            ],
+            "extension": ["air"] * 4,
+            "stressor": ["CO2"] * 4,
+            "unit": ["kg"] * 4,
+            "value": [2.0, 6.0, 3.0, 4.0],
+            "monetary_output": [10.0, 30.0, 100.0, 50.0],
+            "intensity": [0.2, 0.2, 0.03, 0.08],
+        }
+    )
+    sector, final_demand = _partition_environmental_extensions_for_sector_reaggregation(mixed)
+    assert sector is not None and final_demand is not None
+    aggregated = aggregate_environmental_extensions(
+        sector,
+        {"a": "A", "b": "A"},
+        output=pd.Series([10.0, 30.0], index=["a", "b"], dtype="float64"),
+    )
+    assert aggregated is not None
+    groups = sector.loc[
+        :, ["boundary", "denominator_role", "extension", "stressor", "unit"]
+    ].drop_duplicates(ignore_index=True)
+    completed = _complete_environmental_extension_sector_grid(
+        aggregated,
+        output=pd.Series([40.0], index=["A"], dtype="float64"),
+        production_groups=groups,
+    )
+    copied = _final_demand_environmental_rows_for_grid(final_demand)
+    assert completed is not None and copied is not None
+    result = pd.concat([completed, copied], ignore_index=True)
+
+    assert result["sector"].tolist() == ["A", "HH", "GOV"]
+    fy = result.loc[result["boundary"].eq("scope_final_demand_direct")].reset_index(drop=True)
+    assert fy["sector"].tolist() == ["HH", "GOV"]
+    assert fy["sector_position"].tolist() == [1, 2]
+    np.testing.assert_allclose(fy["value"], [3.0, 4.0])
+    np.testing.assert_allclose(fy["monetary_output"], [100.0, 50.0])
