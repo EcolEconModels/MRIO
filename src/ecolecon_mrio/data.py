@@ -1078,6 +1078,160 @@ def load_mrio_iot_matrices(
     return result, basis, metadata
 
 
+# transition-source-api: begin
+# Public, low-memory source-access helpers shared by downstream scientific repos.
+# These functions deliberately contain no knowledge of a caller's repository layout.
+def is_exiobase_dataset(dataset: str) -> bool:
+    """Return whether ``dataset`` selects the canonical EXIOBASE source family."""
+
+    return str(dataset).strip().lower() in {"exiobase", "exiobase3"}
+
+
+def get_mrio_data_root(data_root: str | Path | None = None) -> Path:
+    """Resolve an explicit data root or MRIO's configured default data root."""
+
+    if data_root is not None:
+        return Path(data_root).expanduser().resolve()
+    return default_data_root().resolve()
+
+
+def mrio_source_input_paths_for_year(
+    *,
+    dataset: str,
+    year: int,
+    data_root: str | Path | None = None,
+    exio_system: str = "pxp",
+) -> list[Path]:
+    """Return source files that should invalidate a downstream scientific manifest.
+
+    EXIOBASE has a stable retained source-ZIP boundary. Other providers currently
+    expose no equivalent source-file contract through this helper and therefore
+    return an empty list rather than guessing provider-specific cache paths.
+    """
+
+    if not is_exiobase_dataset(dataset):
+        return []
+    paths = resolve_exiobase_cache_paths(
+        int(year),
+        system=str(exio_system),
+        data_root=get_mrio_data_root(data_root),
+    )
+    return [Path(paths["zip"])]
+
+
+def ensure_exiobase_source_zip(
+    *,
+    year: int,
+    data_root: str | Path | None = None,
+    exio_system: str = "pxp",
+    exio_doi: str | None = None,
+    allow_download_missing: bool = False,
+    force_download: bool = False,
+    refresh_mismatched: bool = False,
+    verbose: bool = False,
+) -> Path:
+    """Ensure one DOI-audited EXIOBASE source ZIP at the canonical MRIO data root.
+
+    ``refresh_mismatched`` is an explicit destructive-recovery opt-in: a DOI/version
+    mismatch is otherwise fail-closed. The retry delegates to the existing
+    ``ensure_exiobase_year_zip`` force-download semantics.
+    """
+
+    data_root_resolved = get_mrio_data_root(data_root)
+    data_dir = resolve_exiobase_year_dir(int(year), data_root=data_root_resolved)
+    kwargs: dict[str, Any] = {
+        "data_dir": data_dir,
+        "system": str(exio_system),
+        "force_download": bool(force_download),
+        "allow_download_missing": bool(allow_download_missing or force_download),
+        "verbose": bool(verbose),
+    }
+    if exio_doi is not None and str(exio_doi).strip():
+        kwargs["doi"] = str(exio_doi).strip()
+    try:
+        return ensure_exiobase_year_zip(int(year), **kwargs)
+    except ValueError as exc:
+        if not refresh_mismatched or "DOI/version mismatch" not in str(exc):
+            raise
+        retry = dict(kwargs)
+        retry["force_download"] = True
+        retry["allow_download_missing"] = True
+        if verbose:
+            print(
+                f"Refreshing EXIOBASE year {int(year)} after DOI/version mismatch: {exc}",
+                flush=True,
+            )
+        return ensure_exiobase_year_zip(int(year), **retry)
+
+
+def load_mrio_output_vector(
+    dataset: str,
+    year: int,
+    *,
+    data_root: str | Path | None = None,
+    exio_system: str = "pxp",
+    exio_doi: str | None = None,
+    allow_download_missing_exiobase_source_zips: bool = False,
+    exio_force_download: bool = False,
+    verbose: bool = False,
+) -> pd.Series:
+    """Load only the canonical annual output vector ``x`` for one MRIO year."""
+
+    kwargs: dict[str, Any] = {
+        "matrices": ("x",),
+        "data_root": get_mrio_data_root(data_root),
+        "force_download": bool(exio_force_download),
+        "verbose": bool(verbose),
+        "allow_download_missing": bool(
+            allow_download_missing_exiobase_source_zips or exio_force_download
+        ),
+    }
+    if is_exiobase_dataset(dataset):
+        kwargs["exio_system"] = str(exio_system)
+        if exio_doi is not None and str(exio_doi).strip():
+            kwargs["doi"] = str(exio_doi).strip()
+    matrices, basis_index, _metadata = load_mrio_iot_matrices(
+        str(dataset), int(year), **kwargs
+    )
+    output = matrices["x"]
+    if not isinstance(output, pd.Series):
+        raise TypeError("MRIO x-only loader must return a pandas Series.")
+    if not output.index.equals(basis_index):
+        raise ValueError("MRIO x-only loader returned an output index that differs from its basis.")
+    return output.astype(float, copy=False)
+
+
+def load_mrio_index(
+    dataset: str,
+    year: int,
+    *,
+    data_root: str | Path | None = None,
+    exio_system: str = "pxp",
+    exio_doi: str | None = None,
+    allow_download_missing_exiobase_source_zips: bool = False,
+    exio_force_download: bool = False,
+    verbose: bool = False,
+) -> pd.MultiIndex:
+    """Load the canonical region-sector basis without transaction matrices."""
+
+    output = load_mrio_output_vector(
+        str(dataset),
+        int(year),
+        data_root=data_root,
+        exio_system=str(exio_system),
+        exio_doi=exio_doi,
+        allow_download_missing_exiobase_source_zips=bool(
+            allow_download_missing_exiobase_source_zips
+        ),
+        exio_force_download=bool(exio_force_download),
+        verbose=bool(verbose),
+    )
+    if not isinstance(output.index, pd.MultiIndex) or output.index.nlevels != 2:
+        raise TypeError("MRIO output vector index must be a 2-level region-sector MultiIndex.")
+    return output.index.set_names(["region", "sector"])
+# transition-source-api: end
+
+
 def load_exiobase3_iot_matrices_in_price_basis(
     year: int,
     *,

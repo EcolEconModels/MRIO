@@ -817,3 +817,22 @@ Sint Maarten, the overlap persists in 2012, `ANT` is zero in 2013/2015, and BES 
 absent.  Other zero-GDP 3rx rows are therefore not automatically removed.  The
 runtime resolver applies only explicit mapping rows and fails closed for any
 non-current source identity lacking an audited provider rule.
+
+<!-- transition-source-access-api -->
+## Lightweight source-access and provenance helpers
+
+Downstream scientific repositories must import MRIO source access from
+`ecolecon_mrio`; they must not maintain repository-local EXIOBASE bridge modules.
+The public helpers are:
+
+- `is_exiobase_dataset(dataset)` for the exact `exiobase` / `exiobase3` alias rule;
+- `get_mrio_data_root(data_root=None)` for the canonical configured data root;
+- `mrio_source_input_paths_for_year(...)` for resumability/provenance source inputs;
+- `ensure_exiobase_source_zip(...)` for DOI-audited source-ZIP availability and an
+  explicit opt-in mismatch refresh;
+- `load_mrio_output_vector(...)` for the x-only low-memory boundary; and
+- `load_mrio_index(...)` for the canonical two-level region-sector basis.
+
+These are convenience boundaries over the existing primitive IOT/source owners.
+They do not expose derived `A` or summed final demand, and they do not know the
+filesystem layout of downstream repositories.

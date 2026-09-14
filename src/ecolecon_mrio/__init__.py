@@ -12,6 +12,12 @@ from .counterfactual import run_panel_scenarios, run_shock_suite
 from .data import (
     load_mrio,
     load_mrio_iot_matrices,
+    load_mrio_index,
+    load_mrio_output_vector,
+    ensure_exiobase_source_zip,
+    mrio_source_input_paths_for_year,
+    get_mrio_data_root,
+    is_exiobase_dataset,
     load_exiobase3_iot_matrices_in_price_basis,
     derive_A_from_Z_and_x,
     derive_nonexport_final_demand_from_Y,
