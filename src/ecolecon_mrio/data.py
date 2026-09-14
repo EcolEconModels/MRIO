@@ -1180,13 +1180,13 @@ def load_mrio_output_vector(
     kwargs: dict[str, Any] = {
         "matrices": ("x",),
         "data_root": get_mrio_data_root(data_root),
-        "force_download": bool(exio_force_download),
         "verbose": bool(verbose),
-        "allow_download_missing": bool(
-            allow_download_missing_exiobase_source_zips or exio_force_download
-        ),
     }
     if is_exiobase_dataset(dataset):
+        kwargs["force_download"] = bool(exio_force_download)
+        kwargs["allow_download_missing"] = bool(
+            allow_download_missing_exiobase_source_zips or exio_force_download
+        )
         kwargs["exio_system"] = str(exio_system)
         if exio_doi is not None and str(exio_doi).strip():
             kwargs["doi"] = str(exio_doi).strip()

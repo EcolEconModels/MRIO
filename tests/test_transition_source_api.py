@@ -71,6 +71,40 @@ def test_output_vector_uses_x_only_primitive_loader(monkeypatch: pytest.MonkeyPa
     assert kwargs["doi"] == "10.5281/zenodo.test"
 
 
+def test_output_vector_non_exio_preserves_generic_loader_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """EXIO-only controls must not override another provider's loader defaults."""
+
+    basis = _basis()
+    expected = pd.Series([4.0, 5.0], index=basis, name="x")
+    calls: list[tuple[str, int, dict[str, object]]] = []
+
+    def fake_loader(dataset: str, year: int, **kwargs: object):
+        calls.append((dataset, year, dict(kwargs)))
+        return {"x": expected.copy()}, basis, {"dataset": dataset}
+
+    monkeypatch.setattr(data, "load_mrio_iot_matrices", fake_loader)
+    out = data.load_mrio_output_vector(
+        "wiod16",
+        2014,
+        data_root=tmp_path,
+        exio_system="ixi",
+        exio_doi="ignored-for-non-exio",
+        allow_download_missing_exiobase_source_zips=True,
+        exio_force_download=True,
+    )
+    pd.testing.assert_series_equal(out, expected)
+    assert len(calls) == 1
+    dataset, year, kwargs = calls[0]
+    assert dataset == "wiod16" and year == 2014
+    assert kwargs == {
+        "matrices": ("x",),
+        "data_root": tmp_path.resolve(),
+        "verbose": False,
+    }
+
+
 def test_index_is_the_x_only_basis(monkeypatch: pytest.MonkeyPatch) -> None:
     basis = _basis()
     monkeypatch.setattr(
