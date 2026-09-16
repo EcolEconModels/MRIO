@@ -217,3 +217,59 @@ def test_strict_csr_matrix_reuses_float64_csr_without_copy() -> None:
     checked = _strict_csr_matrix(matrix, index=index, name="A")
 
     assert checked is matrix
+
+# PUBLIC_YEAR_STATE_LEONTIEF_RHS_TESTS_V1
+def test_year_state_leontief_rhs_preserves_index_columns_and_matches_direct_solve() -> None:
+    """The public state solver must reuse the exact Leontief operator for many RHS."""
+
+    from ecolecon_mrio import MrioYearState, solve_mrio_year_state_leontief_rhs
+
+    index = _idx()
+    A = csr_matrix([[0.10, 0.02], [0.03, 0.12]], dtype=float)
+    state = MrioYearState(
+        year=2020,
+        A=A,
+        x=_series([10.0, 8.0], index, "x"),
+        y=_series([9.0, 7.0], index, "y"),
+        index=index,
+        monetary_unit="MEUR",
+        monetary_unit_source="test_fixture",
+        metadata={"valuation_basis": "current_price"},
+    )
+    rhs = pd.DataFrame(
+        {"source": [1.0, -0.5], "input": [0.25, 2.0], "total": [1.25, 1.5]},
+        index=index,
+        dtype=float,
+    )
+    actual = solve_mrio_year_state_leontief_rhs(state, rhs, label="test multi RHS")
+    expected = np.asarray(
+        spsolve(sparse_eye(2, format="csr") - A, rhs.to_numpy(dtype=float)),
+        dtype=float,
+    )
+    pd.testing.assert_index_equal(actual.index, index)
+    pd.testing.assert_index_equal(actual.columns, rhs.columns)
+    np.testing.assert_allclose(actual.to_numpy(dtype=float), expected, rtol=1e-13, atol=1e-13)
+
+
+def test_year_state_leontief_rhs_rejects_misaligned_rhs() -> None:
+    """Arbitrary RHS solves must not silently reorder or fill a scientific basis."""
+
+    from ecolecon_mrio import MrioYearState, solve_mrio_year_state_leontief_rhs
+
+    index = _idx()
+    state = MrioYearState(
+        year=2020,
+        A=csr_matrix([[0.10, 0.02], [0.03, 0.12]], dtype=float),
+        x=_series([10.0, 8.0], index, "x"),
+        y=_series([9.0, 7.0], index, "y"),
+        index=index,
+        monetary_unit="MEUR",
+        monetary_unit_source="test_fixture",
+        metadata={"valuation_basis": "current_price"},
+    )
+    bad_index = pd.MultiIndex.from_tuples(
+        [("R1", "s2"), ("R1", "s1")], names=["region", "sector"]
+    )
+    rhs = pd.DataFrame({"shock": [1.0, 2.0]}, index=bad_index)
+    with pytest.raises(ValueError, match="exactly match"):
+        solve_mrio_year_state_leontief_rhs(state, rhs)

@@ -324,6 +324,47 @@ def _solve_sparse_leontief(label: str, A: csr_matrix, rhs: np.ndarray) -> np.nda
     return _solve_sparse_leontief_many(label, A, rhs)[:, 0]
 
 
+# PUBLIC_YEAR_STATE_LEONTIEF_RHS_V1
+def solve_mrio_year_state_leontief_rhs(
+    state: MrioYearState,
+    rhs: pd.DataFrame,
+    *,
+    label: str = "MRIO year-state Leontief RHS",
+) -> pd.DataFrame:
+    """Solve ``(I - A_t) z = rhs`` on one already-loaded strict year state.
+
+    This is the public arbitrary-RHS boundary for downstream analyses that need
+    the same sparse Leontief operator as the strict SDA APIs without rebuilding
+    a solver locally.  ``rhs`` must use the state's exact canonical
+    ``MultiIndex(region, sector)`` and unique columns.  Multiple RHS columns are
+    solved together so the existing sparse implementation factorizes the year
+    system only once.  The function forms no explicit inverse and stores no
+    factorization or derived matrix cache.
+    """
+
+    idx = require_region_sector_multiindex(state.index)
+    _mrio_year_state_valuation_signature(state)
+    A = _strict_csr_matrix(state.A, index=idx, name=f"A_{int(state.year)}")
+    if not isinstance(rhs, pd.DataFrame):
+        raise TypeError(f"rhs must be a pandas DataFrame, got {type(rhs)!r}")
+    if not rhs.index.equals(idx):
+        raise ValueError("rhs index does not exactly match the MRIO year-state basis")
+    if rhs.shape[1] == 0:
+        raise ValueError("rhs must contain at least one column")
+    if not rhs.columns.is_unique:
+        raise ValueError("rhs columns must be unique")
+    try:
+        numeric = rhs.astype("float64", copy=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("rhs contains non-numeric values") from exc
+    values = _ensure_finite_array(
+        numeric.to_numpy(dtype=float, copy=False),
+        name=f"{label} RHS",
+    )
+    solved = _solve_sparse_leontief_many(str(label), A, values)
+    return pd.DataFrame(solved, index=idx, columns=rhs.columns, dtype=float)
+
+
 def compute_output_sda_pair_result(
     *,
     start_year: int,

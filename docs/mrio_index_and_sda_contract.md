@@ -142,3 +142,20 @@ full signature, so matching base years alone cannot combine independently scoped
 or differently sourced factor tables. This is a valuation/provenance contract only;
 MRIO does not choose downstream analysis or figure output directories.
 <!-- /ecolecon-valued-primitive-loader -->
+
+<!-- public-year-state-leontief-rhs-v1 -->
+## Public Leontief solve on an already-loaded year state
+
+`solve_mrio_year_state_leontief_rhs(state, rhs, ...)` is the narrow public boundary
+for downstream analyses that need to apply the same `(I-A_t)^{-1}` operator as the
+strict SDA APIs to one or more caller-defined right-hand sides. `rhs` is a pandas
+DataFrame on the state's exact canonical `MultiIndex(region, sector)`; its columns
+are preserved in the returned DataFrame. Multiple columns are solved together so
+the existing sparse multi-RHS implementation factorizes the year system once.
+
+The helper validates the year-state valuation metadata and matrix/index boundary,
+forms no explicit Leontief inverse, stores no solver factorization, performs no unit
+conversion, and creates no derived matrix cache. It is an operator boundary only:
+the downstream caller owns the economic meaning and dimensional consistency of the
+RHS columns. Strict SDA identities continue to be owned by the existing output and
+extension pair APIs.
