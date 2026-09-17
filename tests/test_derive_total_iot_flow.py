@@ -121,6 +121,69 @@ def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> N
     pd.DataFrame(columns=pd.Index(["parent", "child", "output_share"])).to_csv(directory / "split_output_shares.csv", index=False)
 
 
+
+def _conditioning_fixture(tmp_path: Path) -> tuple[pd.Index, dict[str, str], pd.Series]:
+    children = pd.Index(["fuel", "coal", "wind"])
+    child_parent = {"fuel": "fuel", "coal": "electricity", "wind": "electricity"}
+    dom = tmp_path / "stk_flow=DOM"
+    dom.mkdir()
+    pd.DataFrame(
+        [
+            {"parent": "electricity", "child": "coal", "output_share": 0.9},
+            {"parent": "electricity", "child": "wind", "output_share": 0.1},
+        ]
+    ).to_csv(dom / "split_output_shares.csv", index=False)
+    shares = MODULE._load_dom_split_output_shares(
+        dom, child_parent=child_parent, children=children
+    )
+    return children, child_parent, shares
+
+
+def test_producer_column_conditioning_removes_exio_output_scale(tmp_path: Path) -> None:
+    children, child_parent, shares = _conditioning_fixture(tmp_path)
+    Z = pd.DataFrame(0.0, index=children, columns=children)
+    Z.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
+    Z.loc["coal", "fuel"], Z.loc["wind", "fuel"] = 1.0, 9.0
+    x = pd.Series([90.0, 10.0, 90.0], index=children)
+    before_parent = MODULE._aggregate_square(
+        Z, child_parent, pd.Index(["fuel", "electricity"])
+    )
+    got, diagnostic = MODULE._condition_producer_columns_on_domestic_output(
+        Z, child_parent=child_parent, output_share=shares, x_domestic=x, flow="DOM"
+    )
+    pd.testing.assert_series_equal(got.sum(axis=1), Z.sum(axis=1))
+    pd.testing.assert_frame_equal(
+        MODULE._aggregate_square(got, child_parent, pd.Index(["fuel", "electricity"])),
+        before_parent,
+    )
+    assert got.loc["fuel", "coal"] == pytest.approx(9.0)
+    assert got.loc["fuel", "wind"] == pytest.approx(81.0)
+    assert not diagnostic.empty
+
+
+def test_producer_column_conditioning_is_noop_when_scales_match(tmp_path: Path) -> None:
+    children, child_parent, shares = _conditioning_fixture(tmp_path)
+    Z = pd.DataFrame(0.0, index=children, columns=children)
+    Z.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
+    x = pd.Series([90.0, 90.0, 10.0], index=children)
+    got, _ = MODULE._condition_producer_columns_on_domestic_output(
+        Z, child_parent=child_parent, output_share=shares, x_domestic=x, flow="DOM"
+    )
+    pd.testing.assert_frame_equal(got, Z)
+
+
+def test_producer_column_conditioning_rejects_zero_output_support(tmp_path: Path) -> None:
+    children, child_parent, shares = _conditioning_fixture(tmp_path)
+    shares.loc[["coal", "wind"]] = [0.0, 1.0]
+    Z = pd.DataFrame(0.0, index=children, columns=children)
+    Z.loc["fuel", "wind"] = 1.0
+    x = pd.Series([1.0, 1.0, 1.0], index=children)
+    with pytest.raises(ValueError, match="zero EXIO producer-output support"):
+        MODULE._condition_producer_columns_on_domestic_output(
+            Z, child_parent=child_parent, output_share=shares,
+            x_domestic=x, flow="DOM",
+        )
+
 def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_primitive(tmp_path, "DOM", 1.0, 1.0)
     _write_primitive(tmp_path, "IMP", 2.0, 3.0)

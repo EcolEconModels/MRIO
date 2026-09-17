@@ -409,6 +409,121 @@ def _aggregate_columns(frame: pd.DataFrame, child_parent: Mapping[str, str], sou
     return cast(pd.DataFrame, grouped.reindex(columns=source_codes))
 
 
+
+def _load_dom_split_output_shares(
+    dom_dir: Path, *, child_parent: Mapping[str, str], children: pd.Index
+) -> pd.Series:
+    """Return DOM EXIO producer-output shares on the canonical child axis."""
+    frame = pd.read_csv(dom_dir / "split_output_shares.csv")
+    required = {"parent", "child", "output_share"}
+    if set(frame.columns) != required or frame["child"].astype(str).duplicated().any():
+        raise ValueError("Invalid DOM split_output_shares.csv schema or duplicate child.")
+    frame = frame.assign(
+        parent=frame["parent"].astype(str),
+        child=frame["child"].astype(str),
+        output_share=pd.to_numeric(frame["output_share"], errors="coerce"),
+    )
+    children = pd.Index(children.astype(str))
+    shares = pd.Series(1.0, index=children, dtype="float64")
+    split_parents = {
+        parent
+        for parent in dict.fromkeys(child_parent.get(str(c), str(c)) for c in children)
+        if sum(child_parent.get(str(c), str(c)) == parent for c in children) > 1
+    }
+    for parent in split_parents:
+        group = [str(c) for c in children if child_parent.get(str(c), str(c)) == parent]
+        rows = frame.loc[frame["parent"].eq(parent)].set_index("child")
+        if set(rows.index.astype(str)) != set(group):
+            raise ValueError(f"Incomplete DOM output shares for split parent {parent!r}.")
+        values = rows["output_share"].reindex(group).astype("float64")
+        if (
+            not np.isfinite(values.to_numpy()).all()
+            or bool((values < 0.0).any())
+            or not np.isclose(float(values.sum()), 1.0, rtol=0.0, atol=1e-12)
+        ):
+            raise ValueError(f"Invalid DOM output shares for split parent {parent!r}.")
+        shares.loc[group] = values.to_numpy()
+    extra = set(frame["child"]) - set(children)
+    if extra:
+        raise ValueError(f"DOM output shares contain non-canonical children: {sorted(extra)!r}.")
+    return shares
+
+
+def _condition_producer_columns_on_domestic_output(
+    Z: pd.DataFrame,
+    *,
+    child_parent: Mapping[str, str],
+    output_share: pd.Series,
+    x_domestic: pd.Series,
+    flow: str,
+    atol: float = 1e-12,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Use EXIO technology at Austrian child output, preserving rows and parent cells."""
+    if not Z.index.equals(Z.columns):
+        raise ValueError(f"{flow} conditioning requires square aligned Z.")
+    children = pd.Index(Z.index.astype(str))
+    if not output_share.index.equals(children) or not x_domestic.index.equals(children):
+        raise ValueError(f"{flow} conditioning child axes are not aligned.")
+    if not np.isfinite(Z.to_numpy()).all() or bool((Z < -atol).to_numpy().any()):
+        raise ValueError(f"{flow} conditioning requires finite non-negative intermediate Z.")
+    x = x_domestic.astype("float64")
+    if not np.isfinite(x.to_numpy()).all() or bool((x < -atol).any()):
+        raise ValueError("Canonical domestic child output must be finite and non-negative.")
+
+    out = Z.mask(Z.abs() <= atol, 0.0).copy()
+    before_columns = out.sum(axis=0)
+    diagnostic_rows: list[dict[str, object]] = []
+    parents = dict.fromkeys(child_parent.get(str(c), str(c)) for c in children)
+    for parent in parents:
+        group = [str(c) for c in children if child_parent.get(str(c), str(c)) == parent]
+        if len(group) <= 1:
+            continue
+        shares = output_share.reindex(group).astype("float64")
+        target_x = x.reindex(group).mask(lambda s: s.abs() <= atol, 0.0)
+        bad_support = shares.le(atol) & target_x.gt(atol)
+        if bool(bad_support.any()):
+            bad_index = cast(pd.Index, target_x.index[bad_support])
+            bad = [str(child) for child in bad_index]
+            raise ValueError(
+                "Positive Austrian child output has zero EXIO producer-output support: "
+                f"flow={flow!r}, parent={parent!r}, children={bad!r}."
+            )
+        scale = target_x.div(shares.where(shares.gt(atol))).fillna(0.0)
+        block = out.loc[:, group]
+        row_mass = block.sum(axis=1)
+        weighted = block.mul(scale, axis=1)
+        denominator = weighted.sum(axis=1)
+        unsupported = row_mass.gt(atol) & denominator.le(atol)
+        if bool(unsupported.any()):
+            row = str(unsupported.index[unsupported][0])
+            raise ValueError(
+                "Positive target row mass has no supported positive-output producer child: "
+                f"flow={flow!r}, row_child={row!r}, buyer_parent={parent!r}."
+            )
+        factors = row_mass.div(denominator.where(denominator.gt(atol))).fillna(0.0)
+        out.loc[:, group] = weighted.mul(factors, axis=0).to_numpy()
+        for child in group:
+            diagnostic_rows.append(
+                {
+                    "flow": flow,
+                    "buyer_parent": parent,
+                    "buyer_child": child,
+                    "before_column_input": float(before_columns.loc[child]),
+                    "after_column_input": float(out.loc[:, child].sum()),
+                    "domestic_output": float(target_x.loc[child]),
+                    "exio_output_share": float(shares.loc[child]),
+                    "technology_scale": float(scale.loc[child]),
+                }
+            )
+    _assert_close(
+        f"{flow} producer-column conditioning row conservation",
+        Z.sum(axis=1),
+        out.sum(axis=1),
+        rtol=0.0,
+        atol=1e-10,
+    )
+    return out, pd.DataFrame(diagnostic_rows)
+
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
 _SIGNED_INVESTMENT_ATOMS = frozenset({"P5", "P5M", "P52", "P53"})
 
@@ -907,9 +1022,37 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     ))
     source_codes = references["TOTAL"].Z.index.astype(str)
     child_parent = _child_to_parent(manifest, source_codes)
-    # Row conservation supplies the only child-output margin. EXIO producer
-    # output shares remain donor diagnostics and are not a second hard target.
+    # DOM row use fixes Austrian child output; EXIO output shares remove donor
+    # producer scale from the preliminary transaction prior, not a second output target.
     x_domestic = use["DOM"].rename("x")
+    dom_output_share = _load_dom_split_output_shares(
+        dirs["DOM"], child_parent=child_parent, children=Z_dom.index
+    )
+    Z_dom, dom_conditioning = _condition_producer_columns_on_domestic_output(
+        Z_dom, child_parent=child_parent, output_share=dom_output_share,
+        x_domestic=x_domestic, flow="DOM",
+    )
+    Z_imp, imp_conditioning = _condition_producer_columns_on_domestic_output(
+        Z_imp, child_parent=child_parent, output_share=dom_output_share,
+        x_domestic=x_domestic, flow="IMP",
+    )
+    Z_total = Z_dom + Z_imp
+    Z = {"DOM": Z_dom, "IMP": Z_imp, "TOTAL": Z_total}
+    conditioned_use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in Z}
+    _assert_close(
+        "DOM conditioning preserves canonical output", conditioned_use["DOM"],
+        x_domestic, rtol=0.0, atol=1e-10,
+    )
+    _assert_close(
+        "IMP conditioning preserves row use", conditioned_use["IMP"],
+        use["IMP"], rtol=0.0, atol=1e-10,
+    )
+    use = conditioned_use
+    for flow in ("DOM", "IMP", "TOTAL"):
+        _write_frame(Z[flow], dirs[flow], "Z_split.csv")
+    pd.concat([dom_conditioning, imp_conditioning], ignore_index=True).to_csv(
+        outdir / "producer_column_conditioning.csv", index=False
+    )
     import_atomic = source_atomic_final_demand(Y_imp)
     nonsigned_import_columns = [
         code for code in import_atomic.columns if code not in _SIGNED_INVESTMENT_ATOMS
@@ -1015,6 +1158,8 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             "TOTAL": "total_inputs_per_domestic_output",
         },
         "V_status": "transaction_identities_plus_primitive_rows",
+        "producer_column_conditioning": "exio_technology_at_austrian_child_output",
+        "producer_column_conditioning_diagnostic": "../producer_column_conditioning.csv",
         "balancing_applied": False,
     }, indent=2) + "\n", encoding="utf-8")
     pd.DataFrame(diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)

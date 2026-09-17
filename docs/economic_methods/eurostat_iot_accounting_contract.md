@@ -593,6 +593,35 @@ Z^{before}_{ij}
 = \sum_{a \in children(i)}\sum_{b \in children(j)}Z^{after}_{ab}.
 \]
 
+
+### Producer-column technology conditioning
+
+Parent-cell conservation is necessary but does not by itself couple synthetic
+producer columns to target-country child output. Let \(Z^{0,f}_{ab}\) be the
+preliminary donor split, \(C_j\) the children of buyer parent \(j\), and
+\(r^f_{a,j}=\sum_{b\in C_j}Z^{0,f}_{ab}\). Canonical child output remains the DOM
+row-use margin \(x_b\); EXIO output is not a second target.
+
+For persisted EXIO producer-output share \(s_b^{x,E}\), reweight buyer children by
+
+\[
+\omega^f_{ab}=Z^{0,f}_{ab}\frac{x_b}{s_b^{x,E}},
+\qquad
+Z^{*,f}_{ab}=r^f_{a,j}\frac{\omega^f_{ab}}
+{\sum_{c\in C_j}\omega^f_{ac}}.
+\]
+
+Because \(Z^{0,f}_{ab}\propto D^{E,f}_{ab}\) inside a donor-backed parent cell and
+\(s_b^{x,E}\propto x_b^E\), the prior is proportional to
+\(D^{E,f}_{ab}x_b/x_b^E=A^{E,f}_{ab}x_b\): EXIO technology at Austrian child
+output. Row-child/buyer-parent masses, emitted row totals, DOM output, and source
+parent cells are therefore preserved. Use the same DOM production scale for DOM
+and IMP producer columns.
+
+This closed-form conditioning is not RAS/GRAS or optimisation. Positive Austrian
+output with zero EXIO output support, or positive row mass supported only on
+zero-output producer children, is an evidence conflict and fails explicitly.
+
 ### Final use
 
 For every atomic final-use category:

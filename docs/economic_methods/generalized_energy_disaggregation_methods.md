@@ -461,6 +461,19 @@ A donor table is a structural prior, not an authority for target-country totals.
 The target aggregate cell totals \(Z_{ij}\) and \(Y_{if}\) remain authoritative
 unless a separate override policy is explicitly declared.
 
+
+### Target-output conditioning of donor producer columns
+
+Raw donor transactions contain both technology and donor scale,
+\(D^Z_{ab}=A^D_{ab}x^D_b\). After DOM row use fixes target child output \(x_b\),
+condition each preliminary buyer-child prior by \(x_b/s_b^{x,D}\), where
+\(s_b^{x,D}\) is the donor output share, and renormalise within the existing
+row-child/buyer-parent mass. For donor-backed cells this is proportional to
+\(A^D_{ab}x_b\), so donor technology is evaluated at target output without changing
+any authoritative target parent cell or child row/output margin. Apply the same DOM
+production scale to DOM and IMP columns. Unsupported positive target output fails
+for evidence review; no generic optimiser is implied by this step.
+
 ## Geographic scope aggregation
 
 Geographic aggregation is a first-class operation and is independent of sector
