@@ -836,3 +836,44 @@ The public helpers are:
 These are convenience boundaries over the existing primitive IOT/source owners.
 They do not expose derived `A` or summed final demand, and they do not know the
 filesystem layout of downstream repositories.
+
+<!-- GENERIC_INVERSE_MRIO_MECHANISM_API_V1 -->
+## Generic inverse final-use / coefficient-flow optimisation
+
+`InverseMrioMechanismProblem` is the public sparse inverse-accounting owner for a
+single monetary MRIO/IOT reference state. It is transition-family agnostic: callers
+supply a square non-negative coefficient matrix `A0`, aligned gross output `x0`,
+complete final use `f0`, an independent coefficient-change box `L <= delta_A <= U`,
+and an arbitrary sparse linear output-change target `C @ delta_x = rhs`.
+
+The exact change identity is
+
+$$
+(I-A_0)\,\delta x=\delta f+u,\qquad u=\Delta A\,x_1,\qquad x_1=x_0+\delta x.
+$$
+
+For non-negative `x1`, the independent coefficient box has the exact rowwise image
+
+$$
+Lx_1\le u\le Ux_1.
+$$
+
+The API therefore optimises the compact structural-flow vector `u`; it does not add
+one LP variable per coefficient edge. The existing
+`reconstruct_coefficient_change_witness(...)` API converts any admitted `u` back to
+a sparse coefficient witness when an audit requires it.
+
+The generic burden coordinates are gross L1 changes relative to the supplied
+baseline monetary accounts: `||delta_f||_1 / ||f0||_1` and
+`||u||_1 / ||A0 @ x0||_1`. `f0` may contain signed accounting items; gross output
+and `A0` remain non-negative. The change identity deliberately inherits any tiny
+finite-precision baseline source-account residual instead of silently rebalancing
+the source state.
+
+The implementation uses SciPy's bundled incremental HiGHS bindings and streams
+sparse constraint rows into one persistent solver model. This is a resource
+property of the API, not a scientific change. Scenario identities, transition
+roles, environmental extensions, historical precedent, epsilon-grid policy,
+reader-facing witness selection, and plotting remain caller-owned. An EE-MRIO can
+use this API for its monetary MRIO core and evaluate environmental extensions on
+returned economic witnesses separately.

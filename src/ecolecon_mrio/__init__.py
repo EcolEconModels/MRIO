@@ -153,6 +153,11 @@ from .panel_coverage import (
     read_coverage_manifest,
 )
 
+from .inverse_mechanism_frontier import (
+    InverseMechanismSolution,
+    InverseMrioMechanismProblem,
+)
+
 from .inverse_primitives import (
     RowBoundsInterval,
     RowSolveDiagnostics,
@@ -198,6 +203,8 @@ from .energy_balance_pxp import (
 )
 
 __all__ = [
+    "InverseMechanismSolution",
+    "InverseMrioMechanismProblem",
     "load_mrio",
     "load_mrio_iot_matrices",
     "load_exiobase3_iot_matrices_in_price_basis",
