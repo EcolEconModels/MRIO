@@ -27,6 +27,11 @@ from ecolecon_mrio.iot_flow_semantics import (
 _FRAME_FILES = ("Z", "Y", "V", "M")
 _SPLIT_NAMES = {name: f"{name}_split.csv" for name in _FRAME_FILES}
 _AGG_NAMES = {name: f"{name}_agg.csv" for name in _FRAME_FILES}
+_GENERATED_IDENTITY_RTOL = 1e-12
+_GENERATED_IDENTITY_ATOL = 1e-10
+_TRANSFORMATION_COHERENCE_REPORT = "transformation_coherence_validation.csv"
+
+
 def _read_frame(path: Path) -> pd.DataFrame:
     frame = pd.read_csv(path, index_col=0)
     frame.index = frame.index.astype(str)
@@ -76,21 +81,41 @@ def _max_gap(left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series) ->
 
 
 def _assert_close(label: str, left: pd.DataFrame | pd.Series, right: pd.DataFrame | pd.Series, *, rtol: float, atol: float) -> float:
+    """Require elementwise generated equality under ``atol + rtol * scale``.
+
+    A single global scale can hide a bad small cell beside a very large cell.  The
+    generated-table contract is strict but numerical: matching labels/NaN masks are
+    required, while ordinary floating reduction noise is compared element by element.
+    """
+    if not np.isfinite(rtol) or not np.isfinite(atol) or rtol < 0.0 or atol < 0.0:
+        raise ValueError("rtol and atol must be finite and non-negative")
     gap = _max_gap(left, right)
-    finite_values = np.concatenate(
-        [
-            values[np.isfinite(values)]
-            for values in (
-                left.to_numpy(dtype="float64"),
-                right.to_numpy(dtype="float64"),
-            )
-        ]
-    )
-    scale = float(np.max(np.abs(finite_values))) if finite_values.size else 0.0
-    tolerance = max(atol, rtol * scale)
-    if not np.isfinite(gap) or gap > tolerance:
-        raise ValueError(f"{label} failed: max_abs_gap={gap:.12g}, tolerance={tolerance:.12g}")
-    return gap
+    if not np.isfinite(gap):
+        raise ValueError(
+            f"{label} failed: labels/NaN masks differ or non-finite values are present"
+        )
+    left_values = left.to_numpy(dtype="float64")
+    right_values = right.to_numpy(dtype="float64")
+    jointly_missing = np.isnan(left_values) & np.isnan(right_values)
+    finite = np.isfinite(left_values) & np.isfinite(right_values)
+    if np.any(~finite & ~jointly_missing):
+        raise ValueError(f"{label} failed: non-finite compared values are present")
+    abs_gap = np.where(jointly_missing, 0.0, np.abs(left_values - right_values))
+    tolerance = atol + rtol * np.maximum(np.abs(left_values), np.abs(right_values))
+    tolerance = np.where(jointly_missing, np.inf, tolerance)
+    bad = abs_gap > tolerance
+    if bool(np.any(bad)):
+        normalized = np.zeros_like(abs_gap)
+        positive = tolerance > 0.0
+        np.divide(abs_gap, tolerance, out=normalized, where=positive)
+        normalized[~positive & (abs_gap > 0.0)] = np.inf
+        worst = np.unravel_index(int(np.argmax(normalized)), normalized.shape)
+        raise ValueError(
+            f"{label} failed: max_abs_gap={float(np.max(abs_gap)):.12g}, "
+            f"worst_abs_gap={float(abs_gap[worst]):.12g}, "
+            f"worst_tolerance={float(tolerance[worst]):.12g}"
+        )
+    return float(np.max(abs_gap)) if abs_gap.size else 0.0
 
 
 _ROUNDED_Y_CONTROLS = ("P3", "P5M", "P5", "P6_D0", "P6_U3", "TFU", "TU")
@@ -519,10 +544,118 @@ def _condition_producer_columns_on_domestic_output(
         f"{flow} producer-column conditioning row conservation",
         Z.sum(axis=1),
         out.sum(axis=1),
-        rtol=0.0,
-        atol=1e-10,
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
     )
     return out, pd.DataFrame(diagnostic_rows)
+
+
+def _validate_producer_conditioning_transformation(
+    before: pd.DataFrame,
+    after: pd.DataFrame,
+    *,
+    child_parent: Mapping[str, str],
+    x_domestic: pd.Series,
+    flow: str,
+) -> list[dict[str, object]]:
+    """Validate runtime invariants of the producer-column conditioning operator."""
+    children = pd.Index(after.index.astype(str))
+    parent_axis = pd.Index(
+        list(dict.fromkeys(child_parent.get(str(child), str(child)) for child in children)),
+        dtype="object",
+    )
+    before_row_parent = pd.DataFrame(
+        {
+            str(parent): before.loc[
+                :,
+                [
+                    str(child)
+                    for child in children
+                    if child_parent.get(str(child), str(child)) == str(parent)
+                ],
+            ].sum(axis=1)
+            for parent in parent_axis
+        },
+        index=children,
+    )
+    after_row_parent = pd.DataFrame(
+        {
+            str(parent): after.loc[
+                :,
+                [
+                    str(child)
+                    for child in children
+                    if child_parent.get(str(child), str(child)) == str(parent)
+                ],
+            ].sum(axis=1)
+            for parent in parent_axis
+        },
+        index=children,
+    )
+    row_gap = _assert_close(
+        f"{flow} conditioning row-child/buyer-parent mass",
+        before_row_parent,
+        after_row_parent,
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
+    )
+    parent_gap = _assert_close(
+        f"{flow} conditioning parent Z-cell conservation",
+        _aggregate_square(before, child_parent, parent_axis),
+        _aggregate_square(after, child_parent, parent_axis),
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
+    )
+    parent_counts: dict[str, int] = {}
+    for child in children:
+        parent = child_parent.get(str(child), str(child))
+        parent_counts[parent] = parent_counts.get(parent, 0) + 1
+    zero_target_children = [
+        str(child)
+        for child in children
+        if parent_counts[child_parent.get(str(child), str(child))] > 1
+        and abs(float(x_domestic.loc[str(child)])) <= 1e-12
+    ]
+    zero_gap = 0.0
+    if zero_target_children:
+        zero_inputs = after.loc[:, zero_target_children].sum(axis=0).astype("float64")
+        zero_gap = _assert_close(
+            f"{flow} zero-target-output producer columns",
+            zero_inputs,
+            pd.Series(0.0, index=zero_inputs.index, dtype="float64"),
+            rtol=0.0,
+            atol=_GENERATED_IDENTITY_ATOL,
+        )
+    return [
+        {
+            "validation_class": "transformation_coherence",
+            "check_id": "tc.row_child_mass",
+            "flow": flow,
+            "status": "pass",
+            "max_abs_gap": row_gap,
+            "rtol": _GENERATED_IDENTITY_RTOL,
+            "atol": _GENERATED_IDENTITY_ATOL,
+        },
+        {
+            "validation_class": "transformation_coherence",
+            "check_id": "tc.parent_z_cell",
+            "flow": flow,
+            "status": "pass",
+            "max_abs_gap": parent_gap,
+            "rtol": _GENERATED_IDENTITY_RTOL,
+            "atol": _GENERATED_IDENTITY_ATOL,
+        },
+        {
+            "validation_class": "transformation_coherence",
+            "check_id": "tc.zero_target_output_column",
+            "flow": flow,
+            "status": "pass",
+            "max_abs_gap": zero_gap,
+            "rtol": 0.0,
+            "atol": _GENERATED_IDENTITY_ATOL,
+        },
+    ]
+
 
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
 _SIGNED_INVESTMENT_ATOMS = frozenset({"P5", "P5M", "P52", "P53"})
@@ -878,6 +1011,20 @@ def _validate_coefficient_sidecars(
     Y = {flow: _read_frame(path / y_name) for flow, path in dirs.items()}
     use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in dirs}
     output = _read_series(dirs["DOM"] / x_name)
+    _assert_close(
+        f"{suffix} DOM x=row-use",
+        output,
+        use["DOM"],
+        rtol=rtol,
+        atol=atol,
+    )
+    _assert_close(
+        f"{suffix} TOTAL use=DOM+IMP",
+        use["TOTAL"],
+        use["DOM"].add(use["IMP"]),
+        rtol=rtol,
+        atol=atol,
+    )
     for flow, directory in dirs.items():
         expected_A = technical_coefficients(Z[flow], output)
         _assert_close(
@@ -1028,6 +1175,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     dom_output_share = _load_dom_split_output_shares(
         dirs["DOM"], child_parent=child_parent, children=Z_dom.index
     )
+    preconditioned_z = {"DOM": Z_dom.copy(), "IMP": Z_imp.copy()}
     Z_dom, dom_conditioning = _condition_producer_columns_on_domestic_output(
         Z_dom, child_parent=child_parent, output_share=dom_output_share,
         x_domestic=x_domestic, flow="DOM",
@@ -1036,22 +1184,71 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         Z_imp, child_parent=child_parent, output_share=dom_output_share,
         x_domestic=x_domestic, flow="IMP",
     )
+    transformation_checks = _validate_producer_conditioning_transformation(
+        preconditioned_z["DOM"], Z_dom,
+        child_parent=child_parent, x_domestic=x_domestic, flow="DOM",
+    )
+    transformation_checks.extend(
+        _validate_producer_conditioning_transformation(
+            preconditioned_z["IMP"], Z_imp,
+            child_parent=child_parent, x_domestic=x_domestic, flow="IMP",
+        )
+    )
     Z_total = Z_dom + Z_imp
     Z = {"DOM": Z_dom, "IMP": Z_imp, "TOTAL": Z_total}
     conditioned_use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in Z}
-    _assert_close(
+    dom_output_gap = _assert_close(
         "DOM conditioning preserves canonical output", conditioned_use["DOM"],
-        x_domestic, rtol=0.0, atol=1e-10,
+        x_domestic, rtol=_GENERATED_IDENTITY_RTOL, atol=_GENERATED_IDENTITY_ATOL,
     )
-    _assert_close(
+    imp_use_gap = _assert_close(
         "IMP conditioning preserves row use", conditioned_use["IMP"],
-        use["IMP"], rtol=0.0, atol=1e-10,
+        use["IMP"], rtol=_GENERATED_IDENTITY_RTOL, atol=_GENERATED_IDENTITY_ATOL,
+    )
+    total_use_gap = _assert_close(
+        "TOTAL use remains DOM plus IMP after conditioning",
+        conditioned_use["TOTAL"], conditioned_use["DOM"].add(conditioned_use["IMP"]),
+        rtol=_GENERATED_IDENTITY_RTOL, atol=_GENERATED_IDENTITY_ATOL,
+    )
+    transformation_checks.extend(
+        [
+            {
+                "validation_class": "transformation_coherence",
+                "check_id": "tc.dom_output_margin",
+                "flow": "DOM",
+                "status": "pass",
+                "max_abs_gap": dom_output_gap,
+                "rtol": _GENERATED_IDENTITY_RTOL,
+                "atol": _GENERATED_IDENTITY_ATOL,
+            },
+            {
+                "validation_class": "transformation_coherence",
+                "check_id": "tc.imp_row_use_margin",
+                "flow": "IMP",
+                "status": "pass",
+                "max_abs_gap": imp_use_gap,
+                "rtol": _GENERATED_IDENTITY_RTOL,
+                "atol": _GENERATED_IDENTITY_ATOL,
+            },
+            {
+                "validation_class": "transformation_coherence",
+                "check_id": "tc.total_use_additivity",
+                "flow": "TOTAL",
+                "status": "pass",
+                "max_abs_gap": total_use_gap,
+                "rtol": _GENERATED_IDENTITY_RTOL,
+                "atol": _GENERATED_IDENTITY_ATOL,
+            },
+        ]
     )
     use = conditioned_use
     for flow in ("DOM", "IMP", "TOTAL"):
         _write_frame(Z[flow], dirs[flow], "Z_split.csv")
     pd.concat([dom_conditioning, imp_conditioning], ignore_index=True).to_csv(
         outdir / "producer_column_conditioning.csv", index=False
+    )
+    pd.DataFrame(transformation_checks).to_csv(
+        outdir / _TRANSFORMATION_COHERENCE_REPORT, index=False
     )
     import_atomic = source_atomic_final_demand(Y_imp)
     nonsigned_import_columns = [
@@ -1086,10 +1283,11 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         _write_series(use[flow], dirs[flow] / "use_total_split.csv")
         _write_series(x_domestic, dirs[flow] / "x_split.csv")
         _write_frame(technical_coefficients(Z[flow], x_domestic), dirs[flow], "A_split.csv")
-    _assert_close("DOM Leontief output identity", x_domestic, use["DOM"], rtol=0.0, atol=0.0)
     diagnostics.append({
         "stage": "analytical_contract", "flow": "DOM", "object": "P1",
-        "contract": "transaction_derived_DOM_row_use", "max_abs_gap": 0.0, "ok": True,
+        "contract": "transaction_derived_DOM_row_use",
+        "max_abs_gap": dom_output_gap,
+        "ok": True,
     })
     for flow in ("DOM", "IMP"):
         reference = references[flow]
@@ -1160,6 +1358,11 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
         "V_status": "transaction_identities_plus_primitive_rows",
         "producer_column_conditioning": "exio_technology_at_austrian_child_output",
         "producer_column_conditioning_diagnostic": "../producer_column_conditioning.csv",
+        "transformation_coherence_validation": f"../{_TRANSFORMATION_COHERENCE_REPORT}",
+        "validation_classes": [
+            "accounting_identity_and_source_conservation",
+            "transformation_coherence",
+        ],
         "balancing_applied": False,
     }, indent=2) + "\n", encoding="utf-8")
     pd.DataFrame(diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)

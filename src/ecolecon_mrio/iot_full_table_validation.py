@@ -1004,7 +1004,29 @@ def validate_eurostat_iot_full_table(
         checks.append(_not_tested("full.v5.p1_dom_total", flow="TOTAL", block="V_TOTAL|V_DOM", explanation="DOM and TOTAL flows are both required."))
     checks.append(_check("full.v7.no_blanket_v_additivity", status="not_applicable", severity="info", block="V", explanation="Production-account rows are intentionally not tested as TOTAL = DOM + IMP; IMP has no additive production account."))
 
-    # R1--R5 and imports controls use the declared flow orientations.
+    # R0--R5 and imports controls use the declared flow orientations.
+    # Check the direct DOM row/column bridge explicitly rather than relying only on
+    # the logically equivalent TOTAL-P1 bridge plus DOM/TOTAL P1 equality.
+    if dom is not None and "DOM" in atomic:
+        p1_dom = _safe_row(dom.V, "P1", flow="DOM", block="V", checks=checks, check_id="full.r0.domestic_output")
+        compare(
+            "full.r0.domestic_output",
+            "DOM",
+            "V_DOM|Z_DOM|Y_DOM",
+            p1_dom,
+            dom.Z.sum(axis=1).add(atomic["DOM"].sum(axis=1)),
+            len(dom.Z.columns) + len(atomic["DOM"].columns),
+            "DOM P1 must equal complete domestic-origin row use on the symmetric product domain.",
+        )
+    else:
+        checks.append(
+            _not_tested(
+                "full.r0.domestic_output",
+                flow="DOM",
+                block="V_DOM|Z_DOM|Y_DOM",
+                explanation="DOM flow and its atomic final-demand basis are required.",
+            )
+        )
     if total is not None and dom is not None and "DOM" in atomic:
         p1_total = _safe_row(total.V, "P1", flow="TOTAL", block="V", checks=checks, check_id="full.r1.domestic_output")
         compare("full.r1.domestic_output", "TOTAL", "V_TOTAL|Z_DOM|Y_DOM", p1_total, dom.Z.sum(axis=1).add(atomic["DOM"].sum(axis=1)), len(dom.Z.columns) + len(atomic["DOM"].columns), "TOTAL P1 must bridge domestic row uses.")

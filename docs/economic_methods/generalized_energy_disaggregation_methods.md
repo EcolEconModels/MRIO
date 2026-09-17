@@ -474,6 +474,61 @@ any authoritative target parent cell or child row/output margin. Apply the same 
 production scale to DOM and IMP columns. Unsupported positive target output fails
 for evidence review; no generic optimiser is implied by this step.
 
+### Transformation-coherence invariants
+
+Accounting reconstruction alone is insufficient because a hybrid child table can
+balance by moving the discrepancy into a signed residual such as `B1G`.  The
+producer-conditioning operator therefore has its own blocking invariants.
+
+Let \(Z^{0,f}\) be the preliminary split, \(Z^{*,f}\) the conditioned split,
+\(C_j\) the children of buyer parent \(j\), and \(G\) the pure child-to-parent
+summation map.  For both DOM and IMP,
+
+\[
+\sum_{b\in C_j} Z^{*,f}_{ab}
+=
+\sum_{b\in C_j} Z^{0,f}_{ab}
+\quad\text{for every child row }a\text{ and buyer parent }j,
+\]
+
+which implies the source-cell fixed margin
+
+\[
+G Z^{*,f}G^\top=G Z^{0,f}G^\top=Z^{f}_{source}.
+\]
+
+Because DOM row use is the declared target-output closure,
+
+\[
+x_b^{target}
+=
+\sum_c Z^{*,DOM}_{bc}+\sum_{h\in F}Y^{DOM}_{bh}.
+\]
+
+The same \(x_b^{target}\) and donor output support condition the producer columns
+of DOM and IMP.  A split child with \(x_b^{target}=0\) must receive zero conditioned
+producer-column input; positive target output with zero donor producer-output
+support is an explicit evidence conflict.
+
+Most importantly, the operator is invariant to donor producer scale.  For arbitrary
+\(c_b>0\), define
+
+\[
+\bar D_{ab}=c_bD_{ab},\qquad \bar x_b^D=c_bx_b^D.
+\]
+
+Then \(\bar A_{ab}=\bar D_{ab}/\bar x_b^D=A_{ab}\), and with fixed target totals
+and target output the conditioned target allocation must be unchanged.  This
+invariance is a required falsification test: changing donor activity scale while
+holding technology fixed must not change the Austrian child technology allocation.
+
+The exact-compatible case is a second fixed point.  If target child output shares
+already equal donor output shares and target parent cells are a common scaling of
+the donor blocks, conditioning leaves the preliminary child table unchanged up to
+floating-point tolerance.  These tests establish technology/scale separation;
+they do not assert that the resulting child table is uniquely identified or that
+all child `B1G` values must be positive.
+
 ## Geographic scope aggregation
 
 Geographic aggregation is a first-class operation and is independent of sector

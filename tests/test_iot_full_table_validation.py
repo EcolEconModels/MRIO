@@ -237,6 +237,26 @@ def test_source_rounding_gap_passes_but_generated_gap_fails() -> None:
     assert generated["full.y1.p3.total"].affected_labels == ("a",)
 
 
+def test_dom_p1_has_direct_row_use_bridge() -> None:
+    variants = _triplet()
+    checks = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+    assert checks["full.r0.domestic_output"].status == "pass"
+
+    assert variants["DOM"].V is not None
+    variants["DOM"].V.loc["P1", "a"] += 1.0
+    failed = _checks(
+        validate_eurostat_iot_full_table(
+            variants, policy=NAIO_10_CP1700_ACCOUNTING_POLICY, mode="generated"
+        )
+    )
+    assert failed["full.r0.domestic_output"].status == "fail"
+    assert failed["full.r0.domestic_output"].affected_labels == ("a",)
+
+
 def test_dom_ts_bp_uses_domestic_output_not_import_supply() -> None:
     variants = _triplet()
     dom = variants["DOM"]

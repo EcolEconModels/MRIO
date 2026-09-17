@@ -304,6 +304,61 @@ def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows
         mapping_csv=mapping_csv,
     )
     assert report["ok"], report
+def test_final_validator_requires_complete_producer_conditioning_coherence_report(
+    tmp_path: Path,
+) -> None:
+    from scripts import validate_many_many_pipeline_outputs as validation_mod
+
+    split_dir = tmp_path / "split" / "stk_flow=TOTAL"
+    split_dir.mkdir(parents=True)
+    sectors = pd.Index(["S"])
+    pd.DataFrame([[1.0]], index=sectors, columns=sectors).to_csv(
+        split_dir / "Z_split.csv"
+    )
+    pd.DataFrame({"P3": [1.0]}, index=sectors).to_csv(split_dir / "Y_split.csv")
+    pd.Series([2.0], index=sectors, name="x").to_csv(split_dir / "x_split.csv")
+    (split_dir / "split_info.json").write_text(
+        '{"producer_column_conditioning":"exio_technology_at_austrian_child_output"}\n',
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "validation_class": "transformation_coherence",
+            "flow": flow,
+            "check_id": check_id,
+            "status": "pass",
+            "max_abs_gap": 0.0,
+            "rtol": 1e-12,
+            "atol": 1e-10,
+        }
+        for flow, check_id in sorted(
+            validation_mod._REQUIRED_TRANSFORMATION_COHERENCE_CHECKS
+        )
+    ]
+    report_path = split_dir.parent / "transformation_coherence_validation.csv"
+    pd.DataFrame(rows).to_csv(report_path, index=False)
+
+    accepted = validation_mod.validate_pipeline_outputs(split_dir=split_dir)
+    assert accepted["ok"], accepted
+    check = next(
+        row
+        for row in accepted["checks"]
+        if row["name"] == "producer_conditioning_transformation_coherence"
+    )
+    assert check["ok"]
+
+    pd.DataFrame(rows[:-1]).to_csv(report_path, index=False)
+    rejected = validation_mod.validate_pipeline_outputs(split_dir=split_dir)
+    assert not rejected["ok"]
+    failed = next(
+        row
+        for row in rejected["checks"]
+        if row["name"] == "producer_conditioning_transformation_coherence"
+    )
+    assert not failed["ok"]
+    assert failed["missing_checks"]
+
+
 def test_environmental_target_retarget_preserves_signed_import_use() -> None:
     """Signed target import use is preserved rather than clipped as supply noise."""
     from ecolecon_mrio.region_aggregation import _retarget_direct_environmental_account

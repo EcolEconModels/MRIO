@@ -78,6 +78,35 @@ third split representation.
     accounts retain origin through product projection and form the origin-specific
     coefficient only on that common projected basis.
 
+## Two mandatory validation layers
+
+Every production split/reaggregation route must keep two validation classes
+separate instead of treating parent reconstruction as complete correctness.
+
+**Accounting/source-conservation validation** is owned by the canonical Eurostat
+IOT validator and coefficient-sidecar checks.  It runs on generated split and
+reaggregated tables, checks the authorized Z/Y/V/M/x/A identities and source
+conservation, and records unresolved valuation-dependent equations as `not_tested`.
+Generated numerical identities use elementwise floating tolerances; bitwise
+identity is not required after legitimate floating reductions.
+
+**Transformation-coherence validation** is owned by the transformation that uses
+the donor evidence.  The EXIO producer-conditioning route must emit
+`transformation_coherence_validation.csv` beside the flow directories and prove
+row-child/buyer-parent mass preservation, parent-Z-cell conservation, zero target
+output receiving zero conditioned producer-column input, the canonical DOM output
+margin, IMP row-use preservation, and TOTAL use additivity.  Unit/regression tests
+add the non-data-dependent operator invariants: donor-scale invariance, the
+exact-compatible fixed point, and fail-closed positive target output without donor
+production support.
+
+The final many-many production validator must require the complete transformation
+report when `split_info.json` declares
+`producer_column_conditioning=exio_technology_at_austrian_child_output`.  Reaggregation
+still has its own transformation-conservation checks against a fresh recomputation.
+Passing Class I never substitutes for Class II, and neither class turns a
+plausibility diagnostic such as negative child GVA into an accounting identity.
+
 ## Independent geography contract
 
 Geography aggregation is an upstream donor operation, not a fuels/fuels-more or

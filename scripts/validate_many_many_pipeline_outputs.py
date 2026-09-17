@@ -40,6 +40,17 @@ _ENVIRONMENTAL_GRID_COLUMNS = [
     "monetary_output",
     "intensity",
 ]
+_REQUIRED_TRANSFORMATION_COHERENCE_CHECKS = {
+    ("DOM", "tc.row_child_mass"),
+    ("DOM", "tc.parent_z_cell"),
+    ("DOM", "tc.zero_target_output_column"),
+    ("IMP", "tc.row_child_mass"),
+    ("IMP", "tc.parent_z_cell"),
+    ("IMP", "tc.zero_target_output_column"),
+    ("DOM", "tc.dom_output_margin"),
+    ("IMP", "tc.imp_row_use_margin"),
+    ("TOTAL", "tc.total_use_additivity"),
+}
 
 
 def _read_frame(path: Path) -> pd.DataFrame:
@@ -593,6 +604,51 @@ def _load_augmented_mapping(
     )
 
 
+def _validate_transformation_coherence_report(path: Path) -> dict[str, Any]:
+    """Validate persisted evidence for the EXIO producer-conditioning operator."""
+    if not path.is_file():
+        return {"ok": False, "path": str(path), "reason": "missing report"}
+    frame = pd.read_csv(path)
+    required_columns = {
+        "validation_class", "check_id", "flow", "status", "max_abs_gap", "rtol", "atol"
+    }
+    missing_columns = sorted(required_columns - set(frame.columns))
+    if missing_columns:
+        return {
+            "ok": False,
+            "path": str(path),
+            "reason": "missing columns",
+            "missing_columns": missing_columns,
+        }
+    if set(frame["validation_class"].astype(str)) != {"transformation_coherence"}:
+        return {"ok": False, "path": str(path), "reason": "wrong validation_class"}
+    keys = list(zip(frame["flow"].astype(str), frame["check_id"].astype(str)))
+    duplicate_keys = sorted({key for key in keys if keys.count(key) > 1})
+    key_set = set(keys)
+    missing_checks = sorted(_REQUIRED_TRANSFORMATION_COHERENCE_CHECKS - key_set)
+    extra_checks = sorted(key_set - _REQUIRED_TRANSFORMATION_COHERENCE_CHECKS)
+    failing = frame.loc[~frame["status"].astype(str).eq("pass"), ["flow", "check_id", "status"]]
+    numeric = frame[["max_abs_gap", "rtol", "atol"]].apply(pd.to_numeric, errors="coerce")
+    finite_numeric = bool(np.isfinite(numeric.to_numpy(dtype="float64")).all())
+    ok = (
+        not duplicate_keys
+        and not missing_checks
+        and not extra_checks
+        and failing.empty
+        and finite_numeric
+    )
+    return {
+        "ok": ok,
+        "path": str(path),
+        "n_checks": int(len(frame)),
+        "missing_checks": [list(item) for item in missing_checks],
+        "extra_checks": [list(item) for item in extra_checks],
+        "duplicate_checks": [list(item) for item in duplicate_keys],
+        "failing_checks": failing.to_dict(orient="records"),
+        "finite_numeric_diagnostics": finite_numeric,
+    }
+
+
 def validate_pipeline_outputs(
     *,
     split_dir: Path,
@@ -618,6 +674,7 @@ def validate_pipeline_outputs(
         "agg_dir": str(agg_dir) if agg_dir is not None else "",
         "checks": [],
     }
+    flow_role = str(split_dir.name).split("=", 1)[-1].upper()
 
     def add_check(name: str, ok: bool, **extra: Any) -> None:
         row = {"name": name, "ok": bool(ok)}
@@ -636,6 +693,21 @@ def validate_pipeline_outputs(
     x_observed = x_df.iloc[:, 0].astype("float64")
     x_observed.index = x_observed.index.astype(str)
     add_check("split_x_present", True, path=str(x_path))
+    if flow_role == "TOTAL":
+        split_info_path = split_dir / "split_info.json"
+        if split_info_path.is_file():
+            split_info = json.loads(split_info_path.read_text(encoding="utf-8"))
+            if split_info.get("producer_column_conditioning") == "exio_technology_at_austrian_child_output":
+                coherence = _validate_transformation_coherence_report(
+                    split_dir.parent / "transformation_coherence_validation.csv"
+                )
+                coherence_extra = dict(coherence)
+                coherence_ok = bool(coherence_extra.pop("ok", False))
+                add_check(
+                    "producer_conditioning_transformation_coherence",
+                    coherence_ok,
+                    **coherence_extra,
+                )
     # Environmental direct accounts use the current DOM/IMP/TOTAL flow use/supply,
     # whereas aggregate_iot still uses the shared domestic activity x.
     split_flow_denominator = flow_use_total(Z, Y)
@@ -697,7 +769,7 @@ def validate_pipeline_outputs(
         m_path = split_dir / "M_split.csv"
         V = _read_frame(v_path).astype("float64") if v_path.is_file() else None
         M = _read_frame(m_path).astype("float64") if m_path.is_file() else None
-        flow_role = str(split_dir.name).split("=", 1)[-1].upper()
+        # flow_role is resolved once before split-level validation.
         recomputed = aggregate_iot(
             Z,
             Y,

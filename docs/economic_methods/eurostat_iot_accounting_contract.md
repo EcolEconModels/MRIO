@@ -143,6 +143,46 @@ its economic meaning depends on the flow role:
 The generic expression must therefore not be named `output` without a flow-role
 qualification.
 
+## Validation classes
+
+A transformed table is not validated by one undifferentiated notion of
+"balance".  Two classes are mandatory and must be reported separately.
+
+### Class I — accounting identities and source conservation
+
+This class asks whether the emitted table is a valid IOT representation at the
+declared boundary and whether authoritative source information was conserved.  It
+contains structural/domain checks; final-demand partitions; row-use and column
+controls; production-account and value-added identities; DOM/IMP/TOTAL
+decomposition; declared supply and imported-use controls; V/M serialization
+identities; applicability masks; and disaggregation/reaggregation conservation.
+Generated identities use strict floating-point `atol + rtol * scale` comparisons
+**per cell**.  They are not bitwise-equality tests and must not use one global
+maximum table value to set every cell's tolerance.  Published controls continue to
+use the separate source-rounding policy.
+
+### Class II — transformation coherence
+
+This class asks whether the disaggregation operator used donor evidence in the
+economic role declared by the method.  These are not national-account identities.
+For producer-column EXIO conditioning they include preservation of the declared
+target child-output margin, row-child/buyer-parent mass, source parent Z cells,
+zero-target-output support, invariance to donor producer-scale changes that leave
+technical coefficients unchanged, and the exact-compatible fixed point.  A table
+can pass every Class-I identity while failing Class II; for example a synthetic
+child can satisfy `P1 = P2_ADJ + B1G` only by receiving a large negative residual
+`B1G` after a scale-contaminated donor allocation.
+
+Negative `B1G` is therefore not made a generic failure condition: signed residual
+income/value-added components can be economically valid.  The transformation must
+instead prove that donor technology and donor production scale were not conflated.
+
+Valuation matrices (sometimes represented as a separate `N`-type block in other
+layouts) remain policy-gated.  Their row, column and national controls are Class-I
+identities only when the source role dictionary establishes the matrix, signs and
+valuation bridge.  The current `ParsedEurostatIOT` exposes `Z`, `Y`, `V` and `M`;
+it does not invent a universal `N` block from incomplete metadata.
+
 ## Structural invariants
 
 Structural checks precede numerical identities.
@@ -397,11 +437,21 @@ across product rows must equal the output reported under the corresponding
 producing columns:
 
 \[
-q_i^{row} = P1_i^{column}.
+q_i^{row} = P1_i^{DOM,column}.
 \]
 
-This bridge is not valid without matching product domains and compatible
-valuation.
+The generated validator must test this bridge directly on DOM.  Because the TOTAL
+production account carries the same domestic-output control, it must also test
+
+\[
+P1_i^{TOTAL,column}=q_i^{row},
+\qquad
+P1_i^{TOTAL,column}=P1_i^{DOM,column}.
+\]
+
+The second equality belongs to the declared shared DOM/TOTAL production account,
+not to blanket `V_TOTAL = V_DOM + V_IMP` additivity.  This bridge is not valid
+without matching product domains and compatible valuation.
 
 ## Supply and use identities
 
@@ -662,6 +712,33 @@ For global balancing, an output-share vector may be a hard child-output target.
 For local balancing, the clean expanded transaction row totals are authoritative
 and the output shares are expansion priors. Reports must state which contract was
 used.
+
+## Class-I coverage ledger
+
+For generated `naio_10_cp1700` tables, the blocking accounting layer must cover,
+where the source policy authorizes the required evidence:
+
+- structural domains, uniqueness, finiteness and applicability;
+- the one non-overlapping atomic final-demand basis and all declared P3/P5/P6
+  partitions;
+- `TFU`, `TU`, `CPA_TOTAL` and the complete DOM row-output bridge;
+- `P2_ADJ`, `P1 = P2_ADJ + B1G`, the available gross/net value-added component
+  identities, and `D1 >= D11`;
+- cellwise `Z_TOTAL = Z_DOM + Z_IMP` and atomic
+  `Y_TOTAL = Y_DOM + Y_IMP`;
+- imported intermediate/final-use controls on their declared V/M axes;
+- declared P7 geography and `TS_BP = P1 + P7` supply controls;
+- generated named `M[TOTAL] = sum(V)` serialization controls;
+- exact conservation of primitive Z/Y/V/valuation objects through
+  disaggregation/reaggregation; and
+- persisted `x` and `A = Z diag(x)^{-1}` sidecars, with shared domestic `x` and
+  direct `x = DOM row use` validation at both split and reaggregated resolutions.
+
+Candidate equations whose valuation or source role is unresolved remain explicit
+`not_tested` results.  In particular, the current evidence does not license
+`P7 = IMP transaction-row use`, `TS_BP = TU`, a complete purchasers'-price
+valuation bridge, or three-way GDP equality.  Listing an equation is not authority
+to enforce it.
 
 ## Reaggregation validation
 

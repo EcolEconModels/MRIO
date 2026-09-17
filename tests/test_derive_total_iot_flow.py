@@ -59,11 +59,22 @@ def test_validate_additive_outputs_detects_and_accepts_identity(
     _write_flow(tmp_path, "TOTAL", 3.0)
     _write_canonical_sidecars(tmp_path, suffix="split")
     MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
+    # A shared but wrong x/A bundle must not pass merely because all three flows
+    # use the same denominator; x must equal the DOM transaction row-use margin.
+    for flow in ("DOM", "IMP", "TOTAL"):
+        directory = tmp_path / f"stk_flow={flow}"
+        wrong_x = pd.read_csv(directory / "x_split.csv", index_col=0).iloc[:, 0] + 1.0
+        wrong_x.to_csv(directory / "x_split.csv", header=True)
+        z = pd.read_csv(directory / "Z_split.csv", index_col=0)
+        technical_coefficients(z, wrong_x).to_csv(directory / "A_split.csv")
+    with pytest.raises(ValueError, match="split DOM x=row-use"):
+        MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
+    _write_canonical_sidecars(tmp_path, suffix="split")
     total = tmp_path / "stk_flow=TOTAL"
     Z = pd.read_csv(total / "Z_split.csv", index_col=0)
     Z.iloc[0, 0] += 1.0
     Z.to_csv(total / "Z_split.csv")
-    with pytest.raises(ValueError, match="split TOTAL use_total"):
+    with pytest.raises(ValueError, match="split TOTAL use=DOM\\+IMP"):
         MODULE.validate_additive_outputs(tmp_path, suffix="split", rtol=1e-9, atol=1e-6)
 
 
@@ -92,6 +103,25 @@ def test_assert_close_rejects_nan_mask_mismatch() -> None:
     right = pd.Series([1.0, 2.0], index=pd.Index(["a", "b"]))
     with pytest.raises(ValueError):
         MODULE._assert_close("nan mask", left, right, rtol=1e-9, atol=1e-6)
+
+
+def test_assert_close_uses_elementwise_scale_and_accepts_roundoff() -> None:
+    huge = pd.Series([1.0e12, 0.0], index=pd.Index(["large", "small"]))
+    masked_small_error = pd.Series([1.0e12, 1.0e-4], index=huge.index)
+    with pytest.raises(ValueError, match="worst_tolerance"):
+        MODULE._assert_close(
+            "elementwise", huge, masked_small_error, rtol=1e-9, atol=1e-6
+        )
+
+    roundoff = pd.Series([1.0 + 7.27595761418e-12], index=pd.Index(["x"]))
+    exact = pd.Series([1.0], index=roundoff.index)
+    assert MODULE._assert_close(
+        "roundoff",
+        roundoff,
+        exact,
+        rtol=MODULE._GENERATED_IDENTITY_RTOL,
+        atol=MODULE._GENERATED_IDENTITY_ATOL,
+    ) < MODULE._GENERATED_IDENTITY_ATOL
 
 
 def test_aggregate_rows_rejects_orphan_parent() -> None:
@@ -172,6 +202,94 @@ def test_producer_column_conditioning_is_noop_when_scales_match(tmp_path: Path) 
     pd.testing.assert_frame_equal(got, Z)
 
 
+def test_producer_column_conditioning_is_invariant_to_donor_production_scale(
+    tmp_path: Path,
+) -> None:
+    """Column rescaling that leaves donor A unchanged must not change the target split."""
+    children, child_parent, base_shares = _conditioning_fixture(tmp_path)
+    target_x = pd.Series([90.0, 10.0, 90.0], index=children)
+
+    base = pd.DataFrame(0.0, index=children, columns=children)
+    base.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
+    conditioned_base, _ = MODULE._condition_producer_columns_on_domestic_output(
+        base,
+        child_parent=child_parent,
+        output_share=base_shares,
+        x_domestic=target_x,
+        flow="DOM",
+    )
+
+    # Scale the underlying donor producer columns by 2 and 0.5.  Re-normalising
+    # the same Eurostat parent cell changes the preliminary donor transaction
+    # shares and the donor output shares, while A = Z/x is unchanged.
+    donor_mass = pd.Series({"coal": 18.0, "wind": 0.5})
+    scaled_shares = base_shares.copy()
+    scaled_shares.loc[["coal", "wind"]] = donor_mass / float(donor_mass.sum())
+    scaled = base.copy()
+    scaled.loc["fuel", ["coal", "wind"]] = (
+        90.0 * donor_mass / float(donor_mass.sum())
+    ).to_numpy()
+    conditioned_scaled, _ = MODULE._condition_producer_columns_on_domestic_output(
+        scaled,
+        child_parent=child_parent,
+        output_share=scaled_shares,
+        x_domestic=target_x,
+        flow="DOM",
+    )
+    pd.testing.assert_frame_equal(conditioned_scaled, conditioned_base)
+
+
+def test_producer_column_conditioning_zeros_inputs_to_zero_target_output(
+    tmp_path: Path,
+) -> None:
+    children, child_parent, shares = _conditioning_fixture(tmp_path)
+    Z = pd.DataFrame(0.0, index=children, columns=children)
+    Z.loc["fuel", ["coal", "wind"]] = [45.0, 45.0]
+    x = pd.Series([90.0, 0.0, 100.0], index=children)
+    got, _ = MODULE._condition_producer_columns_on_domestic_output(
+        Z,
+        child_parent=child_parent,
+        output_share=shares,
+        x_domestic=x,
+        flow="DOM",
+    )
+    assert float(got["coal"].sum()) == pytest.approx(0.0, abs=1e-12)
+    assert float(got["wind"].sum()) == pytest.approx(90.0)
+    checks = MODULE._validate_producer_conditioning_transformation(
+        Z, got, child_parent=child_parent, x_domestic=x, flow="DOM"
+    )
+    assert {row["status"] for row in checks} == {"pass"}
+
+
+def test_transformation_coherence_rejects_row_parent_shuffle_hidden_by_aggregates(
+    tmp_path: Path,
+) -> None:
+    """Whole-row and parent-cell equality cannot hide a changed row/parent submargin."""
+    children, child_parent, _ = _conditioning_fixture(tmp_path)
+    before = pd.DataFrame(0.0, index=children, columns=children)
+    before.loc["coal", ["fuel", "coal"]] = [2.0, 3.0]
+    before.loc["wind", ["fuel", "wind"]] = [4.0, 5.0]
+    after = before.copy()
+    after.loc["coal", "fuel"] -= 1.0
+    after.loc["coal", "coal"] += 1.0
+    after.loc["wind", "fuel"] += 1.0
+    after.loc["wind", "wind"] -= 1.0
+    pd.testing.assert_series_equal(before.sum(axis=1), after.sum(axis=1))
+    pd.testing.assert_frame_equal(
+        MODULE._aggregate_square(
+            before, child_parent, pd.Index(["fuel", "electricity"])
+        ),
+        MODULE._aggregate_square(
+            after, child_parent, pd.Index(["fuel", "electricity"])
+        ),
+    )
+    x = pd.Series([10.0, 5.0, 9.0], index=children)
+    with pytest.raises(ValueError, match="row-child/buyer-parent mass"):
+        MODULE._validate_producer_conditioning_transformation(
+            before, after, child_parent=child_parent, x_domestic=x, flow="DOM"
+        )
+
+
 def test_producer_column_conditioning_rejects_zero_output_support(tmp_path: Path) -> None:
     children, child_parent, shares = _conditioning_fixture(tmp_path)
     shares.loc[["coal", "wind"]] = [0.0, 1.0]
@@ -217,6 +335,16 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(MODULE, "load_eurostat_iot", fake_source)
     MODULE.derive_total_flow(tmp_path, eurostat_dataset="x", eurostat_filters={}, eurostat_row_dim="r", eurostat_col_dim="c")
+    coherence = pd.read_csv(tmp_path / MODULE._TRANSFORMATION_COHERENCE_REPORT)
+    assert set(coherence["validation_class"]) == {"transformation_coherence"}
+    assert set(coherence["status"]) == {"pass"}
+    assert {
+        ("DOM", "tc.row_child_mass"),
+        ("IMP", "tc.parent_z_cell"),
+        ("DOM", "tc.dom_output_margin"),
+        ("IMP", "tc.imp_row_use_margin"),
+        ("TOTAL", "tc.total_use_additivity"),
+    }.issubset(set(zip(coherence["flow"], coherence["check_id"])))
     dom = tmp_path / "stk_flow=DOM"
     imp = tmp_path / "stk_flow=IMP"
     total = tmp_path / "stk_flow=TOTAL"
@@ -450,7 +578,7 @@ def test_signed_primitive_requires_a_transaction_proxy() -> None:
 def test_assert_close_rejects_infinite_values() -> None:
     left = pd.Series([float("inf")], index=pd.Index(["a"]))
     right = pd.Series([float("inf")], index=pd.Index(["a"]))
-    with pytest.raises(ValueError, match="max_abs_gap=inf"):
+    with pytest.raises(ValueError, match="non-finite values are present"):
         MODULE._assert_close("infinite values", left, right, rtol=1e-9, atol=1e-6)
 
 def test_nested_p5m_source_control_is_atomic_without_p52_p53() -> None:
