@@ -152,7 +152,7 @@ def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> N
 
 
 
-def _conditioning_fixture(tmp_path: Path) -> tuple[pd.Index, dict[str, str], pd.Series]:
+def _reconciliation_fixture(tmp_path: Path) -> tuple[pd.Index, dict[str, str], pd.Series]:
     children = pd.Index(["fuel", "coal", "wind"])
     child_parent = {"fuel": "fuel", "coal": "electricity", "wind": "electricity"}
     dom = tmp_path / "stk_flow=DOM"
@@ -169,8 +169,20 @@ def _conditioning_fixture(tmp_path: Path) -> tuple[pd.Index, dict[str, str], pd.
     return children, child_parent, shares
 
 
-def test_producer_column_conditioning_removes_exio_output_scale(tmp_path: Path) -> None:
-    children, child_parent, shares = _conditioning_fixture(tmp_path)
+def _producer_input_profile(
+    children: pd.Index, *, coal: float, wind: float
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "producer_input_share": [1.0, coal, wind],
+            "producer_input_method": ["singleton", "test", "test"],
+        },
+        index=children,
+    )
+
+
+def test_producer_reconciliation_hits_rows_columns_and_parent_cells(tmp_path: Path) -> None:
+    children, child_parent, output_share = _reconciliation_fixture(tmp_path)
     Z = pd.DataFrame(0.0, index=children, columns=children)
     Z.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
     Z.loc["coal", "fuel"], Z.loc["wind", "fuel"] = 1.0, 9.0
@@ -178,128 +190,79 @@ def test_producer_column_conditioning_removes_exio_output_scale(tmp_path: Path) 
     before_parent = MODULE._aggregate_square(
         Z, child_parent, pd.Index(["fuel", "electricity"])
     )
-    got, diagnostic = MODULE._condition_producer_columns_on_domestic_output(
-        Z, child_parent=child_parent, output_share=shares, x_domestic=x, flow="DOM"
+    profile = _producer_input_profile(children, coal=0.9, wind=0.1)
+
+    got, diagnostic, checks = MODULE._reconcile_producer_technology(
+        Z,
+        child_parent=child_parent,
+        dom_output_share=output_share,
+        producer_input_profile=profile,
+        x_domestic=x,
+        flow="DOM",
     )
-    pd.testing.assert_series_equal(got.sum(axis=1), Z.sum(axis=1))
+    pd.testing.assert_series_equal(got.sum(axis=1), Z.sum(axis=1), check_names=False)
     pd.testing.assert_frame_equal(
         MODULE._aggregate_square(got, child_parent, pd.Index(["fuel", "electricity"])),
         before_parent,
     )
-    assert got.loc["fuel", "coal"] == pytest.approx(9.0)
-    assert got.loc["fuel", "wind"] == pytest.approx(81.0)
-    assert not diagnostic.empty
-
-
-def test_producer_column_conditioning_is_noop_when_scales_match(tmp_path: Path) -> None:
-    children, child_parent, shares = _conditioning_fixture(tmp_path)
-    Z = pd.DataFrame(0.0, index=children, columns=children)
-    Z.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
-    x = pd.Series([90.0, 90.0, 10.0], index=children)
-    got, _ = MODULE._condition_producer_columns_on_domestic_output(
-        Z, child_parent=child_parent, output_share=shares, x_domestic=x, flow="DOM"
-    )
-    pd.testing.assert_frame_equal(got, Z)
-
-
-def test_producer_column_conditioning_is_invariant_to_donor_production_scale(
-    tmp_path: Path,
-) -> None:
-    """Column rescaling that leaves donor A unchanged must not change the target split."""
-    children, child_parent, base_shares = _conditioning_fixture(tmp_path)
-    target_x = pd.Series([90.0, 10.0, 90.0], index=children)
-
-    base = pd.DataFrame(0.0, index=children, columns=children)
-    base.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
-    conditioned_base, _ = MODULE._condition_producer_columns_on_domestic_output(
-        base,
-        child_parent=child_parent,
-        output_share=base_shares,
-        x_domestic=target_x,
-        flow="DOM",
-    )
-
-    # Scale the underlying donor producer columns by 2 and 0.5.  Re-normalising
-    # the same Eurostat parent cell changes the preliminary donor transaction
-    # shares and the donor output shares, while A = Z/x is unchanged.
-    donor_mass = pd.Series({"coal": 18.0, "wind": 0.5})
-    scaled_shares = base_shares.copy()
-    scaled_shares.loc[["coal", "wind"]] = donor_mass / float(donor_mass.sum())
-    scaled = base.copy()
-    scaled.loc["fuel", ["coal", "wind"]] = (
-        90.0 * donor_mass / float(donor_mass.sum())
-    ).to_numpy()
-    conditioned_scaled, _ = MODULE._condition_producer_columns_on_domestic_output(
-        scaled,
-        child_parent=child_parent,
-        output_share=scaled_shares,
-        x_domestic=target_x,
-        flow="DOM",
-    )
-    pd.testing.assert_frame_equal(conditioned_scaled, conditioned_base)
-
-
-def test_producer_column_conditioning_zeros_inputs_to_zero_target_output(
-    tmp_path: Path,
-) -> None:
-    children, child_parent, shares = _conditioning_fixture(tmp_path)
-    Z = pd.DataFrame(0.0, index=children, columns=children)
-    Z.loc["fuel", ["coal", "wind"]] = [45.0, 45.0]
-    x = pd.Series([90.0, 0.0, 100.0], index=children)
-    got, _ = MODULE._condition_producer_columns_on_domestic_output(
-        Z,
-        child_parent=child_parent,
-        output_share=shares,
-        x_domestic=x,
-        flow="DOM",
-    )
-    assert float(got["coal"].sum()) == pytest.approx(0.0, abs=1e-12)
-    assert float(got["wind"].sum()) == pytest.approx(90.0)
-    checks = MODULE._validate_producer_conditioning_transformation(
-        Z, got, child_parent=child_parent, x_domestic=x, flow="DOM"
+    target = diagnostic.set_index("buyer_child")["technology_column_target"]
+    pd.testing.assert_series_equal(
+        got.sum(axis=0).loc[target.index], target, check_names=False, rtol=1e-10, atol=1e-10
     )
     assert {row["status"] for row in checks} == {"pass"}
 
 
-def test_transformation_coherence_rejects_row_parent_shuffle_hidden_by_aggregates(
+def test_producer_reconciliation_removes_donor_scale_from_technology_prior(tmp_path: Path) -> None:
+    children, child_parent, output_share = _reconciliation_fixture(tmp_path)
+    x = pd.Series([90.0, 10.0, 90.0], index=children)
+    base = pd.DataFrame(0.0, index=children, columns=children)
+    base.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
+    scaled = base.copy()
+    scaled.loc["fuel", ["coal", "wind"]] = [87.5675675676, 2.4324324324]
+    scaled_output = output_share.copy()
+    scaled_output.loc[["coal", "wind"]] = [18.0 / 18.5, 0.5 / 18.5]
+
+    prior_base = MODULE._output_conditioned_technology_prior(
+        base,
+        child_parent=child_parent,
+        dom_output_share=output_share,
+        x_domestic=x,
+        flow="DOM",
+    )
+    prior_scaled = MODULE._output_conditioned_technology_prior(
+        scaled,
+        child_parent=child_parent,
+        dom_output_share=scaled_output,
+        x_domestic=x,
+        flow="DOM",
+    )
+    base_block = prior_base.loc["fuel", ["coal", "wind"]]
+    scaled_block = prior_scaled.loc["fuel", ["coal", "wind"]]
+    np.testing.assert_allclose(
+        base_block / float(base_block.sum()),
+        scaled_block / float(scaled_block.sum()),
+        rtol=1e-10,
+        atol=1e-10,
+    )
+
+
+def test_producer_reconciliation_rejects_positive_output_without_exio_output_support(
     tmp_path: Path,
 ) -> None:
-    """Whole-row and parent-cell equality cannot hide a changed row/parent submargin."""
-    children, child_parent, _ = _conditioning_fixture(tmp_path)
-    before = pd.DataFrame(0.0, index=children, columns=children)
-    before.loc["coal", ["fuel", "coal"]] = [2.0, 3.0]
-    before.loc["wind", ["fuel", "wind"]] = [4.0, 5.0]
-    after = before.copy()
-    after.loc["coal", "fuel"] -= 1.0
-    after.loc["coal", "coal"] += 1.0
-    after.loc["wind", "fuel"] += 1.0
-    after.loc["wind", "wind"] -= 1.0
-    pd.testing.assert_series_equal(before.sum(axis=1), after.sum(axis=1))
-    pd.testing.assert_frame_equal(
-        MODULE._aggregate_square(
-            before, child_parent, pd.Index(["fuel", "electricity"])
-        ),
-        MODULE._aggregate_square(
-            after, child_parent, pd.Index(["fuel", "electricity"])
-        ),
-    )
-    x = pd.Series([10.0, 5.0, 9.0], index=children)
-    with pytest.raises(ValueError, match="row-child/buyer-parent mass"):
-        MODULE._validate_producer_conditioning_transformation(
-            before, after, child_parent=child_parent, x_domestic=x, flow="DOM"
-        )
-
-
-def test_producer_column_conditioning_rejects_zero_output_support(tmp_path: Path) -> None:
-    children, child_parent, shares = _conditioning_fixture(tmp_path)
-    shares.loc[["coal", "wind"]] = [0.0, 1.0]
+    children, child_parent, output_share = _reconciliation_fixture(tmp_path)
+    output_share.loc[["coal", "wind"]] = [0.0, 1.0]
     Z = pd.DataFrame(0.0, index=children, columns=children)
     Z.loc["fuel", "wind"] = 1.0
     x = pd.Series([1.0, 1.0, 1.0], index=children)
-    with pytest.raises(ValueError, match="zero EXIO producer-output support"):
-        MODULE._condition_producer_columns_on_domestic_output(
-            Z, child_parent=child_parent, output_share=shares,
-            x_domestic=x, flow="DOM",
+    profile = _producer_input_profile(children, coal=0.0, wind=1.0)
+    with pytest.raises(ValueError, match="zero DOM EXIO producer-output support"):
+        MODULE._reconcile_producer_technology(
+            Z,
+            child_parent=child_parent,
+            dom_output_share=output_share,
+            producer_input_profile=profile,
+            x_domestic=x,
+            flow="DOM",
         )
 
 def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,8 +302,10 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
     assert set(coherence["validation_class"]) == {"transformation_coherence"}
     assert set(coherence["status"]) == {"pass"}
     assert {
-        ("DOM", "tc.row_child_mass"),
+        ("DOM", "tc.child_row_margin"),
+        ("DOM", "tc.child_column_technology_margin"),
         ("IMP", "tc.parent_z_cell"),
+        ("IMP", "tc.ipfp_convergence"),
         ("DOM", "tc.dom_output_margin"),
         ("IMP", "tc.imp_row_use_margin"),
         ("TOTAL", "tc.total_use_additivity"),

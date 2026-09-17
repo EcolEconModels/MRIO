@@ -41,12 +41,16 @@ _ENVIRONMENTAL_GRID_COLUMNS = [
     "intensity",
 ]
 _REQUIRED_TRANSFORMATION_COHERENCE_CHECKS = {
-    ("DOM", "tc.row_child_mass"),
+    ("DOM", "tc.child_row_margin"),
+    ("DOM", "tc.child_column_technology_margin"),
     ("DOM", "tc.parent_z_cell"),
     ("DOM", "tc.zero_target_output_column"),
-    ("IMP", "tc.row_child_mass"),
+    ("DOM", "tc.ipfp_convergence"),
+    ("IMP", "tc.child_row_margin"),
+    ("IMP", "tc.child_column_technology_margin"),
     ("IMP", "tc.parent_z_cell"),
     ("IMP", "tc.zero_target_output_column"),
+    ("IMP", "tc.ipfp_convergence"),
     ("DOM", "tc.dom_output_margin"),
     ("IMP", "tc.imp_row_use_margin"),
     ("TOTAL", "tc.total_use_additivity"),
@@ -698,15 +702,28 @@ def validate_pipeline_outputs(
         if split_info_path.is_file():
             split_info = json.loads(split_info_path.read_text(encoding="utf-8"))
             if split_info.get("producer_column_conditioning") == "exio_technology_at_austrian_child_output":
+                raise ValueError(
+                    "Stale split output declares the superseded closed-form producer-column "
+                    "conditioning method; regenerate the split with canonical IPFP reconciliation."
+                )
+            if split_info.get("producer_column_reconciliation") == "exio_technology_ipfp_at_target_output":
                 coherence = _validate_transformation_coherence_report(
                     split_dir.parent / "transformation_coherence_validation.csv"
                 )
                 coherence_extra = dict(coherence)
                 coherence_ok = bool(coherence_extra.pop("ok", False))
                 add_check(
-                    "producer_conditioning_transformation_coherence",
+                    "producer_technology_reconciliation_coherence",
                     coherence_ok,
                     **coherence_extra,
+                )
+                add_check(
+                    "producer_technology_reconciliation_balancing_declared",
+                    split_info.get("balancing_applied") is True
+                    and split_info.get("balancing_method")
+                    == "IPFP_KL_PARTITION_MARGINS",
+                    balancing_applied=split_info.get("balancing_applied"),
+                    balancing_method=split_info.get("balancing_method"),
                 )
     # Environmental direct accounts use the current DOM/IMP/TOTAL flow use/supply,
     # whereas aggregate_iot still uses the shared domestic activity x.

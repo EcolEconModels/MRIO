@@ -14,12 +14,14 @@ import numpy as np
 import pandas as pd
 
 from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI, default_data_root, load_mrio_iot_matrices
+from ecolecon_mrio.disaggregation import SplitProfiles
 from ecolecon_mrio.exio_share_split import (
     load_local_iot,
     split_iot_using_exiobase_split_profiles,
     write_split_report_xlsx,
     map_exio_value_per_physical_input,
     emitted_sector_to_exio_members_from_split_profiles,
+    build_projection_matrix_for_split_profiles,
 )
 from ecolecon_mrio.region_aggregation import (
     MrioScopeSlice,
@@ -224,6 +226,7 @@ SPLIT_MANAGED_OUTPUT_NAMES: tuple[str, ...] = (
     "use_total_split.csv",
     "supplementary_row_split_diagnostics.csv",
     "split_output_shares.csv",
+    "producer_input_shares.csv",
     "fallback_diagnostics.csv",
     "exio_selected_sectors.json",
     "split_info.json",
@@ -276,8 +279,79 @@ def _split_info_payload(
     return payload
 
 
+
+# PRODUCER_INPUT_SHARE_ARTIFACT_V2
+def _projected_producer_input_shares(
+    *,
+    exio_slice: MrioScopeSlice,
+    column_profiles: Mapping[str, SplitProfiles],
+    column_mapping: Mapping[str, Mapping[str, float]] | None,
+    emitted_labels: Sequence[str],
+    tolerance: float = 1e-12,
+) -> pd.DataFrame:
+    """Serialize flow-specific EXIO producer-input shares on emitted columns.
+
+    Flow specificity comes from ``exio_slice.Z`` itself (for example the external-
+    import donor block versus the domestic donor block).  Producer disaggregation
+    comes from the declared producer-column projection.  A valid many-to-many row
+    projection is source-conservative, so its weights sum to one for every raw
+    supplier and cancel when intermediate input is summed over supplier rows:
+    ``1.T @ P_row @ Z @ P_col.T == 1.T @ Z @ P_col.T``.  Row profiles/mappings are
+    therefore intentionally absent from this helper's API.
+    """
+    raw_labels = list(map(str, exio_slice.Z.columns))
+    P_column = build_projection_matrix_for_split_profiles(
+        split_profiles=column_profiles,
+        eurostat_sector_mapping=column_mapping,
+        raw_exio_sectors=raw_labels,
+        emitted_labels=list(map(str, emitted_labels)),
+    )
+    raw_input_mass = exio_slice.Z.astype("float64").sum(axis=0).reindex(raw_labels)
+    projected_mass = P_column.dot(raw_input_mass).astype("float64")
+
+    rows: list[dict[str, object]] = []
+    # Normalize projected intermediate-input column mass within each producer parent;
+    # unsplit singleton parents need no sidecar row because their share is fixed at 1.
+    for parent, profile in column_profiles.items():
+        children = list(map(str, profile.subsectors))
+        if len(children) <= 1:
+            continue
+        mass = projected_mass.reindex(children, fill_value=0.0).astype("float64")
+        if not np.isfinite(mass.to_numpy(dtype="float64")).all() or bool((mass < -tolerance).any()):
+            raise ValueError(
+                f"Projected producer-input evidence is invalid for parent {parent!r}."
+            )
+        mass = mass.clip(lower=0.0)
+        total = float(mass.sum())
+        if total > tolerance:
+            shares = mass / total
+            method = "flow_specific_donor_input_with_producer_column_projection"
+        else:
+            shares = pd.Series(0.0, index=children, dtype="float64")
+            method = "no_projected_intermediate_input_support"
+        for child in children:
+            rows.append(
+                {
+                    "parent": str(parent),
+                    "child": child,
+                    "producer_input_share": float(shares.loc[child]),
+                    "producer_input_method": method,
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=pd.Index([
+            "parent",
+            "child",
+            "producer_input_share",
+            "producer_input_method",
+        ]),
+    )
+
+
 def write_split_core_outputs(
-    res, outdir: Path, *, verbose: bool, extra_info: dict | None = None
+    res, outdir: Path, *, verbose: bool, extra_info: dict | None = None,
+    producer_input_shares: pd.DataFrame | None = None,
 ) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     for name in (
@@ -288,6 +362,7 @@ def write_split_core_outputs(
         "use_total_split.csv",
         "supplementary_row_split_diagnostics.csv",
         "split_output_shares.csv",
+        "producer_input_shares.csv",
         "fallback_diagnostics.csv",
     ):
         (outdir / name).unlink(missing_ok=True)
@@ -302,6 +377,10 @@ def write_split_core_outputs(
         share_rows.extend({"parent": str(parent), "child": child, "output_share": float(shares.loc[child])} for child in children)
     if share_rows:
         _write_rows_csv(pd.DataFrame(share_rows), outdir / "split_output_shares.csv", verbose=verbose)
+    if producer_input_shares is not None and not producer_input_shares.empty:
+        _write_rows_csv(
+            producer_input_shares, outdir / "producer_input_shares.csv", verbose=verbose
+        )
     _write_df_csv(res.Z, outdir / "Z_split.csv", verbose=verbose)
     _write_df_csv(res.Y, outdir / "Y_split.csv", verbose=verbose)
     if res.use_total is not None:
@@ -1815,6 +1894,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Returned: split_iot_using_exiobase_split_profiles ({t.elapsed_s():.2f}s)",
                 )
 
+                producer_input_shares = None
+                if str(flow) in {"DOM", "IMP"}:
+                    producer_column_profiles = (
+                        dom_column_profiles if exio_flow == "imports" else res.split_profiles
+                    )
+                    producer_column_mapping = (
+                        dom_column_mapping if exio_flow == "imports" else flow_sector_mapping
+                    )
+                    if producer_column_profiles is None:
+                        raise RuntimeError(
+                            "IMP producer-input evidence requires the preceding DOM column profiles."
+                        )
+                    producer_input_shares = _projected_producer_input_shares(
+                        exio_slice=exio_slice,
+                        column_profiles=producer_column_profiles,
+                        column_mapping=producer_column_mapping,
+                        emitted_labels=res.Z.index.astype(str).tolist(),
+                    )
+
                 if str(flow) == "DOM":
                     dom_column_profiles = res.split_profiles
                     dom_column_mapping = flow_sector_mapping
@@ -1822,6 +1920,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 write_split_core_outputs(
                     res,
                     flow_dir,
+                    producer_input_shares=producer_input_shares,
                     verbose=args.verbose,
                     extra_info={
                         "variant_dim": args.eurostat_stk_flow_dim,

@@ -11,6 +11,7 @@ from typing import Iterable, Mapping, cast
 import numpy as np
 import pandas as pd
 
+from ecolecon_mrio.balancing import IPFPMargin, ipfp_balance_partitions
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot
 from ecolecon_mrio.eurostat_iot_source_policy import NAIO_10_CP1700_ACCOUNTING_POLICY
@@ -474,151 +475,297 @@ def _load_dom_split_output_shares(
     return shares
 
 
-def _condition_producer_columns_on_domestic_output(
-    Z: pd.DataFrame,
+
+# PRODUCER_TECH_RECONCILIATION_V2
+def _ordered_parent_groups(
+    children: pd.Index, child_parent: Mapping[str, str]
+) -> tuple[pd.Index, dict[str, list[str]]]:
+    groups: dict[str, list[str]] = {}
+    for child in children.astype(str):
+        parent = child_parent.get(str(child), str(child))
+        groups.setdefault(parent, []).append(str(child))
+    return pd.Index(list(groups), dtype="object"), groups
+
+
+def _load_producer_input_profile(
+    directory: Path,
     *,
     child_parent: Mapping[str, str],
-    output_share: pd.Series,
+    children: pd.Index,
+    flow: str,
+) -> pd.DataFrame:
+    """Load flow-specific projected producer-input shares for split parents."""
+    children = pd.Index(children.astype(str))
+    _, groups = _ordered_parent_groups(children, child_parent)
+    split_parents = {parent for parent, group in groups.items() if len(group) > 1}
+    out = pd.DataFrame(
+        {
+            "producer_input_share": pd.Series(1.0, index=children, dtype="float64"),
+            "producer_input_method": pd.Series("singleton", index=children, dtype="object"),
+        }
+    )
+    if not split_parents:
+        return out
+    path = directory / "producer_input_shares.csv"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{flow} producer-technology reconciliation requires {path.name}."
+        )
+    frame = pd.read_csv(path)
+    required = {
+        "parent",
+        "child",
+        "producer_input_share",
+        "producer_input_method",
+    }
+    if set(frame.columns) != required:
+        raise ValueError(
+            f"Invalid {flow} producer_input_shares.csv schema: {list(frame.columns)!r}."
+        )
+    frame = frame.assign(
+        parent=frame["parent"].astype(str),
+        child=frame["child"].astype(str),
+        producer_input_share=pd.to_numeric(frame["producer_input_share"], errors="coerce"),
+        producer_input_method=frame["producer_input_method"].astype(str),
+    )
+    if frame["child"].duplicated().any():
+        raise ValueError(f"{flow} producer-input profile contains duplicate children.")
+    extra = set(frame["child"]) - set(children)
+    if extra:
+        raise ValueError(
+            f"{flow} producer-input profile contains non-canonical children: {sorted(extra)!r}."
+        )
+    for parent in split_parents:
+        group = groups[parent]
+        rows = frame.loc[frame["parent"].eq(parent)].set_index("child")
+        if set(rows.index) != set(group):
+            raise ValueError(
+                f"Incomplete {flow} producer-input profile for {parent!r}: "
+                f"expected={group!r}, observed={sorted(rows.index)!r}."
+            )
+        shares = rows["producer_input_share"].reindex(group).astype("float64")
+        if not np.isfinite(shares.to_numpy(dtype="float64")).all() or bool((shares < 0.0).any()):
+            raise ValueError(f"Invalid {flow} producer-input shares for {parent!r}.")
+        total = float(shares.sum())
+        if total > _GENERATED_IDENTITY_ATOL and not np.isclose(
+            total, 1.0, rtol=0.0, atol=_GENERATED_IDENTITY_ATOL
+        ):
+            raise ValueError(
+                f"{flow} producer-input shares do not sum to one for {parent!r}: {total:.12g}."
+            )
+        out.loc[group, "producer_input_share"] = shares.to_numpy()
+        out.loc[group, "producer_input_method"] = (
+            rows["producer_input_method"].reindex(group).to_numpy()
+        )
+    return out
+
+
+def _technology_column_targets(
+    *,
+    block_targets: pd.DataFrame,
+    child_parent: Mapping[str, str],
+    dom_output_share: pd.Series,
+    producer_input_profile: pd.DataFrame,
     x_domestic: pd.Series,
     flow: str,
-    atol: float = 1e-12,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Use EXIO technology at Austrian child output, preserving rows and parent cells."""
-    if not Z.index.equals(Z.columns):
-        raise ValueError(f"{flow} conditioning requires square aligned Z.")
-    children = pd.Index(Z.index.astype(str))
-    if not output_share.index.equals(children) or not x_domestic.index.equals(children):
-        raise ValueError(f"{flow} conditioning child axes are not aligned.")
-    if not np.isfinite(Z.to_numpy()).all() or bool((Z < -atol).to_numpy().any()):
-        raise ValueError(f"{flow} conditioning requires finite non-negative intermediate Z.")
-    x = x_domestic.astype("float64")
-    if not np.isfinite(x.to_numpy()).all() or bool((x < -atol).any()):
-        raise ValueError("Canonical domestic child output must be finite and non-negative.")
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Calibrate EXIO relative input coefficients to Eurostat parent input totals."""
+    children = pd.Index(x_domestic.index.astype(str))
+    parent_axis, groups = _ordered_parent_groups(children, child_parent)
+    if not block_targets.index.equals(parent_axis) or not block_targets.columns.equals(parent_axis):
+        raise ValueError(f"{flow} parent block targets are not aligned.")
+    target = pd.Series(0.0, index=children, dtype="float64", name="column_target")
+    diagnostics: list[dict[str, object]] = []
+    parent_input = block_targets.sum(axis=0).astype("float64")
 
-    out = Z.mask(Z.abs() <= atol, 0.0).copy()
-    before_columns = out.sum(axis=0)
-    diagnostic_rows: list[dict[str, object]] = []
-    parents = dict.fromkeys(child_parent.get(str(c), str(c)) for c in children)
-    for parent in parents:
-        group = [str(c) for c in children if child_parent.get(str(c), str(c)) == parent]
-        if len(group) <= 1:
-            continue
-        shares = output_share.reindex(group).astype("float64")
-        target_x = x.reindex(group).mask(lambda s: s.abs() <= atol, 0.0)
-        bad_support = shares.le(atol) & target_x.gt(atol)
-        if bool(bad_support.any()):
-            bad_index = cast(pd.Index, target_x.index[bad_support])
-            bad = [str(child) for child in bad_index]
+    # Convert EXIO input/output shares into relative intermediate-input coefficients
+    # and evaluate those coefficients at the accepted Austrian child-output closure.
+    for parent, group in groups.items():
+        total = float(parent_input.loc[parent])
+        if not np.isfinite(total) or total < -_GENERATED_IDENTITY_ATOL:
             raise ValueError(
-                "Positive Austrian child output has zero EXIO producer-output support: "
+                f"{flow} parent intermediate-input target must be finite and non-negative: "
+                f"parent={parent!r}, total={total!r}."
+            )
+        if len(group) == 1:
+            target.loc[group[0]] = max(total, 0.0)
+            continue
+        x = x_domestic.reindex(group).astype("float64")
+        if bool((x < -_GENERATED_IDENTITY_ATOL).any()):
+            raise ValueError(f"{flow} target domestic output is negative within {parent!r}.")
+        x = x.mask(x.abs() <= _GENERATED_IDENTITY_ATOL, 0.0)
+        output = dom_output_share.reindex(group).astype("float64")
+        inputs = producer_input_profile.loc[group, "producer_input_share"].astype("float64")
+        bad_output_support = x.gt(_GENERATED_IDENTITY_ATOL) & output.le(_GENERATED_IDENTITY_ATOL)
+        if bool(bad_output_support.any()):
+            bad = list(map(str, bad_output_support.index[bad_output_support]))
+            raise ValueError(
+                "Positive target child output has zero DOM EXIO producer-output support: "
                 f"flow={flow!r}, parent={parent!r}, children={bad!r}."
             )
-        scale = target_x.div(shares.where(shares.gt(atol))).fillna(0.0)
-        block = out.loc[:, group]
-        row_mass = block.sum(axis=1)
-        weighted = block.mul(scale, axis=1)
-        denominator = weighted.sum(axis=1)
-        unsupported = row_mass.gt(atol) & denominator.le(atol)
-        if bool(unsupported.any()):
-            row = str(unsupported.index[unsupported][0])
+        relative = inputs.div(output.where(output.gt(_GENERATED_IDENTITY_ATOL))).fillna(0.0)
+        score = (x * relative).where(x.gt(_GENERATED_IDENTITY_ATOL), 0.0)
+        denominator = float(score.sum())
+        if total > _GENERATED_IDENTITY_ATOL and denominator <= _GENERATED_IDENTITY_ATOL:
             raise ValueError(
-                "Positive target row mass has no supported positive-output producer child: "
-                f"flow={flow!r}, row_child={row!r}, buyer_parent={parent!r}."
+                "Positive Eurostat parent intermediate input has no projected EXIO "
+                "producer-technology support at target child output: "
+                f"flow={flow!r}, parent={parent!r}, parent_input={total:.12g}."
             )
-        factors = row_mass.div(denominator.where(denominator.gt(atol))).fillna(0.0)
-        out.loc[:, group] = weighted.mul(factors, axis=0).to_numpy()
+        if total > _GENERATED_IDENTITY_ATOL:
+            target.loc[group] = score.to_numpy() * (total / denominator)
         for child in group:
-            diagnostic_rows.append(
+            diagnostics.append(
                 {
                     "flow": flow,
                     "buyer_parent": parent,
                     "buyer_child": child,
-                    "before_column_input": float(before_columns.loc[child]),
-                    "after_column_input": float(out.loc[:, child].sum()),
-                    "domestic_output": float(target_x.loc[child]),
-                    "exio_output_share": float(shares.loc[child]),
-                    "technology_scale": float(scale.loc[child]),
+                    "domestic_output": float(x.loc[child]),
+                    "exio_output_share": float(output.loc[child]),
+                    "exio_input_share": float(inputs.loc[child]),
+                    "relative_input_coefficient": float(relative.loc[child]),
+                    "technology_column_target": float(target.loc[child]),
+                    "producer_input_method": str(
+                        producer_input_profile.loc[child, "producer_input_method"]
+                    ),
                 }
             )
-    _assert_close(
-        f"{flow} producer-column conditioning row conservation",
-        Z.sum(axis=1),
-        out.sum(axis=1),
+    return target, pd.DataFrame(diagnostics)
+
+
+def _output_conditioned_technology_prior(
+    Z: pd.DataFrame,
+    *,
+    child_parent: Mapping[str, str],
+    dom_output_share: pd.Series,
+    x_domestic: pd.Series,
+    flow: str,
+) -> pd.DataFrame:
+    """Build a prior proportional within each parent block to donor A times target x."""
+    children = pd.Index(Z.index.astype(str))
+    if not Z.index.equals(Z.columns):
+        raise ValueError(f"{flow} technology prior requires square aligned Z.")
+    _, groups = _ordered_parent_groups(children, child_parent)
+    scale = pd.Series(1.0, index=children, dtype="float64")
+    # Remove donor production scale column by column: Z^E_ab * x^AT_b / s^x,E_b
+    # is proportional within each parent to A^E_ab * x^AT_b.
+    for parent, group in groups.items():
+        if len(group) <= 1:
+            continue
+        output = dom_output_share.reindex(group).astype("float64")
+        x = x_domestic.reindex(group).astype("float64").mask(
+            lambda values: values.abs() <= _GENERATED_IDENTITY_ATOL, 0.0
+        )
+        bad = x.gt(_GENERATED_IDENTITY_ATOL) & output.le(_GENERATED_IDENTITY_ATOL)
+        if bool(bad.any()):
+            bad_children = list(map(str, bad.index[bad]))
+            raise ValueError(
+                "Positive target output has zero DOM EXIO output support while constructing "
+                f"the {flow} technology prior: parent={parent!r}, children={bad_children!r}."
+            )
+        scale.loc[group] = x.div(
+            output.where(output.gt(_GENERATED_IDENTITY_ATOL))
+        ).fillna(0.0)
+    prior = Z.astype("float64").clip(lower=0.0).mul(scale, axis=1)
+    prior = prior.mask(prior.abs() <= _GENERATED_IDENTITY_ATOL, 0.0)
+    if not np.isfinite(prior.to_numpy(dtype="float64")).all():
+        raise ValueError(f"{flow} technology prior contains non-finite values.")
+    return prior
+
+
+def _reconcile_producer_technology(
+    Z: pd.DataFrame,
+    *,
+    child_parent: Mapping[str, str],
+    dom_output_share: pd.Series,
+    producer_input_profile: pd.DataFrame,
+    x_domestic: pd.Series,
+    flow: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, object]]]:
+    """Reconcile child rows, technology columns, and Eurostat parent cells."""
+    children = pd.Index(Z.index.astype(str))
+    parent_axis, groups = _ordered_parent_groups(children, child_parent)
+    block_targets = _aggregate_square(Z, child_parent, parent_axis)
+    row_targets = Z.sum(axis=1).astype("float64")
+    column_targets, diagnostic = _technology_column_targets(
+        block_targets=block_targets,
+        child_parent=child_parent,
+        dom_output_share=dom_output_share,
+        producer_input_profile=producer_input_profile,
+        x_domestic=x_domestic,
+        flow=flow,
+    )
+    prior = _output_conditioned_technology_prior(
+        Z,
+        child_parent=child_parent,
+        dom_output_share=dom_output_share,
+        x_domestic=x_domestic,
+        flow=flow,
+    )
+
+    n = len(children)
+    parent_id = {str(parent): i for i, parent in enumerate(parent_axis.astype(str))}
+    child_parent_ids = np.array(
+        [parent_id[child_parent.get(str(child), str(child))] for child in children],
+        dtype=np.int64,
+    )
+    row_groups = np.broadcast_to(np.arange(n, dtype=np.int64)[:, None], (n, n))
+    col_groups = np.broadcast_to(np.arange(n, dtype=np.int64)[None, :], (n, n))
+    block_groups = (
+        child_parent_ids[:, None] * len(parent_axis) + child_parent_ids[None, :]
+    )
+    reconciled_values, stats = ipfp_balance_partitions(
+        prior.to_numpy(dtype="float64"),
+        (
+            IPFPMargin("child_rows", row_groups, row_targets.to_numpy(dtype="float64")),
+            IPFPMargin(
+                "technology_columns",
+                col_groups,
+                column_targets.to_numpy(dtype="float64"),
+            ),
+            IPFPMargin(
+                "eurostat_parent_blocks",
+                block_groups,
+                block_targets.to_numpy(dtype="float64").reshape(-1),
+            ),
+        ),
         rtol=_GENERATED_IDENTITY_RTOL,
         atol=_GENERATED_IDENTITY_ATOL,
     )
-    return out, pd.DataFrame(diagnostic_rows)
+    reconciled = pd.DataFrame(reconciled_values, index=children, columns=children)
 
-
-def _validate_producer_conditioning_transformation(
-    before: pd.DataFrame,
-    after: pd.DataFrame,
-    *,
-    child_parent: Mapping[str, str],
-    x_domestic: pd.Series,
-    flow: str,
-) -> list[dict[str, object]]:
-    """Validate runtime invariants of the producer-column conditioning operator."""
-    children = pd.Index(after.index.astype(str))
-    parent_axis = pd.Index(
-        list(dict.fromkeys(child_parent.get(str(child), str(child)) for child in children)),
-        dtype="object",
-    )
-    before_row_parent = pd.DataFrame(
-        {
-            str(parent): before.loc[
-                :,
-                [
-                    str(child)
-                    for child in children
-                    if child_parent.get(str(child), str(child)) == str(parent)
-                ],
-            ].sum(axis=1)
-            for parent in parent_axis
-        },
-        index=children,
-    )
-    after_row_parent = pd.DataFrame(
-        {
-            str(parent): after.loc[
-                :,
-                [
-                    str(child)
-                    for child in children
-                    if child_parent.get(str(child), str(child)) == str(parent)
-                ],
-            ].sum(axis=1)
-            for parent in parent_axis
-        },
-        index=children,
-    )
     row_gap = _assert_close(
-        f"{flow} conditioning row-child/buyer-parent mass",
-        before_row_parent,
-        after_row_parent,
+        f"{flow} reconciled child-row margin",
+        reconciled.sum(axis=1),
+        row_targets,
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
+    )
+    col_gap = _assert_close(
+        f"{flow} reconciled technology-column margin",
+        reconciled.sum(axis=0),
+        column_targets,
         rtol=_GENERATED_IDENTITY_RTOL,
         atol=_GENERATED_IDENTITY_ATOL,
     )
     parent_gap = _assert_close(
-        f"{flow} conditioning parent Z-cell conservation",
-        _aggregate_square(before, child_parent, parent_axis),
-        _aggregate_square(after, child_parent, parent_axis),
+        f"{flow} reconciled Eurostat parent Z cells",
+        _aggregate_square(reconciled, child_parent, parent_axis),
+        block_targets,
         rtol=_GENERATED_IDENTITY_RTOL,
         atol=_GENERATED_IDENTITY_ATOL,
     )
-    parent_counts: dict[str, int] = {}
-    for child in children:
-        parent = child_parent.get(str(child), str(child))
-        parent_counts[parent] = parent_counts.get(parent, 0) + 1
-    zero_target_children = [
-        str(child)
-        for child in children
-        if parent_counts[child_parent.get(str(child), str(child))] > 1
-        and abs(float(x_domestic.loc[str(child)])) <= 1e-12
+    split_children = [
+        child for group in groups.values() if len(group) > 1 for child in group
+    ]
+    zero_children = [
+        child
+        for child in split_children
+        if abs(float(x_domestic.loc[child])) <= _GENERATED_IDENTITY_ATOL
     ]
     zero_gap = 0.0
-    if zero_target_children:
-        zero_inputs = after.loc[:, zero_target_children].sum(axis=0).astype("float64")
+    if zero_children:
+        zero_inputs = reconciled.loc[:, zero_children].sum(axis=0).astype("float64")
         zero_gap = _assert_close(
             f"{flow} zero-target-output producer columns",
             zero_inputs,
@@ -626,13 +773,32 @@ def _validate_producer_conditioning_transformation(
             rtol=0.0,
             atol=_GENERATED_IDENTITY_ATOL,
         )
-    return [
+
+    diagnostic = diagnostic.copy()
+    if not diagnostic.empty:
+        before = Z.sum(axis=0)
+        after = reconciled.sum(axis=0)
+        diagnostic["before_column_input"] = diagnostic["buyer_child"].map(before)
+        diagnostic["after_column_input"] = diagnostic["buyer_child"].map(after)
+        diagnostic["ipfp_iterations"] = stats.iterations
+        diagnostic["ipfp_max_normalized_gap"] = stats.max_normalized_gap
+
+    checks = [
         {
             "validation_class": "transformation_coherence",
-            "check_id": "tc.row_child_mass",
+            "check_id": "tc.child_row_margin",
             "flow": flow,
             "status": "pass",
             "max_abs_gap": row_gap,
+            "rtol": _GENERATED_IDENTITY_RTOL,
+            "atol": _GENERATED_IDENTITY_ATOL,
+        },
+        {
+            "validation_class": "transformation_coherence",
+            "check_id": "tc.child_column_technology_margin",
+            "flow": flow,
+            "status": "pass",
+            "max_abs_gap": col_gap,
             "rtol": _GENERATED_IDENTITY_RTOL,
             "atol": _GENERATED_IDENTITY_ATOL,
         },
@@ -654,7 +820,17 @@ def _validate_producer_conditioning_transformation(
             "rtol": 0.0,
             "atol": _GENERATED_IDENTITY_ATOL,
         },
+        {
+            "validation_class": "transformation_coherence",
+            "check_id": "tc.ipfp_convergence",
+            "flow": flow,
+            "status": "pass",
+            "max_abs_gap": max(stats.max_abs_gap_by_family.values(), default=0.0),
+            "rtol": _GENERATED_IDENTITY_RTOL,
+            "atol": _GENERATED_IDENTITY_ATOL,
+        },
     ]
+    return reconciled, diagnostic, checks
 
 
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
@@ -1169,46 +1345,61 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
     ))
     source_codes = references["TOTAL"].Z.index.astype(str)
     child_parent = _child_to_parent(manifest, source_codes)
-    # DOM row use fixes Austrian child output; EXIO output shares remove donor
-    # producer scale from the preliminary transaction prior, not a second output target.
+    # PRODUCER_TECH_RECONCILIATION_V2: DOM row use fixes the target
+    # child-output closure.  Eurostat parent cells and child rows are hard target
+    # margins; EXIO supplies a flow-specific producer-technology reference.
     x_domestic = use["DOM"].rename("x")
     dom_output_share = _load_dom_split_output_shares(
         dirs["DOM"], child_parent=child_parent, children=Z_dom.index
     )
-    preconditioned_z = {"DOM": Z_dom.copy(), "IMP": Z_imp.copy()}
-    Z_dom, dom_conditioning = _condition_producer_columns_on_domestic_output(
-        Z_dom, child_parent=child_parent, output_share=dom_output_share,
-        x_domestic=x_domestic, flow="DOM",
-    )
-    Z_imp, imp_conditioning = _condition_producer_columns_on_domestic_output(
-        Z_imp, child_parent=child_parent, output_share=dom_output_share,
-        x_domestic=x_domestic, flow="IMP",
-    )
-    transformation_checks = _validate_producer_conditioning_transformation(
-        preconditioned_z["DOM"], Z_dom,
-        child_parent=child_parent, x_domestic=x_domestic, flow="DOM",
-    )
-    transformation_checks.extend(
-        _validate_producer_conditioning_transformation(
-            preconditioned_z["IMP"], Z_imp,
-            child_parent=child_parent, x_domestic=x_domestic, flow="IMP",
+    producer_input_profiles = {
+        flow: _load_producer_input_profile(
+            dirs[flow], child_parent=child_parent, children=Z_dom.index, flow=flow
         )
+        for flow in ("DOM", "IMP")
+    }
+    pre_reconciliation_use = dict(use)
+    Z_dom, dom_reconciliation, transformation_checks = _reconcile_producer_technology(
+        Z_dom,
+        child_parent=child_parent,
+        dom_output_share=dom_output_share,
+        producer_input_profile=producer_input_profiles["DOM"],
+        x_domestic=x_domestic,
+        flow="DOM",
     )
+    Z_imp, imp_reconciliation, imp_checks = _reconcile_producer_technology(
+        Z_imp,
+        child_parent=child_parent,
+        dom_output_share=dom_output_share,
+        producer_input_profile=producer_input_profiles["IMP"],
+        x_domestic=x_domestic,
+        flow="IMP",
+    )
+    transformation_checks.extend(imp_checks)
+
     Z_total = Z_dom + Z_imp
     Z = {"DOM": Z_dom, "IMP": Z_imp, "TOTAL": Z_total}
-    conditioned_use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in Z}
+    reconciled_use = {flow: flow_use_total(Z[flow], Y[flow]) for flow in Z}
     dom_output_gap = _assert_close(
-        "DOM conditioning preserves canonical output", conditioned_use["DOM"],
-        x_domestic, rtol=_GENERATED_IDENTITY_RTOL, atol=_GENERATED_IDENTITY_ATOL,
+        "DOM reconciliation preserves canonical output",
+        reconciled_use["DOM"],
+        x_domestic,
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
     )
     imp_use_gap = _assert_close(
-        "IMP conditioning preserves row use", conditioned_use["IMP"],
-        use["IMP"], rtol=_GENERATED_IDENTITY_RTOL, atol=_GENERATED_IDENTITY_ATOL,
+        "IMP reconciliation preserves imported-product row use",
+        reconciled_use["IMP"],
+        pre_reconciliation_use["IMP"],
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
     )
     total_use_gap = _assert_close(
-        "TOTAL use remains DOM plus IMP after conditioning",
-        conditioned_use["TOTAL"], conditioned_use["DOM"].add(conditioned_use["IMP"]),
-        rtol=_GENERATED_IDENTITY_RTOL, atol=_GENERATED_IDENTITY_ATOL,
+        "TOTAL use remains DOM plus IMP after reconciliation",
+        reconciled_use["TOTAL"],
+        reconciled_use["DOM"].add(reconciled_use["IMP"]),
+        rtol=_GENERATED_IDENTITY_RTOL,
+        atol=_GENERATED_IDENTITY_ATOL,
     )
     transformation_checks.extend(
         [
@@ -1241,11 +1432,12 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             },
         ]
     )
-    use = conditioned_use
+    use = reconciled_use
     for flow in ("DOM", "IMP", "TOTAL"):
         _write_frame(Z[flow], dirs[flow], "Z_split.csv")
-    pd.concat([dom_conditioning, imp_conditioning], ignore_index=True).to_csv(
-        outdir / "producer_column_conditioning.csv", index=False
+    (outdir / "producer_column_conditioning.csv").unlink(missing_ok=True)
+    pd.concat([dom_reconciliation, imp_reconciliation], ignore_index=True).to_csv(
+        outdir / "producer_technology_reconciliation.csv", index=False
     )
     pd.DataFrame(transformation_checks).to_csv(
         outdir / _TRANSFORMATION_COHERENCE_REPORT, index=False
@@ -1356,14 +1548,16 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             "TOTAL": "total_inputs_per_domestic_output",
         },
         "V_status": "transaction_identities_plus_primitive_rows",
-        "producer_column_conditioning": "exio_technology_at_austrian_child_output",
-        "producer_column_conditioning_diagnostic": "../producer_column_conditioning.csv",
+        "producer_column_reconciliation": "exio_technology_ipfp_at_target_output",
+        "producer_column_reconciliation_diagnostic": "../producer_technology_reconciliation.csv",
+        "producer_column_target_semantics": "target_x_times_flow_specific_exio_relative_input_coefficient_calibrated_to_eurostat_parent_input",
         "transformation_coherence_validation": f"../{_TRANSFORMATION_COHERENCE_REPORT}",
         "validation_classes": [
             "accounting_identity_and_source_conservation",
             "transformation_coherence",
         ],
-        "balancing_applied": False,
+        "balancing_applied": True,
+        "balancing_method": "IPFP_KL_PARTITION_MARGINS",
     }, indent=2) + "\n", encoding="utf-8")
     pd.DataFrame(diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)
 

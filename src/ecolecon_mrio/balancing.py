@@ -1,6 +1,9 @@
+"""Generic matrix-balancing algorithms for MRIO disaggregation and reconciliation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -60,6 +63,165 @@ def ras_balance(
     return M, BalanceStats(max_iter, row_gap, col_gap)
 
 
+
+# MULTI_MARGIN_IPFP_V1
+@dataclass(frozen=True)
+class IPFPMargin:
+    """One partition-margin family for non-negative iterative proportional fitting.
+
+    ``groups`` is an integer array with the same shape as the balanced matrix.
+    Every matrix cell belongs to exactly one group in this family; ``targets[g]``
+    is the required sum of all cells whose group id equals ``g``.
+    """
+
+    name: str
+    groups: np.ndarray
+    targets: np.ndarray
+
+
+@dataclass(frozen=True)
+class IPFPStats:
+    """Convergence diagnostics for multi-margin IPFP."""
+
+    iterations: int
+    max_normalized_gap: float
+    max_abs_gap_by_family: dict[str, float]
+
+
+def ipfp_balance_partitions(
+    M0: np.ndarray,
+    margin_families: Sequence[IPFPMargin],
+    *,
+    max_iter: int = 50_000,
+    rtol: float = 1e-12,
+    atol: float = 1e-10,
+) -> tuple[np.ndarray, IPFPStats]:
+    """KL/IPFP-balance a non-negative matrix to several partition margins.
+
+    Classical two-margin RAS is the special case with one row partition and one
+    column partition.  Each projection rescales every cell in a group by the ratio
+    of target to current group mass; cycling the families converges to the
+    information projection when the declared margins are feasible on the initial
+    support.  Zero cells therefore remain structural zeros.
+    """
+    M = np.asarray(M0, dtype="float64").copy()
+    if M.ndim != 2 or 0 in M.shape:
+        raise ValueError("IPFP requires a non-empty two-dimensional matrix.")
+    if not np.isfinite(M).all() or bool((M < 0.0).any()):
+        raise ValueError("IPFP requires a finite non-negative initial matrix.")
+    if max_iter <= 0:
+        raise ValueError("max_iter must be positive.")
+    if (
+        not np.isfinite(rtol)
+        or not np.isfinite(atol)
+        or rtol < 0.0
+        or atol < 0.0
+        or (rtol == 0.0 and atol == 0.0)
+    ):
+        raise ValueError("IPFP tolerances must be finite, non-negative, and not both zero.")
+    if not margin_families:
+        raise ValueError("IPFP requires at least one margin family.")
+
+    # Validate every partition independently, then require all families to conserve
+    # the same total mass before any iterative projection is attempted.
+    prepared: list[tuple[str, np.ndarray, np.ndarray]] = []
+    seen_names: set[str] = set()
+    common_total: float | None = None
+    for family in margin_families:
+        name = str(family.name).strip()
+        if not name or name in seen_names:
+            raise ValueError(f"IPFP margin names must be non-empty and unique: {name!r}.")
+        seen_names.add(name)
+        groups = np.asarray(family.groups)
+        targets = np.asarray(family.targets, dtype="float64").reshape(-1)
+        if groups.shape != M.shape or not np.issubdtype(groups.dtype, np.integer):
+            raise ValueError(
+                f"IPFP margin {name!r} groups must be an integer array with shape {M.shape}."
+            )
+        groups = groups.astype(np.int64, copy=False)
+        if targets.size == 0 or not np.isfinite(targets).all() or bool((targets < 0.0).any()):
+            raise ValueError(f"IPFP margin {name!r} targets must be finite and non-negative.")
+        if int(groups.min()) < 0 or int(groups.max()) >= targets.size:
+            raise ValueError(
+                f"IPFP margin {name!r} group ids must lie in [0, {targets.size - 1}]."
+            )
+        total = float(targets.sum())
+        if common_total is None:
+            common_total = total
+        else:
+            scale = max(1.0, abs(common_total), abs(total))
+            if abs(total - common_total) > atol + rtol * scale:
+                raise ValueError(
+                    "IPFP margin totals are inconsistent: "
+                    f"reference={common_total:.12g}, {name}={total:.12g}."
+                )
+        prepared.append((name, groups, targets))
+
+    def family_gap(
+        groups: np.ndarray, targets: np.ndarray
+    ) -> tuple[np.ndarray, float, float]:
+        current = np.bincount(
+            groups.ravel(), weights=M.ravel(), minlength=targets.size
+        ).astype("float64")
+        abs_gap = np.abs(current - targets)
+        tolerance = atol + rtol * np.maximum(np.abs(current), np.abs(targets))
+        normalized = np.divide(
+            abs_gap,
+            tolerance,
+            out=np.full_like(abs_gap, np.inf),
+            where=tolerance > 0.0,
+        )
+        normalized[(tolerance == 0.0) & (abs_gap == 0.0)] = 0.0
+        return current, float(np.max(abs_gap, initial=0.0)), float(
+            np.max(normalized, initial=0.0)
+        )
+
+    worst_normalized = float("inf")
+    abs_by_family: dict[str, float] = {}
+    # Each family update is one KL/I-projection: proportional rescaling preserves
+    # relative cell structure inside the group while imposing that group's margin.
+    for iteration in range(1, max_iter + 1):
+        for name, groups, targets in prepared:
+            current, _, _ = family_gap(groups, targets)
+            unsupported = (targets > 0.0) & (current == 0.0)
+            if bool(np.any(unsupported)):
+                group = int(np.flatnonzero(unsupported)[0])
+                raise ValueError(
+                    "IPFP infeasible on initial/current structural support: "
+                    f"margin={name!r}, group={group}, target={targets[group]:.12g}."
+                )
+            factors = np.divide(
+                targets,
+                current,
+                out=np.ones_like(targets),
+                where=current != 0.0,
+            )
+            factors[(targets == 0.0) & (current != 0.0)] = 0.0
+            M *= factors[groups]
+
+        # A full cycle is accepted only when every family is simultaneously within
+        # its elementwise generated-identity tolerance.
+        worst_normalized = 0.0
+        abs_by_family = {}
+        for name, groups, targets in prepared:
+            _, max_abs, max_norm = family_gap(groups, targets)
+            abs_by_family[name] = max_abs
+            worst_normalized = max(worst_normalized, max_norm)
+        if worst_normalized <= 1.0:
+            return M, IPFPStats(
+                iterations=iteration,
+                max_normalized_gap=worst_normalized,
+                max_abs_gap_by_family=dict(abs_by_family),
+            )
+
+    raise ValueError(
+        "IPFP did not converge within max_iter: "
+        f"iterations={max_iter}, max_normalized_gap={worst_normalized:.6g}, "
+        f"max_abs_gap_by_family={abs_by_family!r}. The margin families or "
+        "structural support may be incompatible."
+    )
+
+
 def gras_balance(
     M0: np.ndarray,
     row_targets: np.ndarray,
@@ -91,6 +253,7 @@ def gras_balance(
     r = row_targets
     c = col_targets
     eps = max(float(tol), 1e-12)
+    M = M0.copy()
 
     def _update_multiplier(A: np.ndarray, B: np.ndarray, target: np.ndarray) -> np.ndarray:
         out = np.ones_like(target)

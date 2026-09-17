@@ -93,19 +93,31 @@ identity is not required after legitimate floating reductions.
 **Transformation-coherence validation** is owned by the transformation that uses
 the donor evidence.  The EXIO producer-conditioning route must emit
 `transformation_coherence_validation.csv` beside the flow directories and prove
-row-child/buyer-parent mass preservation, parent-Z-cell conservation, zero target
-output receiving zero conditioned producer-column input, the canonical DOM output
-margin, IMP row-use preservation, and TOTAL use additivity.  Unit/regression tests
-add the non-data-dependent operator invariants: donor-scale invariance, the
-exact-compatible fixed point, and fail-closed positive target output without donor
-production support.
+child-row preservation, technology-reference child-column margins, parent-Z-cell
+conservation, zero target output receiving zero producer-column input, numerical
+IPFP convergence, the canonical DOM output margin, IMP row-use preservation, and
+TOTAL use additivity. Unit/regression tests retain donor-scale invariance of the
+technology prior and fail-closed positive target output without donor support.
+Preliminary row-child/buyer-parent submargins are not hard constraints.
 
 The final many-many production validator must require the complete transformation
 report when `split_info.json` declares
-`producer_column_conditioning=exio_technology_at_austrian_child_output`.  Reaggregation
+`producer_column_reconciliation=exio_technology_ipfp_at_target_output`.  Reaggregation
 still has its own transformation-conservation checks against a fresh recomputation.
 Passing Class I never substitutes for Class II, and neither class turns a
 plausibility diagnostic such as negative child GVA into an accounting identity.
+
+The canonical producer reconciliation reuses `ecolecon_mrio.balancing`: ordinary
+RAS remains the existing two-margin API, while one generic multi-partition IPFP
+primitive handles the additional Eurostat parent-block margin. Domain scripts own
+only target construction and artifact serialization; they must not carry a parallel
+solver implementation. Many-to-many concordances are resolved to unique emitted
+edge children before reconciliation, with IMP rows allowed flow-specific mapping
+while producer columns retain the DOM production mapping. For producer-input column
+shares, the conservative supplier-row projection cancels after summing over rows;
+flow specificity comes from the selected donor-flow Z block, not from redistributing
+a fixed donor flow across emitted supplier rows. For producer-input column
+a fixed donor flow across emitted supplier rows.
 
 ## Independent geography contract
 

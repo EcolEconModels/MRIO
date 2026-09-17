@@ -480,3 +480,115 @@ def test_external_import_nested_p5m_preserves_signed_child_use(tmp_path: Path) -
     assert float(result.Y.loc[donors, "P5M"].sum()) == pytest.approx(-80.0)
     assert float(result.use_total.sum()) == pytest.approx(20.0)
     assert float(result.use_total.loc["d1"]) < 0.0
+
+# PRODUCER_INPUT_SHARE_M2M_TEST_V2
+def test_projected_producer_input_share_uses_imp_flow_and_dom_columns(
+    tmp_path: Path,
+) -> None:
+    """IMP producer evidence uses IMP donor inputs and the DOM producer mapping.
+
+    The supplier-row concordance may differ between DOM and IMP, but conservative
+    row projection cannot alter producer-column totals after summing over suppliers.
+    Flow specificity therefore comes from the IMP donor Z block, while producer
+    disaggregation comes from the DOM column profiles/mapping.
+    """
+    from scripts.split_eurostat_energy_by_exiobase import _projected_producer_input_shares
+
+    z, y, donor_slice, split_mapping = _core_fixture(tmp_path)
+    dom_edges = {
+        "CPA_C20": {"p24.d": 0.0, "p24.g": 1.0},
+        "CPA_C21": {"p24.d": 1.0, "p24.h": 1.0},
+    }
+    imp_edges = {
+        "CPA_C20": {"p24.d": 0.5, "p24.g": 1.0},
+        "CPA_C21": {"p24.d": 0.5, "p24.h": 1.0},
+    }
+    export_loader = lambda **_kwargs: pd.Series(0.0, index=donor_slice.Z.index)
+    dom = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=z,
+        eurostat_Y=y,
+        exio_slice=donor_slice,
+        sector_to_exio_sectors=split_mapping,
+        eurostat_sector_mapping=dom_edges,
+        export_vector_loader=export_loader,
+        create_io_system=False,
+    )
+
+    # Use a genuinely different external-import donor technology: doubling the
+    # p24.d buyer column changes raw intermediate input into that producer while
+    # retaining the same raw donor basis and structural support.
+    imp_z = donor_slice.Z.copy()
+    imp_z.loc[:, "p24.d"] = imp_z.loc[:, "p24.d"] * 2.0
+    imp_slice = MrioScopeSlice(
+        scope=donor_slice.scope,
+        Z=imp_z,
+        Y=donor_slice.Y.copy(),
+        x_scope=donor_slice.x_scope.copy(),
+        flow="external_imports",
+        metadata=dict(donor_slice.metadata),
+    )
+    imp = split_iot_using_exiobase_split_profiles(
+        eurostat_Z=z,
+        eurostat_Y=y,
+        exio_slice=imp_slice,
+        sector_to_exio_sectors=split_mapping,
+        eurostat_sector_mapping=imp_edges,
+        column_split_profiles=dom.split_profiles,
+        column_eurostat_sector_mapping=dom_edges,
+        export_vector_loader=export_loader,
+        create_io_system=False,
+    )
+
+    # The split path genuinely uses different row-side mapping evidence for IMP.
+    assert not imp.split_profiles["CPA_C20"].output_share.equals(
+        dom.split_profiles["CPA_C20"].output_share
+    )
+
+    observed = _projected_producer_input_shares(
+        exio_slice=imp_slice,
+        column_profiles=dom.split_profiles,
+        column_mapping=dom_edges,
+        emitted_labels=imp.Z.index.astype(str).tolist(),
+    )
+    counterfactual_dom_flow = _projected_producer_input_shares(
+        exio_slice=donor_slice,
+        column_profiles=dom.split_profiles,
+        column_mapping=dom_edges,
+        emitted_labels=imp.Z.index.astype(str).tolist(),
+    )
+    counterfactual_imp_columns = _projected_producer_input_shares(
+        exio_slice=imp_slice,
+        column_profiles=imp.split_profiles,
+        column_mapping=imp_edges,
+        emitted_labels=imp.Z.index.astype(str).tolist(),
+    )
+    assert list(observed.columns) == [
+        "parent", "child", "producer_input_share", "producer_input_method"
+    ]
+    assert {"p24.d@CPA_C20", "p24.d@CPA_C21"}.issubset(set(observed["child"]))
+    for _parent, group in observed.groupby("parent"):
+        assert float(group["producer_input_share"].sum()) == pytest.approx(1.0)
+
+    flow_difference = observed.merge(
+        counterfactual_dom_flow,
+        on=["parent", "child"],
+        suffixes=("_imp_flow", "_dom_flow"),
+    )
+    assert bool(
+        (
+            flow_difference["producer_input_share_imp_flow"]
+            - flow_difference["producer_input_share_dom_flow"]
+        ).abs().gt(1e-12).any()
+    )
+
+    column_difference = observed.merge(
+        counterfactual_imp_columns,
+        on=["parent", "child"],
+        suffixes=("_dom_columns", "_imp_columns"),
+    )
+    assert bool(
+        (
+            column_difference["producer_input_share_dom_columns"]
+            - column_difference["producer_input_share_imp_columns"]
+        ).abs().gt(1e-12).any()
+    )

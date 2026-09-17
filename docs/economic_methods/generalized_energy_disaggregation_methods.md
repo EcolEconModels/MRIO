@@ -465,69 +465,85 @@ unless a separate override policy is explicitly declared.
 ### Target-output conditioning of donor producer columns
 
 Raw donor transactions contain both technology and donor scale,
-\(D^Z_{ab}=A^D_{ab}x^D_b\). After DOM row use fixes target child output \(x_b\),
-condition each preliminary buyer-child prior by \(x_b/s_b^{x,D}\), where
-\(s_b^{x,D}\) is the donor output share, and renormalise within the existing
-row-child/buyer-parent mass. For donor-backed cells this is proportional to
-\(A^D_{ab}x_b\), so donor technology is evaluated at target output without changing
-any authoritative target parent cell or child row/output margin. Apply the same DOM
-production scale to DOM and IMP columns. Unsupported positive target output fails
-for evidence review; no generic optimiser is implied by this step.
+\(D^Z_{ab}=A^D_{ab}x^D_b\).  After DOM row use fixes target child output \(x_b\),
+producer technology is transferred in two separate objects.
+
+First, the within-block prior is conditioned by the common DOM producer-output
+share \(s_b^{x,D}\):
+
+\[
+Q^f_{ab}\propto Z^{0,f}_{ab}\frac{x_b}{s_b^{x,D}},
+\]
+
+which is proportional within a donor-backed parent cell to
+\(A^{D,f}_{ab}x_b\).  Second, the actual projected donor block supplies the
+flow-specific producer intermediate-input share \(s_b^{in,D,f}\).  The relative
+input coefficient is
+
+\[
+\rho_b^f=\frac{s_b^{in,D,f}}{s_b^{x,D}},
+\]
+
+and the child producer-column target within buyer parent \(j\) is
+
+\[
+q_b^f=U_j^f
+\frac{x_b\rho_b^f}{\sum_{c\in C_j}x_c\rho_c^f},
+\qquad
+U_j^f=\sum_i Z^f_{ij}.
+\]
+
+The common output share is always the DOM production profile.  For IMP the row
+projection may use flow-specific import concordance weights, while the column
+projection uses the DOM production mapping; therefore \(s_b^{in,D,IMP}\) is
+measured after the actual IMP-row/DOM-column donor projection.  This makes the
+construction valid on materialized many-to-many edge children without duplicating
+a raw donor source.
+
+The preliminary child row totals, the technology column targets \(q_b^f\), and the
+original Eurostat parent cells are simultaneous constraints.  No one-pass
+row-then-column or column-then-row normalization is authoritative.  Let \(G\) be
+the child-to-parent summation map.  The canonical matrix is the non-negative
+information projection
+
+\[
+\min_{Z^{*,f}\ge0}D_{KL}(Z^{*,f}\Vert Q^f)
+\]
+
+subject to
+
+\[
+Z^{*,f}\mathbf 1=Z^{0,f}\mathbf 1,
+\qquad
+\mathbf 1^\top Z^{*,f}=q^{f\top},
+\qquad
+GZ^{*,f}G^\top=Z^{f}_{source}.
+\]
+
+The implementation uses the generic multi-partition IPFP primitive in
+`ecolecon_mrio.balancing`; ordinary row/column RAS is its two-margin special case.
+The primitive split remains an unbalanced reconstruction stage.  Canonical
+reconciliation occurs only after DOM output is known.  If positive hard margins
+have no declared prior support, or the simultaneous margins do not converge within
+strict generated-table tolerance, the run fails as an evidence/closure conflict;
+support is not fabricated.
 
 ### Transformation-coherence invariants
 
-Accounting reconstruction alone is insufficient because a hybrid child table can
-balance by moving the discrepancy into a signed residual such as `B1G`.  The
-producer-conditioning operator therefore has its own blocking invariants.
+Class-II validation checks the constraints actually made authoritative by this
+reconciliation: child row margins, technology-reference child column margins,
+Eurostat parent cells, zero-input columns for zero target output, numerical IPFP
+convergence, preservation of the canonical DOM output margin, preservation of IMP
+product-row use, and TOTAL=DOM+IMP use additivity.  The former
+child-row/buyer-parent submargin is deliberately **not** an invariant: the Austria
+production run showed that this preliminary donor-derived allocation could pass all
+accounting checks while forcing a tiny-output technology to absorb implausibly
+large imported inputs.
 
-Let \(Z^{0,f}\) be the preliminary split, \(Z^{*,f}\) the conditioned split,
-\(C_j\) the children of buyer parent \(j\), and \(G\) the pure child-to-parent
-summation map.  For both DOM and IMP,
-
-\[
-\sum_{b\in C_j} Z^{*,f}_{ab}
-=
-\sum_{b\in C_j} Z^{0,f}_{ab}
-\quad\text{for every child row }a\text{ and buyer parent }j,
-\]
-
-which implies the source-cell fixed margin
-
-\[
-G Z^{*,f}G^\top=G Z^{0,f}G^\top=Z^{f}_{source}.
-\]
-
-Because DOM row use is the declared target-output closure,
-
-\[
-x_b^{target}
-=
-\sum_c Z^{*,DOM}_{bc}+\sum_{h\in F}Y^{DOM}_{bh}.
-\]
-
-The same \(x_b^{target}\) and donor output support condition the producer columns
-of DOM and IMP.  A split child with \(x_b^{target}=0\) must receive zero conditioned
-producer-column input; positive target output with zero donor producer-output
-support is an explicit evidence conflict.
-
-Most importantly, the operator is invariant to donor producer scale.  For arbitrary
-\(c_b>0\), define
-
-\[
-\bar D_{ab}=c_bD_{ab},\qquad \bar x_b^D=c_bx_b^D.
-\]
-
-Then \(\bar A_{ab}=\bar D_{ab}/\bar x_b^D=A_{ab}\), and with fixed target totals
-and target output the conditioned target allocation must be unchanged.  This
-invariance is a required falsification test: changing donor activity scale while
-holding technology fixed must not change the Austrian child technology allocation.
-
-The exact-compatible case is a second fixed point.  If target child output shares
-already equal donor output shares and target parent cells are a common scaling of
-the donor blocks, conditioning leaves the preliminary child table unchanged up to
-floating-point tolerance.  These tests establish technology/scale separation;
-they do not assert that the resulting child table is uniquely identified or that
-all child `B1G` values must be positive.
+The technology-reference child column target is a declared disaggregation closure,
+not an independently observed Austrian statistic and not a national-account
+identity.  Negative child `B1G` therefore remains a plausibility diagnostic rather
+than a generic failure condition.
 
 ## Geographic scope aggregation
 

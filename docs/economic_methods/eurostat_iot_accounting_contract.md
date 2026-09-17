@@ -165,10 +165,11 @@ use the separate source-rounding policy.
 
 This class asks whether the disaggregation operator used donor evidence in the
 economic role declared by the method.  These are not national-account identities.
-For producer-column EXIO conditioning they include preservation of the declared
-target child-output margin, row-child/buyer-parent mass, source parent Z cells,
-zero-target-output support, invariance to donor producer-scale changes that leave
-technical coefficients unchanged, and the exact-compatible fixed point.  A table
+For EXIO producer-technology reconciliation they include preservation of the declared
+target child-output margin, child-row margins, technology-reference child-column
+margins, source parent Z cells, zero-target-output support, and numerical IPFP
+convergence. Donor-scale invariance remains a falsification test of the technology
+prior, while preliminary row-child/buyer-parent submargins are explicitly non-authoritative.  A table
 can pass every Class-I identity while failing Class II; for example a synthetic
 child can satisfy `P1 = P2_ADJ + B1G` only by receiving a large negative residual
 `B1G` after a scale-contaminated donor allocation.
@@ -661,12 +662,20 @@ Z^{*,f}_{ab}=r^f_{a,j}\frac{\omega^f_{ab}}
 {\sum_{c\in C_j}\omega^f_{ac}}.
 \]
 
-Because \(Z^{0,f}_{ab}\propto D^{E,f}_{ab}\) inside a donor-backed parent cell and
-\(s_b^{x,E}\propto x_b^E\), the prior is proportional to
-\(D^{E,f}_{ab}x_b/x_b^E=A^{E,f}_{ab}x_b\): EXIO technology at Austrian child
-output. Row-child/buyer-parent masses, emitted row totals, DOM output, and source
-parent cells are therefore preserved. Use the same DOM production scale for DOM
-and IMP producer columns.
+Because the preliminary donor-backed block is proportional within each
+Eurostat parent cell to the projected donor transaction block, conditioning its
+producer columns by \(x_b/s_b^{x,E}\) supplies a prior proportional to
+\(A^{E,f}_{ab}x_b\).  This prior is not itself the final allocation.  The canonical
+stage also forms flow-specific technology-reference child producer-column margins
+from \(x_b(s_b^{in,E,f}/s_b^{x,E})\), calibrated to each authoritative Eurostat
+parent intermediate-input total, and reconciles child rows, child columns, and
+parent cells simultaneously with the shared multi-partition IPFP API.  The former
+row-child/buyer-parent submargin is not authoritative.  DOM output shares define
+the producer-output profile for both DOM and IMP. IMP producer-input shares use the
+IMP donor transaction block and the DOM producer-column projection. Because the
+validated supplier-row projection is source-conservative, its weights cancel when
+summing over supplier rows; changing only the IMP row concordance therefore cannot
+change producer-column input totals.
 
 This closed-form conditioning is not RAS/GRAS or optimisation. Positive Austrian
 output with zero EXIO output support, or positive row mass supported only on

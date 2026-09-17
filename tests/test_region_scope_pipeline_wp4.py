@@ -318,7 +318,7 @@ def test_final_validator_requires_complete_producer_conditioning_coherence_repor
     pd.DataFrame({"P3": [1.0]}, index=sectors).to_csv(split_dir / "Y_split.csv")
     pd.Series([2.0], index=sectors, name="x").to_csv(split_dir / "x_split.csv")
     (split_dir / "split_info.json").write_text(
-        '{"producer_column_conditioning":"exio_technology_at_austrian_child_output"}\n',
+        '{"producer_column_reconciliation":"exio_technology_ipfp_at_target_output","balancing_applied":true,"balancing_method":"IPFP_KL_PARTITION_MARGINS"}\n',
         encoding="utf-8",
     )
     rows = [
@@ -343,7 +343,7 @@ def test_final_validator_requires_complete_producer_conditioning_coherence_repor
     check = next(
         row
         for row in accepted["checks"]
-        if row["name"] == "producer_conditioning_transformation_coherence"
+        if row["name"] == "producer_technology_reconciliation_coherence"
     )
     assert check["ok"]
 
@@ -353,7 +353,7 @@ def test_final_validator_requires_complete_producer_conditioning_coherence_repor
     failed = next(
         row
         for row in rejected["checks"]
-        if row["name"] == "producer_conditioning_transformation_coherence"
+        if row["name"] == "producer_technology_reconciliation_coherence"
     )
     assert not failed["ok"]
     assert failed["missing_checks"]
