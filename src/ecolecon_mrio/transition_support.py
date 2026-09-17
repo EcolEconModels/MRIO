@@ -469,6 +469,55 @@ def merge_panel_coefficient_envelope(
     )
 
 
+# INVERSE_FRONTIER_REALIZABILITY_V1
+def coefficient_eligible_mask(
+    A: Any,
+    active_year_counts: Any,
+    *,
+    edge_threshold: float,
+    minimum_active_years: int,
+) -> csr_matrix:
+    """Return coefficient links eligible under the accepted panel topology.
+
+    A baseline link above ``edge_threshold`` remains adjustable even when it has
+    not appeared recurrently in earlier panel years. A baseline-dormant link is
+    adjustable only when its thresholded panel count reaches
+    ``minimum_active_years``. This is the generic current-or-recurrent support
+    rule used by downstream historical coefficient domains; it creates no novel
+    link outside the observed panel support.
+    """
+
+    cutoff = float(edge_threshold)
+    recurrence = int(minimum_active_years)
+    if not np.isfinite(cutoff) or cutoff < 0.0:
+        raise ValueError("coefficient edge threshold must be finite and non-negative")
+    if not 1 <= recurrence <= np.iinfo(np.uint8).max:
+        raise ValueError("minimum_active_years must lie in [1, 255]")
+    matrix = _nonnegative_support_matrix(A)
+    counts = cast(csr_matrix, csr_matrix(active_year_counts, copy=False))
+    if counts.shape != matrix.shape:
+        raise ValueError("coefficient active-year counts must share A's shape")
+    count_data = np.asarray(counts.data)
+    if count_data.size and (
+        not np.isfinite(count_data).all()
+        or bool((count_data < 0).any())
+        or not np.array_equal(count_data, np.rint(count_data))
+    ):
+        raise ValueError("coefficient active-year counts must be finite non-negative integers")
+    if (not counts.has_canonical_format) or bool(count_data.size and (count_data == 0).any()):
+        counts = counts.copy()
+        counts.sum_duplicates()
+        counts.eliminate_zeros()
+        counts.sort_indices()
+
+    current_active = cast(csr_matrix, (matrix > cutoff).astype(np.int8).tocsr())
+    recurrent = cast(csr_matrix, (counts >= recurrence).astype(np.int8).tocsr())
+    eligible = cast(csr_matrix, current_active.maximum(recurrent).tocsr())
+    eligible.eliminate_zeros()
+    eligible.sort_indices()
+    return eligible
+
+
 def complete_directions_with_fixed_final_demand(
     A: Any,
     prescribed_rows: np.ndarray,
@@ -1058,3 +1107,131 @@ def certificate_safe_coefficient_headroom(
     upper.eliminate_zeros()
     upper.sort_indices()
     return lower, upper, row_scale, guaranteed_margin
+
+
+
+def reconstruct_coefficient_change_witness(
+    lower_headroom: Any,
+    upper_headroom: Any,
+    x1: np.ndarray,
+    structural_flow: np.ndarray,
+    *,
+    tolerance: float = 1.0e-10,
+) -> csr_matrix:
+    r"""Reconstruct one sparse ``Delta A`` from exact rowwise flow capacities.
+
+    For non-negative ``x1`` and an independent coefficient box
+    ``L <= Delta A <= U``, row ``i`` can generate exactly the interval
+    ``(L @ x1)_i <= u_i <= (U @ x1)_i``.  The construction uses one deterministic
+    interpolation factor per row,
+
+    ``Delta A_ij = L_ij + theta_i (U_ij - L_ij)``,
+
+    which exactly reaches every target inside that interval.  This supplies an
+    auditable coefficient witness for LPs that optimize the compact structural-flow
+    image instead of one variable per coefficient edge.
+    """
+
+    tol = float(tolerance)
+    if not np.isfinite(tol) or tol <= 0.0:
+        raise ValueError("witness tolerance must be finite and positive")
+    lower = cast(csr_matrix, csr_matrix(lower_headroom, dtype=np.float64, copy=True))
+    upper = cast(csr_matrix, csr_matrix(upper_headroom, dtype=np.float64, copy=True))
+    lower_shape = lower.shape
+    upper_shape = upper.shape
+    if lower_shape is None or upper_shape is None:
+        raise ValueError("coefficient headroom matrices must expose shapes")
+    if lower_shape != upper_shape or lower_shape[0] != lower_shape[1] or lower_shape[0] == 0:
+        raise ValueError("coefficient headroom matrices must be non-empty, square, and aligned")
+    for matrix in (lower, upper):
+        matrix.sum_duplicates()
+        matrix.eliminate_zeros()
+        matrix.sort_indices()
+    if lower.data.size and float(lower.data.max()) > tol:
+        raise ValueError("lower coefficient headroom must be non-positive")
+    if upper.data.size and float(upper.data.min()) < -tol:
+        raise ValueError("upper coefficient headroom must be non-negative")
+
+    n = lower_shape[0]
+    output = np.asarray(x1, dtype=np.float64).reshape(-1)
+    target = np.asarray(structural_flow, dtype=np.float64).reshape(-1)
+    if output.shape != (n,) or target.shape != (n,):
+        raise ValueError("x1 and structural_flow must be aligned length-N vectors")
+    if not np.isfinite(output).all() or not np.isfinite(target).all():
+        raise ValueError("x1 and structural_flow must be finite")
+    if output.size and float(output.min()) < -tol:
+        raise ValueError("exact coefficient-flow realizability requires non-negative x1")
+    output = np.maximum(output, 0.0)
+
+    row_counts = np.zeros(n, dtype=np.int64)
+    theta = np.zeros(n, dtype=np.float64)
+    global_scale = max(1.0, float(np.max(np.abs(target), initial=0.0)))
+    for row in range(n):
+        lower_columns = np.asarray(
+            lower.indices[lower.indptr[row] : lower.indptr[row + 1]], dtype=np.intp
+        )
+        upper_columns = np.asarray(
+            upper.indices[upper.indptr[row] : upper.indptr[row + 1]], dtype=np.intp
+        )
+        columns = np.union1d(lower_columns, upper_columns)
+        low = _sparse_row_values(lower, row=row, columns=columns)
+        high = _sparse_row_values(upper, row=row, columns=columns)
+        if bool((low > high + tol).any()):
+            raise ValueError("lower coefficient headroom exceeds upper headroom")
+        weights = output[columns]
+        lower_product = float(np.dot(low, weights))
+        upper_product = float(np.dot(high, weights))
+        scale = max(1.0, abs(lower_product), abs(upper_product), abs(float(target[row])))
+        global_scale = max(global_scale, scale)
+        if float(target[row]) < lower_product - tol * scale or float(target[row]) > upper_product + tol * scale:
+            raise ValueError(
+                f"structural-flow row {row} lies outside exact coefficient capacity: "
+                f"target={target[row]}, lower={lower_product}, upper={upper_product}"
+            )
+        width = upper_product - lower_product
+        if width <= tol * scale:
+            if abs(float(target[row]) - lower_product) > tol * scale:
+                raise ValueError(f"zero-width structural-flow row {row} does not match its unique capacity")
+            row_theta = 0.0
+        else:
+            row_theta = float(np.clip((float(target[row]) - lower_product) / width, 0.0, 1.0))
+        theta[row] = row_theta
+        values = low + row_theta * (high - low)
+        row_counts[row] = int(np.count_nonzero(values != 0.0))
+
+    indptr = np.empty(n + 1, dtype=np.int64)
+    indptr[0] = 0
+    np.cumsum(row_counts, out=indptr[1:])
+    indices = np.empty(int(indptr[-1]), dtype=np.int64)
+    data = np.empty(int(indptr[-1]), dtype=np.float64)
+    for row in range(n):
+        out_left = int(indptr[row])
+        out_right = int(indptr[row + 1])
+        if out_left == out_right:
+            continue
+        lower_columns = np.asarray(
+            lower.indices[lower.indptr[row] : lower.indptr[row + 1]], dtype=np.intp
+        )
+        upper_columns = np.asarray(
+            upper.indices[upper.indptr[row] : upper.indptr[row + 1]], dtype=np.intp
+        )
+        columns = np.union1d(lower_columns, upper_columns)
+        low = _sparse_row_values(lower, row=row, columns=columns)
+        high = _sparse_row_values(upper, row=row, columns=columns)
+        values = low + theta[row] * (high - low)
+        keep = values != 0.0
+        if int(np.count_nonzero(keep)) != out_right - out_left:
+            raise RuntimeError("coefficient witness support count changed between construction passes")
+        indices[out_left:out_right] = columns[keep]
+        data[out_left:out_right] = values[keep]
+
+    witness = csr_matrix((data, indices, indptr), shape=lower.shape)
+    witness.sort_indices()
+    residual = np.asarray(witness.dot(output), dtype=np.float64).reshape(-1) - target
+    scaled_residual = float(np.max(np.abs(residual), initial=0.0) / global_scale)
+    if not np.isfinite(scaled_residual) or scaled_residual > tol:
+        raise RuntimeError(
+            "coefficient witness does not reconstruct structural flow: "
+            f"scaled_residual={scaled_residual:.6g}, tolerance={tol:.6g}"
+        )
+    return witness

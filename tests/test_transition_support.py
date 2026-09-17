@@ -12,6 +12,8 @@ from ecolecon_mrio.transition_support import (
     benchmark_step_for_emissions_cut,
     certificate_safe_coefficient_capacity_products,
     certificate_safe_coefficient_headroom,
+    coefficient_eligible_mask,
+    reconstruct_coefficient_change_witness,
     complete_directions_with_fixed_final_demand,
     merge_panel_coefficient_envelope,
     coefficient_change_bounds,
@@ -361,3 +363,43 @@ def test_fixed_final_demand_completion_preserves_prescribed_rows() -> None:
     np.testing.assert_allclose(completed[prescribed, :], D_S)
     residual = completed - A.dot(completed)
     assert float(np.max(np.abs(residual[~prescribed, :]))) <= 1.0e-10
+
+
+# INVERSE_FRONTIER_REALIZABILITY_TESTS_V1
+def test_coefficient_eligible_mask_keeps_current_links_and_recurrent_dormant_links() -> None:
+    """The accepted topology allows current links plus dormant links seen in >=2 years."""
+
+    A0 = csr_matrix(np.array([[0.10, 0.0, 0.0], [0.15, 0.10, 0.0], [0.0, 0.0, 0.10]]))
+    counts = csr_matrix(np.array([[3, 2, 1], [1, 3, 0], [0, 0, 3]], dtype=np.uint8))
+    eligible = coefficient_eligible_mask(
+        A0, counts, edge_threshold=0.05, minimum_active_years=2
+    )
+    expected = np.array([[1, 1, 0], [1, 1, 0], [0, 0, 1]], dtype=np.int8)
+    np.testing.assert_array_equal(eligible.toarray(), expected)
+
+
+def test_reconstruct_coefficient_change_witness_exactly_realizes_rowwise_capacity() -> None:
+    """Every flow inside Lx<=u<=Ux has a sparse coefficient witness for x>=0."""
+
+    lower = csr_matrix(
+        np.array([[-0.10, -0.05, 0.0], [0.0, -0.20, -0.10], [-0.05, 0.0, 0.0]])
+    )
+    upper = csr_matrix(
+        np.array([[0.20, 0.15, 0.0], [0.10, 0.10, 0.20], [0.05, 0.0, 0.30]])
+    )
+    x1 = np.array([2.0, 0.0, 4.0])
+    low_flow = np.asarray(lower.dot(x1)).reshape(-1)
+    high_flow = np.asarray(upper.dot(x1)).reshape(-1)
+    row_theta = np.array([0.25, 0.70, 0.40])
+    target = low_flow + row_theta * (high_flow - low_flow)
+
+    witness = reconstruct_coefficient_change_witness(lower, upper, x1, target)
+    np.testing.assert_allclose(witness.dot(x1), target, rtol=1.0e-12, atol=1.0e-12)
+    dense = witness.toarray()
+    assert bool((dense >= lower.toarray() - 1.0e-12).all())
+    assert bool((dense <= upper.toarray() + 1.0e-12).all())
+
+    outside = target.copy()
+    outside[0] = high_flow[0] + 1.0
+    with pytest.raises(ValueError, match="outside exact coefficient capacity"):
+        reconstruct_coefficient_change_witness(lower, upper, x1, outside)
