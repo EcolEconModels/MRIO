@@ -316,3 +316,55 @@ def test_linear_kl_reconciliation_fails_without_structural_support() -> None:
     constraints = np.array([[0.0, 1.0]])
     with pytest.raises(ValueError, match="structural support"):
         kl_balance_linear_equalities(prior, constraints, np.array([1.0]))
+
+
+# SEPARABLE_LINEAR_EQUALITY_TESTS_V2
+def test_separable_linear_reconciliation_allows_signed_variable_to_cross_zero() -> None:
+    """Signed inventory-like variables may change sign without epsilon support."""
+    from ecolecon_mrio.balancing import balance_separable_linear_equalities
+
+    prior = np.array([1.0, 2.0, 0.5], dtype="float64")
+    constraints = np.array(
+        [
+            [1.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype="float64",
+    )
+    targets = np.array([0.0, 1.0, 2.0], dtype="float64")
+    signed_mask = np.array([False, False, True])
+    signed_scale = np.array([0.0, 0.0, 1.0])
+
+    result, stats = balance_separable_linear_equalities(
+        prior,
+        constraints,
+        targets,
+        signed_quadratic_mask=signed_mask,
+        signed_quadratic_scale=signed_scale,
+        rtol=1e-12,
+        atol=1e-10,
+    )
+
+    np.testing.assert_allclose(constraints @ result, targets, rtol=1e-12, atol=1e-10)
+    assert result[0] == pytest.approx(1.0)
+    assert result[1] == pytest.approx(2.0)
+    assert result[2] == pytest.approx(-1.0)
+    assert stats.max_normalized_gap <= 1.0
+
+
+def test_separable_linear_reconciliation_keeps_zero_scale_signed_prior_fixed() -> None:
+    """Zero signed adjustment scale is an exact fixed value, not hidden support."""
+    from ecolecon_mrio.balancing import balance_separable_linear_equalities
+
+    prior = np.array([2.0, -3.0], dtype="float64")
+    constraints = np.array([[1.0, 1.0]], dtype="float64")
+    result, _ = balance_separable_linear_equalities(
+        prior,
+        constraints,
+        np.array([1.0], dtype="float64"),
+        signed_quadratic_mask=np.array([False, True]),
+        signed_quadratic_scale=np.array([0.0, 0.0]),
+    )
+    assert result[1] == pytest.approx(-3.0)
+    assert result[0] == pytest.approx(4.0)

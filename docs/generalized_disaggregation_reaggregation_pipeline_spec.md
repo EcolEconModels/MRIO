@@ -811,25 +811,42 @@ copy_unaffected
 The exact source row codes for those rules live in dictionaries.
 
 
-<!-- production-account-v-reconciliation-step1 -->
-### Active Step-1 production-account reconciliation
+<!-- production-account-v-reconciliation-step2 -->
+### Active Step-2 joint atomic-final-demand reconciliation
 
-For the canonical Eurostat/EXIO production path, atomic final demand remains fixed
-in Step 1.  The active reconciliation variables are DOM/IMP intermediate
-transactions plus child `D21X31` and an auxiliary `B1G` allocation.  Eurostat parent
-Z cells, child intermediate-sales rows and parent `D21X31` are hard controls; every
-child obeys `P1 = Z_column_total + D21X31 + B1G`.  EXIO transaction structure and
-source-conserving child production-account allocations are priors, not child
-monetary observations.  The implementation uses the shared sparse
-`kl_balance_linear_equalities` numerical owner and records
-`balancing_method=KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V`.
+For the canonical Eurostat/EXIO production path, the active primitive monetary
+variables are DOM/IMP intermediate transactions, DOM/IMP atomic final demand,
+child domestic output, child `D21X31`, and an auxiliary `B1G` allocation.
 
-Aggregate/display `Y`, derived `V`, and `M` serialization cells are not additional
-independent balancing variables.  Atomic `Y` remains fixed in this step; a later
-method change may make atomic final demand and therefore child output endogenous.
-Environmental sidecars do not need retargeting in Step 1 because the reconciliation
-still preserves DOM and IMP supplier-row use, hence the monetary denominators used
-by the current direct environmental extension contract remain invariant.
+Eurostat parent Z cells, Eurostat parent atomic-Y cells, and parent `D21X31` are
+hard controls. Child supplier-row totals and child final-demand allocations are
+latent rather than hard preliminary margins. Every child obeys both
+
+```text
+x = DOM Z row + DOM atomic Y row
+P1 = TOTAL Z column + D21X31 + B1G
+```
+
+in the same sparse reconciliation.
+
+EXIO transaction structure and the preliminary child allocations are priors, not
+child monetary observations. Non-negative variables use KL divergence; signed
+inventory/valuables final-demand atoms use a quadratic signed prior with no
+fabricated epsilon support. The numerical owner is
+`balance_separable_linear_equalities`.
+
+Aggregate/display Y, derived V, and M serialization cells remain derived rather
+than independent balancing variables. The method records
+`producer_column_reconciliation=joint_dom_imp_atomic_y_production_account_v` and
+`balancing_method=SEPARABLE_LINEAR_EQUALITY_Z_Y_PRODUCTION_ACCOUNT_V`.
+
+Because child output and imported-product use can move in Step 2, canonical DOM
+and IMP environmental target sidecars are retargeted after the monetary
+reconciliation and TOTAL is rebuilt only then. Direct environmental coefficients
+are preserved where available; unavailable evidence stays unavailable. The
+DOM monetary-output/physical-quantity sidecar is retargeted on the same final
+child-output basis.
+
 ## Reaggregation validation
 
 Every run must validate:

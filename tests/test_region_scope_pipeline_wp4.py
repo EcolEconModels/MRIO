@@ -318,7 +318,7 @@ def test_final_validator_requires_complete_whole_iot_reconciliation_evidence(
     pd.DataFrame({"P3": [1.0]}, index=sectors).to_csv(split_dir / "Y_split.csv")
     pd.Series([2.0], index=sectors, name="x").to_csv(split_dir / "x_split.csv")
     (split_dir / "split_info.json").write_text(
-        '{"producer_column_reconciliation":"joint_dom_imp_kl_production_account_v","balancing_applied":true,"balancing_method":"KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V"}\n',
+        '{"producer_column_reconciliation":"joint_dom_imp_atomic_y_production_account_v","balancing_applied":true,"balancing_method":"SEPARABLE_LINEAR_EQUALITY_Z_Y_PRODUCTION_ACCOUNT_V"}\n',
         encoding="utf-8",
     )
     rows = [
@@ -717,3 +717,57 @@ def test_environmental_grid_validates_required_fy_passthrough(tmp_path: Path) ->
     )
     assert not missing_report["ok"]
     assert any("scope_final_demand_direct" in error for error in missing_report["errors"])
+
+
+
+def test_target_environmental_sidecar_retargets_after_monetary_reconciliation() -> None:
+    """Changed child denominators preserve coefficients and explicit NA evidence."""
+    from ecolecon_mrio.region_aggregation import _retarget_target_environmental_sidecar
+
+    dom = pd.DataFrame(
+        {
+            "sector": ["a", "b"],
+            "boundary": ["scope_production", "scope_production"],
+            "denominator_role": ["target_domestic_output", "target_domestic_output"],
+            "extension": ["air", "air"],
+            "stressor": ["CO2", "CO2"],
+            "unit": ["kg", "kg"],
+            "value": [2.0, 6.0],
+            "monetary_output": [10.0, 20.0],
+            "intensity": [0.2, 0.3],
+        }
+    )
+    retargeted = _retarget_target_environmental_sidecar(
+        dom,
+        target_denominator=pd.Series([15.0, 5.0], index=["a", "b"]),
+        boundary="scope_production",
+        denominator_role="target_domestic_output",
+    ).set_index("sector")
+    assert float(retargeted.loc["a", "value"]) == pytest.approx(3.0)
+    assert float(retargeted.loc["b", "value"]) == pytest.approx(1.5)
+    assert float(retargeted.loc["a", "intensity"]) == pytest.approx(0.2)
+    assert float(retargeted.loc["b", "monetary_output"]) == pytest.approx(5.0)
+
+    imp = pd.DataFrame(
+        {
+            "sector": ["a"],
+            "boundary": ["external_imports_direct"],
+            "denominator_role": ["target_import_use"],
+            "extension": ["air"],
+            "stressor": ["CO2"],
+            "unit": ["kg"],
+            "value": [np.nan],
+            "monetary_output": [2.0],
+            "intensity": [np.nan],
+        }
+    )
+    unavailable = _retarget_target_environmental_sidecar(
+        imp,
+        target_denominator=pd.Series([-3.0], index=["a"]),
+        boundary="external_imports_direct",
+        denominator_role="target_import_use",
+        allow_signed_denominator=True,
+    )
+    assert float(unavailable.loc[0, "monetary_output"]) == pytest.approx(-3.0)
+    assert pd.isna(unavailable.loc[0, "value"])
+    assert pd.isna(unavailable.loc[0, "intensity"])

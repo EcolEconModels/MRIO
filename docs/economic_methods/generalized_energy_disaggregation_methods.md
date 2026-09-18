@@ -462,78 +462,68 @@ The target aggregate cell totals \(Z_{ij}\) and \(Y_{if}\) remain authoritative
 unless a separate override policy is explicitly declared.
 
 
-### Joint whole-IOT reconciliation at fixed Step-1 final demand
+### Joint whole-IOT reconciliation with endogenous atomic final demand
 
 Raw donor transactions contain both technology and donor scale,
-\(D^Z_{ab}=A^D_{ab}x^D_b\).  In Step 1 the already-disaggregated atomic final-demand
-block remains fixed, so DOM row use fixes current child output \(x_b\).  The donor
-block is used only as a structural KL prior,
+\(D^Z_{ab}=A^D_{ab}x^D_b\). EXIO remains a structural prior, never an
+authoritative Austrian child monetary table.
+
+The Step-2 primitive monetary variables are
+\(Z^{DOM}\), \(Z^{IMP}\), atomic \(Y^{DOM}\), atomic \(Y^{IMP}\), child output
+\(x\), child `D21X31`, and an auxiliary child `B1G` allocation. The hard source
+controls are every Eurostat parent Z cell and every non-overlapping atomic
+final-demand parent cell,
 
 \[
-Q^f_{ab}\propto Z^{0,f}_{ab}\frac{x_b}{s_b^{x,D}},
-\qquad f\in\{DOM,IMP\}.
-\]
-
-EXIO does not determine an Austrian child monetary column.  The free monetary
-objects that actually interact in the Step-1 production account are
-\(Z^{DOM}\), \(Z^{IMP}\), child `D21X31`, and an auxiliary child `B1G` allocation.
-For each flow preserve the accepted child intermediate-sales row margins and every
-Eurostat parent intermediate cell,
-
-\[
-\sum_b Z^f_{ab}=r^f_a,
+\sum_{a\in C_i}\sum_{b\in C_j}Z^f_{ab}=Z^{Eurostat,f}_{ij},
 \qquad
-\sum_{a\in C_i}\sum_{b\in C_j}Z^f_{ab}=Z^{Eurostat,f}_{ij}.
+\sum_{a\in C_i}Y^f_{ak}=Y^{Eurostat,f}_{ik},
 \]
 
-Let
+for \(f\in\{DOM,IMP\}\) and every atomic final-demand category \(k\).
+
+Child supplier-row margins are no longer hard observations. Domestic child output
+is endogenous and closes on complete domestic row use,
 
 \[
-u_b=\sum_a\left(Z^{DOM}_{ab}+Z^{IMP}_{ab}\right),
-\qquad d_b=D21X31_b,
-\qquad g_b=B1G_b.
+x_b=\sum_j Z^{DOM}_{bj}+\sum_kY^{DOM}_{bk}.
 \]
 
-The child production account is imposed directly,
+The production account is part of the same feasible set,
 
 \[
-\boxed{u_b+d_b+g_b=x_b}.
+x_b=
+\sum_a\left(Z^{DOM}_{ab}+Z^{IMP}_{ab}\right)
++D21X31_b+B1G_b.
 \]
 
-Published parent `D21X31` is an independent primitive control, so
+Published parent `D21X31` remains an exact primitive control. Published parent
+`B1G` remains an independently rounded validation control because its generated
+parent total is already implied by parent output, intermediate input, and
+`D21X31`.
 
-\[
-\sum_{b\in C_j}d_b=D21X31_j.
-\]
-
-`B1G` is not redundantly imposed as another exact parent equality because the
-published source rows are independently rounded: its generated parent value is
-already implied by parent output, parent intermediate input and parent `D21X31`.
-Published parent `B1G` remains a source-rounding validation control.  Its child
-allocation nevertheless enters the KL objective as an auxiliary prior, which
-prevents the information projection from treating \(g_b=0\) as a cost-free boundary
-whenever positive GVA can be allocated consistently.
-
-Signed production-account controls are represented by a non-negative magnitude and
-the source-parent sign.  Thus the transformation does not invent offsetting child
-tax/subsidy or positive/negative GVA sign reversals inside one parent without
-child-specific evidence.  Structural zeros remain structural zeros.
-
+Non-negative Z, ordinary final-demand atoms, output, D21X31/B1G magnitudes use
+information-projection priors. Legitimately signed inventory/valuables atoms
+(`P5`, `P5M`, `P52`, `P53` when selected by the atomic basis) use a signed
+quadratic deviation around their preliminary child allocation. A zero signed
+prior magnitude is fixed rather than receiving fabricated epsilon sign support.
 The generic numerical owner is
-`ecolecon_mrio.balancing.kl_balance_linear_equalities`.  It solves the KL
-information projection over arbitrary sparse signed-coefficient linear equalities;
-the domain script only assembles the economic constraints.  Existing RAS, GRAS and
-partition IPFP remain unchanged owners for their established problems.
+`ecolecon_mrio.balancing.balance_separable_linear_equalities`.
 
-Other primitive `V` rows such as `D1`, `D11`, `D29X39` and `P51C` retain their
-source-conserving child priors in Step 1 because, with final demand fixed, they do
-not restrict the transaction feasible set.  Derived `P2_ADJ`, `B2A3G`, `B2A3N`,
-`P1`, aggregate `Y` controls and `M` serialization controls are rebuilt from the
-feasible system rather than optimized independently.  Atomic `Y` remains fixed in
-Step 1; making atomic final demand and child output endogenous is a separate method
-change.
+Aggregate/display Y controls, derived V rows and M serialization cells are
+recomputed from the primitive solution and are not additional independent
+variables. Structural zeros remain structural zeros.
 
-The domestic technical matrix is formed only after reconciliation,
+Because Step 2 can move child domestic output and imported-product use, target
+environmental product sidecars are retargeted only after the monetary solution.
+Persisted direct coefficients are applied to the reconciled monetary denominators;
+unavailable evidence remains unavailable and no missing coefficient is fabricated.
+DOM direct-final-demand `F_Y` rows are unchanged because the authoritative atomic
+final-demand parent cells preserve the corresponding economy-wide category totals.
+The DOM value-per-physical-input sidecar likewise retains physical quantity while
+its monetary numerator is retargeted to reconciled child output.
+
+The domestic technical matrix is then
 
 \[
 A^{DOM}_{ab}=\frac{Z^{DOM}_{ab}}{x_b},
@@ -544,14 +534,14 @@ and the generated domestic Leontief system must satisfy
 
 ### Transformation-coherence invariants
 
-Class-II validation proves DOM/IMP child-row preservation, all Eurostat parent-Z
-cells, exact child production-account closure, parent `D21X31` conservation,
-source-conditioned child-GVA sign admissibility, zero-input columns for zero child
-output, KL linear-equality convergence, canonical DOM-output preservation, IMP
-product-row-use preservation, TOTAL=DOM+IMP use additivity, and domestic Leontief
-productivity.  EXIO remains a prior, not an Austrian monetary control.
+Class-II validation proves all DOM/IMP parent-Z cells, all DOM/IMP parent atomic-Y
+cells, the child domestic-output identity, parent domestic-output reconstruction,
+parent imported-use reconstruction, exact child production-account closure,
+parent `D21X31` conservation, source-conditioned child-GVA sign admissibility,
+separable-reconciliation convergence, TOTAL=DOM+IMP use additivity, and domestic
+Leontief productivity.
 
-Class II does not replace Class I.  The persisted full-table accounting report must
+Class II does not replace Class I. The persisted full-table accounting report must
 also pass after all `Z`, `Y`, `V`, and `M` objects have been constructed.
 
 ## Geographic scope aggregation

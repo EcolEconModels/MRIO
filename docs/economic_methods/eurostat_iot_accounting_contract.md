@@ -647,55 +647,58 @@ Z^{before}_{ij}
 
 ### Joint whole-IOT feasibility reconciliation
 
-Parent-cell conservation is necessary but insufficient.  In Step 1 atomic final
-demand remains fixed and source-conserved, so DOM row use fixes child domestic
-output.  DOM and IMP `Z` are reconciled jointly with the production-account objects
-that directly constrain their producer columns.
+Parent-cell conservation is necessary but insufficient. The canonical Step-2
+method therefore reconciles the unobserved child allocations of intermediate use
+and atomic final demand simultaneously rather than treating either preliminary
+child split as an Austrian observation.
 
-For producer child \(b\),
+For each flow \(f\in\{DOM,IMP\}\), every Eurostat parent Z cell and every
+non-overlapping atomic final-demand cell is a hard equality,
+
+\[
+\sum_{a\in C_i}\sum_{b\in C_j}Z^f_{ab}=Z^{Eurostat,f}_{ij},
+\qquad
+\sum_{a\in C_i}Y^f_{ak}=Y^{Eurostat,f}_{ik}.
+\]
+
+Domestic child output is derived inside the reconciliation,
+
+\[
+x_b=\sum_j Z^{DOM}_{bj}+\sum_kY^{DOM}_{bk},
+\]
+
+and must be non-negative. For producer child \(b\),
 
 \[
 u_b=\sum_a(Z^{DOM}_{ab}+Z^{IMP}_{ab}),
-\qquad d_b=D21X31_b,
-\qquad g_b=B1G_b.
+\qquad
+d_b=D21X31_b,
+\qquad
+g_b=B1G_b,
 \]
 
-The generated child production account must satisfy the exact identity
+with the exact child production account
 
 \[
 \boxed{x_b=u_b+d_b+g_b}.
 \]
 
-`D21X31` is a primitive source control and its child allocation is inferred in the
-same reconciliation while preserving each published parent amount exactly,
+`D21X31` is a primitive source control and conserves every parent amount exactly.
+The generated parent `B1G` total is implied by parent output, intermediate input
+and `D21X31`; the separately published parent `B1G` remains an independently
+rounded source validation control.
 
-\[
-\sum_{b\in C_j}d_b=D21X31_j.
-\]
+Ordinary non-negative final-demand atoms use KL priors. Signed
+inventory/valuables atoms use a signed quadratic child-allocation prior and may
+change sign where the preliminary split has nonzero signed support. Zero signed
+prior magnitude remains fixed; no epsilon support is invented. Aggregate/display
+Y, derived V, and M identities are rebuilt from the primitive solution.
 
-The generated parent `B1G` total is implied by parent output, intermediate input and
-`D21X31`; the separately published parent `B1G` remains an independently rounded
-source control and is validated under the source-rounding contract rather than
-being added as a redundant exact equality.  An auxiliary child `B1G` prior is
-included in the KL objective so positive source/implied GVA is not treated merely
-as an upper-bound slack that can collapse arbitrarily to zero.
-
-Signed source-parent `D21X31` and generated/implied `B1G` are represented by
-non-negative magnitudes with the source-parent sign.  Without child-specific
-evidence, disaggregation therefore does not manufacture offsetting within-parent
-sign reversals.  A source parent with non-negative GVA cannot acquire a materially
-negative synthetic child through the transformation.
-
-The generic numerical owner is the sparse linear-equality KL projection in
-`ecolecon_mrio.balancing`; application code supplies economic constraints and does
-not own a parallel solver.  Structural zeros remain structural zeros and an
-incompatible source/support system fails explicitly.
-
-Other primitive production rows that do not constrain the Step-1 transaction
-feasible set remain source-conserving child allocations.  Derived `V`, aggregate
-`Y`, and `M` identities are rebuilt from the feasible transactions and checked by
-the complete generated-IOT Class-I validator.  Candidate valuation/supply-use
-bridges marked `not_tested` by source policy remain unpromoted.
+The post-reconciliation environmental contract uses the final monetary
+denominators. DOM production sidecars are retargeted to reconciled \(x\), IMP
+direct sidecars to reconciled imported-product use, and TOTAL is then rebuilt from
+those final DOM/IMP components. Missing environmental evidence remains missing.
+Direct final-demand `F_Y` is not product-disaggregated and remains unchanged.
 
 The cleared domestic technical matrix must additionally satisfy
 \(\rho(A^{DOM})<1\).
