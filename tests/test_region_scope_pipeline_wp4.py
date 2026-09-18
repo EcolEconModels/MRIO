@@ -304,7 +304,7 @@ def test_validator_uses_total_supply_not_domestic_x_for_total_environmental_rows
         mapping_csv=mapping_csv,
     )
     assert report["ok"], report
-def test_final_validator_requires_complete_producer_conditioning_coherence_report(
+def test_final_validator_requires_complete_whole_iot_reconciliation_evidence(
     tmp_path: Path,
 ) -> None:
     from scripts import validate_many_many_pipeline_outputs as validation_mod
@@ -318,7 +318,7 @@ def test_final_validator_requires_complete_producer_conditioning_coherence_repor
     pd.DataFrame({"P3": [1.0]}, index=sectors).to_csv(split_dir / "Y_split.csv")
     pd.Series([2.0], index=sectors, name="x").to_csv(split_dir / "x_split.csv")
     (split_dir / "split_info.json").write_text(
-        '{"producer_column_reconciliation":"exio_technology_ipfp_at_target_output","balancing_applied":true,"balancing_method":"IPFP_KL_PARTITION_MARGINS"}\n',
+        '{"producer_column_reconciliation":"joint_dom_imp_kl_production_account_feasible","balancing_applied":true,"balancing_method":"KL_DYKSTRA_PARTITION_CONSTRAINTS"}\n',
         encoding="utf-8",
     )
     rows = [
@@ -337,6 +337,9 @@ def test_final_validator_requires_complete_producer_conditioning_coherence_repor
     ]
     report_path = split_dir.parent / "transformation_coherence_validation.csv"
     pd.DataFrame(rows).to_csv(report_path, index=False)
+    pd.DataFrame(
+        [{"check_id": "synthetic.full", "status": "pass", "severity": "error"}]
+    ).to_csv(split_dir.parent / "split_full_table_validation.csv", index=False)
 
     accepted = validation_mod.validate_pipeline_outputs(split_dir=split_dir)
     assert accepted["ok"], accepted

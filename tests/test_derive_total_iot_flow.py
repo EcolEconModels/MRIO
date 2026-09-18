@@ -152,118 +152,84 @@ def _write_primitive(root: Path, flow: str, z_scale: float, y_scale: float) -> N
 
 
 
-def _reconciliation_fixture(tmp_path: Path) -> tuple[pd.Index, dict[str, str], pd.Series]:
-    children = pd.Index(["fuel", "coal", "wind"])
-    child_parent = {"fuel": "fuel", "coal": "electricity", "wind": "electricity"}
-    dom = tmp_path / "stk_flow=DOM"
-    dom.mkdir()
-    pd.DataFrame(
-        [
-            {"parent": "electricity", "child": "coal", "output_share": 0.9},
-            {"parent": "electricity", "child": "wind", "output_share": 0.1},
-        ]
-    ).to_csv(dom / "split_output_shares.csv", index=False)
-    shares = MODULE._load_dom_split_output_shares(
-        dom, child_parent=child_parent, children=children
+def _joint_reconciliation_fixture() -> tuple[pd.Index, dict[str, str], pd.Series, SimpleNamespace]:
+    children = pd.Index(["a1", "a2"])
+    child_parent = {"a1": "A", "a2": "A"}
+    output_share = pd.Series([0.5, 0.5], index=children, dtype="float64")
+    reference = SimpleNamespace(
+        V=pd.DataFrame(
+            [[8.0], [0.0]],
+            index=pd.Index(["B1G", "D21X31"]),
+            columns=pd.Index(["A"]),
+        )
     )
-    return children, child_parent, shares
+    return children, child_parent, output_share, reference
 
 
-def _producer_input_profile(
-    children: pd.Index, *, coal: float, wind: float
-) -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "producer_input_share": [1.0, coal, wind],
-            "producer_input_method": ["singleton", "test", "test"],
-        },
-        index=children,
+def test_joint_iot_reconciliation_preserves_rows_parent_cells_and_nonnegative_gva() -> None:
+    children, child_parent, output_share, reference = _joint_reconciliation_fixture()
+    Z_dom = pd.DataFrame(
+        [[5.5, 0.5], [5.5, 0.5]], index=children, columns=children
     )
+    Z_imp = pd.DataFrame(0.0, index=children, columns=children)
+    x = pd.Series([10.0, 10.0], index=children, dtype="float64")
 
-
-def test_producer_reconciliation_hits_rows_columns_and_parent_cells(tmp_path: Path) -> None:
-    children, child_parent, output_share = _reconciliation_fixture(tmp_path)
-    Z = pd.DataFrame(0.0, index=children, columns=children)
-    Z.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
-    Z.loc["coal", "fuel"], Z.loc["wind", "fuel"] = 1.0, 9.0
-    x = pd.Series([90.0, 10.0, 90.0], index=children)
-    before_parent = MODULE._aggregate_square(
-        Z, child_parent, pd.Index(["fuel", "electricity"])
-    )
-    profile = _producer_input_profile(children, coal=0.9, wind=0.1)
-
-    got, diagnostic, checks = MODULE._reconcile_producer_technology(
-        Z,
+    dom, imp, diagnostic, checks = MODULE._reconcile_iot_intermediate_transactions(
+        Z_dom,
+        Z_imp,
         child_parent=child_parent,
         dom_output_share=output_share,
-        producer_input_profile=profile,
         x_domestic=x,
-        flow="DOM",
+        reference_total=reference,
     )
-    pd.testing.assert_series_equal(got.sum(axis=1), Z.sum(axis=1), check_names=False)
-    pd.testing.assert_frame_equal(
-        MODULE._aggregate_square(got, child_parent, pd.Index(["fuel", "electricity"])),
-        before_parent,
-    )
-    target = diagnostic.set_index("buyer_child")["technology_column_target"]
-    pd.testing.assert_series_equal(
-        got.sum(axis=0).loc[target.index], target, check_names=False, rtol=1e-10, atol=1e-10
-    )
+    pd.testing.assert_series_equal(dom.sum(axis=1), Z_dom.sum(axis=1), check_names=False)
+    pd.testing.assert_series_equal(imp.sum(axis=1), Z_imp.sum(axis=1), check_names=False)
+    assert float(dom.to_numpy().sum()) == pytest.approx(float(Z_dom.to_numpy().sum()))
+    total_columns = dom.sum(axis=0).add(imp.sum(axis=0))
+    assert float(total_columns.max()) <= 10.0 + 1e-9
+    assert (diagnostic["generated_B1G"].dropna() >= -1e-10).all()
     assert {row["status"] for row in checks} == {"pass"}
+    assert ("TOTAL", "tc.production_account_capacity") in {
+        (row["flow"], row["check_id"]) for row in checks
+    }
 
 
-def test_producer_reconciliation_removes_donor_scale_from_technology_prior(tmp_path: Path) -> None:
-    children, child_parent, output_share = _reconciliation_fixture(tmp_path)
-    x = pd.Series([90.0, 10.0, 90.0], index=children)
-    base = pd.DataFrame(0.0, index=children, columns=children)
-    base.loc["fuel", ["coal", "wind"]] = [81.0, 9.0]
-    scaled = base.copy()
-    scaled.loc["fuel", ["coal", "wind"]] = [87.5675675676, 2.4324324324]
-    scaled_output = output_share.copy()
-    scaled_output.loc[["coal", "wind"]] = [18.0 / 18.5, 0.5 / 18.5]
-
-    prior_base = MODULE._output_conditioned_technology_prior(
-        base,
-        child_parent=child_parent,
-        dom_output_share=output_share,
-        x_domestic=x,
-        flow="DOM",
+def test_joint_iot_reconciliation_fails_when_parent_gva_capacity_is_impossible() -> None:
+    children, child_parent, output_share, reference = _joint_reconciliation_fixture()
+    Z_dom = pd.DataFrame(
+        [[5.5, 0.5], [5.5, 0.5]], index=children, columns=children
     )
-    prior_scaled = MODULE._output_conditioned_technology_prior(
-        scaled,
-        child_parent=child_parent,
-        dom_output_share=scaled_output,
-        x_domestic=x,
-        flow="DOM",
-    )
-    base_block = prior_base.loc["fuel", ["coal", "wind"]]
-    scaled_block = prior_scaled.loc["fuel", ["coal", "wind"]]
-    np.testing.assert_allclose(
-        base_block / float(base_block.sum()),
-        scaled_block / float(scaled_block.sum()),
-        rtol=1e-10,
-        atol=1e-10,
-    )
-
-
-def test_producer_reconciliation_rejects_positive_output_without_exio_output_support(
-    tmp_path: Path,
-) -> None:
-    children, child_parent, output_share = _reconciliation_fixture(tmp_path)
-    output_share.loc[["coal", "wind"]] = [0.0, 1.0]
-    Z = pd.DataFrame(0.0, index=children, columns=children)
-    Z.loc["fuel", "wind"] = 1.0
-    x = pd.Series([1.0, 1.0, 1.0], index=children)
-    profile = _producer_input_profile(children, coal=0.0, wind=1.0)
-    with pytest.raises(ValueError, match="zero DOM EXIO producer-output support"):
-        MODULE._reconcile_producer_technology(
-            Z,
+    Z_imp = pd.DataFrame(0.0, index=children, columns=children)
+    x = pd.Series([4.0, 4.0], index=children, dtype="float64")
+    with pytest.raises(ValueError, match="Production-account capacity infeasible"):
+        MODULE._reconcile_iot_intermediate_transactions(
+            Z_dom,
+            Z_imp,
             child_parent=child_parent,
             dom_output_share=output_share,
-            producer_input_profile=profile,
             x_domestic=x,
-            flow="DOM",
+            reference_total=reference,
         )
+
+
+def test_joint_iot_reconciliation_rejects_positive_output_without_exio_support() -> None:
+    children, child_parent, _output_share, reference = _joint_reconciliation_fixture()
+    output_share = pd.Series([0.0, 1.0], index=children, dtype="float64")
+    Z_dom = pd.DataFrame(
+        [[0.0, 1.0], [0.0, 1.0]], index=children, columns=children
+    )
+    Z_imp = pd.DataFrame(0.0, index=children, columns=children)
+    x = pd.Series([1.0, 1.0], index=children, dtype="float64")
+    with pytest.raises(ValueError, match="zero DOM EXIO output support"):
+        MODULE._reconcile_iot_intermediate_transactions(
+            Z_dom,
+            Z_imp,
+            child_parent=child_parent,
+            dom_output_share=output_share,
+            x_domestic=x,
+            reference_total=reference,
+        )
+
 
 def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_primitive(tmp_path, "DOM", 1.0, 1.0)
@@ -303,9 +269,11 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
     assert set(coherence["status"]) == {"pass"}
     assert {
         ("DOM", "tc.child_row_margin"),
-        ("DOM", "tc.child_column_technology_margin"),
+        ("DOM", "tc.parent_z_cell"),
         ("IMP", "tc.parent_z_cell"),
-        ("IMP", "tc.ipfp_convergence"),
+        ("TOTAL", "tc.production_account_capacity"),
+        ("TOTAL", "tc.nonnegative_child_b1g"),
+        ("TOTAL", "tc.kl_convergence"),
         ("DOM", "tc.dom_output_margin"),
         ("IMP", "tc.imp_row_use_margin"),
         ("TOTAL", "tc.total_use_additivity"),

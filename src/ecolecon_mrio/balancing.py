@@ -64,24 +64,26 @@ def ras_balance(
 
 
 
-# MULTI_MARGIN_IPFP_V1
+# IPFP_PARTITION_BOUNDS_V2
 @dataclass(frozen=True)
 class IPFPMargin:
-    """One partition-margin family for non-negative iterative proportional fitting.
+    """One partition constraint for non-negative KL reconciliation.
 
-    ``groups`` is an integer array with the same shape as the balanced matrix.
-    Every matrix cell belongs to exactly one group in this family; ``targets[g]``
-    is the required sum of all cells whose group id equals ``g``.
+    ``groups`` has the same shape as the balanced matrix and assigns every cell to
+    exactly one integer group. ``targets[g]`` is either the exact group mass
+    (``relation='equal'``) or an upper bound (``relation='upper'``).  The default
+    keeps the pre-existing equality-only API fully backward compatible.
     """
 
     name: str
     groups: np.ndarray
     targets: np.ndarray
+    relation: str = "equal"
 
 
 @dataclass(frozen=True)
 class IPFPStats:
-    """Convergence diagnostics for multi-margin IPFP."""
+    """Convergence diagnostics for partition-constrained KL reconciliation."""
 
     iterations: int
     max_normalized_gap: float
@@ -96,13 +98,14 @@ def ipfp_balance_partitions(
     rtol: float = 1e-12,
     atol: float = 1e-10,
 ) -> tuple[np.ndarray, IPFPStats]:
-    """KL/IPFP-balance a non-negative matrix to several partition margins.
+    """KL-project a non-negative matrix onto partition equalities/upper bounds.
 
-    Classical two-margin RAS is the special case with one row partition and one
-    column partition.  Each projection rescales every cell in a group by the ratio
-    of target to current group mass; cycling the families converges to the
-    information projection when the declared margins are feasible on the initial
-    support.  Zero cells therefore remain structural zeros.
+    Equality-only calls reduce to the repository's established multi-margin IPFP
+    contract; ordinary row/column RAS is the two-equality-family special case.
+    Upper-bound families are true convex KL constraints, not post-hoc clipping.
+    Multiplicative Dykstra correction factors are retained per partition family so
+    cycling equality and inequality projections converges to the joint information
+    projection.  Structural zeros in ``M0`` remain structural zeros throughout.
     """
     M = np.asarray(M0, dtype="float64").copy()
     if M.ndim != 2 or 0 in M.shape:
@@ -122,15 +125,18 @@ def ipfp_balance_partitions(
     if not margin_families:
         raise ValueError("IPFP requires at least one margin family.")
 
-    # Validate every partition independently, then require all families to conserve
-    # the same total mass before any iterative projection is attempted.
-    prepared: list[tuple[str, np.ndarray, np.ndarray]] = []
+    prepared: list[tuple[str, np.ndarray, np.ndarray, str, np.ndarray]] = []
     seen_names: set[str] = set()
-    common_total: float | None = None
+    common_equal_total: float | None = None
     for family in margin_families:
         name = str(family.name).strip()
+        relation = str(family.relation).strip().lower()
         if not name or name in seen_names:
             raise ValueError(f"IPFP margin names must be non-empty and unique: {name!r}.")
+        if relation not in {"equal", "upper"}:
+            raise ValueError(
+                f"IPFP margin {name!r} relation must be 'equal' or 'upper', got {relation!r}."
+            )
         seen_names.add(name)
         groups = np.asarray(family.groups)
         targets = np.asarray(family.targets, dtype="float64").reshape(-1)
@@ -145,66 +151,104 @@ def ipfp_balance_partitions(
             raise ValueError(
                 f"IPFP margin {name!r} group ids must lie in [0, {targets.size - 1}]."
             )
-        total = float(targets.sum())
-        if common_total is None:
-            common_total = total
-        else:
-            scale = max(1.0, abs(common_total), abs(total))
-            if abs(total - common_total) > atol + rtol * scale:
-                raise ValueError(
-                    "IPFP margin totals are inconsistent: "
-                    f"reference={common_total:.12g}, {name}={total:.12g}."
-                )
-        prepared.append((name, groups, targets))
+        if relation == "equal":
+            total = float(targets.sum())
+            if common_equal_total is None:
+                common_equal_total = total
+            else:
+                scale = max(1.0, abs(common_equal_total), abs(total))
+                if abs(total - common_equal_total) > atol + rtol * scale:
+                    raise ValueError(
+                        "IPFP equality-margin totals are inconsistent: "
+                        f"reference={common_equal_total:.12g}, {name}={total:.12g}."
+                    )
+        support_mass = np.bincount(
+            groups.ravel(), weights=M.ravel(), minlength=targets.size
+        ).astype("float64")
+        unsupported = relation == "equal" and bool(
+            np.any((targets > 0.0) & (support_mass == 0.0))
+        )
+        if unsupported:
+            group = int(np.flatnonzero((targets > 0.0) & (support_mass == 0.0))[0])
+            raise ValueError(
+                "IPFP infeasible on initial structural support: "
+                f"margin={name!r}, group={group}, target={targets[group]:.12g}."
+            )
+        prepared.append((name, groups, targets, relation, np.ones_like(targets)))
 
     def family_gap(
-        groups: np.ndarray, targets: np.ndarray
+        groups: np.ndarray, targets: np.ndarray, relation: str
     ) -> tuple[np.ndarray, float, float]:
         current = np.bincount(
             groups.ravel(), weights=M.ravel(), minlength=targets.size
         ).astype("float64")
-        abs_gap = np.abs(current - targets)
+        gap = (
+            np.abs(current - targets)
+            if relation == "equal"
+            else np.maximum(current - targets, 0.0)
+        )
         tolerance = atol + rtol * np.maximum(np.abs(current), np.abs(targets))
         normalized = np.divide(
-            abs_gap,
+            gap,
             tolerance,
-            out=np.full_like(abs_gap, np.inf),
+            out=np.full_like(gap, np.inf),
             where=tolerance > 0.0,
         )
-        normalized[(tolerance == 0.0) & (abs_gap == 0.0)] = 0.0
-        return current, float(np.max(abs_gap, initial=0.0)), float(
+        normalized[(tolerance == 0.0) & (gap == 0.0)] = 0.0
+        return current, float(np.max(gap, initial=0.0)), float(
             np.max(normalized, initial=0.0)
         )
 
     worst_normalized = float("inf")
     abs_by_family: dict[str, float] = {}
-    # Each family update is one KL/I-projection: proportional rescaling preserves
-    # relative cell structure inside the group while imposing that group's margin.
     for iteration in range(1, max_iter + 1):
-        for name, groups, targets in prepared:
-            current, _, _ = family_gap(groups, targets)
-            unsupported = (targets > 0.0) & (current == 0.0)
-            if bool(np.any(unsupported)):
-                group = int(np.flatnonzero(unsupported)[0])
-                raise ValueError(
-                    "IPFP infeasible on initial/current structural support: "
-                    f"margin={name!r}, group={group}, target={targets[group]:.12g}."
+        for position, (name, groups, targets, relation, correction) in enumerate(prepared):
+            corrected = M * correction[groups]
+            current = np.bincount(
+                groups.ravel(), weights=corrected.ravel(), minlength=targets.size
+            ).astype("float64")
+            if relation == "equal":
+                unsupported = (targets > 0.0) & (current == 0.0)
+                if bool(np.any(unsupported)):
+                    group = int(np.flatnonzero(unsupported)[0])
+                    raise ValueError(
+                        "IPFP infeasible on current structural support: "
+                        f"margin={name!r}, group={group}, target={targets[group]:.12g}."
+                    )
+                factors = np.divide(
+                    targets,
+                    current,
+                    out=np.ones_like(targets),
+                    where=current != 0.0,
                 )
-            factors = np.divide(
+                factors[(targets == 0.0) & (current != 0.0)] = 0.0
+            else:
+                factors = np.ones_like(targets)
+                active = current > targets
+                factors[active] = np.divide(
+                    targets[active],
+                    current[active],
+                    out=np.zeros_like(targets[active]),
+                    where=current[active] != 0.0,
+                )
+            M = corrected * factors[groups]
+            next_correction = np.ones_like(correction)
+            positive = factors > 0.0
+            next_correction[positive] = 1.0 / factors[positive]
+            # A zero target permanently removes that partition's support. If a
+            # later equality needs positive mass there, the support check fails.
+            prepared[position] = (
+                name,
+                groups,
                 targets,
-                current,
-                out=np.ones_like(targets),
-                where=current != 0.0,
+                relation,
+                next_correction,
             )
-            factors[(targets == 0.0) & (current != 0.0)] = 0.0
-            M *= factors[groups]
 
-        # A full cycle is accepted only when every family is simultaneously within
-        # its elementwise generated-identity tolerance.
         worst_normalized = 0.0
         abs_by_family = {}
-        for name, groups, targets in prepared:
-            _, max_abs, max_norm = family_gap(groups, targets)
+        for name, groups, targets, relation, _correction in prepared:
+            _, max_abs, max_norm = family_gap(groups, targets, relation)
             abs_by_family[name] = max_abs
             worst_normalized = max(worst_normalized, max_norm)
         if worst_normalized <= 1.0:
@@ -215,10 +259,10 @@ def ipfp_balance_partitions(
             )
 
     raise ValueError(
-        "IPFP did not converge within max_iter: "
+        "IPFP/KL-Dykstra did not converge within max_iter: "
         f"iterations={max_iter}, max_normalized_gap={worst_normalized:.6g}, "
-        f"max_abs_gap_by_family={abs_by_family!r}. The margin families or "
-        "structural support may be incompatible."
+        f"max_abs_gap_by_family={abs_by_family!r}. Equality margins, upper "
+        "bounds, or structural support may be incompatible."
     )
 
 

@@ -174,3 +174,46 @@ def test_multi_margin_ipfp_rejects_positive_target_without_support() -> None:
                 IPFPMargin("columns", col_groups, np.array([0.5, 0.5])),
             ),
         )
+
+
+# IPFP_PARTITION_BOUNDS_TESTS_V2
+def test_partition_ipfp_upper_bound_is_joint_kl_constraint() -> None:
+    from ecolecon_mrio.balancing import IPFPMargin, ipfp_balance_partitions
+
+    prior = np.array([[1.0, 2.0], [3.0, 4.0]])
+    rows = np.broadcast_to(np.arange(2)[:, None], prior.shape)
+    cols = np.broadcast_to(np.arange(2)[None, :], prior.shape)
+    result, stats = ipfp_balance_partitions(
+        prior,
+        (
+            IPFPMargin("rows", rows, np.array([4.0, 6.0])),
+            IPFPMargin("column_caps", cols, np.array([3.5, 10.0]), relation="upper"),
+        ),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    reversed_result, _ = ipfp_balance_partitions(
+        prior,
+        (
+            IPFPMargin("column_caps", cols, np.array([3.5, 10.0]), relation="upper"),
+            IPFPMargin("rows", rows, np.array([4.0, 6.0])),
+        ),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(result.sum(axis=1), np.array([4.0, 6.0]), atol=1e-10)
+    assert float(result[:, 0].sum()) <= 3.5 + 1e-10
+    np.testing.assert_allclose(result, reversed_result, rtol=1e-9, atol=1e-9)
+    assert stats.max_normalized_gap <= 1.0
+
+
+def test_partition_ipfp_rejects_unknown_relation() -> None:
+    from ecolecon_mrio.balancing import IPFPMargin, ipfp_balance_partitions
+
+    prior = np.ones((2, 2), dtype="float64")
+    groups = np.broadcast_to(np.arange(2)[:, None], prior.shape)
+    with np.testing.assert_raises_regex(ValueError, "relation"):
+        ipfp_balance_partitions(
+            prior,
+            (IPFPMargin("bad", groups, np.array([2.0, 2.0]), relation="lower"),),
+        )

@@ -17,10 +17,10 @@ for _extra_path in (_REPO_ROOT, _REPO_ROOT / "src"):
     if _extra_text not in sys.path:
         sys.path.insert(0, _extra_text)
 
-from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions, aggregate_iot
-from ecolecon_mrio.iot_flow_semantics import flow_use_total
-from ecolecon_mrio.mapping_csv import read_aggregation_mapping
-from scripts.aggregate_iot_by_mapping import (
+from ecolecon_mrio.iot_aggregation import aggregate_environmental_extensions, aggregate_iot  # noqa: E402
+from ecolecon_mrio.iot_flow_semantics import flow_use_total  # noqa: E402
+from ecolecon_mrio.mapping_csv import read_aggregation_mapping  # noqa: E402
+from scripts.aggregate_iot_by_mapping import (  # noqa: E402
     _augment_mapping_from_split_child_edges,
     _load_split_selected_children,
     _partition_environmental_extensions_for_sector_reaggregation,
@@ -42,18 +42,17 @@ _ENVIRONMENTAL_GRID_COLUMNS = [
 ]
 _REQUIRED_TRANSFORMATION_COHERENCE_CHECKS = {
     ("DOM", "tc.child_row_margin"),
-    ("DOM", "tc.child_column_technology_margin"),
     ("DOM", "tc.parent_z_cell"),
-    ("DOM", "tc.zero_target_output_column"),
-    ("DOM", "tc.ipfp_convergence"),
     ("IMP", "tc.child_row_margin"),
-    ("IMP", "tc.child_column_technology_margin"),
     ("IMP", "tc.parent_z_cell"),
-    ("IMP", "tc.zero_target_output_column"),
-    ("IMP", "tc.ipfp_convergence"),
+    ("TOTAL", "tc.production_account_capacity"),
+    ("TOTAL", "tc.nonnegative_child_b1g"),
+    ("TOTAL", "tc.zero_target_output_column"),
+    ("TOTAL", "tc.kl_convergence"),
     ("DOM", "tc.dom_output_margin"),
     ("IMP", "tc.imp_row_use_margin"),
     ("TOTAL", "tc.total_use_additivity"),
+    ("DOM", "tc.dom_leontief_productivity"),
 }
 
 
@@ -653,6 +652,34 @@ def _validate_transformation_coherence_report(path: Path) -> dict[str, Any]:
     }
 
 
+
+def _validate_full_iot_accounting_report(path: Path) -> dict[str, Any]:
+    """Require persisted Class-I generated-IOT evidence for canonical TOTAL output."""
+    if not path.is_file():
+        return {"ok": False, "path": str(path), "reason": "missing report"}
+    frame = pd.read_csv(path)
+    required = {"check_id", "status", "severity"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        return {
+            "ok": False,
+            "path": str(path),
+            "reason": "missing columns",
+            "missing_columns": missing,
+        }
+    failed = frame.loc[
+        frame["status"].astype(str).eq("fail")
+        & frame["severity"].astype(str).eq("error"),
+        ["check_id", "status", "severity"],
+    ]
+    return {
+        "ok": failed.empty,
+        "path": str(path),
+        "n_checks": int(len(frame)),
+        "failing_error_checks": failed.to_dict(orient="records"),
+    }
+
+
 def validate_pipeline_outputs(
     *,
     split_dir: Path,
@@ -704,9 +731,14 @@ def validate_pipeline_outputs(
             if split_info.get("producer_column_conditioning") == "exio_technology_at_austrian_child_output":
                 raise ValueError(
                     "Stale split output declares the superseded closed-form producer-column "
-                    "conditioning method; regenerate the split with canonical IPFP reconciliation."
+                    "conditioning method; regenerate the canonical whole-IOT reconciliation."
                 )
             if split_info.get("producer_column_reconciliation") == "exio_technology_ipfp_at_target_output":
+                raise ValueError(
+                    "Stale split output declares EXIO child producer-column totals as hard margins; "
+                    "regenerate with joint DOM/IMP whole-IOT production-account reconciliation."
+                )
+            if split_info.get("producer_column_reconciliation") == "joint_dom_imp_kl_production_account_feasible":
                 coherence = _validate_transformation_coherence_report(
                     split_dir.parent / "transformation_coherence_validation.csv"
                 )
@@ -717,11 +749,21 @@ def validate_pipeline_outputs(
                     coherence_ok,
                     **coherence_extra,
                 )
+                full_table = _validate_full_iot_accounting_report(
+                    split_dir.parent / "split_full_table_validation.csv"
+                )
+                full_table_extra = dict(full_table)
+                full_table_ok = bool(full_table_extra.pop("ok", False))
+                add_check(
+                    "whole_iot_accounting_validation",
+                    full_table_ok,
+                    **full_table_extra,
+                )
                 add_check(
                     "producer_technology_reconciliation_balancing_declared",
                     split_info.get("balancing_applied") is True
                     and split_info.get("balancing_method")
-                    == "IPFP_KL_PARTITION_MARGINS",
+                    == "KL_DYKSTRA_PARTITION_CONSTRAINTS",
                     balancing_applied=split_info.get("balancing_applied"),
                     balancing_method=split_info.get("balancing_method"),
                 )

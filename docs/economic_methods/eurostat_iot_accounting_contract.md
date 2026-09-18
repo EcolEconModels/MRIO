@@ -645,41 +645,55 @@ Z^{before}_{ij}
 \]
 
 
-### Producer-column technology conditioning
+### Joint whole-IOT feasibility reconciliation
 
-Parent-cell conservation is necessary but does not by itself couple synthetic
-producer columns to target-country child output. Let \(Z^{0,f}_{ab}\) be the
-preliminary donor split, \(C_j\) the children of buyer parent \(j\), and
-\(r^f_{a,j}=\sum_{b\in C_j}Z^{0,f}_{ab}\). Canonical child output remains the DOM
-row-use margin \(x_b\); EXIO output is not a second target.
+Parent-cell conservation is necessary but insufficient: a disaggregation can
+reaggregate perfectly while assigning more intermediate input to a synthetic
+producer than its target output and production account can support.  The canonical
+method therefore treats EXIO as a KL technology prior and the authorized Eurostat
+IOT/accounting relations as the feasible set.
 
-For persisted EXIO producer-output share \(s_b^{x,E}\), reweight buyer children by
+Atomic `Y` is fixed and source-conserved before intermediate reconciliation. DOM row
+use determines target child domestic output. DOM and IMP `Z` are then solved
+jointly, preserving each flow's child row margins and every source parent `Z` cell.
+No EXIO-derived Austrian child monetary column total is authoritative.
+
+For producer child \(b\), define TOTAL intermediate input
 
 \[
-\omega^f_{ab}=Z^{0,f}_{ab}\frac{x_b}{s_b^{x,E}},
-\qquad
-Z^{*,f}_{ab}=r^f_{a,j}\frac{\omega^f_{ab}}
-{\sum_{c\in C_j}\omega^f_{ac}}.
+u_b=\sum_a(Z^{DOM}_{ab}+Z^{IMP}_{ab}).
 \]
 
-Because the preliminary donor-backed block is proportional within each
-Eurostat parent cell to the projected donor transaction block, conditioning its
-producer columns by \(x_b/s_b^{x,E}\) supplies a prior proportional to
-\(A^{E,f}_{ab}x_b\).  This prior is not itself the final allocation.  The canonical
-stage also forms flow-specific technology-reference child producer-column margins
-from \(x_b(s_b^{in,E,f}/s_b^{x,E})\), calibrated to each authoritative Eurostat
-parent intermediate-input total, and reconciles child rows, child columns, and
-parent cells simultaneously with the shared multi-partition IPFP API.  The former
-row-child/buyer-parent submargin is not authoritative.  DOM output shares define
-the producer-output profile for both DOM and IMP. IMP producer-input shares use the
-IMP donor transaction block and the DOM producer-column projection. Because the
-validated supplier-row projection is source-conservative, its weights cancel when
-summing over supplier rows; changing only the IMP row concordance therefore cannot
-change producer-column input totals.
+For parent \(j\), let \(U_j=\sum_{b\in C_j}u_b\) and let \(D_j\) be published
+`D21X31`.  Because generated `D21X31` is distributed over children in proportion to
+TOTAL intermediate input,
 
-This closed-form conditioning is not RAS/GRAS or optimisation. Positive Austrian
-output with zero EXIO output support, or positive row mass supported only on
-zero-output producer children, is an evidence conflict and fails explicitly.
+\[
+B1G_b=x_b-\left(1+\frac{D_j}{U_j}\right)u_b.
+\]
+
+Whenever the published parent `B1G` is non-negative and the coefficient in
+parentheses is positive, the canonical disaggregation imposes the equivalent
+upper bound that keeps every generated child B1G non-negative.  A zero-output child
+has zero producer-column capacity.  A genuinely negative source parent B1G is kept
+as such and is not converted into a universal positivity rule.
+
+The joint objective minimizes KL divergence from the output-conditioned EXIO prior
+subject to these production-account inequalities plus the DOM/IMP row and parent-Z
+equalities. The numerical owner is the generic partition KL/IPFP routine with
+KL-Dykstra upper-bound projections; no application-local optimizer is duplicated.
+
+After the free transaction matrices are feasible, generated `Y`, `V` and `M`
+identities are rebuilt rather than independently balanced.  Primitive source
+controls retain their declared source-conservation rules and applicability masks.
+The complete `validate_eurostat_iot_full_table(..., mode="generated")` report is a
+blocking Class-I gate, while transformation coherence is a separate blocking
+Class-II gate.  Candidate valuation/supply-use equations that the source policy
+marks `not_tested` are not promoted merely to make the system look more constrained.
+
+The cleared domestic technical matrix must additionally satisfy
+\(\rho(A^{DOM})<1\); this is evaluated with the existing shared spectral-radius
+implementation.
 
 ### Final use
 

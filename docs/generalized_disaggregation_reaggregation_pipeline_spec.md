@@ -102,10 +102,11 @@ Preliminary row-child/buyer-parent submargins are not hard constraints.
 
 The final many-many production validator must require the complete transformation
 report when `split_info.json` declares
-`producer_column_reconciliation=exio_technology_ipfp_at_target_output`.  Reaggregation
+`producer_column_reconciliation=joint_dom_imp_kl_production_account_feasible`.  Reaggregation
 still has its own transformation-conservation checks against a fresh recomputation.
-Passing Class I never substitutes for Class II, and neither class turns a
-plausibility diagnostic such as negative child GVA into an accounting identity.
+Passing Class I never substitutes for Class II, and Class II now prevents a non-negative source-parent GVA from becoming negative
+for a synthetic child through the disaggregation itself; genuinely negative source
+parents remain signed source evidence rather than a universal positivity rule.
 
 The canonical producer reconciliation reuses `ecolecon_mrio.balancing`: ordinary
 RAS remains the existing two-margin API, while one generic multi-partition IPFP

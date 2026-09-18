@@ -462,88 +462,115 @@ The target aggregate cell totals \(Z_{ij}\) and \(Y_{if}\) remain authoritative
 unless a separate override policy is explicitly declared.
 
 
-### Target-output conditioning of donor producer columns
+### Joint whole-IOT reconciliation at target child output
 
 Raw donor transactions contain both technology and donor scale,
-\(D^Z_{ab}=A^D_{ab}x^D_b\).  After DOM row use fixes target child output \(x_b\),
-producer technology is transferred in two separate objects.
-
-First, the within-block prior is conditioned by the common DOM producer-output
-share \(s_b^{x,D}\):
+\(D^Z_{ab}=A^D_{ab}x^D_b\).  After DOM row use and the already-disaggregated
+atomic final-demand block fix target child output \(x_b\), the donor block is used
+only as a structural KL prior.  Conditioning the preliminary child producer column
+by the common DOM producer-output share gives
 
 \[
 Q^f_{ab}\propto Z^{0,f}_{ab}\frac{x_b}{s_b^{x,D}},
 \]
 
 which is proportional within a donor-backed parent cell to
-\(A^{D,f}_{ab}x_b\).  Second, the actual projected donor block supplies the
-flow-specific producer intermediate-input share \(s_b^{in,D,f}\).  The relative
-input coefficient is
+\(A^{D,f}_{ab}x_b\).  EXIO does **not** determine an Austrian monetary child-column
+total.
+
+The canonical free variables are the DOM and IMP intermediate transaction matrices
+jointly.  For \(f\in\{DOM,IMP\}\), preserve the accepted child row-use margins and
+every Eurostat parent intermediate cell,
 
 \[
-\rho_b^f=\frac{s_b^{in,D,f}}{s_b^{x,D}},
-\]
-
-and the child producer-column target within buyer parent \(j\) is
-
-\[
-q_b^f=U_j^f
-\frac{x_b\rho_b^f}{\sum_{c\in C_j}x_c\rho_c^f},
+\sum_b Z^{f}_{ab}=r^f_a,
 \qquad
-U_j^f=\sum_i Z^f_{ij}.
+\sum_{a\in C_i}\sum_{b\in C_j}Z^f_{ab}=Z^{Eurostat,f}_{ij}.
 \]
 
-The common output share is always the DOM production profile.  For IMP the row
-projection may use flow-specific import concordance weights, while the column
-projection uses the DOM production mapping; therefore \(s_b^{in,D,IMP}\) is
-measured after the actual IMP-row/DOM-column donor projection.  This makes the
-construction valid on materialized many-to-many edge children without duplicating
-a raw donor source.
-
-The preliminary child row totals, the technology column targets \(q_b^f\), and the
-original Eurostat parent cells are simultaneous constraints.  No one-pass
-row-then-column or column-then-row normalization is authoritative.  Let \(G\) be
-the child-to-parent summation map.  The canonical matrix is the non-negative
-information projection
+The production account is part of the same feasible set.  Let
 
 \[
-\min_{Z^{*,f}\ge0}D_{KL}(Z^{*,f}\Vert Q^f)
+u_b=\sum_a\left(Z^{DOM}_{ab}+Z^{IMP}_{ab}\right),
+\qquad
+U_j=\sum_{b\in C_j}u_b,
 \]
 
-subject to
+and let \(D_j\) be published `D21X31` for producer parent \(j\).  The canonical V
+construction allocates this parent control proportionally to TOTAL intermediate
+input, so
 
 \[
-Z^{*,f}\mathbf 1=Z^{0,f}\mathbf 1,
-\qquad
-\mathbf 1^\top Z^{*,f}=q^{f\top},
-\qquad
-GZ^{*,f}G^\top=Z^{f}_{source}.
+D_b=D_j\frac{u_b}{U_j}.
 \]
 
-The implementation uses the generic multi-partition IPFP primitive in
-`ecolecon_mrio.balancing`; ordinary row/column RAS is its two-margin special case.
-The primitive split remains an unbalanced reconstruction stage.  Canonical
-reconciliation occurs only after DOM output is known.  If positive hard margins
-have no declared prior support, or the simultaneous margins do not converge within
-strict generated-table tolerance, the run fails as an evidence/closure conflict;
-support is not fabricated.
+Therefore
+
+\[
+B1G_b=x_b-u_b-D_b
+=x_b-\left(1+\frac{D_j}{U_j}\right)u_b.
+\]
+
+If published parent `B1G` is non-negative and
+\(\kappa_j=1+D_j/U_j>0\), a synthetic child may not acquire negative GVA merely
+through disaggregation.  The corresponding hard capacity is
+
+\[
+0\le u_b\le c_b,
+\qquad
+c_b=\frac{x_b}{\kappa_j}.
+\]
+
+Zero-output children have \(c_b=0\).  A genuinely negative published parent B1G
+is not silently reclassified; its sign remains source evidence and no generic
+non-negativity assumption is imposed on that parent.  If parent cells, child row
+margins and the source-conditioned production capacities are incompatible, the
+pipeline fails as an accounting/evidence conflict rather than creating negative
+GVA or epsilon support.
+
+The canonical solution is
+
+\[
+\min_{Z^{DOM},Z^{IMP}\ge0}
+D_{KL}(Z^{DOM}\Vert Q^{DOM})+D_{KL}(Z^{IMP}\Vert Q^{IMP})
+\]
+
+subject to all equalities above and the applicable joint column capacities.  The
+generic owner is `ecolecon_mrio.balancing.ipfp_balance_partitions`: equality-only
+calls remain ordinary multi-margin IPFP/RAS, while upper partition constraints use
+multiplicative KL-Dykstra corrections.  Structural zeros remain structural zeros.
+
+Atomic `Y` is source-reconstructed before this solve and is not an additional free
+matrix.  Generated `Y` controls (`P3`, `P5M`, `P5`, export residuals, `TFU`, `TU`),
+`V` identities, and `M` serialization controls are rebuilt from the feasible
+transaction system and must pass the single full generated-IOT validator.  Source
+rows or valuation bridges that the accounting policy marks unresolved remain
+explicitly unpromoted; in particular the method does not invent `P7 = IMP use` or
+`TS_BP = TU`.
+
+The domestic technical matrix is formed only after reconciliation,
+
+\[
+A^{DOM}_{ab}=\frac{Z^{DOM}_{ab}}{x_b},
+\]
+
+and the generated domestic Leontief system must satisfy
+\(\rho(A^{DOM})<1\).  The existing repository spectral-radius implementation is
+reused; no separate eigensolver is introduced here.
 
 ### Transformation-coherence invariants
 
-Class-II validation checks the constraints actually made authoritative by this
-reconciliation: child row margins, technology-reference child column margins,
-Eurostat parent cells, zero-input columns for zero target output, numerical IPFP
-convergence, preservation of the canonical DOM output margin, preservation of IMP
-product-row use, and TOTAL=DOM+IMP use additivity.  The former
-child-row/buyer-parent submargin is deliberately **not** an invariant: the Austria
-production run showed that this preliminary donor-derived allocation could pass all
-accounting checks while forcing a tiny-output technology to absorb implausibly
-large imported inputs.
+Class-II validation proves the constraints actually made authoritative by the
+transformation: DOM and IMP child-row preservation, DOM and IMP Eurostat parent-Z
+cells, joint production-account capacity, source-conditioned non-negative child
+B1G, zero-input columns for zero child output, KL-Dykstra convergence, preservation
+of the canonical DOM output margin, preservation of IMP product-row use,
+TOTAL=DOM+IMP use additivity, and domestic Leontief productivity.  The former EXIO
+technology-reference child-column monetary margin is explicitly obsolete: EXIO is
+the prior, not an Austrian monetary control.
 
-The technology-reference child column target is a declared disaggregation closure,
-not an independently observed Austrian statistic and not a national-account
-identity.  Negative child `B1G` therefore remains a plausibility diagnostic rather
-than a generic failure condition.
+Class II does not replace Class I.  The persisted full-table accounting report must
+also pass after all `Z`, `Y`, `V`, and `M` objects have been constructed.
 
 ## Geographic scope aggregation
 
