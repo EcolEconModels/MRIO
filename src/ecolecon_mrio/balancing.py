@@ -358,14 +358,18 @@ def kl_balance_linear_equalities(
     if supported_q.size == 0:
         return q.copy(), KLLinearStats(0, 0.0, 0.0)
 
-    # Scale each equality by the larger of its target, prior absolute activity,
-    # and one monetary unit.  This changes neither the feasible set nor the KL
-    # optimum and prevents large parent cells from hiding small child identities.
+    # KL_LINEAR_TARGET_CONDITIONING_V3
+    # Numerically condition the dual by the authoritative equality itself, not by
+    # donor-prior activity.  The output-conditioned EXIO prior can be orders of
+    # magnitude above an Austrian target; dividing a row by that prior mass makes
+    # A_scaled nearly zero and forces the dual multipliers toward huge magnitudes.
+    # Target/coefficient scaling leaves A @ x = b and the KL optimum unchanged
+    # while keeping ordinary unit-coefficient IOT constraints near O(1).
     abs_A = supported_A.copy()
     abs_A.data = np.abs(abs_A.data)
-    prior_activity = np.asarray(abs_A @ supported_q).reshape(-1)
+    row_coefficient_scale = np.asarray(abs_A.max(axis=1).toarray()).reshape(-1)
     row_scale = np.maximum.reduce(
-        [np.ones_like(b), np.abs(b), prior_activity]
+        [np.ones_like(b), np.abs(b), row_coefficient_scale]
     )
     A_scaled = (sparse.diags(1.0 / row_scale) @ supported_A).tocsr()
     b_scaled = b / row_scale
@@ -421,6 +425,12 @@ def kl_balance_linear_equalities(
         method="L-BFGS-B",
         options={
             "maxiter": max_iter,
+            # SciPy's L-BFGS-B otherwise retains its independent default maxfun
+            # (15,000), which can terminate a large sparse problem even though the
+            # caller deliberately allowed many more iterations.  Keep max_iter as
+            # the iteration ceiling but give analytic-gradient line searches enough
+            # function evaluations to reach it.
+            "maxfun": max(15_000, 20 * max_iter),
             "ftol": 0.0,
             "gtol": 1e-12,
             "maxls": 100,
@@ -450,10 +460,26 @@ def kl_balance_linear_equalities(
     if max_norm > 1.0:
         polish_success = None if polished is None else bool(polished.success)
         polish_message = "not_needed" if polished is None else str(polished.message)
+        actual = np.asarray(A @ result).reshape(-1)
+        gap = np.abs(actual - b)
+        tolerance = atol + rtol * np.maximum(np.abs(actual), np.abs(b))
+        normalized = np.divide(
+            gap,
+            tolerance,
+            out=np.full_like(gap, np.inf),
+            where=tolerance > 0.0,
+        )
+        normalized[(tolerance == 0.0) & (gap == 0.0)] = 0.0
+        worst_row = int(np.argmax(normalized))
         raise ValueError(
             "Linear KL reconciliation did not satisfy its equalities: "
             f"max_normalized_gap={max_norm:.6g}, max_abs_gap={max_abs:.12g}, "
+            f"worst_row={worst_row}, actual={actual[worst_row]:.12g}, "
+            f"target={b[worst_row]:.12g}, tolerance={tolerance[worst_row]:.12g}, "
+            f"row_scale={row_scale[worst_row]:.12g}, "
             f"lbfgs_success={bool(first.success)}, lbfgs_message={first.message!s}, "
+            f"lbfgs_nit={int(getattr(first, 'nit', 0))}, "
+            f"lbfgs_nfev={int(getattr(first, 'nfev', 0))}, "
             f"polish_success={polish_success!r}, polish_message={polish_message}."
         )
     polish_iterations = 0 if polished is None else int(getattr(polished, "nit", 0))

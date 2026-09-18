@@ -272,6 +272,43 @@ def test_linear_kl_skips_root_polish_when_lbfgs_candidate_is_feasible(
     assert stats.max_normalized_gap <= 1.0
 
 
+
+# KL_LINEAR_LARGE_PRIOR_CONDITIONING_TEST_V3
+def test_linear_kl_handles_donor_prior_far_above_authoritative_targets() -> None:
+    """Large donor-prior mass must not destroy exact target-country equalities."""
+    from ecolecon_mrio.balancing import kl_balance_linear_equalities
+
+    # The first two prior entries mimic an output-conditioned donor column whose
+    # monetary scale is many orders above the authoritative target-country cells.
+    # The target system itself is modest and feasible. Solver conditioning must
+    # therefore follow the equalities, not the donor-prior activity level.
+    prior = np.array([1.0e8, 1.0e6, 10.0, 5.0], dtype="float64")
+    constraints = np.array(
+        [
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 1.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0, 0.0],
+        ],
+        dtype="float64",
+    )
+    feasible = np.array([2.0, 3.0, 4.0, 5.0], dtype="float64")
+    targets = constraints @ feasible
+
+    result, stats = kl_balance_linear_equalities(
+        prior,
+        constraints,
+        targets,
+        rtol=1e-12,
+        atol=1e-10,
+    )
+
+    np.testing.assert_allclose(
+        constraints @ result, targets, rtol=1e-12, atol=1e-10
+    )
+    assert np.isfinite(result).all()
+    assert bool((result > 0.0).all())
+    assert stats.max_normalized_gap <= 1.0
+
 def test_linear_kl_reconciliation_fails_without_structural_support() -> None:
     from ecolecon_mrio.balancing import kl_balance_linear_equalities
 
