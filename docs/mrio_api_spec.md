@@ -877,3 +877,29 @@ roles, environmental extensions, historical precedent, epsilon-grid policy,
 reader-facing witness selection, and plotting remain caller-owned. An EE-MRIO can
 use this API for its monetary MRIO core and evaluate environmental extensions on
 returned economic witnesses separately.
+<!-- INVERSE_MRIO_HIGHS_NUMERICAL_CONTRACT_V2 -->
+### HiGHS numerical representation and pure-final cold start
+
+The inverse-MRIO feasible set retains every stored non-zero coefficient supplied by
+`A0`, `lower_headroom`, and `upper_headroom`. HiGHS 1.8 has a default
+`small_matrix_value` of `1e-9`, which is too coarse for this API because valid MRIO
+coefficients and certificate-safe headroom can be smaller. The API therefore sets the
+backend floor explicitly to `1e-12`. If a complete constraint row contains a smaller
+stored coefficient, the entire row and every finite row bound are multiplied by the
+same positive factor so the smallest stored coefficient is represented above the
+backend floor. This is an algebraically exact row transformation: no matrix
+coefficient is pruned and the feasible set is unchanged. The API fails closed if the
+required exact scaling would approach the declared HiGHS large-value safety regime.
+
+`numerical_matrix_diagnostics` reports the number of matrix entries at or below the
+old `1e-9` default and the explicit `1e-12` backend floor, the smallest stored input
+coefficient, and the number/magnitude of exact row scalings. These are numerical
+diagnostics, not an empirical coefficient-support rule. The public constructor also
+checks the complete lower corner `A0 + L >= 0` row by row.
+
+For a pure-final-use solve, `u=0`, `L<=0<=U`, and `x1>=0` imply
+`L x1 <= 0 <= U x1`; the large coefficient-capacity row blocks are therefore
+mathematically redundant. The persistent model defers those rows until the first
+solve that permits structural adjustment, then appends them once and reuses the
+resulting HiGHS model/basis for later solves. This changes construction order only,
+not the inverse-accounting problem or its lexicographic objectives.

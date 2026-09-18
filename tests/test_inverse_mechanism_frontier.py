@@ -1,4 +1,3 @@
-# GENERIC_INVERSE_MRIO_MECHANISM_TESTS_V1
 from __future__ import annotations
 
 import numpy as np
@@ -104,3 +103,58 @@ def test_inverse_mrio_accepts_signed_complete_final_use_boundary() -> None:
     result = problem.solve_pure_final_use(np.array([1.0]))
     assert result.optimal
     assert np.isclose(problem.F0, 16.0)
+
+def test_inverse_mrio_defers_capacity_rows_until_structure_is_allowed() -> None:
+    """Pure final use must not pay the EXIO-scale L/U construction cost."""
+
+    problem = _problem()
+    assert problem.coefficient_capacity_materialized is False
+    pure_final = problem.solve_pure_final_use(np.array([1.0]))
+    assert pure_final.optimal
+    assert problem.coefficient_capacity_materialized is False
+    joint = problem.solve_epsilon(np.array([1.0]), 0.025)
+    assert joint.optimal
+    assert problem.coefficient_capacity_materialized is True
+
+
+def test_inverse_mrio_exactly_scales_sub_highs_floor_rows() -> None:
+    """Tiny retained coefficients are represented by exact whole-row scaling, not pruning."""
+
+    tiny = 1.0e-20
+    A0 = csr_matrix([[0.2, tiny], [0.0, 0.2]])
+    x0 = np.array([10.0, 10.0])
+    f0 = x0 - A0.dot(x0)
+    lower = csr_matrix([[-0.1, -tiny], [0.0, -0.1]])
+    upper = csr_matrix([[0.1, tiny], [0.0, 0.1]])
+    target = csr_matrix([[1.0, 0.0]])
+    problem = InverseMrioMechanismProblem(
+        A0,
+        x0,
+        f0,
+        lower,
+        upper,
+        target,
+        accompaniment_indices=np.array([1], dtype=np.int32),
+    )
+    assert problem.solve_pure_final_use(np.array([1.0])).optimal
+    assert problem.solve_epsilon(np.array([1.0]), 0.025).optimal
+    diag = problem.numerical_matrix_diagnostics
+    assert diag["backend_small_matrix_value"] == 1.0e-12
+    assert int(diag["input_abs_le_1e-9"]) >= 3
+    assert int(diag["input_abs_le_1e-12"]) >= 3
+    assert int(diag["scaled_row_count"]) >= 3
+    assert float(diag["max_exact_row_scale"]) >= 1.0e9
+
+
+def test_inverse_mrio_rejects_negative_lower_coefficient_corner() -> None:
+    """The generic coefficient-change box may never admit negative technical coefficients."""
+
+    with np.testing.assert_raises_regex(ValueError, "A0 \\+ L negative"):
+        InverseMrioMechanismProblem(
+            csr_matrix([[0.2]]),
+            np.array([1.0]),
+            np.array([0.8]),
+            csr_matrix([[-0.3]]),
+            csr_matrix([[0.1]]),
+            csr_matrix([[1.0]]),
+        )

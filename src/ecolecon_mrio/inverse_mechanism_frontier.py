@@ -1,4 +1,3 @@
-# GENERIC_INVERSE_MRIO_MECHANISM_API_V1
 """Low-memory inverse final-use / coefficient-flow optimisation for monetary MRIOs.
 
 The public object in this module is deliberately agnostic to transition scenarios,
@@ -32,6 +31,18 @@ from scipy.sparse import csr_matrix
 
 
 InverseSolveStatus = Literal["optimal", "infeasible", "unbounded", "numerical_failure"]
+
+# HiGHS 1.8 treats matrix entries at or below ``small_matrix_value`` as zero.
+# Figure-10 retains empirically admitted coefficient entries below the default
+# 1e-9 cutoff, so the generic API lowers the backend floor to HiGHS' supported
+# minimum and rescales complete constraint rows exactly when necessary.  Row
+# scaling multiplies both sides of one constraint by the same positive constant;
+# it therefore changes conditioning/representation only, never the feasible set.
+_HIGHS_SMALL_MATRIX_VALUE = 1.0e-12
+_HIGHS_ROW_SCALE_TARGET = 1.0e-11
+_HIGHS_LARGE_MATRIX_VALUE = 1.0e19
+_HIGHS_SAFE_SCALED_VALUE = 1.0e18
+_HIGHS_DEFAULT_SMALL_MATRIX_VALUE = 1.0e-9
 
 
 @dataclass(frozen=True)
@@ -101,27 +112,37 @@ class InverseMrioMechanismProblem:
         self.L = self._canonical_matrix(lower_headroom, "lower_headroom")
         self.U = self._canonical_matrix(upper_headroom, "upper_headroom")
         self.C = self._canonical_matrix(target_matrix, "target_matrix", square=False)
+        a0_shape = self.A0.shape
+        lower_shape = self.L.shape
+        upper_shape = self.U.shape
+        target_shape = self.C.shape
+        if a0_shape is None or lower_shape is None or upper_shape is None or target_shape is None:
+            raise RuntimeError("canonical sparse matrices unexpectedly lack a shape")
         self.x0 = np.asarray(x0, dtype=np.float64).reshape(-1).copy()
         self.f0 = np.asarray(f0, dtype=np.float64).reshape(-1).copy()
         self.n = int(self.x0.size)
-        c_shape = self.C.shape
-        if c_shape is None:
-            raise ValueError("target_matrix must expose a two-dimensional shape")
-        self.m = int(c_shape[0])
+        self.m = int(target_shape[0])
         self.feasibility_tolerance = float(feasibility_tolerance)
         self.objective_relative_tolerance = float(objective_relative_tolerance)
         self.objective_absolute_tolerance = float(objective_absolute_tolerance)
         self.row_chunk_size = int(row_chunk_size)
         self.verbose = bool(verbose)
+        # Read-only numerical census of coefficients before exact row scaling.
+        # These counters make backend representation visible without turning the
+        # numerical storage floor into a scientific coefficient-support rule.
+        self._matrix_input_count = 0
+        self._below_default_small_count = 0
+        self._below_backend_small_count = 0
+        self._smallest_abs_input = np.inf
+        self._scaled_row_count = 0
+        self._max_row_scale = 1.0
+        self._capacity_rows_added = False
 
         if self.n <= 0:
             raise ValueError("inverse MRIO problem requires a non-empty output vector")
-        a_shape, lower_shape, upper_shape = self.A0.shape, self.L.shape, self.U.shape
-        if a_shape is None or lower_shape is None or upper_shape is None:
-            raise ValueError("MRIO coefficient matrices must expose shapes")
-        if a_shape != (self.n, self.n) or lower_shape != (self.n, self.n) or upper_shape != (self.n, self.n):
+        if a0_shape != (self.n, self.n) or lower_shape != (self.n, self.n) or upper_shape != (self.n, self.n):
             raise ValueError("A0 and coefficient-headroom matrices must match x0 on one square basis")
-        if c_shape[1] != self.n or self.m <= 0:
+        if target_shape[1] != self.n or self.m <= 0:
             raise ValueError("target_matrix must contain at least one row on the MRIO basis")
         if self.f0.shape != (self.n,):
             raise ValueError("f0 must align one-to-one with x0")
@@ -137,6 +158,7 @@ class InverseMrioMechanismProblem:
             raise ValueError("upper_headroom must satisfy U >= 0")
         if self.feasibility_tolerance <= 0.0 or not np.isfinite(self.feasibility_tolerance):
             raise ValueError("feasibility_tolerance must be positive and finite")
+        self._validate_nonnegative_lower_corner()
         if self.objective_relative_tolerance < 0.0 or self.objective_absolute_tolerance < 0.0:
             raise ValueError("objective face tolerances must be non-negative")
         if self.row_chunk_size <= 0:
@@ -170,6 +192,8 @@ class InverseMrioMechanismProblem:
         self._define_columns()
         self._define_rows()
         self._active_cost_indices = np.empty(0, dtype=np.int32)
+        if self.verbose:
+            print(f"inverse-MRIO HiGHS input census (initial): {self.numerical_matrix_diagnostics}", flush=True)
 
     @staticmethod
     def _canonical_matrix(raw: Any, label: str, *, square: bool = True) -> csr_matrix:
@@ -187,6 +211,39 @@ class InverseMrioMechanismProblem:
         if matrix.data.size and not np.isfinite(matrix.data).all():
             raise ValueError(f"{label} contains non-finite stored values")
         return matrix
+
+    def _validate_nonnegative_lower_corner(self) -> None:
+        """Fail unless every admitted lower coefficient corner keeps ``A1 >= 0``.
+
+        The generic API promises coefficient changes, not signed technical
+        coefficients.  Stage-A currently guarantees this invariant, but a public
+        caller can supply any aligned sparse box, so enforce it row-wise without
+        allocating an EXIO-scale ``A0 + L`` temporary matrix.
+        """
+
+        tol = float(self.feasibility_tolerance)
+        for row in range(self.n):
+            a0_left, a0_right = int(self.A0.indptr[row]), int(self.A0.indptr[row + 1])
+            l_left, l_right = int(self.L.indptr[row]), int(self.L.indptr[row + 1])
+            a0_cols = np.asarray(self.A0.indices[a0_left:a0_right], dtype=np.intp)
+            l_cols = np.asarray(self.L.indices[l_left:l_right], dtype=np.intp)
+            columns = np.union1d(a0_cols, l_cols)
+            if columns.size == 0:
+                continue
+            baseline = np.zeros(columns.size, dtype=np.float64)
+            lower = np.zeros(columns.size, dtype=np.float64)
+            if a0_cols.size:
+                baseline[np.searchsorted(columns, a0_cols)] = self.A0.data[a0_left:a0_right]
+            if l_cols.size:
+                lower[np.searchsorted(columns, l_cols)] = self.L.data[l_left:l_right]
+            minimum = baseline + lower
+            bad = np.flatnonzero(minimum < -tol)
+            if bad.size:
+                col = int(columns[int(bad[0])])
+                raise ValueError(
+                    "coefficient lower corner would make A0 + L negative: "
+                    f"row={row}, column={col}, value={minimum[int(bad[0])]:.6g}"
+                )
 
     @staticmethod
     def _load_highs_core() -> Any:
@@ -206,14 +263,116 @@ class InverseMrioMechanismProblem:
         if int(status) < 0:
             raise RuntimeError(f"HiGHS failed while {action}: {status}")
 
+    def _require_exact_ok(self, status: Any, action: str) -> None:
+        """Reject HiGHS warnings when constructing the mathematical LP matrix."""
+
+        if int(status) != 0:
+            raise RuntimeError(
+                f"HiGHS returned a non-OK status while {action}: {status}. "
+                "Matrix insertion warnings are blocking because they can mean "
+                "coefficients were silently discarded."
+            )
+
     def _configure_highs(self) -> None:
         for name, value in (
             ("output_flag", bool(self.verbose)),
             ("log_to_console", bool(self.verbose)),
+            ("small_matrix_value", _HIGHS_SMALL_MATRIX_VALUE),
+            ("large_matrix_value", _HIGHS_LARGE_MATRIX_VALUE),
             ("primal_feasibility_tolerance", float(self.feasibility_tolerance)),
             ("dual_feasibility_tolerance", float(self.feasibility_tolerance)),
         ):
             self._require_ok(self._highs.setOptionValue(name, value), f"setting option {name}")
+
+    @property
+    def coefficient_capacity_materialized(self) -> bool:
+        """Whether the large ``L/U`` row blocks have been inserted into HiGHS."""
+
+        return bool(self._capacity_rows_added)
+
+    @property
+    def numerical_matrix_diagnostics(self) -> dict[str, int | float | bool]:
+        """Return the exact-input census and row-scaling diagnostics seen so far."""
+
+        minimum = 0.0 if not np.isfinite(self._smallest_abs_input) else float(self._smallest_abs_input)
+        return {
+            "backend_small_matrix_value": float(_HIGHS_SMALL_MATRIX_VALUE),
+            "backend_previous_default_small_matrix_value": float(_HIGHS_DEFAULT_SMALL_MATRIX_VALUE),
+            "matrix_input_nonzeros": int(self._matrix_input_count),
+            "input_abs_le_1e-9": int(self._below_default_small_count),
+            "input_abs_le_1e-12": int(self._below_backend_small_count),
+            "smallest_abs_input": minimum,
+            "scaled_row_count": int(self._scaled_row_count),
+            "max_exact_row_scale": float(self._max_row_scale),
+            "capacity_rows_materialized": bool(self._capacity_rows_added),
+        }
+
+    def _scale_rows_exactly_for_highs(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        indptr: np.ndarray,
+        data: np.ndarray,
+        *,
+        label: str,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Scale complete rows so HiGHS cannot silently discard stored entries.
+
+        HiGHS 1.8 has a hard supported lower bound of 1e-12 for
+        ``small_matrix_value``.  When a stored coefficient is smaller, multiply
+        that complete constraint row and every finite bound by one positive
+        factor.  This is algebraically exact.  If exact scaling would approach
+        HiGHS' large-value regime, fail instead of pruning the scientific matrix.
+        """
+
+        lo = np.asarray(lower, dtype=np.float64).copy()
+        hi = np.asarray(upper, dtype=np.float64).copy()
+        ptr = np.asarray(indptr, dtype=np.int64)
+        values = np.asarray(data, dtype=np.float64).copy()
+        if ptr.shape != (lo.size + 1,) or hi.shape != lo.shape:
+            raise RuntimeError(f"{label}: malformed CSR row arrays")
+        absolute = np.abs(values)
+        nonzero = absolute > 0.0
+        nz = absolute[nonzero]
+        self._matrix_input_count += int(nz.size)
+        if nz.size:
+            self._below_default_small_count += int(np.count_nonzero(nz <= _HIGHS_DEFAULT_SMALL_MATRIX_VALUE))
+            self._below_backend_small_count += int(np.count_nonzero(nz <= _HIGHS_SMALL_MATRIX_VALUE))
+            self._smallest_abs_input = min(self._smallest_abs_input, float(nz.min()))
+
+        for row in range(lo.size):
+            left, right = int(ptr[row]), int(ptr[row + 1])
+            row_abs = np.abs(values[left:right])
+            row_nonzero = row_abs[row_abs > 0.0]
+            if row_nonzero.size == 0:
+                continue
+            minimum = float(row_nonzero.min())
+            if minimum > _HIGHS_SMALL_MATRIX_VALUE:
+                continue
+            scale = _HIGHS_ROW_SCALE_TARGET / minimum
+            row_largest = float(row_nonzero.max())
+            if lo[row] > -0.5 * self._inf:
+                row_largest = max(row_largest, abs(float(lo[row])))
+            if hi[row] < 0.5 * self._inf:
+                row_largest = max(row_largest, abs(float(hi[row])))
+            if row_largest * scale >= _HIGHS_SAFE_SCALED_VALUE:
+                raise RuntimeError(
+                    f"{label} row {row}: exact scaling needed to preserve coefficient "
+                    f"{minimum:.6g} would create magnitude {row_largest * scale:.6g}; "
+                    "refusing numerical pruning"
+                )
+            values[left:right] *= scale
+            if lo[row] > -0.5 * self._inf:
+                lo[row] *= scale
+            if hi[row] < 0.5 * self._inf:
+                hi[row] *= scale
+            self._scaled_row_count += 1
+            self._max_row_scale = max(self._max_row_scale, float(scale))
+
+        remaining = np.abs(values[np.abs(values) > 0.0])
+        if remaining.size and float(remaining.min()) <= _HIGHS_SMALL_MATRIX_VALUE:
+            raise RuntimeError(f"{label}: exact row scaling left a coefficient at the HiGHS zeroing threshold")
+        return lo, hi, values
 
     def _define_columns(self) -> None:
         n = self.n
@@ -260,18 +419,19 @@ class InverseMrioMechanismProblem:
         label: str,
     ) -> tuple[int, int]:
         row_start = int(self._highs.getNumRow())
-        self._require_ok(
-            self._highs.addRows(
-                int(lower.size),
-                np.asarray(lower, dtype=np.float64),
-                np.asarray(upper, dtype=np.float64),
-                int(data.size),
-                np.asarray(indptr, dtype=np.int32),
-                np.asarray(indices, dtype=np.int32),
-                np.asarray(data, dtype=np.float64),
-            ),
-            f"adding {label} rows",
+        scaled_lower, scaled_upper, scaled_data = self._scale_rows_exactly_for_highs(
+            lower, upper, indptr, data, label=label
         )
+        status = self._highs.addRows(
+            int(scaled_lower.size),
+            scaled_lower,
+            scaled_upper,
+            int(scaled_data.size),
+            np.asarray(indptr, dtype=np.int32),
+            np.asarray(indices, dtype=np.int32),
+            scaled_data,
+        )
+        self._require_exact_ok(status, f"adding {label} rows")
         return row_start, int(self._highs.getNumRow())
 
     def _add_accounting_rows(self) -> tuple[int, int]:
@@ -420,16 +580,35 @@ class InverseMrioMechanismProblem:
         return first, int(self._highs.getNumRow())
 
     def _define_rows(self) -> None:
+        # Build the common accounting/target/objective shell first.  The large
+        # coefficient-capacity blocks are redundant for the pure-final endpoint
+        # because u=0 and L<=0<=U with x1>=0 imply Lx1<=0<=Ux1.  Deferring them
+        # gives the first cold solve a much smaller matrix and preserves its basis
+        # as a warm start when the structural rows are appended afterward.
         self._rows_accounting = self._add_accounting_rows()
         self._rows_target = self._add_target_rows()
-        self._rows_capacity_lower = self._add_capacity_rows(self.L, lower_side=True)
-        self._rows_capacity_upper = self._add_capacity_rows(self.U, lower_side=False)
+        self._rows_capacity_lower = (-1, -1)
+        self._rows_capacity_upper = (-1, -1)
         self._rows_abs_u = self._add_abs_rows(self._u, self._abs_u, "structural flow")
         self._rows_abs_f = self._add_abs_rows(self._df, self._abs_f, "final-use change")
         self._row_final_cap = self._add_sum_guard(self._abs_f, "final-use cap")
         self._row_structure_face = self._add_sum_guard(self._abs_u, "structure objective face")
         self._row_final_face = self._add_sum_guard(self._abs_f, "final-use objective face")
         self._rows_accompaniment = self._add_accompaniment_rows()
+
+    def _ensure_capacity_rows(self) -> None:
+        """Append the exact coefficient-capacity rows once, immediately before use."""
+
+        if self._capacity_rows_added:
+            return
+        self._rows_capacity_lower = self._add_capacity_rows(self.L, lower_side=True)
+        self._rows_capacity_upper = self._add_capacity_rows(self.U, lower_side=False)
+        self._capacity_rows_added = True
+        if self.verbose:
+            print(
+                f"inverse-MRIO HiGHS input census (with capacity): {self.numerical_matrix_diagnostics}",
+                flush=True,
+            )
 
     def _set_row_upper(self, row: int, upper: float) -> None:
         self._require_ok(
@@ -543,16 +722,14 @@ class InverseMrioMechanismProblem:
             if self.accompaniment_indices.size
             else 0.0
         )
-        a0, a1 = self._rows_accounting
-        t0, t1 = self._rows_target
-        l0, l1 = self._rows_capacity_lower
-        u0, u1 = self._rows_capacity_upper
-        accounting_residual = rows[a0:a1]
-        target_residual = rows[t0:t1] - self._target_rhs
-        # The lower-capacity row is L*dx-u <= -L*x0, so slack is
-        # (-L*x0) - row_value = u - L*x1.  The upper side is analogous.
-        lower_slack = -self._Lx0 - rows[l0:l1]
-        upper_slack = self._Ux0 - rows[u0:u1]
+        # Report diagnostics in the original unscaled economic coordinates.
+        # HiGHS row activities may be exactly rescaled for numerical storage.
+        accounting_residual = (
+            dx - np.asarray(self.A0.dot(dx), dtype=np.float64).reshape(-1) - df - u
+        )
+        target_residual = np.asarray(self.C.dot(dx), dtype=np.float64).reshape(-1) - self._target_rhs
+        lower_slack = u - np.asarray(self.L.dot(x1), dtype=np.float64).reshape(-1)
+        upper_slack = np.asarray(self.U.dot(x1), dtype=np.float64).reshape(-1) - u
         return InverseMechanismSolution(
             status="optimal",
             message=message,
@@ -634,6 +811,7 @@ class InverseMrioMechanismProblem:
         eta = float(eta_final_use)
         if not np.isfinite(eta) or eta < 0.0:
             raise ValueError("eta_final_use must be finite and non-negative")
+        self._ensure_capacity_rows()
         self._set_target_rhs(target_rhs)
         self._reset_guards()
         self._set_row_upper(self._row_final_cap, eta * self.F0)
@@ -642,6 +820,7 @@ class InverseMrioMechanismProblem:
     def solve_min_final_use(self, target_rhs: np.ndarray) -> InverseMechanismSolution:
         """Return the leftmost burden point: min final use, then min structure."""
 
+        self._ensure_capacity_rows()
         self._set_target_rhs(target_rhs)
         self._reset_guards()
         return self._minimize_with_lexicographic_followups(primary="final", secondary="structure")
@@ -657,6 +836,7 @@ class InverseMrioMechanismProblem:
     def solve_pure_structure(self, target_rhs: np.ndarray) -> InverseMechanismSolution:
         """Minimize structural burden subject to exactly zero final-use change."""
 
+        self._ensure_capacity_rows()
         self._set_target_rhs(target_rhs)
         self._reset_guards()
         self._set_row_upper(self._row_final_face, 0.0)
