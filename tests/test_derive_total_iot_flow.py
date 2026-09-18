@@ -166,7 +166,7 @@ def _joint_reconciliation_fixture() -> tuple[pd.Index, dict[str, str], pd.Series
     return children, child_parent, output_share, reference
 
 
-def test_joint_iot_reconciliation_preserves_rows_parent_cells_and_nonnegative_gva() -> None:
+def test_joint_iot_reconciliation_preserves_source_cells_and_allocates_positive_gva() -> None:
     children, child_parent, output_share, reference = _joint_reconciliation_fixture()
     Z_dom = pd.DataFrame(
         [[5.5, 0.5], [5.5, 0.5]], index=children, columns=children
@@ -174,7 +174,7 @@ def test_joint_iot_reconciliation_preserves_rows_parent_cells_and_nonnegative_gv
     Z_imp = pd.DataFrame(0.0, index=children, columns=children)
     x = pd.Series([10.0, 10.0], index=children, dtype="float64")
 
-    dom, imp, diagnostic, checks = MODULE._reconcile_iot_intermediate_transactions(
+    dom, imp, production_v, diagnostic, checks = MODULE._reconcile_iot_intermediate_transactions(
         Z_dom,
         Z_imp,
         child_parent=child_parent,
@@ -182,26 +182,63 @@ def test_joint_iot_reconciliation_preserves_rows_parent_cells_and_nonnegative_gv
         x_domestic=x,
         reference_total=reference,
     )
+    assert production_v is not None
     pd.testing.assert_series_equal(dom.sum(axis=1), Z_dom.sum(axis=1), check_names=False)
     pd.testing.assert_series_equal(imp.sum(axis=1), Z_imp.sum(axis=1), check_names=False)
-    assert float(dom.to_numpy().sum()) == pytest.approx(float(Z_dom.to_numpy().sum()))
     total_columns = dom.sum(axis=0).add(imp.sum(axis=0))
-    assert float(total_columns.max()) <= 10.0 + 1e-9
-    assert (diagnostic["generated_B1G"].dropna() >= -1e-10).all()
+    pd.testing.assert_series_equal(
+        total_columns + production_v.loc["D21X31"] + production_v.loc["B1G"],
+        x,
+        check_names=False,
+        rtol=1e-10,
+        atol=1e-10,
+    )
+    assert float(production_v.loc["B1G"].min()) > 0.0
+    assert float(production_v.loc["D21X31"].abs().sum()) == pytest.approx(0.0)
+    assert (diagnostic["generated_B1G"].dropna() > 0.0).all()
     assert {row["status"] for row in checks} == {"pass"}
-    assert ("TOTAL", "tc.production_account_capacity") in {
-        (row["flow"], row["check_id"]) for row in checks
-    }
+    assert {
+        ("TOTAL", "tc.production_account_identity"),
+        ("TOTAL", "tc.parent_d21x31"),
+    }.issubset({(row["flow"], row["check_id"]) for row in checks})
 
 
-def test_joint_iot_reconciliation_fails_when_parent_gva_capacity_is_impossible() -> None:
+def test_joint_iot_reconciliation_preserves_negative_d21_source_sign() -> None:
+    children, child_parent, output_share, _reference = _joint_reconciliation_fixture()
+    reference = SimpleNamespace(
+        V=pd.DataFrame(
+            [[10.0], [-2.0]],
+            index=pd.Index(["B1G", "D21X31"]),
+            columns=pd.Index(["A"]),
+        )
+    )
+    Z_dom = pd.DataFrame(
+        [[5.5, 0.5], [5.5, 0.5]], index=children, columns=children
+    )
+    Z_imp = pd.DataFrame(0.0, index=children, columns=children)
+    x = pd.Series([10.0, 10.0], index=children, dtype="float64")
+    _dom, _imp, production_v, _diagnostic, _checks = MODULE._reconcile_iot_intermediate_transactions(
+        Z_dom,
+        Z_imp,
+        child_parent=child_parent,
+        dom_output_share=output_share,
+        x_domestic=x,
+        reference_total=reference,
+    )
+    assert production_v is not None
+    assert float(production_v.loc["D21X31"].sum()) == pytest.approx(-2.0, abs=1e-10)
+    assert bool((production_v.loc["D21X31"] <= 1e-12).all())
+    assert bool((production_v.loc["B1G"] >= -1e-12).all())
+
+
+def test_joint_iot_reconciliation_fails_when_production_account_is_infeasible() -> None:
     children, child_parent, output_share, reference = _joint_reconciliation_fixture()
     Z_dom = pd.DataFrame(
         [[5.5, 0.5], [5.5, 0.5]], index=children, columns=children
     )
     Z_imp = pd.DataFrame(0.0, index=children, columns=children)
     x = pd.Series([4.0, 4.0], index=children, dtype="float64")
-    with pytest.raises(ValueError, match="Production-account capacity infeasible"):
+    with pytest.raises(ValueError, match="negative child B1G"):
         MODULE._reconcile_iot_intermediate_transactions(
             Z_dom,
             Z_imp,
@@ -229,7 +266,6 @@ def test_joint_iot_reconciliation_rejects_positive_output_without_exio_support()
             x_domestic=x,
             reference_total=reference,
         )
-
 
 def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_primitive(tmp_path, "DOM", 1.0, 1.0)
@@ -259,7 +295,13 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
         V = None
         if flow in {"DOM", "TOTAL"}:
             p1 = MODULE.flow_use_total(Z_dom, Y_dom)
-            V = pd.DataFrame([p1], index=pd.Index(["P1"]))
+            d21 = pd.Series(0.0, index=p1.index, dtype="float64")
+            total_input = Z_dom.add(Z_imp).sum(axis=0).reindex(p1.index)
+            b1g = p1 - total_input - d21
+            V = pd.DataFrame(
+                [p1, d21, b1g],
+                index=pd.Index(["P1", "D21X31", "B1G"]),
+            )
         return SimpleNamespace(Z=Z, Y=Y, M=sources[flow], V=V, meta={"source_rounding_quantum": 1.0})
 
     monkeypatch.setattr(MODULE, "load_eurostat_iot", fake_source)
@@ -271,7 +313,8 @@ def test_derive_constructs_total_shared_x_a_and_source_m(tmp_path: Path, monkeyp
         ("DOM", "tc.child_row_margin"),
         ("DOM", "tc.parent_z_cell"),
         ("IMP", "tc.parent_z_cell"),
-        ("TOTAL", "tc.production_account_capacity"),
+        ("TOTAL", "tc.production_account_identity"),
+        ("TOTAL", "tc.parent_d21x31"),
         ("TOTAL", "tc.nonnegative_child_b1g"),
         ("TOTAL", "tc.kl_convergence"),
         ("DOM", "tc.dom_output_margin"),

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 
 def test_ras_balance_hits_margins():
@@ -217,3 +218,64 @@ def test_partition_ipfp_rejects_unknown_relation() -> None:
             prior,
             (IPFPMargin("bad", groups, np.array([2.0, 2.0]), relation="lower"),),
         )
+
+
+# KL_LINEAR_EQUALITY_TESTS_V1
+def test_linear_kl_reconciliation_hits_overlapping_equalities() -> None:
+    from ecolecon_mrio.balancing import kl_balance_linear_equalities
+
+    prior = np.array([1.0, 1.0, 1.0])
+    constraints = np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+    result, stats = kl_balance_linear_equalities(
+        prior, constraints, np.array([4.0, 4.0]), rtol=1e-12, atol=1e-10
+    )
+    np.testing.assert_allclose(constraints @ result, np.array([4.0, 4.0]), atol=1e-10)
+    assert result[0] == pytest.approx(result[2])
+    assert bool((result > 0.0).all())
+    assert stats.max_normalized_gap <= 1.0
+
+
+def test_linear_kl_reconciliation_supports_signed_coefficients() -> None:
+    from ecolecon_mrio.balancing import kl_balance_linear_equalities
+
+    prior = np.array([2.0, 1.0])
+    constraints = np.array([[1.0, -1.0]])
+    result, stats = kl_balance_linear_equalities(
+        prior, constraints, np.array([1.0]), rtol=1e-12, atol=1e-10
+    )
+    assert float(result[0] - result[1]) == pytest.approx(1.0, abs=1e-10)
+    assert bool((result >= 0.0).all())
+    assert stats.max_normalized_gap <= 1.0
+
+
+# KL_LINEAR_FEASIBILITY_FIRST_TEST_V2
+def test_linear_kl_skips_root_polish_when_lbfgs_candidate_is_feasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ecolecon_mrio.balancing as balancing
+
+    prior = np.array([1.0, 2.0])
+    constraints = np.eye(2, dtype="float64")
+
+    def unexpected_root(*_args, **_kwargs):
+        raise AssertionError("Krylov root polish must not run for an already feasible KL candidate")
+
+    monkeypatch.setattr(balancing, "root", unexpected_root)
+    result, stats = balancing.kl_balance_linear_equalities(
+        prior,
+        constraints,
+        prior.copy(),
+        rtol=1e-12,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(result, prior, rtol=0.0, atol=1e-12)
+    assert stats.max_normalized_gap <= 1.0
+
+
+def test_linear_kl_reconciliation_fails_without_structural_support() -> None:
+    from ecolecon_mrio.balancing import kl_balance_linear_equalities
+
+    prior = np.array([1.0, 0.0])
+    constraints = np.array([[0.0, 1.0]])
+    with pytest.raises(ValueError, match="structural support"):
+        kl_balance_linear_equalities(prior, constraints, np.array([1.0]))

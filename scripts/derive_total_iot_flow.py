@@ -11,7 +11,9 @@ from typing import Iterable, Mapping, cast
 import numpy as np
 import pandas as pd
 
-from ecolecon_mrio.balancing import IPFPMargin, ipfp_balance_partitions
+from scipy import sparse
+
+from ecolecon_mrio.balancing import kl_balance_linear_equalities
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.diagnostics import calc_spectral_radius
 from ecolecon_mrio.eurostat_iot import ParsedEurostatIOT, load_eurostat_iot
@@ -528,107 +530,69 @@ def _output_conditioned_technology_prior(
     return prior
 
 
-# WHOLE_IOT_KL_RECONCILIATION_V1
-def _production_account_column_capacity(
+# WHOLE_IOT_PRODUCTION_V_RECONCILIATION_V2
+def _signed_parent_magnitude_prior(
     *,
-    Z_dom: pd.DataFrame,
-    Z_imp: pd.DataFrame,
+    published: pd.Series,
+    proxy: pd.Series,
     child_parent: Mapping[str, str],
-    x_domestic: pd.Series,
-    reference_total: ParsedEurostatIOT,
-) -> tuple[pd.Series, pd.DataFrame]:
-    """Return joint DOM+IMP producer-column caps implied by the production account.
+    children: pd.Index,
+    row_code: str,
+) -> tuple[pd.Series, pd.Series]:
+    """Return a sign-preserving non-negative child magnitude prior.
 
-    For a parent ``j`` with non-negative published B1G, generated child B1G may not
-    become negative merely because donor technology was disaggregated badly.  The
-    repository allocates D21X31 over children in proportion to TOTAL intermediate
-    input.  With ``U_j`` parent intermediate input and ``D_j`` published D21X31,
-
-        B1G_b = x_b - (1 + D_j/U_j) * u_b.
-
-    Hence, when ``kappa_j = 1 + D_j/U_j > 0``, non-negative child B1G requires
-    ``u_b <= x_b/kappa_j``.  Parents with genuinely negative published B1G are not
-    silently reclassified; their sign remains source evidence rather than a generic
-    non-negativity rule.  Zero-output children always receive zero producer input.
+    The source parent sign is evidence; absent child-specific evidence the split
+    must not invent offsetting tax/subsidy or positive/negative account entries
+    inside one parent merely to make the monetary table balance.  The non-negative
+    magnitude is therefore the KL variable and the parent sign enters the linear
+    accounting constraint separately.
     """
-    children = pd.Index(Z_dom.index.astype(str))
-    if not Z_dom.index.equals(Z_dom.columns) or not Z_imp.index.equals(children) or not Z_imp.columns.equals(children):
-        raise ValueError("Joint production-account reconciliation requires aligned DOM/IMP child matrices.")
-    x = x_domestic.reindex(children).astype("float64")
-    if not np.isfinite(x.to_numpy(dtype="float64")).all() or bool((x < -_GENERATED_IDENTITY_ATOL).any()):
-        raise ValueError("Target domestic output must be finite and non-negative.")
-    x = x.mask(x.abs() <= _GENERATED_IDENTITY_ATOL, 0.0)
-    total_columns = Z_dom.add(Z_imp).sum(axis=0).reindex(children).astype("float64")
-    total_mass = max(float(total_columns.sum()), 0.0)
-    capacity = pd.Series(total_mass, index=children, dtype="float64", name="production_account_capacity")
-    capacity.loc[x.eq(0.0)] = 0.0
-
-    parent_axis, groups = _ordered_parent_groups(children, child_parent)
-    source_b1g = _source_row(reference_total, "B1G")
-    source_d21 = _source_row(reference_total, "D21X31")
-    if source_b1g is not None:
-        missing = set(parent_axis.astype(str)) - set(source_b1g.index.astype(str))
-        if missing:
-            raise ValueError(f"Source B1G is missing producer parents: {sorted(missing)!r}.")
-    if source_d21 is not None:
-        missing = set(parent_axis.astype(str)) - set(source_d21.index.astype(str))
-        if missing:
-            raise ValueError(f"Source D21X31 is missing producer parents: {sorted(missing)!r}.")
-
-    records: list[dict[str, object]] = []
+    prior = pd.Series(0.0, index=children, dtype="float64")
+    signs = pd.Series(0.0, index=children, dtype="float64")
+    _, groups = _ordered_parent_groups(children, child_parent)
     for parent, group in groups.items():
-        u_parent = float(total_columns.reindex(group).sum())
-        x_parent = float(x.reindex(group).sum())
-        published_b1g = float("nan") if source_b1g is None else float(source_b1g.loc[parent])
-        published_d21 = float("nan") if source_d21 is None else float(source_d21.loc[parent])
-        constrained = source_b1g is not None and published_b1g >= -_GENERATED_IDENTITY_ATOL
-        kappa = float("nan")
-        if constrained:
-            if source_d21 is None:
-                raise ValueError(
-                    "Non-negative published B1G cannot constrain child production accounts without D21X31."
-                )
-            if u_parent <= _GENERATED_IDENTITY_ATOL:
-                if abs(published_d21) > _GENERATED_IDENTITY_ATOL:
-                    raise ValueError(
-                        "Production-account feasibility conflict: nonzero D21X31 under zero parent "
-                        f"intermediate input for parent={parent!r}, D21X31={published_d21:.12g}."
-                    )
-            else:
-                kappa = 1.0 + published_d21 / u_parent
-                if kappa > _GENERATED_IDENTITY_ATOL:
-                    local_cap = x.reindex(group).div(kappa).clip(lower=0.0)
-                    capacity.loc[group] = np.minimum(
-                        capacity.loc[group].to_numpy(dtype="float64"),
-                        local_cap.to_numpy(dtype="float64"),
-                    )
-                    available = float(capacity.reindex(group).sum())
-                    tolerance = _GENERATED_IDENTITY_ATOL + _GENERATED_IDENTITY_RTOL * max(
-                        abs(u_parent), abs(available), 1.0
-                    )
-                    if u_parent > available + tolerance:
-                        raise ValueError(
-                            "Production-account capacity infeasible before KL reconciliation: "
-                            f"parent={parent!r}, required_TOTAL_intermediate={u_parent:.12g}, "
-                            f"available_nonnegative_B1G_capacity={available:.12g}, "
-                            f"x_parent={x_parent:.12g}, D21X31={published_d21:.12g}, "
-                            f"published_B1G={published_b1g:.12g}."
-                        )
-        for child in group:
-            records.append(
-                {
-                    "buyer_parent": parent,
-                    "buyer_child": child,
-                    "domestic_output": float(x.loc[child]),
-                    "parent_total_intermediate": u_parent,
-                    "published_parent_D21X31": published_d21,
-                    "published_parent_B1G": published_b1g,
-                    "production_kappa": kappa,
-                    "production_account_capacity": float(capacity.loc[child]),
-                    "source_nonnegative_B1G_constraint": bool(constrained),
-                }
+        if parent not in published.index:
+            raise ValueError(f"Source {row_code} is missing producer parent {parent!r}.")
+        value = float(published.loc[parent])
+        if not np.isfinite(value):
+            raise ValueError(f"Source {row_code} is non-finite for parent {parent!r}.")
+        if abs(value) <= _GENERATED_IDENTITY_ATOL:
+            continue
+        weights = proxy.reindex(group).astype("float64")
+        if not np.isfinite(weights.to_numpy(dtype="float64")).all() or bool((weights < 0.0).any()):
+            raise ValueError(
+                f"Invalid {row_code} child-allocation prior for parent {parent!r}: "
+                f"proxy={weights.to_dict()!r}."
             )
-    return capacity, pd.DataFrame(records)
+        denominator = float(weights.sum())
+        if denominator <= _GENERATED_IDENTITY_ATOL:
+            raise ValueError(
+                f"No structural support for nonzero {row_code} parent {parent!r}: "
+                f"published={value:.12g}."
+            )
+        prior.loc[group] = weights.to_numpy(dtype="float64") * (abs(value) / denominator)
+        signs.loc[group] = 1.0 if value > 0.0 else -1.0
+    return prior, signs
+
+
+def _append_linear_constraint(
+    rows: list[int],
+    columns: list[int],
+    values: list[float],
+    targets: list[float],
+    entries: Iterable[tuple[int, float]],
+    target: float,
+) -> None:
+    """Append one sparse equality row, omitting explicit zero coefficients."""
+    row = len(targets)
+    for column, value in entries:
+        coefficient = float(value)
+        if coefficient == 0.0:
+            continue
+        rows.append(row)
+        columns.append(int(column))
+        values.append(coefficient)
+    targets.append(float(target))
 
 
 def _reconcile_iot_intermediate_transactions(
@@ -639,23 +603,38 @@ def _reconcile_iot_intermediate_transactions(
     dom_output_share: pd.Series,
     x_domestic: pd.Series,
     reference_total: ParsedEurostatIOT,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict[str, object]]]:
-    """Jointly reconcile DOM/IMP Z to source cells and production-account feasibility.
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame | None, pd.DataFrame, list[dict[str, object]]]:
+    """Jointly reconcile DOM/IMP Z and the production-account V closure.
 
-    The free variables are the two non-negative child transaction matrices.  EXIO
-    enters only through the output-conditioned KL priors.  Hard equalities preserve
-    each flow's child-row margins and every Eurostat parent Z cell.  A joint upper
-    partition enforces the TOTAL producer-column capacity implied by source B1G and
-    D21X31.  This is one feasibility problem; there is no post-hoc GVA residual fix.
+    Atomic final demand remains fixed in Step 1, so DOM row use fixes child output.
+    EXIO supplies only the non-negative transaction prior.  The hard source
+    equalities are flow-specific child intermediate-sales rows, every Eurostat
+    parent Z cell (one algebraically redundant block per supplier parent is omitted
+    from the numerical system but checked afterwards), and the parent D21X31
+    control.  At child level the exact production account is
+
+        u_b + D21X31_b + B1G_b = x_b.
+
+    D21X31 and B1G enter as sign-preserving non-negative magnitudes.  This removes
+    the former proportional-D21 capacity formula: child GVA is now allocated in
+    the same information projection instead of appearing only as a non-negativity
+    boundary.  Published parent B1G is independently rounded source evidence; its
+    generated aggregate is implied by P1, Z and D21X31 and is validated later by
+    the source-rounding contract rather than redundantly forced as another exact
+    equality.
     """
     children = pd.Index(Z_dom.index.astype(str))
     if not Z_dom.index.equals(Z_dom.columns):
         raise ValueError("DOM Z must be square before joint IOT reconciliation.")
     if not Z_imp.index.equals(children) or not Z_imp.columns.equals(children):
         raise ValueError("DOM and IMP child topology/order differs before joint IOT reconciliation.")
-    parent_axis, groups = _ordered_parent_groups(children, child_parent)
     n = len(children)
+    parent_axis, groups = _ordered_parent_groups(children, child_parent)
     p = len(parent_axis)
+    x = x_domestic.reindex(children).astype("float64")
+    if not np.isfinite(x.to_numpy(dtype="float64")).all() or bool((x < -_GENERATED_IDENTITY_ATOL).any()):
+        raise ValueError("Target domestic output must be finite and non-negative.")
+    x = x.mask(x.abs() <= _GENERATED_IDENTITY_ATOL, 0.0)
 
     block_targets = {
         "DOM": _aggregate_square(Z_dom, child_parent, parent_axis),
@@ -670,68 +649,191 @@ def _reconcile_iot_intermediate_transactions(
             Z_dom,
             child_parent=child_parent,
             dom_output_share=dom_output_share,
-            x_domestic=x_domestic,
+            x_domestic=x,
             flow="DOM",
         ),
         "IMP": _output_conditioned_technology_prior(
             Z_imp,
             child_parent=child_parent,
             dom_output_share=dom_output_share,
-            x_domestic=x_domestic,
+            x_domestic=x,
             flow="IMP",
         ),
     }
-    capacity, diagnostic = _production_account_column_capacity(
-        Z_dom=Z_dom,
-        Z_imp=Z_imp,
-        child_parent=child_parent,
-        x_domestic=x_domestic,
-        reference_total=reference_total,
-    )
+
+    source_d21 = _source_row(reference_total, "D21X31")
+    source_b1g = _source_row(reference_total, "B1G")
+    if source_d21 is None or source_b1g is None:
+        # Non-production-account fixtures/datasets still receive the source-cell
+        # Z reconciliation, but must not claim the production-V method downstream.
+        production_v: pd.DataFrame | None = None
+        d21_prior = pd.Series(0.0, index=children, dtype="float64")
+        d21_sign = pd.Series(0.0, index=children, dtype="float64")
+        b1g_prior = pd.Series(0.0, index=children, dtype="float64")
+        b1g_sign = pd.Series(0.0, index=children, dtype="float64")
+        production_account_available = False
+    else:
+        production_account_available = True
+        preliminary_columns = Z_dom.add(Z_imp).sum(axis=0).reindex(children).astype("float64")
+        # Product-tax/subsidy evidence follows the existing intermediate-input
+        # proxy, but is now a soft child prior rather than a hard proportional rule.
+        d21_prior, d21_sign = _signed_parent_magnitude_prior(
+            published=source_d21,
+            proxy=preliminary_columns.where(x.gt(0.0), 0.0),
+            child_parent=child_parent,
+            children=children,
+            row_code="D21X31",
+        )
+        # The exact generated parent GVA is implied by P1 - Z - D21X31.  Use that
+        # implied total for support/scale and the published B1G only as independent
+        # rounded source validation.  This avoids fabricating epsilon support when
+        # a published 0.00 is merely a rounded small balance.
+        implied_parent_b1g = pd.Series(0.0, index=parent_axis, dtype="float64")
+        for parent, group in groups.items():
+            implied_parent_b1g.loc[parent] = (
+                float(x.reindex(group).sum())
+                - float(Z_dom.add(Z_imp).loc[:, group].to_numpy(dtype="float64").sum())
+                - float(source_d21.loc[parent])
+            )
+        b1g_prior, b1g_sign = _signed_parent_magnitude_prior(
+            published=implied_parent_b1g,
+            proxy=x,
+            child_parent=child_parent,
+            children=children,
+            row_code="implied_B1G",
+        )
+        production_v = pd.DataFrame(index=pd.Index(["D21X31", "B1G"]), columns=children, dtype="float64")
 
     parent_id = {str(parent): i for i, parent in enumerate(parent_axis.astype(str))}
     child_parent_ids = np.array(
         [parent_id[child_parent.get(str(child), str(child))] for child in children],
         dtype=np.int64,
     )
-    base_blocks = child_parent_ids[:, None] * p + child_parent_ids[None, :]
-    stacked_prior = np.vstack(
-        [priors["DOM"].to_numpy(dtype="float64"), priors["IMP"].to_numpy(dtype="float64")]
-    )
-    row_groups = np.broadcast_to(
-        np.arange(2 * n, dtype=np.int64)[:, None], stacked_prior.shape
-    )
-    block_groups = np.vstack([base_blocks, base_blocks + p * p])
-    column_groups = np.broadcast_to(
-        np.arange(n, dtype=np.int64)[None, :], stacked_prior.shape
-    )
-    stacked_rows = np.concatenate(
-        [row_targets["DOM"].to_numpy(dtype="float64"), row_targets["IMP"].to_numpy(dtype="float64")]
-    )
-    stacked_blocks = np.concatenate(
+    parent_children = {
+        i: np.flatnonzero(child_parent_ids == i).astype(np.int64)
+        for i in range(p)
+    }
+
+    dom_offset = 0
+    imp_offset = n * n
+    d21_offset = 2 * n * n
+    b1g_offset = d21_offset + n
+    variable_count = b1g_offset + n
+    prior = np.concatenate(
         [
-            block_targets["DOM"].to_numpy(dtype="float64").reshape(-1),
-            block_targets["IMP"].to_numpy(dtype="float64").reshape(-1),
+            priors["DOM"].to_numpy(dtype="float64").reshape(-1),
+            priors["IMP"].to_numpy(dtype="float64").reshape(-1),
+            d21_prior.to_numpy(dtype="float64"),
+            b1g_prior.to_numpy(dtype="float64"),
         ]
     )
-    reconciled_values, stats = ipfp_balance_partitions(
-        stacked_prior,
-        (
-            IPFPMargin("flow_child_rows", row_groups, stacked_rows),
-            IPFPMargin("flow_eurostat_parent_blocks", block_groups, stacked_blocks),
-            IPFPMargin(
-                "total_production_account_capacity",
-                column_groups,
-                capacity.to_numpy(dtype="float64"),
-                relation="upper",
-            ),
-        ),
+
+    matrix_rows: list[int] = []
+    matrix_columns: list[int] = []
+    matrix_values: list[float] = []
+    targets: list[float] = []
+
+    def z_index(offset: int, row: int, column: int) -> int:
+        return offset + row * n + column
+
+    # Exact child intermediate-sales rows for each flow.
+    for flow, offset in (("DOM", dom_offset), ("IMP", imp_offset)):
+        for row in range(n):
+            _append_linear_constraint(
+                matrix_rows,
+                matrix_columns,
+                matrix_values,
+                targets,
+                ((z_index(offset, row, column), 1.0) for column in range(n)),
+                float(row_targets[flow].iloc[row]),
+            )
+
+    # Parent Z cells are also exact.  Within each supplier parent, the final buyer
+    # block is implied by the child-row totals plus all preceding buyer blocks, so
+    # omit that one numerical row to avoid a redundant dual equality.  Post-solve
+    # validation still checks every source parent cell.
+    if p > 1:
+        for flow, offset in (("DOM", dom_offset), ("IMP", imp_offset)):
+            for supplier_parent in range(p):
+                supplier_rows = parent_children[supplier_parent]
+                for buyer_parent in range(p - 1):
+                    buyer_columns = parent_children[buyer_parent]
+                    _append_linear_constraint(
+                        matrix_rows,
+                        matrix_columns,
+                        matrix_values,
+                        targets,
+                        (
+                            (z_index(offset, int(row), int(column)), 1.0)
+                            for row in supplier_rows
+                            for column in buyer_columns
+                        ),
+                        float(block_targets[flow].iloc[supplier_parent, buyer_parent]),
+                    )
+
+    if production_account_available:
+        assert source_d21 is not None
+        # D21X31 is a primitive parent source control.  Its child magnitudes are
+        # inferred jointly but aggregate exactly to the published parent amount.
+        for parent_position, parent in enumerate(parent_axis.astype(str)):
+            child_positions = parent_children[parent_position]
+            _append_linear_constraint(
+                matrix_rows,
+                matrix_columns,
+                matrix_values,
+                targets,
+                ((d21_offset + int(column), 1.0) for column in child_positions),
+                abs(float(source_d21.loc[parent])),
+            )
+
+        # Child production account: raw DOM+IMP intermediate inputs, signed
+        # D21X31 and signed B1G must close exactly to fixed Step-1 output.
+        for column in range(n):
+            entries: list[tuple[int, float]] = [
+                (z_index(dom_offset, row, column), 1.0) for row in range(n)
+            ]
+            entries.extend(
+                (z_index(imp_offset, row, column), 1.0) for row in range(n)
+            )
+            entries.extend(
+                [
+                    (d21_offset + column, float(d21_sign.iloc[column])),
+                    (b1g_offset + column, float(b1g_sign.iloc[column])),
+                ]
+            )
+            _append_linear_constraint(
+                matrix_rows,
+                matrix_columns,
+                matrix_values,
+                targets,
+                entries,
+                float(x.iloc[column]),
+            )
+
+    constraint_matrix = sparse.coo_matrix(
+        (matrix_values, (matrix_rows, matrix_columns)),
+        shape=(len(targets), variable_count),
+        dtype="float64",
+    ).tocsr()
+    solution, stats = kl_balance_linear_equalities(
+        prior,
+        constraint_matrix,
+        np.asarray(targets, dtype="float64"),
         rtol=_GENERATED_IDENTITY_RTOL,
         atol=_GENERATED_IDENTITY_ATOL,
     )
+    flat = solution.reshape(-1)
     reconciled = {
-        "DOM": pd.DataFrame(reconciled_values[:n, :], index=children, columns=children),
-        "IMP": pd.DataFrame(reconciled_values[n:, :], index=children, columns=children),
+        "DOM": pd.DataFrame(
+            flat[dom_offset:imp_offset].reshape(n, n),
+            index=children,
+            columns=children,
+        ),
+        "IMP": pd.DataFrame(
+            flat[imp_offset:d21_offset].reshape(n, n),
+            index=children,
+            columns=children,
+        ),
     }
 
     checks: list[dict[str, object]] = []
@@ -774,24 +876,7 @@ def _reconcile_iot_intermediate_transactions(
         )
 
     total_columns = reconciled["DOM"].sum(axis=0).add(reconciled["IMP"].sum(axis=0))
-    capacity_violation = total_columns.sub(capacity).clip(lower=0.0)
-    cap_gap = float(capacity_violation.max()) if len(capacity_violation) else 0.0
-    cap_tolerance = _GENERATED_IDENTITY_ATOL + _GENERATED_IDENTITY_RTOL * np.maximum(
-        total_columns.abs(), capacity.abs()
-    )
-    if bool((capacity_violation > cap_tolerance).any()):
-        bad = capacity_violation.idxmax()
-        raise ValueError(
-            "Joint KL reconciliation violated production-account capacity: "
-            f"child={bad!r}, input={float(total_columns.loc[bad]):.12g}, "
-            f"capacity={float(capacity.loc[bad]):.12g}."
-        )
-
-    zero_children = [
-        str(child)
-        for child, output in x_domestic.items()
-        if abs(float(output)) <= _GENERATED_IDENTITY_ATOL
-    ]
+    zero_children = [str(child) for child in children if float(x.loc[child]) == 0.0]
     zero_gap = 0.0
     if zero_children:
         zero_inputs = total_columns.reindex(zero_children).astype("float64")
@@ -803,20 +888,35 @@ def _reconcile_iot_intermediate_transactions(
             atol=_GENERATED_IDENTITY_ATOL,
         )
 
-    source_b1g = _source_row(reference_total, "B1G")
-    source_d21 = _source_row(reference_total, "D21X31")
-    generated_b1g = pd.Series(np.nan, index=children, dtype="float64")
+    production_gap = 0.0
+    d21_parent_gap = 0.0
     b1g_violation = 0.0
-    if source_b1g is not None and source_d21 is not None:
-        d21_child = _allocate_source_parent_vector(
-            published=source_d21,
-            child_parent=child_parent,
-            children=children,
-            proxy=total_columns,
-            flow="TOTAL",
-            row_code="D21X31",
+    generated_b1g = pd.Series(np.nan, index=children, dtype="float64")
+    if production_account_available:
+        assert source_d21 is not None and source_b1g is not None and production_v is not None
+        d21_magnitude = pd.Series(flat[d21_offset:b1g_offset], index=children, dtype="float64")
+        b1g_magnitude = pd.Series(flat[b1g_offset:], index=children, dtype="float64")
+        generated_d21 = d21_magnitude.mul(d21_sign)
+        auxiliary_b1g = b1g_magnitude.mul(b1g_sign)
+        generated_b1g = x - total_columns - generated_d21
+        production_gap = _assert_close(
+            "joint production-account B1G auxiliary",
+            generated_b1g,
+            auxiliary_b1g,
+            rtol=_GENERATED_IDENTITY_RTOL,
+            atol=_GENERATED_IDENTITY_ATOL,
         )
-        generated_b1g = x_domestic.reindex(children).astype("float64") - total_columns - d21_child
+        production_v.loc["D21X31"] = generated_d21
+        production_v.loc["B1G"] = generated_b1g
+        d21_parent_gap = _assert_close(
+            "joint D21X31 parent reconstruction",
+            _aggregate_columns(
+                production_v.loc[["D21X31"]], child_parent, source_d21.index.astype(str)
+            ).loc["D21X31"],
+            source_d21,
+            rtol=_GENERATED_IDENTITY_RTOL,
+            atol=_GENERATED_IDENTITY_ATOL,
+        )
         constrained_children = [
             child
             for parent, group in groups.items()
@@ -829,68 +929,100 @@ def _reconcile_iot_intermediate_transactions(
             if b1g_violation > _GENERATED_IDENTITY_ATOL:
                 child = str(negatives.idxmax())
                 raise ValueError(
-                    "Generated child B1G is negative despite non-negative published parent B1G: "
-                    f"child={child!r}, B1G={float(generated_b1g.loc[child]):.12g}."
+                    "Joint production-account reconciliation generated negative child B1G "
+                    f"under a non-negative source parent: child={child!r}, "
+                    f"B1G={float(generated_b1g.loc[child]):.12g}."
                 )
-
-    diagnostic = diagnostic.copy()
-    if not diagnostic.empty:
-        before_dom = Z_dom.sum(axis=0)
-        before_imp = Z_imp.sum(axis=0)
-        diagnostic["before_DOM_column_input"] = diagnostic["buyer_child"].map(before_dom)
-        diagnostic["before_IMP_column_input"] = diagnostic["buyer_child"].map(before_imp)
-        diagnostic["after_DOM_column_input"] = diagnostic["buyer_child"].map(reconciled["DOM"].sum(axis=0))
-        diagnostic["after_IMP_column_input"] = diagnostic["buyer_child"].map(reconciled["IMP"].sum(axis=0))
-        diagnostic["after_TOTAL_column_input"] = diagnostic["buyer_child"].map(total_columns)
-        buyer_children = cast(pd.Series, diagnostic["buyer_child"]).astype(str)
-        diagnostic["generated_B1G"] = buyer_children.map(
-            lambda child: generated_b1g.get(child, np.nan)
+        checks.extend(
+            [
+                {
+                    "validation_class": "transformation_coherence",
+                    "check_id": "tc.production_account_identity",
+                    "flow": "TOTAL",
+                    "status": "pass",
+                    "max_abs_gap": production_gap,
+                    "rtol": _GENERATED_IDENTITY_RTOL,
+                    "atol": _GENERATED_IDENTITY_ATOL,
+                },
+                {
+                    "validation_class": "transformation_coherence",
+                    "check_id": "tc.parent_d21x31",
+                    "flow": "TOTAL",
+                    "status": "pass",
+                    "max_abs_gap": d21_parent_gap,
+                    "rtol": _GENERATED_IDENTITY_RTOL,
+                    "atol": _GENERATED_IDENTITY_ATOL,
+                },
+                {
+                    "validation_class": "transformation_coherence",
+                    "check_id": "tc.nonnegative_child_b1g",
+                    "flow": "TOTAL",
+                    "status": "pass",
+                    "max_abs_gap": b1g_violation,
+                    "rtol": 0.0,
+                    "atol": _GENERATED_IDENTITY_ATOL,
+                },
+                {
+                    "validation_class": "transformation_coherence",
+                    "check_id": "tc.zero_target_output_column",
+                    "flow": "TOTAL",
+                    "status": "pass",
+                    "max_abs_gap": zero_gap,
+                    "rtol": 0.0,
+                    "atol": _GENERATED_IDENTITY_ATOL,
+                },
+            ]
         )
-        diagnostic["kl_iterations"] = stats.iterations
-        diagnostic["kl_max_normalized_gap"] = stats.max_normalized_gap
 
-    checks.extend(
-        [
-            {
-                "validation_class": "transformation_coherence",
-                "check_id": "tc.production_account_capacity",
-                "flow": "TOTAL",
-                "status": "pass",
-                "max_abs_gap": cap_gap,
-                "rtol": _GENERATED_IDENTITY_RTOL,
-                "atol": _GENERATED_IDENTITY_ATOL,
-            },
-            {
-                "validation_class": "transformation_coherence",
-                "check_id": "tc.nonnegative_child_b1g",
-                "flow": "TOTAL",
-                "status": "pass",
-                "max_abs_gap": b1g_violation,
-                "rtol": 0.0,
-                "atol": _GENERATED_IDENTITY_ATOL,
-            },
-            {
-                "validation_class": "transformation_coherence",
-                "check_id": "tc.zero_target_output_column",
-                "flow": "TOTAL",
-                "status": "pass",
-                "max_abs_gap": zero_gap,
-                "rtol": 0.0,
-                "atol": _GENERATED_IDENTITY_ATOL,
-            },
-            {
-                "validation_class": "transformation_coherence",
-                "check_id": "tc.kl_convergence",
-                "flow": "TOTAL",
-                "status": "pass",
-                "max_abs_gap": max(stats.max_abs_gap_by_family.values(), default=0.0),
-                "rtol": _GENERATED_IDENTITY_RTOL,
-                "atol": _GENERATED_IDENTITY_ATOL,
-            },
-        ]
+    checks.append(
+        {
+            "validation_class": "transformation_coherence",
+            "check_id": "tc.kl_convergence",
+            "flow": "TOTAL",
+            "status": "pass",
+            "max_abs_gap": stats.max_abs_gap,
+            "rtol": _GENERATED_IDENTITY_RTOL,
+            "atol": _GENERATED_IDENTITY_ATOL,
+        }
     )
-    return reconciled["DOM"], reconciled["IMP"], diagnostic, checks
 
+    diagnostic_records: list[dict[str, object]] = []
+    before_dom = Z_dom.sum(axis=0)
+    before_imp = Z_imp.sum(axis=0)
+    for parent, group in groups.items():
+        published_d21 = float("nan") if source_d21 is None else float(source_d21.loc[parent])
+        published_b1g = float("nan") if source_b1g is None else float(source_b1g.loc[parent])
+        generated_parent_b1g = float(generated_b1g.reindex(group).sum()) if production_account_available else float("nan")
+        for child in group:
+            diagnostic_records.append(
+                {
+                    "buyer_parent": parent,
+                    "buyer_child": child,
+                    "domestic_output": float(x.loc[child]),
+                    "published_parent_D21X31": published_d21,
+                    "published_parent_B1G": published_b1g,
+                    "generated_parent_B1G": generated_parent_b1g,
+                    "before_DOM_column_input": float(before_dom.loc[child]),
+                    "before_IMP_column_input": float(before_imp.loc[child]),
+                    "after_DOM_column_input": float(reconciled["DOM"].sum(axis=0).loc[child]),
+                    "after_IMP_column_input": float(reconciled["IMP"].sum(axis=0).loc[child]),
+                    "after_TOTAL_column_input": float(total_columns.loc[child]),
+                    "joint_D21X31": (
+                        float(production_v.loc["D21X31", child])
+                        if production_v is not None else float("nan")
+                    ),
+                    "generated_B1G": float(generated_b1g.loc[child]),
+                    "kl_iterations": stats.iterations,
+                    "kl_max_normalized_gap": stats.max_normalized_gap,
+                }
+            )
+    return (
+        reconciled["DOM"],
+        reconciled["IMP"],
+        production_v,
+        pd.DataFrame(diagnostic_records),
+        checks,
+    )
 
 _V_OUTPUT_PRIMITIVES = {"D1", "D11", "D29X39", "P51C", "B3G"}
 _SIGNED_INVESTMENT_ATOMS = frozenset({"P5", "P5M", "P52", "P53"})
@@ -976,6 +1108,7 @@ def _construct_transaction_v(
     Z: pd.DataFrame, Z_total: pd.DataFrame, Z_imp: pd.DataFrame,
     x_domestic: pd.Series, import_supply_proxy: pd.Series,
     primitive_reference: ParsedEurostatIOT | None = None,
+    production_account_v: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame]:
     """Construct V from primitive observations and exact transaction identities."""
     if reference.V is None:
@@ -1016,15 +1149,23 @@ def _construct_transaction_v(
             "max_abs_gap": gap,
         })
 
-    # Product taxes on intermediate use follow purchaser-column input mass, not
-    # producer output, because they bridge basic-price inputs to P2_ADJ.
+    # D21X31 is a production-account primitive.  On the canonical path its child
+    # allocation comes from the same KL reconciliation as Z; standalone fixtures
+    # without that transient result retain the source-conserving proxy fallback.
     if "D21X31" in source.index:
         if primitive_v is None or "D21X31" not in primitive_v.index:
             raise ValueError("Authoritative primitive V row 'D21X31' is unavailable")
-        allocated_d21 = _allocate_source_parent_vector(
-            published=primitive_v.loc["D21X31"], child_parent=child_parent, children=children,
-            proxy=input_proxy, flow=flow, row_code="D21X31",
-        )
+        if production_account_v is not None:
+            if "D21X31" not in production_account_v.index:
+                raise ValueError("Joint production-account result is missing D21X31")
+            allocated_d21 = production_account_v.loc["D21X31"].reindex(children).astype("float64")
+            role = "joint_production_account"
+        else:
+            allocated_d21 = _allocate_source_parent_vector(
+                published=primitive_v.loc["D21X31"], child_parent=child_parent, children=children,
+                proxy=input_proxy, flow=flow, row_code="D21X31",
+            )
+            role = "primitive_input_weighted_fallback"
         V.loc["D21X31"] = allocated_d21
         reconstructed_d21 = _aggregate_columns(
             allocated_d21.rename("D21X31").to_frame().T,
@@ -1035,11 +1176,11 @@ def _construct_transaction_v(
             f"{flow} primitive V reconstruction D21X31",
             reconstructed_d21,
             primitive_v.loc["D21X31"],
-            rtol=0.0,
-            atol=1e-9,
+            rtol=_GENERATED_IDENTITY_RTOL if production_account_v is not None else 0.0,
+            atol=_GENERATED_IDENTITY_ATOL if production_account_v is not None else 1e-9,
         )
         diagnostics.append({
-            "flow": flow, "row": "D21X31", "role": "primitive_input_weighted",
+            "flow": flow, "row": "D21X31", "role": role,
             "max_abs_gap": d21_gap,
         })
 
@@ -1118,6 +1259,16 @@ def _construct_transaction_v(
             raise ValueError(f"{flow} production account requires D21X31")
         p2 = input_proxy + V.loc["D21X31"]
         b1g = output_proxy - p2
+        if production_account_v is not None:
+            if "B1G" not in production_account_v.index:
+                raise ValueError("Joint production-account result is missing B1G")
+            _assert_close(
+                f"{flow} joint production-account B1G",
+                b1g,
+                production_account_v.loc["B1G"].reindex(children).astype("float64"),
+                rtol=_GENERATED_IDENTITY_RTOL,
+                atol=_GENERATED_IDENTITY_ATOL,
+            )
         if primitive_v is not None and "B1G" in primitive_v.index:
             published_b1g = primitive_v.loc["B1G"].astype("float64")
             for parent in published_b1g.index.astype(str):
@@ -1442,7 +1593,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             )
         )
     pre_reconciliation_use = dict(use)
-    Z_dom, Z_imp, reconciliation, transformation_checks = (
+    Z_dom, Z_imp, production_account_v, reconciliation, transformation_checks = (
         _reconcile_iot_intermediate_transactions(
             Z_dom,
             Z_imp,
@@ -1598,6 +1749,9 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             Z=Z[flow], Z_total=Z_total, Z_imp=Z_imp,
             x_domestic=x_domestic, import_supply_proxy=import_supply_proxy,
             primitive_reference=references["TOTAL"] if flow in {"DOM", "TOTAL"} else None,
+            production_account_v=(
+                production_account_v if flow in {"DOM", "TOTAL"} else None
+            ),
         )
         canonical_v[flow] = V
         if V is not None:
@@ -1668,9 +1822,9 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             "TOTAL": "total_inputs_per_domestic_output",
         },
         "V_status": "transaction_identities_plus_primitive_rows",
-        "producer_column_reconciliation": "joint_dom_imp_kl_production_account_feasible",
+        "producer_column_reconciliation": "joint_dom_imp_kl_production_account_v",
         "producer_column_reconciliation_diagnostic": "../producer_technology_reconciliation.csv",
-        "producer_column_constraint_semantics": "EXIO_is_KL_prior; Eurostat_parent_Z_and_child_rows_are_equalities; nonnegative_source_B1G_imposes_joint_TOTAL_column_capacity",
+        "producer_column_constraint_semantics": "EXIO_is_KL_prior; Eurostat_parent_Z_and_child_rows_are_equalities; D21X31_is_joint_parent_control; child_production_account_closes_with_B1G_auxiliary",
         "transformation_coherence_validation": f"../{_TRANSFORMATION_COHERENCE_REPORT}",
         "full_table_validation": "../split_full_table_validation.csv",
         "validation_classes": [
@@ -1678,7 +1832,7 @@ def derive_total_flow(outdir: Path, *, eurostat_dataset: str, eurostat_filters: 
             "transformation_coherence",
         ],
         "balancing_applied": True,
-        "balancing_method": "KL_DYKSTRA_PARTITION_CONSTRAINTS",
+        "balancing_method": "KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V",
     }, indent=2) + "\n", encoding="utf-8")
     pd.DataFrame(diagnostics).to_csv(outdir / "derived_total_flow_identity.csv", index=False)
 

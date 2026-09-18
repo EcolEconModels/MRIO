@@ -102,10 +102,12 @@ Preliminary row-child/buyer-parent submargins are not hard constraints.
 
 The final many-many production validator must require the complete transformation
 report when `split_info.json` declares
-`producer_column_reconciliation=joint_dom_imp_kl_production_account_feasible`.  Reaggregation
+`producer_column_reconciliation=joint_dom_imp_kl_production_account_v`.  Reaggregation
 still has its own transformation-conservation checks against a fresh recomputation.
-Passing Class I never substitutes for Class II, and Class II now prevents a non-negative source-parent GVA from becoming negative
-for a synthetic child through the disaggregation itself; genuinely negative source
+Passing Class I never substitutes for Class II.  Class II requires exact child
+production-account closure and parent D21X31 conservation while preventing a
+non-negative source-parent GVA from becoming materially negative for a synthetic
+child; genuinely negative source
 parents remain signed source evidence rather than a universal positivity rule.
 
 The canonical producer reconciliation reuses `ecolecon_mrio.balancing`: ordinary
@@ -808,6 +810,26 @@ copy_unaffected
 
 The exact source row codes for those rules live in dictionaries.
 
+
+<!-- production-account-v-reconciliation-step1 -->
+### Active Step-1 production-account reconciliation
+
+For the canonical Eurostat/EXIO production path, atomic final demand remains fixed
+in Step 1.  The active reconciliation variables are DOM/IMP intermediate
+transactions plus child `D21X31` and an auxiliary `B1G` allocation.  Eurostat parent
+Z cells, child intermediate-sales rows and parent `D21X31` are hard controls; every
+child obeys `P1 = Z_column_total + D21X31 + B1G`.  EXIO transaction structure and
+source-conserving child production-account allocations are priors, not child
+monetary observations.  The implementation uses the shared sparse
+`kl_balance_linear_equalities` numerical owner and records
+`balancing_method=KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V`.
+
+Aggregate/display `Y`, derived `V`, and `M` serialization cells are not additional
+independent balancing variables.  Atomic `Y` remains fixed in this step; a later
+method change may make atomic final demand and therefore child output endogenous.
+Environmental sidecars do not need retargeting in Step 1 because the reconciliation
+still preserves DOM and IMP supplier-row use, hence the monetary denominators used
+by the current direct environmental extension contract remain invariant.
 ## Reaggregation validation
 
 Every run must validate:

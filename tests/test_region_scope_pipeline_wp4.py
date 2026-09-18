@@ -318,7 +318,7 @@ def test_final_validator_requires_complete_whole_iot_reconciliation_evidence(
     pd.DataFrame({"P3": [1.0]}, index=sectors).to_csv(split_dir / "Y_split.csv")
     pd.Series([2.0], index=sectors, name="x").to_csv(split_dir / "x_split.csv")
     (split_dir / "split_info.json").write_text(
-        '{"producer_column_reconciliation":"joint_dom_imp_kl_production_account_feasible","balancing_applied":true,"balancing_method":"KL_DYKSTRA_PARTITION_CONSTRAINTS"}\n',
+        '{"producer_column_reconciliation":"joint_dom_imp_kl_production_account_v","balancing_applied":true,"balancing_method":"KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V"}\n',
         encoding="utf-8",
     )
     rows = [

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
+from scipy import sparse
+from scipy.optimize import minimize, root
 
 
 @dataclass(frozen=True)
@@ -265,6 +268,200 @@ def ipfp_balance_partitions(
         "bounds, or structural support may be incompatible."
     )
 
+
+
+# KL_LINEAR_EQUALITY_RECONCILIATION_V1
+@dataclass(frozen=True)
+class KLLinearStats:
+    """Diagnostics for a KL projection onto arbitrary linear equalities."""
+
+    iterations: int
+    max_normalized_gap: float
+    max_abs_gap: float
+
+
+def kl_balance_linear_equalities(
+    prior: np.ndarray,
+    constraint_matrix: object,
+    targets: np.ndarray,
+    *,
+    max_iter: int = 50_000,
+    rtol: float = 1e-12,
+    atol: float = 1e-10,
+) -> tuple[np.ndarray, KLLinearStats]:
+    """Return the non-negative KL projection subject to ``A @ x = b``.
+
+    ``prior`` may have any shape and is flattened internally.  A zero prior is a
+    structural zero and remains zero.  ``constraint_matrix`` may contain arbitrary
+    finite signed coefficients, which is required when a signed supplementary
+    account such as taxes less subsidies enters an otherwise non-negative
+    production-account reconciliation.
+
+    The strictly positive support is parameterised by the KL dual
+
+        x = q * exp(-A.T @ lambda).
+
+    L-BFGS obtains the information projection efficiently on sparse systems.  Every
+    dual-family candidate already has the KL KKT stationarity form.  If the L-BFGS
+    candidate also satisfies the declared primal equality tolerance, it is therefore
+    accepted directly; a matrix-free Krylov root polish is invoked only when that
+    primal feasibility test fails.  Failure to reach the declared tolerance remains
+    fail-closed, and root-solver warnings are not suppressed.
+    """
+    q = np.asarray(prior, dtype="float64")
+    original_shape = q.shape
+    flat = q.reshape(-1)
+    if flat.size == 0 or not np.isfinite(flat).all() or bool((flat < 0.0).any()):
+        raise ValueError("Linear KL reconciliation requires a finite non-negative prior.")
+    if max_iter <= 0:
+        raise ValueError("max_iter must be positive.")
+    if (
+        not np.isfinite(rtol)
+        or not np.isfinite(atol)
+        or rtol < 0.0
+        or atol < 0.0
+        or (rtol == 0.0 and atol == 0.0)
+    ):
+        raise ValueError("KL reconciliation tolerances must be finite, non-negative, and not both zero.")
+
+    A = sparse.csr_matrix(constraint_matrix, dtype="float64")
+    b = np.asarray(targets, dtype="float64").reshape(-1)
+    # KL_LINEAR_CONSTRAINT_SHAPE_GUARD_V1
+    raw_constraint_shape = A.shape
+    if raw_constraint_shape is None:
+        raise ValueError("Linear KL constraint matrix has no shape.")
+    # KL_LINEAR_CONSTRAINT_SHAPE_CAST_V1
+    constraint_shape = cast(tuple[int, int], raw_constraint_shape)
+    rows, columns = constraint_shape
+    if A.ndim != 2 or rows != b.size or columns != flat.size:
+        raise ValueError(
+            "Linear KL constraint dimensions disagree: "
+            f"A={constraint_shape}, targets={b.shape}, prior_size={flat.size}."
+        )
+    if b.size == 0 or not np.isfinite(b).all() or not np.isfinite(A.data).all():
+        raise ValueError("Linear KL constraints and targets must be finite and non-empty.")
+
+    support = flat > 0.0
+    supported_A = A[:, support]
+    supported_q = flat[support]
+    row_nnz = np.diff(supported_A.indptr)
+    unsupported = row_nnz == 0
+    unsupported_gap = np.abs(b) > (
+        atol + rtol * np.maximum(np.abs(b), 1.0)
+    )
+    if bool(np.any(unsupported & unsupported_gap)):
+        row = int(np.flatnonzero(unsupported & unsupported_gap)[0])
+        raise ValueError(
+            "Linear KL reconciliation is infeasible on structural support: "
+            f"constraint_row={row}, target={b[row]:.12g}."
+        )
+    if supported_q.size == 0:
+        return q.copy(), KLLinearStats(0, 0.0, 0.0)
+
+    # Scale each equality by the larger of its target, prior absolute activity,
+    # and one monetary unit.  This changes neither the feasible set nor the KL
+    # optimum and prevents large parent cells from hiding small child identities.
+    abs_A = supported_A.copy()
+    abs_A.data = np.abs(abs_A.data)
+    prior_activity = np.asarray(abs_A @ supported_q).reshape(-1)
+    row_scale = np.maximum.reduce(
+        [np.ones_like(b), np.abs(b), prior_activity]
+    )
+    A_scaled = (sparse.diags(1.0 / row_scale) @ supported_A).tocsr()
+    b_scaled = b / row_scale
+
+    def state(multiplier: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        dual_load = np.asarray(A_scaled.T @ multiplier).reshape(-1)
+        exponent = np.clip(-dual_load, -500.0, 500.0)
+        values = supported_q * np.exp(exponent)
+        return values, exponent
+
+    def objective(multiplier: np.ndarray) -> float:
+        _values, exponent = state(multiplier)
+        return float(np.sum(supported_q * np.expm1(exponent)) + b_scaled @ multiplier)
+
+    def gradient(multiplier: np.ndarray) -> np.ndarray:
+        values, _exponent = state(multiplier)
+        return b_scaled - np.asarray(A_scaled @ values).reshape(-1)
+
+    # KL_LINEAR_FEASIBILITY_FIRST_V2
+    def evaluate_candidate(multiplier: np.ndarray) -> tuple[np.ndarray, float, float]:
+        """Materialize one dual-family candidate and measure primal feasibility."""
+        candidate = np.asarray(multiplier, dtype="float64").reshape(-1)
+        if candidate.size != b.size or not np.isfinite(candidate).all():
+            raise ValueError("Linear KL solver produced a non-finite or mis-sized dual candidate.")
+        supported_values, _ = state(candidate)
+        if not np.isfinite(supported_values).all():
+            raise ValueError("Linear KL solver produced non-finite primal values.")
+        result = np.zeros_like(flat)
+        result[support] = supported_values
+        actual = np.asarray(A @ result).reshape(-1)
+        if not np.isfinite(actual).all():
+            raise ValueError("Linear KL solver produced non-finite equality totals.")
+        gap = np.abs(actual - b)
+        tolerance = atol + rtol * np.maximum(np.abs(actual), np.abs(b))
+        normalized = np.divide(
+            gap,
+            tolerance,
+            out=np.full_like(gap, np.inf),
+            where=tolerance > 0.0,
+        )
+        normalized[(tolerance == 0.0) & (gap == 0.0)] = 0.0
+        return (
+            result,
+            float(np.max(normalized, initial=0.0)),
+            float(np.max(gap, initial=0.0)),
+        )
+
+    start = np.zeros(b.size, dtype="float64")
+    first = minimize(
+        objective,
+        start,
+        jac=gradient,
+        method="L-BFGS-B",
+        options={
+            "maxiter": max_iter,
+            "ftol": 0.0,
+            "gtol": 1e-12,
+            "maxls": 100,
+            "maxcor": 30,
+        },
+    )
+    result, max_norm, max_abs = evaluate_candidate(
+        np.asarray(first.x, dtype="float64")
+    )
+
+    # Any feasible point in x=q*exp(-A.T@lambda) satisfies the KKT stationarity
+    # form of this strictly convex information projection.  Root-polishing an
+    # already feasible candidate is therefore unnecessary and, near an exact zero
+    # residual, can make scipy's Krylov finite-difference step divide by zero.
+    polished = None
+    if max_norm > 1.0:
+        polished = root(
+            gradient,
+            np.asarray(first.x, dtype="float64"),
+            method="krylov",
+            options={"fatol": 1e-13, "maxiter": min(max_iter, 5_000)},
+        )
+        result, max_norm, max_abs = evaluate_candidate(
+            np.asarray(polished.x, dtype="float64")
+        )
+
+    if max_norm > 1.0:
+        polish_success = None if polished is None else bool(polished.success)
+        polish_message = "not_needed" if polished is None else str(polished.message)
+        raise ValueError(
+            "Linear KL reconciliation did not satisfy its equalities: "
+            f"max_normalized_gap={max_norm:.6g}, max_abs_gap={max_abs:.12g}, "
+            f"lbfgs_success={bool(first.success)}, lbfgs_message={first.message!s}, "
+            f"polish_success={polish_success!r}, polish_message={polish_message}."
+        )
+    polish_iterations = 0 if polished is None else int(getattr(polished, "nit", 0))
+    return result.reshape(original_shape), KLLinearStats(
+        iterations=int(getattr(first, "nit", 0)) + polish_iterations,
+        max_normalized_gap=max_norm,
+        max_abs_gap=max_abs,
+    )
 
 def gras_balance(
     M0: np.ndarray,

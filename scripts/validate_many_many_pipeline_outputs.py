@@ -45,7 +45,8 @@ _REQUIRED_TRANSFORMATION_COHERENCE_CHECKS = {
     ("DOM", "tc.parent_z_cell"),
     ("IMP", "tc.child_row_margin"),
     ("IMP", "tc.parent_z_cell"),
-    ("TOTAL", "tc.production_account_capacity"),
+    ("TOTAL", "tc.production_account_identity"),
+    ("TOTAL", "tc.parent_d21x31"),
     ("TOTAL", "tc.nonnegative_child_b1g"),
     ("TOTAL", "tc.zero_target_output_column"),
     ("TOTAL", "tc.kl_convergence"),
@@ -739,6 +740,11 @@ def validate_pipeline_outputs(
                     "regenerate with joint DOM/IMP whole-IOT production-account reconciliation."
                 )
             if split_info.get("producer_column_reconciliation") == "joint_dom_imp_kl_production_account_feasible":
+                raise ValueError(
+                    "Stale hard-cap production-account reconciliation; "
+                    "regenerate with joint production-account V reconciliation."
+                )
+            if split_info.get("producer_column_reconciliation") == "joint_dom_imp_kl_production_account_v":
                 coherence = _validate_transformation_coherence_report(
                     split_dir.parent / "transformation_coherence_validation.csv"
                 )
@@ -763,7 +769,7 @@ def validate_pipeline_outputs(
                     "producer_technology_reconciliation_balancing_declared",
                     split_info.get("balancing_applied") is True
                     and split_info.get("balancing_method")
-                    == "KL_DYKSTRA_PARTITION_CONSTRAINTS",
+                    == "KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V",
                     balancing_applied=split_info.get("balancing_applied"),
                     balancing_method=split_info.get("balancing_method"),
                 )

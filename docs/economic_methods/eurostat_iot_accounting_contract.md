@@ -647,53 +647,58 @@ Z^{before}_{ij}
 
 ### Joint whole-IOT feasibility reconciliation
 
-Parent-cell conservation is necessary but insufficient: a disaggregation can
-reaggregate perfectly while assigning more intermediate input to a synthetic
-producer than its target output and production account can support.  The canonical
-method therefore treats EXIO as a KL technology prior and the authorized Eurostat
-IOT/accounting relations as the feasible set.
+Parent-cell conservation is necessary but insufficient.  In Step 1 atomic final
+demand remains fixed and source-conserved, so DOM row use fixes child domestic
+output.  DOM and IMP `Z` are reconciled jointly with the production-account objects
+that directly constrain their producer columns.
 
-Atomic `Y` is fixed and source-conserved before intermediate reconciliation. DOM row
-use determines target child domestic output. DOM and IMP `Z` are then solved
-jointly, preserving each flow's child row margins and every source parent `Z` cell.
-No EXIO-derived Austrian child monetary column total is authoritative.
-
-For producer child \(b\), define TOTAL intermediate input
+For producer child \(b\),
 
 \[
-u_b=\sum_a(Z^{DOM}_{ab}+Z^{IMP}_{ab}).
+u_b=\sum_a(Z^{DOM}_{ab}+Z^{IMP}_{ab}),
+\qquad d_b=D21X31_b,
+\qquad g_b=B1G_b.
 \]
 
-For parent \(j\), let \(U_j=\sum_{b\in C_j}u_b\) and let \(D_j\) be published
-`D21X31`.  Because generated `D21X31` is distributed over children in proportion to
-TOTAL intermediate input,
+The generated child production account must satisfy the exact identity
 
 \[
-B1G_b=x_b-\left(1+\frac{D_j}{U_j}\right)u_b.
+\boxed{x_b=u_b+d_b+g_b}.
 \]
 
-Whenever the published parent `B1G` is non-negative and the coefficient in
-parentheses is positive, the canonical disaggregation imposes the equivalent
-upper bound that keeps every generated child B1G non-negative.  A zero-output child
-has zero producer-column capacity.  A genuinely negative source parent B1G is kept
-as such and is not converted into a universal positivity rule.
+`D21X31` is a primitive source control and its child allocation is inferred in the
+same reconciliation while preserving each published parent amount exactly,
 
-The joint objective minimizes KL divergence from the output-conditioned EXIO prior
-subject to these production-account inequalities plus the DOM/IMP row and parent-Z
-equalities. The numerical owner is the generic partition KL/IPFP routine with
-KL-Dykstra upper-bound projections; no application-local optimizer is duplicated.
+\[
+\sum_{b\in C_j}d_b=D21X31_j.
+\]
 
-After the free transaction matrices are feasible, generated `Y`, `V` and `M`
-identities are rebuilt rather than independently balanced.  Primitive source
-controls retain their declared source-conservation rules and applicability masks.
-The complete `validate_eurostat_iot_full_table(..., mode="generated")` report is a
-blocking Class-I gate, while transformation coherence is a separate blocking
-Class-II gate.  Candidate valuation/supply-use equations that the source policy
-marks `not_tested` are not promoted merely to make the system look more constrained.
+The generated parent `B1G` total is implied by parent output, intermediate input and
+`D21X31`; the separately published parent `B1G` remains an independently rounded
+source control and is validated under the source-rounding contract rather than
+being added as a redundant exact equality.  An auxiliary child `B1G` prior is
+included in the KL objective so positive source/implied GVA is not treated merely
+as an upper-bound slack that can collapse arbitrarily to zero.
+
+Signed source-parent `D21X31` and generated/implied `B1G` are represented by
+non-negative magnitudes with the source-parent sign.  Without child-specific
+evidence, disaggregation therefore does not manufacture offsetting within-parent
+sign reversals.  A source parent with non-negative GVA cannot acquire a materially
+negative synthetic child through the transformation.
+
+The generic numerical owner is the sparse linear-equality KL projection in
+`ecolecon_mrio.balancing`; application code supplies economic constraints and does
+not own a parallel solver.  Structural zeros remain structural zeros and an
+incompatible source/support system fails explicitly.
+
+Other primitive production rows that do not constrain the Step-1 transaction
+feasible set remain source-conserving child allocations.  Derived `V`, aggregate
+`Y`, and `M` identities are rebuilt from the feasible transactions and checked by
+the complete generated-IOT Class-I validator.  Candidate valuation/supply-use
+bridges marked `not_tested` by source policy remain unpromoted.
 
 The cleared domestic technical matrix must additionally satisfy
-\(\rho(A^{DOM})<1\); this is evaluated with the existing shared spectral-radius
-implementation.
+\(\rho(A^{DOM})<1\).
 
 ### Final use
 
