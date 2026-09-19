@@ -239,6 +239,12 @@ shared because sector mappings do not depend on environmental selection. The fin
 reaggregated directory contains `production_validation.json`; its independent
 many-many/environmental validation is a blocking wrapper gate.
 
+`environmental_extensions.csv` remains the canonical model-facing environmental
+table. Where DOM production provenance and persisted flow-specific EXIO-to-Eurostat
+weights are available, the XLSX `EXIO-Eurostat CO2 Mapping` tab is reconstructed as
+a derived presentation/audit view of combustion CO2. It is not a separate scientific
+source and is omitted when the required production-side provenance is unavailable.
+
 The fuels pipeline no longer needs a workbook to author mapping CSVs. The split pass is driven by the committed split CSV, and the identity mapping is synthesized from split-stage artifacts at runtime so the workbook export stays reproducible without checking in an extra identity CSV.
 
 The canonical IO accounting pass derives domestic output from domestic transaction row use and imports from imported transaction row use. It constructs `TOTAL = DOM + IMP` for `Z` and the atomic final-demand basis, regenerates displayed final-demand controls, closes the production account through `B2A3N`, and rebuilds the applicable `V`/`M` controls. `A_DOM` is the cleared domestic Leontief matrix; `A_IMP` and `A_TOTAL` are imported and total input requirements per unit of the same domestic output, not standalone Leontief systems. The fuels donor-block path does not invoke RAS/GRAS.

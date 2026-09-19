@@ -24,6 +24,7 @@ from ecolecon_mrio.iot_flow_semantics import (
     flow_use_total,
 )
 from ecolecon_mrio.mapping_csv import read_aggregation_mapping
+from ecolecon_mrio.sector_intensity import aggregate_intensity_by_mapping
 
 
 def _vprint(enabled: bool, msg: str) -> None:
@@ -1790,6 +1791,110 @@ def _legacy_co2_final_demand_view(
         ]
     ]
 
+
+def _legacy_co2_mapping_view(
+    exio_environmental_extensions: pd.DataFrame | None,
+    flow_specific_weights: pd.DataFrame | None,
+    *,
+    target_environmental_extensions: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    """Build the legacy XLSX CO2 mapping tab from current DOM provenance only.
+
+    This is a presentation adapter: it neither changes canonical environmental
+    tables nor substitutes for their boundary-aware target calculation. The DOM
+    production boundary and persisted domestic projection weights are required so
+    raw EXIO ``F`` evidence cannot be misrepresented for IMP or TOTAL.
+    """
+    if (
+        exio_environmental_extensions is None
+        or exio_environmental_extensions.empty
+        or flow_specific_weights is None
+        or flow_specific_weights.empty
+        or target_environmental_extensions is None
+        or target_environmental_extensions.empty
+    ):
+        return None
+    raw_required = {
+        "source_label",
+        "extension",
+        "kind",
+        "stressor",
+        "unit",
+        "value",
+        "monetary_denominator",
+    }
+    weight_required = {"source_code", "target_code", "weight", "exio_flow"}
+    target_required = {"boundary", "extension", "stressor", "unit"}
+    if not raw_required.issubset(exio_environmental_extensions.columns):
+        return None
+    if not weight_required.issubset(flow_specific_weights.columns):
+        return None
+    if not target_required.issubset(target_environmental_extensions.columns):
+        return None
+
+    co2 = "CO2 - combustion - air".casefold()
+    raw_mask = (
+        exio_environmental_extensions["kind"].astype(str).eq("F")
+        & exio_environmental_extensions["extension"].astype(str).eq("air_emissions")
+        & exio_environmental_extensions["stressor"].astype(str).str.casefold().eq(co2)
+    )
+    raw = cast(pd.DataFrame, exio_environmental_extensions.loc[raw_mask].copy())
+    target_mask = (
+        target_environmental_extensions["boundary"].astype(str).eq("scope_production")
+        & target_environmental_extensions["extension"].astype(str).eq("air_emissions")
+        & target_environmental_extensions["stressor"].astype(str).str.casefold().eq(co2)
+    )
+    if raw.empty or not bool(target_mask.any()):
+        return None
+
+    weights = flow_specific_weights.loc[
+        flow_specific_weights["exio_flow"].astype(str).str.casefold().eq("domestic")
+    ].copy()
+    if weights.empty or weights.duplicated(["source_code", "target_code"]).any():
+        return None
+    weights["source_code"] = weights["source_code"].astype(str).str.strip()
+    weights["target_code"] = weights["target_code"].astype(str).str.strip()
+    weights["weight"] = pd.to_numeric(weights["weight"], errors="coerce")
+    if (
+        weights[["source_code", "target_code"]].eq("").any().any()
+        or weights["weight"].isna().any()
+        or not np.isfinite(weights["weight"].to_numpy(dtype="float64")).all()
+        or weights["weight"].lt(0.0).any()
+    ):
+        return None
+    mapping = {
+        str(target): {
+            str(row.source_code): float(row.weight)
+            for row in group.itertuples(index=False)
+        }
+        for target, group in weights.groupby("target_code", sort=False)
+    }
+    adapter_input = raw.rename(
+        columns={
+            "source_label": "exio_sector",
+            "value": "emission",
+            "monetary_denominator": "monetary_output",
+        }
+    )
+    view = aggregate_intensity_by_mapping(
+        adapter_input,
+        mapping,
+        method_label="ratio-of-sums (EXIO)",
+        include_exio_list=True,
+    )
+    if view.empty:
+        return None
+    if "notes" in weights.columns:
+        notes = (
+            weights.assign(notes=weights["notes"].fillna("").astype(str).str.strip())
+            .loc[lambda frame: frame["notes"].ne("")]
+            .groupby("target_code", sort=False)["notes"]
+            .agg(lambda values: " | ".join(dict.fromkeys(values)))
+        )
+        view["mapping_notes"] = view["aggregated_sector"].map(notes).fillna("")
+    return view
+
+
 def _write_sfc_workbook(
     *,
     parsed: ParsedEurostatIOT,
@@ -2737,6 +2842,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         final_demand_co2 = _legacy_co2_final_demand_view(
             exio_environmental_extensions
         )
+        flow_specific_weights_path = z_dir / "flow_specific_exio_to_eurostat_weights.csv"
+        flow_specific_weights = (
+            pd.read_csv(flow_specific_weights_path)
+            if flow_specific_weights_path.exists()
+            else None
+        )
+        mapping_for_sheet = _legacy_co2_mapping_view(
+            exio_environmental_extensions,
+            flow_specific_weights,
+            target_environmental_extensions=sector_environmental_extensions,
+        )
 
         if not args.no_xlsx:
             out_xlsx = out_base / "aggregation_report.xlsx"
@@ -2778,7 +2894,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 disaggregated_sector_emission_intensity=disaggregated_co2,
                 aggregated_sector_emission_intensity=aggregated_co2,
                 exio_final_demand_emission_intensity=final_demand_co2,
-                eurostat_sector_co2_mapping=None,
+                eurostat_sector_co2_mapping=mapping_for_sheet,
                 output_after=res.x,
             )
             _vprint(args.verbose, f"Returned: write SFC workbook ({t2.elapsed_s():.2f}s)")
