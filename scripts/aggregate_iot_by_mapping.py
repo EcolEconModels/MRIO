@@ -515,24 +515,22 @@ def _missing_sfc_co2_reason(variant_value: str | None, *, use_phase: bool) -> st
     if role == "IMP":
         if use_phase:
             return (
-                "for IMP flow because import-origin weighted final-demand CO2 intensities "
-                "are not implemented"
+                "for IMP flow because direct final-demand F_Y is a destination-category "
+                "account and has no import-origin product counterpart"
             )
         return (
-            "for IMP flow because origin-weighted import production CO2 intensities are "
-            "not implemented; using Austrian destination-region EXIO extension proxies "
-            "would be misleading"
+            "for IMP flow because the origin-weighted import target environmental sidecar is "
+            "unavailable"
         )
     if role == "TOTAL":
         if use_phase:
             return (
-                "for TOTAL flow because a combined domestic and import-origin final-demand "
-                "CO2 intensity is not implemented"
+                "for TOTAL flow because the destination final-demand F_Y evidence is "
+                "unavailable"
             )
         return (
-            "for TOTAL flow because a combined domestic-production and origin-weighted "
-            "import CO2 intensity is not implemented; using domestic-only intensities "
-            "would mislabel total supply"
+            "for TOTAL flow because the combined DOM/IMP target environmental sidecar is "
+            "unavailable"
         )
     return (
         f"for {role or 'this'} flow because the required CO2 intensity inputs are not "
@@ -565,6 +563,9 @@ def _write_excel_mapping_sheet(
 ) -> None:
     import openpyxl
     from openpyxl.utils import get_column_letter
+
+    flow_role = str(variant_value or "").strip().upper()
+    imp_fy_not_applicable = flow_role in {"IMP", "IMPORT", "IMPORTS"}
 
     if sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
@@ -696,14 +697,22 @@ def _write_excel_mapping_sheet(
     fy_dom_intensity_scalar: float | None = None
     fy_unit_label = "mixed units"
     if exio_final_demand_emission_intensity is None or exio_final_demand_emission_intensity.empty:
-        if not allow_missing_sfc_co2:
+        if imp_fy_not_applicable:
+            _vprint(
+                verbose,
+                "INFO: SFC workbook mapping sheet has no use-phase CO2 column for IMP flow: "
+                "direct final-demand F_Y is a destination-category account and has no "
+                "import-origin product counterpart.",
+            )
+        elif not allow_missing_sfc_co2:
             raise ValueError("exio_final_demand_emission_intensity is required for use-phase CO2 intensity.")
-        _vprint(
-            verbose,
-            "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns "
-            + _missing_sfc_co2_reason(variant_value, use_phase=True)
-            + ".",
-        )
+        else:
+            _vprint(
+                verbose,
+                "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns "
+                + _missing_sfc_co2_reason(variant_value, use_phase=True)
+                + ".",
+            )
     else:
         if disaggregated_Y is None or disaggregated_Y.empty:
             raise ValueError("disaggregated_Y is required for use-phase CO2 intensity.")
@@ -956,14 +965,22 @@ def _write_excel_mapping_sheet(
                 + ".",
             )
         if not summary_has_use_co2:
-            if not allow_missing_sfc_co2:
+            if imp_fy_not_applicable:
+                _vprint(
+                    verbose,
+                    "INFO: SFC workbook re-aggregated summary has no use-phase CO2 column for IMP flow: "
+                    "direct final-demand F_Y is a destination-category account and has no "
+                    "import-origin product counterpart.",
+                )
+            elif not allow_missing_sfc_co2:
                 raise ValueError("use-phase CO2 intensity is required for the summary sheet.")
-            _vprint(
-                verbose,
-                "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2 columns "
-                + _missing_sfc_co2_reason(variant_value, use_phase=True)
-                + ".",
-            )
+            else:
+                _vprint(
+                    verbose,
+                    "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2 columns "
+                    + _missing_sfc_co2_reason(variant_value, use_phase=True)
+                    + ".",
+                )
         agg_domestic_fd, agg_exports, agg_stocks = _split_final_demand(aggregated_Y)
 
         sheet_title = "Re-aggregated Summary"

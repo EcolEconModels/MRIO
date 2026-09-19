@@ -128,3 +128,61 @@ def test_flags_report_cancellation_without_changing_any_validity_state() -> None
     )
     assert args.intensity_threshold == pytest.approx(1e9)
     assert args.cancellation_ratio_threshold == pytest.approx(1e-10)
+
+
+def test_flags_report_positive_target_without_donor_import_use() -> None:
+    row = pd.Series(
+        {
+            "donor_import_intensity": float("nan"),
+            "target_monetary_output": 1.06,
+            "net_import_use": 0.0,
+            "gross_abs_import_use": 0.0,
+            "cancellation_ratio": float("nan"),
+            "n_invalid_active_origins": 0,
+        }
+    )
+    flags = module._flags(
+        row,
+        intensity_threshold=1e9,
+        cancellation_threshold=1e-10,
+        import_row=True,
+    )
+    assert flags == "TARGET_POSITIVE_DONOR_IMPORT_USE_ZERO"
+
+
+def test_total_support_coverage_retains_known_value_under_signed_import_use() -> None:
+    keys = {
+        "sector": ["CPA_E36", "p16"],
+        "extension": ["air", "air"],
+        "stressor": ["CO2", "CO2"],
+        "unit": ["kg", "kg"],
+    }
+    dom = pd.DataFrame(
+        {
+            **keys,
+            "observed_value": [100.0, 50.0],
+            "observed_monetary_output": [1138.22, 863.4264476632452],
+            "observed_intensity": [100.0 / 1138.22, 50.0 / 863.4264476632452],
+        }
+    )
+    imp = pd.DataFrame(
+        {
+            **keys,
+            "observed_value": [float("nan"), -20.0],
+            "observed_monetary_output": [1.06, -813.7604651384088],
+            "observed_intensity": [float("nan"), 20.0 / 813.7604651384088],
+        }
+    )
+    out = module._total_support_coverage(dom, imp).set_index("sector")
+
+    assert float(out.at["CPA_E36", "supported_value"]) == pytest.approx(100.0)
+    assert float(out.at["CPA_E36", "coverage_fraction"]) == pytest.approx(
+        1138.22 / (1138.22 + 1.06)
+    )
+    assert float(out.at["CPA_E36", "unsupported_monetary_mass"]) == pytest.approx(1.06)
+
+    assert float(out.at["p16", "target_total_use"]) == pytest.approx(
+        863.4264476632452 - 813.7604651384088
+    )
+    assert float(out.at["p16", "supported_value"]) == pytest.approx(30.0)
+    assert float(out.at["p16", "coverage_fraction"]) == pytest.approx(1.0)

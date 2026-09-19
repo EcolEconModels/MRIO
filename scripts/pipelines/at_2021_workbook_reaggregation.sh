@@ -94,7 +94,9 @@ CLOSED_REAGG_REVIEW_CSV="$GENERATED_MAPPINGS_OUT/reaggregation_closed_review.csv
 CLOSED_REAGG_MANIFEST_JSON="$GENERATED_MAPPINGS_OUT/reaggregation_closed_manifest.json"
 
 # Presentation-only layout template. TEMPLATE_XLSX remains a compatibility alias.
-SFC_LAYOUT_TEMPLATE_XLSX="${SFC_LAYOUT_TEMPLATE_XLSX:-${TEMPLATE_XLSX:-$ROOT_DIR/tmp/IOT_Austria_2021_Eurostat.xlsx}}"
+# Default to the maintained sibling PostGrowth model rather than a disposable tmp copy.
+POSTGROWTH_SFC_DIR="${POSTGROWTH_SFC_DIR:-$ROOT_DIR/../PostGrowth-SFC-Austria}"
+SFC_LAYOUT_TEMPLATE_XLSX="${SFC_LAYOUT_TEMPLATE_XLSX:-${TEMPLATE_XLSX:-$POSTGROWTH_SFC_DIR/IOT_Austria_2021_Eurostat.xlsx}}"
 TEMPLATE_XLSX="$SFC_LAYOUT_TEMPLATE_XLSX"
 WRITE_SFC_WORKBOOK="${WRITE_SFC_WORKBOOK:-}"
 if [[ -z "$WRITE_SFC_WORKBOOK" ]]; then

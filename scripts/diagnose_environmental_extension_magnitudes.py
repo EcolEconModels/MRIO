@@ -39,7 +39,7 @@ DOM_COLUMNS = [
     *KEYS,
     "raw_global_F_total", "raw_global_abs_F_mass", "raw_scope_F_total",
     "raw_scope_abs_F_mass", "mapped_F", "mapped_x", "donor_intensity",
-    "target_monetary_output", "implied_target_value", "observed_value",
+    "target_monetary_output", "retarget_factor", "implied_target_value", "observed_value",
     "observed_monetary_output", "observed_intensity", "value_abs_gap",
     "monetary_abs_gap", "intensity_abs_gap", "diagnostic_flags",
 ]
@@ -48,7 +48,7 @@ IMP_COLUMNS = [
     "raw_global_F_total", "raw_global_abs_F_mass", "origin_weighted_numerator",
     "net_import_use", "gross_abs_import_use", "cancellation_ratio",
     "n_external_origins", "n_nonzero_use_origins", "n_invalid_active_origins",
-    "donor_import_intensity", "target_monetary_output", "implied_target_value",
+    "donor_import_intensity", "target_monetary_output", "retarget_factor", "implied_target_value",
     "observed_value", "observed_monetary_output", "observed_intensity",
     "value_abs_gap", "monetary_abs_gap", "intensity_abs_gap", "diagnostic_flags",
 ]
@@ -57,6 +57,13 @@ ORIGIN_COLUMNS = [
     "origin_intensity", "environmental_contribution", "target_net_import_use",
     "target_gross_abs_import_use", "target_cancellation_ratio",
     "target_donor_import_intensity", "diagnostic_flags",
+]
+TOTAL_SUPPORT_COLUMNS = [
+    *KEYS,
+    "domestic_target_monetary_output", "import_target_monetary_output",
+    "target_total_use", "domestic_supported", "import_supported",
+    "supported_value", "supported_monetary_mass", "gross_component_monetary_mass",
+    "unsupported_monetary_mass", "coverage_fraction",
 ]
 READER_COLUMNS = [
     "extension", "stressor", "unit", "robust_row_label", "match_state",
@@ -99,6 +106,125 @@ def _read_target_sidecar(flow_dir: Path, role: str) -> pd.DataFrame:
             "intensity": "observed_intensity",
         }
     )
+
+
+def _numeric_column(
+    frame: pd.DataFrame,
+    column: str,
+    *,
+    context: str,
+) -> pd.Series:
+    "Return one numeric diagnostic column with a type-stable pandas boundary."
+    raw = cast(pd.Series, frame[column])
+    numeric_obj = pd.to_numeric(raw, errors="coerce")
+    if not isinstance(numeric_obj, pd.Series):
+        raise TypeError(f"{context}: expected pandas Series for {column!r}.")
+    return numeric_obj.astype("float64")
+
+
+def _total_support_coverage(
+    dom_observed: pd.DataFrame,
+    imp_observed: pd.DataFrame,
+) -> pd.DataFrame:
+    "Report known TOTAL physical value and gross monetary evidence coverage."
+    dom = dom_observed.rename(
+        columns={
+            "observed_value": "domestic_value",
+            "observed_monetary_output": "domestic_target_monetary_output",
+            "observed_intensity": "domestic_intensity",
+        }
+    )
+    imp = imp_observed.rename(
+        columns={
+            "observed_value": "import_value",
+            "observed_monetary_output": "import_target_monetary_output",
+            "observed_intensity": "import_intensity",
+        }
+    )
+    merged = dom.merge(imp, on=KEYS, how="outer", validate="one_to_one", indicator=True)
+    merge_state = cast(pd.Series, merged["_merge"])
+    domain_mismatch = merge_state.ne("both")
+    if bool(domain_mismatch.any()):
+        sample = cast(
+            pd.DataFrame,
+            merged.loc[domain_mismatch, [*KEYS, "_merge"]],
+        ).head(10)
+        raise ValueError(
+            "DOM and IMP environmental target domains differ in support-coverage diagnostic: "
+            f"{sample.to_dict(orient='records')!r}"
+        )
+    merged = merged.drop(columns="_merge")
+
+    dom_den_series = _numeric_column(
+        merged, "domestic_target_monetary_output", context="support coverage"
+    )
+    imp_den_series = _numeric_column(
+        merged, "import_target_monetary_output", context="support coverage"
+    )
+    if not np.isfinite(dom_den_series.to_numpy(dtype="float64")).all():
+        raise ValueError(
+            "Support-coverage denominator 'domestic_target_monetary_output' must be finite."
+        )
+    if not np.isfinite(imp_den_series.to_numpy(dtype="float64")).all():
+        raise ValueError(
+            "Support-coverage denominator 'import_target_monetary_output' must be finite."
+        )
+
+    dom_den = dom_den_series.to_numpy(dtype="float64")
+    imp_den = imp_den_series.to_numpy(dtype="float64")
+    dom_value = _numeric_column(
+        merged, "domestic_value", context="support coverage"
+    ).to_numpy(dtype="float64")
+    imp_value = _numeric_column(
+        merged, "import_value", context="support coverage"
+    ).to_numpy(dtype="float64")
+    dom_intensity = _numeric_column(
+        merged, "domestic_intensity", context="support coverage"
+    ).to_numpy(dtype="float64")
+    imp_intensity = _numeric_column(
+        merged, "import_intensity", context="support coverage"
+    ).to_numpy(dtype="float64")
+
+    dom_active = dom_den != 0.0
+    imp_active = imp_den != 0.0
+    dom_supported = ~dom_active | (
+        np.isfinite(dom_value) & np.isfinite(dom_intensity)
+    )
+    imp_supported = ~imp_active | (
+        np.isfinite(imp_value) & np.isfinite(imp_intensity)
+    )
+    dom_supported_active = dom_active & dom_supported
+    imp_supported_active = imp_active & imp_supported
+
+    supported_mass = (
+        np.where(dom_supported_active, np.abs(dom_den), 0.0)
+        + np.where(imp_supported_active, np.abs(imp_den), 0.0)
+    )
+    gross_mass = np.abs(dom_den) + np.abs(imp_den)
+    coverage = np.full(gross_mass.shape, np.nan)
+    np.divide(supported_mass, gross_mass, out=coverage, where=gross_mass > 0.0)
+
+    supported_value = (
+        np.where(dom_supported_active, dom_value, 0.0)
+        + np.where(imp_supported_active, imp_value, 0.0)
+    )
+    any_supported_active = dom_supported_active | imp_supported_active
+    supported_value[(gross_mass > 0.0) & ~any_supported_active] = np.nan
+
+    out = cast(pd.DataFrame, merged.loc[:, KEYS]).copy()
+    out["domestic_target_monetary_output"] = pd.Series(dom_den, index=out.index, dtype="float64")
+    out["import_target_monetary_output"] = pd.Series(imp_den, index=out.index, dtype="float64")
+    out["target_total_use"] = pd.Series(dom_den + imp_den, index=out.index, dtype="float64")
+    out["domestic_supported"] = pd.Series(dom_supported, index=out.index, dtype=bool)
+    out["import_supported"] = pd.Series(imp_supported, index=out.index, dtype=bool)
+    out["supported_value"] = pd.Series(supported_value, index=out.index, dtype="float64")
+    out["supported_monetary_mass"] = pd.Series(supported_mass, index=out.index, dtype="float64")
+    out["gross_component_monetary_mass"] = pd.Series(gross_mass, index=out.index, dtype="float64")
+    out["unsupported_monetary_mass"] = pd.Series(
+        gross_mass - supported_mass, index=out.index, dtype="float64"
+    )
+    out["coverage_fraction"] = pd.Series(coverage, index=out.index, dtype="float64")
+    return out
 
 
 def _attach_observed(trace: pd.DataFrame, observed: pd.DataFrame) -> pd.DataFrame:
@@ -286,6 +412,9 @@ def _flags(
     if import_row:
         gross = as_float(row.get("gross_abs_import_use"), 0.0)
         net = as_float(row.get("net_import_use"), float("nan"))
+        target = as_float(row.get("target_monetary_output"), float("nan"))
+        if math.isfinite(target) and target > 0.0 and gross == 0.0:
+            flags.append("TARGET_POSITIVE_DONOR_IMPORT_USE_ZERO")
         cancellation = as_float(row.get("cancellation_ratio"), float("nan"))
         if gross > 0.0 and net == 0.0:
             flags.append("NET_USE_ZERO_WITH_GROSS_MASS")
@@ -509,6 +638,21 @@ def run_trace(args: argparse.Namespace) -> dict[str, object]:
             dom["target_monetary_output"] = dom["sector"].map(
                 lambda sector: dom_target.get(str(sector), np.nan)
             )
+            dom["retarget_factor"] = np.nan
+            dom_donor = _numeric_column(
+                dom, "mapped_x", context="DOM retarget factor"
+            ).to_numpy(dtype="float64")
+            dom_target_values = _numeric_column(
+                dom, "target_monetary_output", context="DOM retarget factor"
+            ).to_numpy(dtype="float64")
+            dom_factor = np.full(dom_donor.shape, np.nan)
+            np.divide(
+                dom_target_values,
+                dom_donor,
+                out=dom_factor,
+                where=dom_donor != 0.0,
+            )
+            dom["retarget_factor"] = dom_factor
             dom["implied_target_value"] = dom["donor_intensity"] * dom["target_monetary_output"]
             dom = _attach_observed(dom, dom_observed)
             dom["diagnostic_flags"] = dom.apply(
@@ -539,6 +683,21 @@ def run_trace(args: argparse.Namespace) -> dict[str, object]:
             imp["target_monetary_output"] = imp["sector"].map(
                 lambda sector: imp_target.get(str(sector), np.nan)
             )
+            imp["retarget_factor"] = np.nan
+            imp_donor = _numeric_column(
+                imp, "net_import_use", context="IMP retarget factor"
+            ).to_numpy(dtype="float64")
+            imp_target_values = _numeric_column(
+                imp, "target_monetary_output", context="IMP retarget factor"
+            ).to_numpy(dtype="float64")
+            imp_factor = np.full(imp_donor.shape, np.nan)
+            np.divide(
+                imp_target_values,
+                imp_donor,
+                out=imp_factor,
+                where=imp_donor != 0.0,
+            )
+            imp["retarget_factor"] = imp_factor
             imp["implied_target_value"] = imp["donor_import_intensity"] * imp["target_monetary_output"]
             imp = _attach_observed(imp, imp_observed)
             imp["diagnostic_flags"] = imp.apply(
@@ -578,9 +737,11 @@ def run_trace(args: argparse.Namespace) -> dict[str, object]:
     imp_trace = pd.concat(imp_rows, ignore_index=True) if imp_rows else pd.DataFrame()
     origin_trace = pd.DataFrame(origin_rows)
     reader_trace = pd.DataFrame(reader_rows)
+    total_support = _total_support_coverage(dom_observed, imp_observed)
     _write_csv(dom_trace, outdir / "production_magnitude_trace.csv", DOM_COLUMNS)
     _write_csv(imp_trace, outdir / "import_magnitude_trace.csv", IMP_COLUMNS)
     _write_csv(origin_trace, outdir / "import_origin_trace.csv", ORIGIN_COLUMNS)
+    _write_csv(total_support, outdir / "total_support_coverage.csv", TOTAL_SUPPORT_COLUMNS)
     _write_csv(reader_trace, outdir / "source_reader_comparison.csv", READER_COLUMNS)
     pd.DataFrame(source_errors, columns=pd.Index(["extension", "error"], dtype="object")).to_csv(
         outdir / "source_errors.csv", index=False
@@ -589,6 +750,12 @@ def run_trace(args: argparse.Namespace) -> dict[str, object]:
     reader_nonexact = int(
         ((~reader_trace["numeric_equal"].astype(bool)) | (~reader_trace["label_exact"].astype(bool))).sum()
     ) if not reader_trace.empty else 0
+    coverage_series = cast(pd.Series, total_support["coverage_fraction"]).astype("float64")
+    finite_coverage = coverage_series.dropna()
+    partial_coverage = (
+        coverage_series.notna() & coverage_series.lt(1.0) & coverage_series.gt(0.0)
+    )
+
     summary: dict[str, object] = {
         "source_zip": str(source_zip),
         "provenance": provenance,
@@ -604,6 +771,16 @@ def run_trace(args: argparse.Namespace) -> dict[str, object]:
         "imp_signed_cancellation_rows": int(
             imp_trace["diagnostic_flags"].astype(str).str.contains("SIGNED_NET_CANCELLATION", regex=False).sum()
         ) if not imp_trace.empty else 0,
+        "imp_target_positive_donor_import_use_zero_rows": int(
+            imp_trace["diagnostic_flags"].astype(str).str.contains(
+                "TARGET_POSITIVE_DONOR_IMPORT_USE_ZERO", regex=False
+            ).sum()
+        ) if not imp_trace.empty else 0,
+        "total_support_rows": int(len(total_support)),
+        "total_partial_support_rows": int(partial_coverage.sum()),
+        "total_min_coverage_fraction": (
+            None if finite_coverage.empty else float(finite_coverage.min())
+        ),
         "thresholds_are_report_only": True,
         "absolute_intensity_report_threshold": float(args.intensity_threshold),
         "signed_net_cancellation_report_ratio": float(args.cancellation_ratio_threshold),

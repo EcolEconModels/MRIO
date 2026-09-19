@@ -126,6 +126,38 @@ $$
 \kappa_a=|D_a|/G_a.
 $$
 
+The trace also records the report-only retarget factor
+
+$$
+r_a=U_a^{target}/U_a^{donor},
+$$
+
+using mapped donor production output for DOM and net origin-weighted import use
+for IMP. A negative IMP $r_a$ is valid when the authoritative target IOT has
+signed use, for example from negative inventory change; it is not a gross
+physical-import claim. If $U_a^{target}>0$ while the donor gross import-use mass
+$\sum_o|\bar u_{oa}|$ is exactly zero, the collapsed IMP trace reports
+`TARGET_POSITIVE_DONOR_IMPORT_USE_ZERO`.
+
+The diagnostic also writes `total_support_coverage.csv`. It does not relax the
+canonical fail-closed TOTAL coefficient. Instead it reports the signed physical
+contribution known from supported DOM/IMP components as `supported_value` and
+
+$$
+c_a=
+\frac{
+ |U_a^{DOM}|\mathbf{1}[DOM\ supported]
+ +|U_a^{IMP}|\mathbf{1}[IMP\ supported]
+}{
+ |U_a^{DOM}|+|U_a^{IMP}|
+}
+$$
+
+as `coverage_fraction`. Absolute component monetary mass keeps $c_a\in[0,1]$
+under signed IMP accounting. An unavailable active component is excluded from
+`supported_value`; the result is diagnostic partial evidence, never an imputed
+TOTAL value or intensity.
+
 The command reports, but does not adjudicate, very small $\kappa_a$, extreme
 absolute intensities, source-reader disagreement, non-positive mapped production
 output at an actively used origin, and mismatches between reconstructed and
@@ -136,7 +168,7 @@ semantics.
 
 The explicit audit output directory receives
 `production_magnitude_trace.csv`, `import_magnitude_trace.csv`,
-`import_origin_trace.csv`, `source_reader_comparison.csv`, `source_errors.csv`, and
+`import_origin_trace.csv`, `total_support_coverage.csv`, `source_reader_comparison.csv`, `source_errors.csv`, and
 `magnitude_summary.json`. The origin trace is limited to target rows carrying at
 least one diagnostic flag; the DOM/IMP magnitude tables enumerate every selected
 sidecar stressor/sector combination.

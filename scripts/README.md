@@ -203,7 +203,7 @@ TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_202
 bash scripts/pipelines/at_2021_fuels.sh
 ```
 
-For a non-AT target, enabling `WRITE_SFC_WORKBOOK=1` requires an explicit `TEMPLATE_XLSX`; the Austrian default template is never reused for another geography.
+For AT, the plain fuels/fuels-more command uses the sibling PostGrowth layout by default. For a non-AT target, workbook export remains opt-in; if enabled without an override the same taint-isolated layout source may be reused safely, or `SFC_LAYOUT_TEMPLATE_XLSX` may select another layout explicitly.
 
 The wrapper materializes three storage stages but only two scientific sector
 resolutions. `*_split_flows` is the working/provenance representation produced by
@@ -340,4 +340,4 @@ denominators before deriving intensity. Aggregate exports exclude intra-scope tr
 <!-- sfc-layout-template-isolation -->
 ### SFC layout template
 
-`at_2021_fuels.sh` and `at_2021_fuels_more.sh` use `SFC_LAYOUT_TEMPLATE_XLSX` for optional Eurostat-shaped workbook output (`TEMPLATE_XLSX` remains a compatibility alias). The default `tmp/IOT_Austria_2021_Eurostat.xlsx` contributes visual style/geometry only: current parsed Eurostat metadata and transformed arrays own product, final-demand and supplementary codes/order/labels/applicability/values. Template text, formulas, numbers, filled/blank patterns, stale metadata and auxiliary sheets are erased or ignored. `sector_contract.csv` is generated from current source metadata independently of XLSX enablement; the MPG4ALL `source_sector_contract.csv` is emitted only for an exact CPA65 source domain. Grouped/non-AT runs keep workbook export off by default; set `WRITE_SFC_WORKBOOK=1` to request one explicitly.
+`at_2021_fuels.sh` and `at_2021_fuels_more.sh` use `SFC_LAYOUT_TEMPLATE_XLSX` for optional Eurostat-shaped workbook output (`TEMPLATE_XLSX` remains a compatibility alias). By default they use the maintained sibling `../PostGrowth-SFC-Austria/IOT_Austria_2021_Eurostat.xlsx` (`POSTGROWTH_SFC_DIR` may override the sibling root). The workbook contributes visual style/geometry only: current parsed Eurostat metadata and transformed arrays own product, final-demand and supplementary codes/order/labels/applicability/values. Template text, formulas, numbers, filled/blank patterns, stale metadata and auxiliary sheets are erased or ignored. `sector_contract.csv` is generated from current source metadata independently of XLSX enablement; the MPG4ALL `source_sector_contract.csv` is emitted only for an exact CPA65 source domain. Grouped/non-AT runs keep workbook export off by default; set `WRITE_SFC_WORKBOOK=1` to request one explicitly.

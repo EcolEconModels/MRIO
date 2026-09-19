@@ -927,10 +927,12 @@ def test_write_excel_mapping_sheet_allows_missing_co2_for_import_flow(capsys) ->
 
     stdout = capsys.readouterr().out
     assert "WARNING: SFC workbook mapping sheet is omitting production-based CO2 intensity columns" in stdout
-    assert "WARNING: SFC workbook mapping sheet is omitting use-phase CO2 intensity columns" in stdout
+    assert "INFO: SFC workbook mapping sheet has no use-phase CO2 column for IMP flow" in stdout
     assert "WARNING: SFC workbook re-aggregated summary is omitting production-based CO2" in stdout
-    assert "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2" in stdout
-    assert "for IMP flow" in stdout
+    assert "INFO: SFC workbook re-aggregated summary has no use-phase CO2 column for IMP flow" in stdout
+    assert "not implemented" not in stdout
+    assert "WARNING: SFC workbook mapping sheet is omitting use-phase CO2" not in stdout
+    assert "WARNING: SFC workbook re-aggregated summary is omitting use-phase CO2" not in stdout
 
     ws = wb["IO Aggregation Mapping"]
     headers = [cell.value for cell in ws[1]]
@@ -1029,9 +1031,11 @@ def test_missing_sfc_co2_reason_distinguishes_imp_and_total() -> None:
     assert "IMP flow" in imp_prod
     assert "origin-weighted import" in imp_prod
     assert "IMP flow" in imp_use
+    assert "no import-origin product counterpart" in imp_use
     assert "TOTAL flow" in total_prod
-    assert "domestic-production" in total_prod
+    assert "combined DOM/IMP target environmental sidecar" in total_prod
     assert "TOTAL flow" in total_use
+    assert "destination final-demand F_Y evidence" in total_use
     assert "for import flow" not in " ".join([imp_prod, imp_use, total_prod, total_use])
 
 

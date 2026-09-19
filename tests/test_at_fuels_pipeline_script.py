@@ -17,6 +17,9 @@ def test_at_fuels_runner_preserves_year_and_parent_lineage_contracts() -> None:
     )
 
     assert "SFC_LAYOUT_TEMPLATE_XLSX" in text
+    assert "POSTGROWTH_SFC_DIR" in text
+    assert "$ROOT_DIR/../PostGrowth-SFC-Austria" in text
+    assert "$ROOT_DIR/tmp/IOT_Austria_2021_Eurostat.xlsx" not in text
     assert "IOT_Austria_${EUROSTAT_TIME}_Eurostat.xlsx" not in text
     assert "IOT_Austria_2021_Eurostat.xlsx" in text
     assert '"source_parent_code": str(aggregate_code)' in text
@@ -57,6 +60,7 @@ def test_fuels_wrapper_defaults_to_reviewed_official_direct_concordance() -> Non
 def test_layout_template_is_reusable_and_group_workbook_export_remains_opt_in() -> None:
     text = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(encoding="utf-8")
     assert "SFC_LAYOUT_TEMPLATE_XLSX" in text
+    assert 'POSTGROWTH_SFC_DIR="${POSTGROWTH_SFC_DIR:-$ROOT_DIR/../PostGrowth-SFC-Austria}"' in text
     assert 'TEMPLATE_XLSX="$SFC_LAYOUT_TEMPLATE_XLSX"' in text
     assert "Explicit TEMPLATE_XLSX is required" not in text
     assert 'if [[ -z "$REGION_SCOPE_MAPPING_CSV" && "$EUROSTAT_GEO" == "AT" ]]' in text
