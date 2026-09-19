@@ -203,20 +203,22 @@ TEMPLATE_XLSX=/home/agilra/EcolEconModels/PostGrowth-SFC-Austria/IOT_Austria_202
 bash scripts/pipelines/at_2021_fuels.sh
 ```
 
-With no environmental selector, `at_2021_fuels.sh` exports all EXIOBASE
-environmental extensions. Its default output namespace is
-`fuels_all_extensions`. To reproduce the historic combustion-only selection,
-set it explicitly:
+Every workflow routed through `at_2021_workbook_reaggregation.sh` defaults to all
+available EXIOBASE environmental extensions when no environmental selector is
+provided. This includes `fuels`, `fuels_more`, `biofuels`,
+`biofuels_feedstocks`, grouped-region runs, and other mappings using that shared
+runner. Their default output namespaces therefore include `_all_extensions` (for
+example, `fuels_all_extensions` and `fuels_more_all_extensions`). To reproduce a
+historic or smaller combustion-only selection, opt out explicitly:
 
 ```bash
 ENVIRONMENTAL_ALL_EXTENSIONS=0 \
-ENVIRONMENTAL_PRESET=combustion-co2 \
 bash scripts/pipelines/at_2021_fuels.sh
 ```
 
-An explicit `ENVIRONMENTAL_PRESET` or `ENVIRONMENTAL_EXTENSIONS_JSON` likewise
-suppresses this fuels-only default. This does not change the separate
-`at_2021_fuels_more.sh` pipeline.
+An explicit `ENVIRONMENTAL_PRESET` (including `combustion-co2`) or
+`ENVIRONMENTAL_EXTENSIONS_JSON` likewise suppresses the shared default; JSON is
+the explicit custom-selection override.
 
 For AT, the plain fuels/fuels-more command uses the sibling PostGrowth layout by default. For a non-AT target, workbook export remains opt-in; if enabled without an override the same taint-isolated layout source may be reused safely, or `SFC_LAYOUT_TEMPLATE_XLSX` may select another layout explicitly.
 
