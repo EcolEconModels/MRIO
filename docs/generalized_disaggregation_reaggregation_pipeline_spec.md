@@ -811,51 +811,34 @@ copy_unaffected
 The exact source row codes for those rules live in dictionaries.
 
 
-<!-- production-account-v-reconciliation-step2 -->
-### Active Step-2 joint atomic-final-demand reconciliation
+<!-- production-account-v-reconciliation-fixed-child-use -->
+### Active conservative fixed-child-use production-account reconciliation
 
-For the canonical Eurostat/EXIO production path, the active primitive monetary
-variables are DOM/IMP intermediate transactions, DOM/IMP atomic final demand,
-child domestic output, child `D21X31`, and an auxiliary `B1G` allocation.
+For the canonical Eurostat/EXIO production path, atomic final demand and each
+flow-specific child intermediate-sales row remain fixed by the selected
+disaggregation as a conservative reference closure; they are not promoted to
+observed child-level Eurostat controls. The active reconciliation variables are
+DOM/IMP intermediate transactions plus child `D21X31` and an auxiliary `B1G`
+allocation. Eurostat parent Z cells, child intermediate-sales rows and parent
+`D21X31` are hard reconciliation controls; every child obeys
+`P1 = Z_column_total + D21X31 + B1G`. EXIO transaction structure and
+source-conserving child production-account allocations are priors, not child
+monetary observations. The implementation uses the shared sparse
+`kl_balance_linear_equalities` numerical owner and records
+`producer_column_reconciliation=joint_dom_imp_kl_production_account_v` and
+`balancing_method=KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V`.
 
-Eurostat parent Z cells, Eurostat parent atomic-Y cells, and parent `D21X31` are
-hard controls. Child supplier-row totals and child final-demand allocations are
-latent rather than hard preliminary margins. Every child obeys both
+Aggregate/display `Y`, derived `V`, and `M` serialization cells are not additional
+independent balancing variables. Atomic `Y`, child output, and DOM/IMP supplier-row
+totals remain invariant through reconciliation. Environmental sidecars therefore
+remain unchanged: their child monetary denominators are invariant, while indirect
+Leontief footprints may change through the reconciled `A` matrix.
 
-```text
-x = DOM Z row + DOM atomic Y row
-P1 = TOTAL Z column + D21X31 + B1G
-```
-
-in the same sparse reconciliation.
-
-EXIO transaction structure and the preliminary child allocations are priors, not
-child monetary observations. Non-negative variables use KL divergence. Signed
-inventory/valuables final-demand atoms with nonzero preliminary value \(q\) use
-\(Q(y\mid q,|q|)=(y-q)^2/(2|q|)\), the monetary-scale-compatible local
-quadratic KL form; zero signed support remains fixed and receives no fabricated
-epsilon support. The numerical owner is `balance_separable_linear_equalities`.
-Gross target-country monetary scales may condition homogeneous child accounting rows
-and signed-net source rows. Hard Eurostat parent Z, atomic-Y, and D21X31 cells keep
-target-based acceptance; conditioning is only an algebraic row rescaling and is not
-an observation, constraint, objective weight, or acceptance relaxation. Separately,
-the homogeneous rows use preliminary child output as
-the relative numerical tolerance reference so rewriting Step 1's nonzero-RHS
-`inputs = x` equality as Step 2's zero-target residual cannot erase the `rtol`
-scale. This tolerance reference does not constrain child output.
-
-Aggregate/display Y, derived V, and M serialization cells remain derived rather
-than independent balancing variables. The method records
-`producer_column_reconciliation=joint_dom_imp_atomic_y_production_account_v` and
-`balancing_method=SEPARABLE_LINEAR_EQUALITY_Z_Y_PRODUCTION_ACCOUNT_V`.
-
-Because child output and imported-product use can move in Step 2, canonical DOM
-and IMP environmental target sidecars are retargeted after the monetary
-reconciliation and TOTAL is rebuilt only then. Direct environmental coefficients
-are preserved where available; unavailable evidence stays unavailable. The
-DOM monetary-output/physical-quantity sidecar is retargeted on the same final
-child-output basis.
-
+`producer_technology_reconciliation.csv` is the movement audit. It records
+before/after supplier-row intermediate sales, producer-column inputs, fixed child
+output, jointly allocated `D21X31`, and generated `B1G`. Canonical validation
+requires zero supplier-row/output movement within generated-identity tolerance;
+column-input movement records the minimum production-account correction.
 ## Reaggregation validation
 
 Every run must validate:

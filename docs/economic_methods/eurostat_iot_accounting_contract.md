@@ -647,75 +647,64 @@ Z^{before}_{ij}
 
 ### Joint whole-IOT feasibility reconciliation
 
-Parent-cell conservation is necessary but insufficient. The canonical Step-2
-method therefore reconciles the unobserved child allocations of intermediate use
-and atomic final demand simultaneously rather than treating either preliminary
-child split as an Austrian observation.
+Parent-cell conservation is necessary but insufficient. In the canonical
+conservative reconciliation, atomic final demand and each flow-specific child
+supplier-row margin from the chosen disaggregation are held fixed as a reference
+closure; they are not treated as observed child-level Eurostat controls. DOM row
+use therefore fixes child domestic output. DOM and IMP `Z` are reconciled jointly
+with the production-account objects that directly constrain their producer columns.
 
-For each flow \(f\in\{DOM,IMP\}\), every Eurostat parent Z cell and every
-non-overlapping atomic final-demand cell is a hard equality,
-
-\[
-\sum_{a\in C_i}\sum_{b\in C_j}Z^f_{ab}=Z^{Eurostat,f}_{ij},
-\qquad
-\sum_{a\in C_i}Y^f_{ak}=Y^{Eurostat,f}_{ik}.
-\]
-
-Domestic child output is derived inside the reconciliation,
-
-\[
-x_b=\sum_j Z^{DOM}_{bj}+\sum_kY^{DOM}_{bk},
-\]
-
-and must be non-negative. For producer child \(b\),
+For producer child \(b\),
 
 \[
 u_b=\sum_a(Z^{DOM}_{ab}+Z^{IMP}_{ab}),
-\qquad
-d_b=D21X31_b,
-\qquad
-g_b=B1G_b,
+\qquad d_b=D21X31_b,
+\qquad g_b=B1G_b.
 \]
 
-with the exact child production account
+The generated child production account must satisfy the exact identity
 
 \[
 \boxed{x_b=u_b+d_b+g_b}.
 \]
 
-`D21X31` is a primitive source control and conserves every parent amount exactly.
-The generated parent `B1G` total is implied by parent output, intermediate input
-and `D21X31`; the separately published parent `B1G` remains an independently
-rounded source validation control.
-
-Ordinary non-negative final-demand atoms use KL priors. For a signed
-inventory/valuables atom with preliminary child value \(q\) and nonzero monetary
-scale \(s=|q|\), the signed child-allocation prior is the local quadratic KL form
+`D21X31` is a primitive source control and its child allocation is inferred in the
+same reconciliation while preserving each published parent amount exactly,
 
 \[
-Q(y\mid q,s)=\frac{(y-q)^2}{2s}.
+\sum_{b\in C_j}d_b=D21X31_j.
 \]
 
-It has the same monetary dimension and degree-one monetary scaling as KL, so changing
-from euros to thousands or millions cannot change the reconciled allocation. A zero
-signed prior magnitude has \(s=0\) and remains fixed; no epsilon support is invented.
-Aggregate/display Y, derived V, and M identities are rebuilt from the primitive
-solution. Numerical row conditioning may use gross target-country monetary
-magnitudes for homogeneous child identities and signed-net source cells, but this
-only rescales an equality and never changes its target or objective weight. Hard
-Eurostat parent Z, atomic-Y, and D21X31 source controls retain target-based
-acceptance even when a gross signed-net scale is useful for dual conditioning.
-Because making child output endogenous rewrites the Step-1 relation
-`inputs = x` as a zero-right-hand-side residual, those homogeneous output and
-production rows use preliminary child output only as the relative numerical
-tolerance reference. This restores the same `rtol` scale that Step 1 had; it does
-not fix child output or weaken the exact accounting identity.
+The generated parent `B1G` total is implied by parent output, intermediate input and
+`D21X31`; the separately published parent `B1G` remains an independently rounded
+source control and is validated under the source-rounding contract rather than
+being added as a redundant exact equality.  An auxiliary child `B1G` prior is
+included in the KL objective so positive source/implied GVA is not treated merely
+as an upper-bound slack that can collapse arbitrarily to zero.
 
-The post-reconciliation environmental contract uses the final monetary
-denominators. DOM production sidecars are retargeted to reconciled \(x\), IMP
-direct sidecars to reconciled imported-product use, and TOTAL is then rebuilt from
-those final DOM/IMP components. Missing environmental evidence remains missing.
-Direct final-demand `F_Y` is not product-disaggregated and remains unchanged.
+Signed source-parent `D21X31` and generated/implied `B1G` are represented by
+non-negative magnitudes with the source-parent sign.  Without child-specific
+evidence, disaggregation therefore does not manufacture offsetting within-parent
+sign reversals.  A source parent with non-negative GVA cannot acquire a materially
+negative synthetic child through the transformation.
+
+The generic numerical owner is the sparse linear-equality KL projection in
+`ecolecon_mrio.balancing`; application code supplies economic constraints and does
+not own a parallel solver.  Structural zeros remain structural zeros and an
+incompatible source/support system fails explicitly.
+
+Other primitive production rows that do not constrain the fixed-child-use
+transaction feasible set remain source-conserving child allocations. Derived `V`, aggregate
+`Y`, and `M` identities are rebuilt from the feasible transactions and checked by
+the complete generated-IOT Class-I validator.  Candidate valuation/supply-use
+bridges marked `not_tested` by source policy remain unpromoted.
+
+The existing `producer_technology_reconciliation.csv` is the movement audit:
+it records fixed child output, before/after DOM and IMP supplier-row intermediate
+sales, before/after producer-column inputs, and the jointly allocated `D21X31`
+and generated `B1G`. Supplier-row and output changes must be numerical zero;
+producer-column changes show the minimum reconciliation needed for production
+feasibility.
 
 The cleared domestic technical matrix must additionally satisfy
 \(\rho(A^{DOM})<1\).

@@ -41,17 +41,17 @@ _ENVIRONMENTAL_GRID_COLUMNS = [
     "intensity",
 ]
 _REQUIRED_TRANSFORMATION_COHERENCE_CHECKS = {
+    ("DOM", "tc.child_row_margin"),
     ("DOM", "tc.parent_z_cell"),
+    ("IMP", "tc.child_row_margin"),
     ("IMP", "tc.parent_z_cell"),
-    ("DOM", "tc.parent_atomic_y_cell"),
-    ("IMP", "tc.parent_atomic_y_cell"),
-    ("DOM", "tc.dom_output_identity"),
-    ("DOM", "tc.parent_dom_output"),
-    ("IMP", "tc.parent_import_use"),
     ("TOTAL", "tc.production_account_identity"),
     ("TOTAL", "tc.parent_d21x31"),
     ("TOTAL", "tc.nonnegative_child_b1g"),
-    ("TOTAL", "tc.separable_reconciliation_convergence"),
+    ("TOTAL", "tc.zero_target_output_column"),
+    ("TOTAL", "tc.kl_convergence"),
+    ("DOM", "tc.dom_output_margin"),
+    ("IMP", "tc.imp_row_use_margin"),
     ("TOTAL", "tc.total_use_additivity"),
     ("DOM", "tc.dom_leontief_productivity"),
 }
@@ -744,12 +744,12 @@ def validate_pipeline_outputs(
                     "Stale hard-cap production-account reconciliation; "
                     "regenerate with joint production-account V reconciliation."
                 )
-            if split_info.get("producer_column_reconciliation") == "joint_dom_imp_kl_production_account_v":
-                raise ValueError(
-                    "Stale Step-1 fixed-atomic-Y reconciliation; regenerate with the "
-                    "joint atomic-Y whole-IOT reconciliation."
-                )
             if split_info.get("producer_column_reconciliation") == "joint_dom_imp_atomic_y_production_account_v":
+                raise ValueError(
+                    "Stale endogenous-atomic-Y Step-2 reconciliation; regenerate with the "
+                    "canonical fixed-child-use production-account reconciliation."
+                )
+            if split_info.get("producer_column_reconciliation") == "joint_dom_imp_kl_production_account_v":
                 coherence = _validate_transformation_coherence_report(
                     split_dir.parent / "transformation_coherence_validation.csv"
                 )
@@ -774,7 +774,7 @@ def validate_pipeline_outputs(
                     "producer_technology_reconciliation_balancing_declared",
                     split_info.get("balancing_applied") is True
                     and split_info.get("balancing_method")
-                    == "SEPARABLE_LINEAR_EQUALITY_Z_Y_PRODUCTION_ACCOUNT_V",
+                    == "KL_LINEAR_EQUALITY_PRODUCTION_ACCOUNT_V",
                     balancing_applied=split_info.get("balancing_applied"),
                     balancing_method=split_info.get("balancing_method"),
                 )
