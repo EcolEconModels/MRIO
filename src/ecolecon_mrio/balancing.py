@@ -290,6 +290,7 @@ def balance_separable_linear_equalities(
     signed_quadratic_mask: np.ndarray | None = None,
     signed_quadratic_scale: np.ndarray | None = None,
     equality_conditioning_scale: np.ndarray | None = None,
+    equality_tolerance_scale: np.ndarray | None = None,
     max_iter: int = 50_000,
     rtol: float = 1e-12,
     atol: float = 1e-10,
@@ -320,9 +321,14 @@ def balance_separable_linear_equalities(
 
     ``equality_conditioning_scale`` is an optional non-negative numerical row-scale
     floor. Dividing an equality and its target by that scale changes only dual
-    coordinates, never ``A @ x = b`` or the primal objective. The solver otherwise
-    uses the same target/coefficient conditioning and feasibility-first KKT
-    acceptance as ``kl_balance_linear_equalities``.
+    coordinates, never ``A @ x = b`` or the primal objective.
+
+    ``equality_tolerance_scale`` is a separate optional non-negative reference
+    magnitude for the relative feasibility tolerance. It is needed when an
+    economically scaled equality such as ``inputs = x`` becomes the algebraically
+    equivalent homogeneous row ``inputs - x = 0`` after ``x`` is made endogenous.
+    It never changes the equality, objective, structural support, or row
+    conditioning. Source-control rows should leave it at zero.
     """
     q = np.asarray(prior, dtype="float64")
     original_shape = q.shape
@@ -400,6 +406,24 @@ def balance_separable_linear_equalities(
                 "equality_conditioning_scale must be finite and non-negative."
             )
 
+    # SEPARABLE_HOMOGENEOUS_TOLERANCE_REFERENCE_V4
+    if equality_tolerance_scale is None:
+        tolerance_scale = np.zeros(b.size, dtype="float64")
+    else:
+        tolerance_scale = np.asarray(
+            equality_tolerance_scale, dtype="float64"
+        ).reshape(-1)
+        if tolerance_scale.size != b.size:
+            raise ValueError(
+                "equality_tolerance_scale must match the number of equality rows."
+            )
+        if not np.isfinite(tolerance_scale).all() or bool(
+            (tolerance_scale < 0.0).any()
+        ):
+            raise ValueError(
+                "equality_tolerance_scale must be finite and non-negative."
+            )
+
     # Non-negative KL zero priors are structural zeros. Signed variables with zero
     # declared scale are fixed at their prior value. Remove both from the active
     # optimisation while retaining the exact contribution of fixed signed values.
@@ -419,9 +443,10 @@ def balance_separable_linear_equalities(
 
     row_nnz = np.diff(active_A.indptr)
     unsupported = row_nnz == 0
-    unsupported_tolerance = atol + rtol * np.maximum(
-        np.maximum(np.abs(b), np.abs(fixed_contribution)), 1.0
+    unsupported_reference = np.maximum.reduce(
+        [np.abs(b), np.abs(fixed_contribution), tolerance_scale, np.ones_like(b)]
     )
+    unsupported_tolerance = atol + rtol * unsupported_reference
     unsupported_gap = np.abs(active_target) > unsupported_tolerance
     if bool(np.any(unsupported & unsupported_gap)):
         row = int(np.flatnonzero(unsupported & unsupported_gap)[0])
@@ -438,7 +463,9 @@ def balance_separable_linear_equalities(
         if not np.isfinite(actual).all():
             raise ValueError("Linear reconciliation produced non-finite equality totals.")
         gap = np.abs(actual - b)
-        tolerance = atol + rtol * np.maximum(np.abs(actual), np.abs(b))
+        tolerance = atol + rtol * np.maximum.reduce(
+            [np.abs(actual), np.abs(b), tolerance_scale]
+        )
         normalized = np.divide(
             gap,
             tolerance,
@@ -480,6 +507,26 @@ def balance_separable_linear_equalities(
     )
     A_scaled = (sparse.diags(1.0 / row_scale) @ active_A).tocsr()
     b_scaled = active_target / row_scale
+
+    # Homogeneous rows with an explicit tolerance reference recover the numerical
+    # scale that was present before their nonzero RHS became endogenous. If that
+    # requested acceptance is tighter than Krylov's historical conditioned fatol,
+    # tighten only enough for those rows; hard source rows do not drive this floor.
+    polish_fatol = 1e-13
+    referenced_rows = tolerance_scale > 0.0
+    if bool(np.any(referenced_rows)):
+        referenced_floor = (
+            atol
+            + rtol
+            * np.maximum(
+                np.abs(b[referenced_rows]), tolerance_scale[referenced_rows]
+            )
+        ) / row_scale[referenced_rows]
+        positive_floor = referenced_floor[referenced_floor > 0.0]
+        if positive_floor.size:
+            polish_fatol = min(
+                polish_fatol, 0.5 * float(np.min(positive_floor))
+            )
 
     active_kl_mask = ~active_signed_mask
     q_kl = active_q[active_kl_mask]
@@ -557,7 +604,7 @@ def balance_separable_linear_equalities(
             gradient,
             np.asarray(first.x, dtype="float64"),
             method="krylov",
-            options={"fatol": 1e-13, "maxiter": min(max_iter, 5_000)},
+            options={"fatol": polish_fatol, "maxiter": min(max_iter, 5_000)},
         )
         result, max_norm, max_abs = evaluate_candidate(
             np.asarray(polished.x, dtype="float64")
@@ -574,6 +621,8 @@ def balance_separable_linear_equalities(
             f"worst_row={worst_row}, actual={actual[worst_row]:.12g}, "
             f"target={b[worst_row]:.12g}, tolerance={tolerance[worst_row]:.12g}, "
             f"row_scale={row_scale[worst_row]:.12g}, "
+            f"tolerance_scale={tolerance_scale[worst_row]:.12g}, "
+            f"polish_fatol={polish_fatol:.12g}, "
             f"n_signed_quadratic={int(active_signed_mask.sum())}, "
             f"lbfgs_success={bool(first.success)}, lbfgs_message={first.message!s}, "
             f"lbfgs_nit={int(getattr(first, 'nit', 0))}, "

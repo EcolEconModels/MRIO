@@ -701,8 +701,15 @@ from euros to thousands or millions cannot change the reconciled allocation. A z
 signed prior magnitude has \(s=0\) and remains fixed; no epsilon support is invented.
 Aggregate/display Y, derived V, and M identities are rebuilt from the primitive
 solution. Numerical row conditioning may use gross target-country monetary
-magnitudes, including for zero-target accounting identities and signed-net cells,
-but this only rescales an equality and never changes its target or objective weight.
+magnitudes for homogeneous child identities and signed-net source cells, but this
+only rescales an equality and never changes its target or objective weight. Hard
+Eurostat parent Z, atomic-Y, and D21X31 source controls retain target-based
+acceptance even when a gross signed-net scale is useful for dual conditioning.
+Because making child output endogenous rewrites the Step-1 relation
+`inputs = x` as a zero-right-hand-side residual, those homogeneous output and
+production rows use preliminary child output only as the relative numerical
+tolerance reference. This restores the same `rtol` scale that Step 1 had; it does
+not fix child output or weaken the exact accounting identity.
 
 The post-reconciliation environmental contract uses the final monetary
 denominators. DOM production sidecars are retargeted to reconciled \(x\), IMP

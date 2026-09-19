@@ -434,3 +434,43 @@ def test_separable_equality_conditioning_scale_is_algebraically_neutral() -> Non
         equality_conditioning_scale=np.array([5.0, 1.0e6], dtype="float64"),
     )
     np.testing.assert_allclose(conditioned, base, rtol=1e-9, atol=1e-9)
+
+# SEPARABLE_HOMOGENEOUS_TOLERANCE_SCALE_TEST_V4
+def test_separable_homogeneous_tolerance_scale_is_distinct_from_conditioning() -> None:
+    """Conditioning must not relax source controls; homogeneous scale is explicit."""
+    from ecolecon_mrio.balancing import balance_separable_linear_equalities
+
+    # Two fixed signed values leave a small residual after subtractive cancellation.
+    # A large conditioning scale alone must not change acceptance. Declaring the
+    # monetary reference scale separately restores the relative-tolerance meaning of
+    # an equivalent nonzero-RHS accounting identity.
+    prior = np.array([100_000.0, 99_999.99999995], dtype="float64")
+    constraints = np.array([[1.0, -1.0]], dtype="float64")
+    signed_mask = np.array([True, True])
+    signed_scale = np.zeros(2, dtype="float64")
+
+    with pytest.raises(ValueError, match="structural support"):
+        balance_separable_linear_equalities(
+            prior,
+            constraints,
+            np.array([0.0]),
+            signed_quadratic_mask=signed_mask,
+            signed_quadratic_scale=signed_scale,
+            equality_conditioning_scale=np.array([100_000.0]),
+            rtol=1e-12,
+            atol=1e-10,
+        )
+
+    result, stats = balance_separable_linear_equalities(
+        prior,
+        constraints,
+        np.array([0.0]),
+        signed_quadratic_mask=signed_mask,
+        signed_quadratic_scale=signed_scale,
+        equality_conditioning_scale=np.array([100_000.0]),
+        equality_tolerance_scale=np.array([100_000.0]),
+        rtol=1e-12,
+        atol=1e-10,
+    )
+    np.testing.assert_array_equal(result, prior)
+    assert stats.max_normalized_gap <= 1.0

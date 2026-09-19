@@ -932,3 +932,60 @@ def test_joint_iot_reconciliation_is_scale_equivariant_on_homogeneous_accounts(
         atol=1e-8,
     )
     assert {row["status"] for row in scaled[7]} == {"pass"}
+
+# STEP2_NATIVE_SCALE_HOMOGENEOUS_TOLERANCE_TEST_V4
+def test_joint_iot_reconciliation_large_native_scale_uses_relative_account_tolerance() -> None:
+    """Large M.EUR accounts must not lose rtol merely because x is endogenous."""
+    (
+        _children,
+        child_parent,
+        output_share,
+        Z_dom,
+        Z_imp,
+        Y_dom,
+        Y_imp,
+        refs,
+    ) = _joint_reconciliation_fixture()
+
+    # This is a large native-scale stress, not a monetary-unit conversion: keep the
+    # repository atol unchanged. It reproduces the cancellation regime that exposed
+    # Step 2's zero-RHS acceptance regression.
+    factor = 1.0e6
+    scaled_refs: dict[str, SimpleNamespace] = {}
+    for flow, reference in refs.items():
+        scaled_refs[flow] = SimpleNamespace(
+            Z=reference.Z * factor,
+            Y=reference.Y * factor,
+            V=None if reference.V is None else reference.V * factor,
+        )
+
+    dom, imp, y_dom, _y_imp, output, production_v, _diag, checks = (
+        MODULE._reconcile_iot_intermediate_transactions(
+            Z_dom * factor,
+            Z_imp * factor,
+            Y_dom * factor,
+            Y_imp * factor,
+            child_parent=child_parent,
+            dom_output_share=output_share,
+            references=scaled_refs,
+        )
+    )
+    assert production_v is not None
+    pd.testing.assert_series_equal(
+        output,
+        MODULE.flow_use_total(dom, y_dom).rename("x"),
+        check_names=False,
+        rtol=MODULE._GENERATED_IDENTITY_RTOL,
+        atol=MODULE._GENERATED_IDENTITY_ATOL,
+    )
+    pd.testing.assert_series_equal(
+        output,
+        dom.sum(axis=0)
+        + imp.sum(axis=0)
+        + production_v.loc["D21X31"]
+        + production_v.loc["B1G"],
+        check_names=False,
+        rtol=MODULE._GENERATED_IDENTITY_RTOL,
+        atol=MODULE._GENERATED_IDENTITY_ATOL,
+    )
+    assert {row["status"] for row in checks} == {"pass"}

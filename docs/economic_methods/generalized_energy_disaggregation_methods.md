@@ -515,10 +515,18 @@ the second-order KL form around the signed prior. Unlike a squared *relative*
 deviation, this penalty has monetary units and scales by the same factor as KL when
 the table's monetary unit changes. A zero signed prior has \(s=0\) and is fixed
 rather than receiving fabricated epsilon sign support. The generic numerical owner
-is `ecolecon_mrio.balancing.balance_separable_linear_equalities`. Homogeneous
-accounting rows and signed-net source rows may receive target-country gross monetary
-row scales for numerical conditioning; these algebraically rescale the equality
-only and do not alter the feasible set, objective, or acceptance tolerance.
+is `ecolecon_mrio.balancing.balance_separable_linear_equalities`. Gross
+target-country row scales may condition homogeneous child accounting equations and
+signed-net source rows without changing their feasible set or objective. Hard
+Eurostat parent Z, atomic-Y, and D21X31 controls keep target-based acceptance even
+when a gross source-row scale is used only for dual conditioning. Step 1 expressed
+the child production account with nonzero output on the right-hand side, so `rtol`
+was naturally evaluated at child-output scale. Step 2 makes that output endogenous
+and therefore writes the same relation as a zero-target residual. The homogeneous
+DOM-output and production rows consequently carry preliminary child output as a
+separate relative numerical tolerance reference. This restores representation-
+invariant floating-point validation only; preliminary output remains a prior, not a
+hard child observation.
 
 Aggregate/display Y controls, derived V rows and M serialization cells are
 recomputed from the primitive solution and are not additional independent
