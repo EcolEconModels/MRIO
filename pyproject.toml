@@ -23,6 +23,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Public HiGHS >=1.15 exposes HiPO; extras supplies its external sparse-factorization dependencies.
+inverse-highs = ["highspy[extras]>=1.15.1,<1.16"]
 # Optional helpers for parsing the WIOD 2016 release (2000–2014).
 # - `pyreadstat` enables fast reading of the provided STATA bundles via `pandas.read_stata`.
 # - `pyxlsb` enables reading the provided XLSB bundles via `pandas.read_excel(..., engine="pyxlsb")`.

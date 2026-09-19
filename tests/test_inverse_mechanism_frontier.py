@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
 
 from ecolecon_mrio import InverseMrioMechanismProblem
@@ -244,3 +245,54 @@ def test_inverse_mrio_two_objective_frontier_uses_exactly_two_highs_runs_without
     after = int(problem.numerical_matrix_diagnostics["solver_run_count"])
     assert result.optimal
     assert after - before == 2
+
+# PUBLIC_HIGHSPY_BACKEND_TESTS_V1
+def test_inverse_mrio_rejects_public_only_solver_on_scipy_backend() -> None:
+    """Explicit HiPO/IPX names must not be sent to the older bundled backend."""
+
+    base = _problem()
+    with pytest.raises(ValueError, match="requires highs_backend='highspy'"):
+        InverseMrioMechanismProblem(
+            base.A0,
+            base.x0,
+            base.f0,
+            base.L,
+            base.U,
+            base.C,
+            highs_backend="scipy",
+            cold_start_solver="hipo",
+        )
+
+
+def test_inverse_mrio_public_highspy_hipo_preserves_audited_solution() -> None:
+    """Public HiPO solves the same tiny economic problem and passes postchecks."""
+
+    highspy = pytest.importorskip("highspy")
+    pytest.importorskip("highspy_extras")
+    A0 = csr_matrix(np.diag([0.2, 0.2]))
+    x0 = np.array([10.0, 10.0])
+    f0 = x0 - A0.dot(x0)
+    lower = csr_matrix(np.diag([-0.1, -0.1]))
+    upper = csr_matrix(np.diag([0.1, 0.1]))
+    target = csr_matrix([[1.0, 0.0]])
+    problem = InverseMrioMechanismProblem(
+        A0,
+        x0,
+        f0,
+        lower,
+        upper,
+        target,
+        accompaniment_indices=np.empty(0, dtype=np.int32),
+        highs_backend="highspy",
+        cold_start_solver="hipo",
+        cold_start_crossover="off",
+        postcheck_tolerance=1.0e-9,
+    )
+    result = problem.solve_pure_final_use(np.array([1.0]))
+    assert result.optimal
+    assert np.isclose(result.j_structure, 0.0, atol=1.0e-10)
+    diag = problem.numerical_matrix_diagnostics
+    assert diag["solver_backend"] == "highspy"
+    assert diag["cold_start_solver"] == "hipo"
+    assert diag["cold_start_crossover"] == "off"
+    assert str(diag["highs_version"]) == str(highspy.Highs().version())

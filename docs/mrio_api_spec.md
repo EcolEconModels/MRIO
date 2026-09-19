@@ -870,18 +870,19 @@ and `A0` remain non-negative. The change identity deliberately inherits any tiny
 finite-precision baseline source-account residual instead of silently rebalancing
 the source state.
 
-The implementation uses SciPy's bundled incremental HiGHS bindings and streams
-sparse constraint rows into one persistent solver model. A lexicographic solve runs
-only the objectives actually requested: when no accompaniment objective is declared,
-the last burden optimum is returned directly rather than performing an additional
-objective-free HiGHS run. Installing the public `highspy` package does not switch
-this backend implicitly; any public-highspy/HiPO backend would require an explicit
-separately tested adapter. This is a resource property of the API, not a scientific
-change. Scenario identities, transition
-roles, environmental extensions, historical precedent, epsilon-grid policy,
-reader-facing witness selection, and plotting remain caller-owned. An EE-MRIO can
-use this API for its monetary MRIO core and evaluate environmental extensions on
-returned economic witnesses separately.
+The implementation streams sparse constraint rows into one persistent HiGHS
+model. The default `scipy` backend preserves SciPy's bundled incremental binding for
+compatibility. An explicit `highspy` backend uses the supported public `highspy.Highs`
+interface so current HiGHS algorithms, including HiPO when `highspy-extras` is
+installed, can solve the *same* scaled model. Backend selection never occurs
+implicitly. A lexicographic solve runs only the objectives actually requested: when
+no accompaniment objective is declared, the last burden optimum is returned directly
+rather than performing an additional objective-free run. This is numerical/resource
+policy, not a scientific change. Scenario identities, transition roles, environmental
+extensions, historical precedent, adaptive-frontier policy, reader-facing witness
+selection, and plotting remain caller-owned. An EE-MRIO can use this API for its
+monetary MRIO core and evaluate environmental extensions on returned economic
+witnesses separately.
 <!-- INVERSE_MRIO_SCALED_NUMERICAL_CONTRACT_V3 -->
 ### Scaled numerical representation, linear output guards, and original-unit acceptance
 
@@ -918,8 +919,8 @@ HiGHS still requires a finite matrix-entry floor. Entries at or below the declar
 dimensionless solver coordinates. This is a numerical approximation rule, not a
 scientific coefficient-support rule and not a claim that every IEEE nonzero is
 meaningful. `numerical_matrix_diagnostics` reports the number and maximum magnitude
-of omitted scaled entries, the retained matrix range/dynamic range, the selected
-cold-start solver, and solve count.
+of omitted scaled entries, the retained matrix range/dynamic range, selected backend
+and HiGHS version, cold-start solver/crossover policy, and solve count.
 
 Every backend-optimal result is recomputed against the complete original `A0/L/U/C/G`
 objects. The API returns `numerical_failure`, not `optimal`, whenever scale-aware
@@ -927,12 +928,15 @@ original-coordinate accounting, target, coefficient-capacity, gross-output, or
 output-guard residuals exceed `postcheck_tolerance`. In particular, backend
 sparsification is never accepted solely because HiGHS reports optimality.
 
-The optional `cold_start_solver` is one of `choose`, `simplex`, or `ipm`. `ipm`
-enables crossover for the first cold solve; after a successful first run, continuation
-solves switch to simplex so nearby epsilon-constraint problems can reuse basis
-information. Solver selection is numerical policy only and carries no economic
-interpretation. Production callers should benchmark memory/time before changing their
-default.
+`highs_backend` is `scipy` (default) or explicit `highspy`. The compatible
+`cold_start_solver` values are `choose`, `simplex`, and `ipm` on the bundled SciPy
+backend, plus explicit `ipx` and `hipo` on public highspy. `cold_start_crossover` is
+`on`, `off`, or `choose` for an interior-point cold start. The established SciPy-IPM
+path keeps crossover `on`; public highspy exposes the policy for production-size
+benchmarking. After the first run, continuation solves still switch to simplex so an
+available basis can be reused. Solver/backend selection is numerical policy only and
+carries no economic interpretation. Production callers must benchmark memory/time and
+retain the original-coordinate postchecks before changing a production default.
 
 For pure-final-use solves, `u=0`, `L<=0<=U`, and `x1>=0` still make the coefficient
 capacity rows redundant, so those rows remain deferred until structural adjustment is

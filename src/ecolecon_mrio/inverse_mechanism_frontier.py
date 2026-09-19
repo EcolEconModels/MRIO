@@ -26,7 +26,9 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 InverseSolveStatus = Literal["optimal", "infeasible", "unbounded", "numerical_failure"]
-ColdStartSolver = Literal["choose", "simplex", "ipm"]
+HighsBackend = Literal["scipy", "highspy"]
+ColdStartSolver = Literal["choose", "simplex", "ipm", "ipx", "hipo"]
+ColdStartCrossover = Literal["on", "off", "choose"]
 
 _HIGHS_MIN_SMALL_MATRIX_VALUE = 1.0e-12
 _HIGHS_DEFAULT_SMALL_MATRIX_VALUE = 1.0e-9
@@ -97,7 +99,9 @@ class InverseMrioMechanismProblem:
         objective_absolute_tolerance: float = 1.0e-7,
         row_chunk_size: int = 128,
         solver_matrix_floor: float = _HIGHS_MIN_SMALL_MATRIX_VALUE,
+        highs_backend: HighsBackend = "scipy",
         cold_start_solver: ColdStartSolver = "choose",
+        cold_start_crossover: ColdStartCrossover = "on",
         verbose: bool = False,
     ) -> None:
         self.A0 = self._canonical_matrix(A0, "A0")
@@ -131,7 +135,9 @@ class InverseMrioMechanismProblem:
         self.objective_absolute_tolerance = float(objective_absolute_tolerance)
         self.row_chunk_size = int(row_chunk_size)
         self.solver_matrix_floor = float(solver_matrix_floor)
+        self.highs_backend = cast(HighsBackend, str(highs_backend))
         self.cold_start_solver = cast(ColdStartSolver, str(cold_start_solver))
+        self.cold_start_crossover = cast(ColdStartCrossover, str(cold_start_crossover))
         self.verbose = bool(verbose)
         if not np.isfinite(self.feasibility_tolerance) or self.feasibility_tolerance <= 0.0:
             raise ValueError("feasibility_tolerance must be positive and finite")
@@ -143,8 +149,16 @@ class InverseMrioMechanismProblem:
             raise ValueError("row_chunk_size must be positive")
         if not (_HIGHS_MIN_SMALL_MATRIX_VALUE <= self.solver_matrix_floor <= 1.0e-9):
             raise ValueError("solver_matrix_floor must lie in [1e-12, 1e-9]")
-        if self.cold_start_solver not in {"choose", "simplex", "ipm"}:
-            raise ValueError("cold_start_solver must be 'choose', 'simplex', or 'ipm'")
+        if self.highs_backend not in {"scipy", "highspy"}:
+            raise ValueError("highs_backend must be 'scipy' or 'highspy'")
+        if self.cold_start_solver not in {"choose", "simplex", "ipm", "ipx", "hipo"}:
+            raise ValueError("cold_start_solver must be one of choose/simplex/ipm/ipx/hipo")
+        if self.cold_start_crossover not in {"on", "off", "choose"}:
+            raise ValueError("cold_start_crossover must be 'on', 'off', or 'choose'")
+        if self.highs_backend == "scipy" and self.cold_start_solver in {"ipx", "hipo"}:
+            raise ValueError("explicit ipx/hipo selection requires highs_backend='highspy'")
+        if self.highs_backend == "scipy" and self.cold_start_solver == "ipm" and self.cold_start_crossover != "on":
+            raise ValueError("SciPy-bundled ipm retains the established crossover='on' policy")
         if self.x0.size and float(self.x0.min()) < -self.feasibility_tolerance:
             raise ValueError("baseline gross output x0 must be non-negative")
         if self.A0.data.size and float(self.A0.data.min()) < -self.feasibility_tolerance:
@@ -210,9 +224,10 @@ class InverseMrioMechanismProblem:
         self._capacity_rows_added = False
         self._run_count = 0
 
-        self._core = self._load_highs_core()
+        self._core, self._highs = self._load_highs_backend()
         self._inf = float(self._core.kHighsInf)
-        self._highs = self._core._Highs()
+        version_method = getattr(self._highs, "version", None)
+        self._highs_version = str(version_method()) if callable(version_method) else "unknown"
         self._configure_highs()
         self._define_columns()
         self._define_rows()
@@ -257,15 +272,39 @@ class InverseMrioMechanismProblem:
                     f"row={row}, column={int(cols[pos])}, value={values[pos]:.6g}"
                 )
 
-    @staticmethod
-    def _load_highs_core() -> Any:
+    def _load_highs_backend(self) -> tuple[Any, Any]:
+        """Create one incremental HiGHS object without changing model ownership.
+
+        The SciPy backend preserves the established private binding for compatibility.
+        The explicit public backend uses ``highspy.Highs`` so current HiGHS solvers
+        such as HiPO can be benchmarked against exactly the same scaled rows,
+        objectives and original-coordinate acceptance checks.
+        """
+
+        if self.highs_backend == "scipy":
+            try:
+                core = import_module("scipy.optimize._highspy._core")
+            except ImportError as exc:  # pragma: no cover
+                raise RuntimeError("inverse MRIO optimisation requires SciPy's bundled HiGHS bindings") from exc
+            if not hasattr(core, "_Highs") or not hasattr(core, "kHighsInf"):
+                raise RuntimeError("installed SciPy lacks the incremental HiGHS API")
+            return core, core._Highs()
+
         try:
-            core = import_module("scipy.optimize._highspy._core")
+            highspy = import_module("highspy")
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("inverse MRIO optimisation requires SciPy's bundled HiGHS bindings") from exc
-        if not hasattr(core, "_Highs") or not hasattr(core, "kHighsInf"):
-            raise RuntimeError("installed SciPy lacks the incremental HiGHS API")
-        return core
+            raise RuntimeError(
+                "public highspy backend requested but highspy is not installed; "
+                "install the MRIO inverse-highs optional dependency"
+            ) from exc
+        if not hasattr(highspy, "Highs") or not hasattr(highspy, "kHighsInf") or not hasattr(highspy, "HighsModelStatus"):
+            raise RuntimeError("installed highspy lacks the required public incremental API")
+        if self.cold_start_solver == "hipo":
+            try:
+                import_module("highspy_extras")
+            except ImportError as exc:  # pragma: no cover
+                raise RuntimeError("HiPO requires highspy-extras; install highspy[extras]") from exc
+        return highspy, highspy.Highs()
 
     def _require_ok(self, status: Any, action: str) -> None:
         if int(status) < 0:
@@ -308,7 +347,10 @@ class InverseMrioMechanismProblem:
             "scaled_matrix_dynamic_range": dynamic,
             "scaled_matrix_max_abs_pruned": float(self._solver_max_abs_pruned),
             "postcheck_tolerance": float(self.postcheck_tolerance),
+            "solver_backend": str(self.highs_backend),
+            "highs_version": str(self._highs_version),
             "cold_start_solver": str(self.cold_start_solver),
+            "cold_start_crossover": str(self.cold_start_crossover),
             "capacity_rows_materialized": bool(self._capacity_rows_added),
             "solver_run_count": int(self._run_count),
         }
@@ -533,12 +575,23 @@ class InverseMrioMechanismProblem:
         if code==int(enum.kUnbounded): return "unbounded",str(raw)
         return "numerical_failure",str(raw)
 
-    def _configure_run_solver(self)->None:
-        if self._run_count==0 and self.cold_start_solver!="choose":
-            self._require_ok(self._highs.setOptionValue("solver",str(self.cold_start_solver)),"setting cold-start solver")
-            if self.cold_start_solver=="ipm": self._require_ok(self._highs.setOptionValue("run_crossover","on"),"enabling IPM crossover")
-        elif self._run_count>0:
-            self._require_ok(self._highs.setOptionValue("solver","simplex"),"switching continuation solves to simplex")
+    def _configure_run_solver(self) -> None:
+        if self._run_count == 0:
+            if self.cold_start_solver != "choose":
+                self._require_ok(
+                    self._highs.setOptionValue("solver", str(self.cold_start_solver)),
+                    "setting cold-start solver",
+                )
+            if self.cold_start_solver in {"ipm", "ipx", "hipo"}:
+                self._require_ok(
+                    self._highs.setOptionValue("run_crossover", str(self.cold_start_crossover)),
+                    "setting cold-start crossover policy",
+                )
+        else:
+            self._require_ok(
+                self._highs.setOptionValue("solver", "simplex"),
+                "switching continuation solves to simplex",
+            )
 
     def _run_highs(self)->tuple[InverseSolveStatus,str,np.ndarray|None,np.ndarray|None]:
         self._configure_run_solver(); run_status=self._highs.run(); self._run_count += 1
