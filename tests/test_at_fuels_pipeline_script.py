@@ -40,6 +40,20 @@ def test_at_fuels_runner_exposes_archive_extensions_and_eurostat_only_refresh() 
     assert "--exio-force-download" not in text
 
 
+def test_fuels_wrapper_defaults_only_unset_environmental_selection_to_all_extensions() -> None:
+    """Bare fuels runs request all extensions without overriding explicit selectors."""
+    text = Path("scripts/pipelines/at_2021_fuels.sh").read_text(encoding="utf-8")
+
+    assert 'export OUTPUT_SUFFIX="${OUTPUT_SUFFIX:-fuels}"' in text
+    assert '[[ -z "${ENVIRONMENTAL_ALL_EXTENSIONS+x}"' in text
+    assert '-z "${ENVIRONMENTAL_PRESET+x}"' in text
+    assert '-z "${ENVIRONMENTAL_EXTENSIONS_JSON+x}"' in text
+    assert "export ENVIRONMENTAL_ALL_EXTENSIONS=1" in text
+    assert "RUN_OUTPUT_SUFFIX" not in text
+    assert "ENVIRONMENTAL_PRESET=" not in text
+    assert "ENVIRONMENTAL_EXTENSIONS_JSON=" not in text
+
+
 def test_fuels_wrapper_defaults_to_reviewed_official_direct_concordance() -> None:
     """Fuels/fuels-more use the reviewed production map; green/brown stays unchanged."""
     fuels = Path("scripts/pipelines/at_2021_workbook_reaggregation.sh").read_text(
