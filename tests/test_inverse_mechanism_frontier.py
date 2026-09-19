@@ -117,8 +117,8 @@ def test_inverse_mrio_defers_capacity_rows_until_structure_is_allowed() -> None:
     assert problem.coefficient_capacity_materialized is True
 
 
-def test_inverse_mrio_exactly_scales_sub_highs_floor_rows() -> None:
-    """Tiny retained coefficients are represented by exact whole-row scaling, not pruning."""
+def test_inverse_mrio_scaled_floor_avoids_huge_row_amplification() -> None:
+    """Tiny scaled coefficients may be omitted without whole-row amplification."""
 
     tiny = 1.0e-20
     A0 = csr_matrix([[0.2, tiny], [0.0, 0.2]])
@@ -134,17 +134,81 @@ def test_inverse_mrio_exactly_scales_sub_highs_floor_rows() -> None:
         lower,
         upper,
         target,
-        accompaniment_indices=np.array([1], dtype=np.int32),
+        solver_matrix_floor=1.0e-12,
+        postcheck_tolerance=1.0e-9,
+        cold_start_solver="ipm",
     )
-    assert problem.solve_pure_final_use(np.array([1.0])).optimal
-    assert problem.solve_epsilon(np.array([1.0]), 0.025).optimal
+    result = problem.solve_pure_final_use(np.array([1.0]))
+    assert result.optimal
     diag = problem.numerical_matrix_diagnostics
-    assert diag["backend_small_matrix_value"] == 1.0e-12
-    assert int(diag["input_abs_le_1e-9"]) >= 3
-    assert int(diag["input_abs_le_1e-12"]) >= 3
-    assert int(diag["scaled_row_count"]) >= 3
-    assert float(diag["max_exact_row_scale"]) >= 1.0e9
+    assert int(diag["scaled_matrix_pruned_nonzeros"]) >= 1
+    assert float(diag["scaled_matrix_max_abs_pruned"]) <= 1.0e-12
+    assert float(diag["scaled_matrix_dynamic_range"]) < 1.0e6
+    assert int(diag["solver_run_count"]) >= 1
 
+
+def test_inverse_mrio_original_coordinate_postcheck_rejects_material_pruning() -> None:
+    """A backend-optimal point is rejected when an omitted scaled term matters."""
+
+    A0 = csr_matrix(np.diag([0.2, 0.2]))
+    x0 = np.array([10.0, 10.0])
+    f0 = x0 - A0.dot(x0)
+    lower = csr_matrix(np.diag([-0.1, -0.1]))
+    upper = csr_matrix(np.diag([0.1, 0.1]))
+    target = csr_matrix(np.eye(2))
+    tiny = 5.0e-10
+    guard = csr_matrix([[1.0, tiny]])
+    problem = InverseMrioMechanismProblem(
+        A0,
+        x0,
+        f0,
+        lower,
+        upper,
+        target,
+        output_guard_matrix=guard,
+        solver_matrix_floor=1.0e-9,
+        postcheck_tolerance=1.0e-12,
+        cold_start_solver="simplex",
+    )
+    result = problem.solve_pure_final_use(
+        np.array([1.0, 1.0]),
+        guard_lower=np.array([-np.inf]),
+        guard_upper=np.array([1.0]),
+    )
+    assert result.status == "numerical_failure"
+    assert "original-coordinate postcheck failed" in result.message
+    assert int(problem.numerical_matrix_diagnostics["scaled_matrix_pruned_nonzeros"]) >= 1
+
+
+def test_inverse_mrio_linear_output_guard_is_enforced() -> None:
+    """Caller-owned output guards constrain dx without acquiring scientific meaning."""
+
+    A0 = csr_matrix(np.diag([0.2, 0.2]))
+    x0 = np.array([10.0, 10.0])
+    f0 = x0 - A0.dot(x0)
+    lower = csr_matrix(np.diag([-0.1, -0.1]))
+    upper = csr_matrix(np.diag([0.1, 0.1]))
+    target = csr_matrix([[1.0, 0.0]])
+    guard = csr_matrix([[0.0, 1.0]])
+    problem = InverseMrioMechanismProblem(
+        A0,
+        x0,
+        f0,
+        lower,
+        upper,
+        target,
+        output_guard_matrix=guard,
+        postcheck_tolerance=1.0e-9,
+    )
+    result = problem.solve_pure_final_use(
+        np.array([1.0]),
+        guard_lower=np.array([-np.inf]),
+        guard_upper=np.array([0.0]),
+    )
+    assert result.optimal
+    assert result.delta_x is not None
+    assert result.delta_x[1] <= 1.0e-9
+    assert result.max_guard_scaled_violation <= 1.0e-9
 
 def test_inverse_mrio_rejects_negative_lower_coefficient_corner() -> None:
     """The generic coefficient-change box may never admit negative technical coefficients."""

@@ -877,29 +877,59 @@ roles, environmental extensions, historical precedent, epsilon-grid policy,
 reader-facing witness selection, and plotting remain caller-owned. An EE-MRIO can
 use this API for its monetary MRIO core and evaluate environmental extensions on
 returned economic witnesses separately.
-<!-- INVERSE_MRIO_HIGHS_NUMERICAL_CONTRACT_V2 -->
-### HiGHS numerical representation and pure-final cold start
+<!-- INVERSE_MRIO_SCALED_NUMERICAL_CONTRACT_V3 -->
+### Scaled numerical representation, linear output guards, and original-unit acceptance
 
-The inverse-MRIO feasible set retains every stored non-zero coefficient supplied by
-`A0`, `lower_headroom`, and `upper_headroom`. HiGHS 1.8 has a default
-`small_matrix_value` of `1e-9`, which is too coarse for this API because valid MRIO
-coefficients and certificate-safe headroom can be smaller. The API therefore sets the
-backend floor explicitly to `1e-12`. If a complete constraint row contains a smaller
-stored coefficient, the entire row and every finite row bound are multiplied by the
-same positive factor so the smallest stored coefficient is represented above the
-backend floor. This is an algebraically exact row transformation: no matrix
-coefficient is pruned and the feasible set is unchanged. The API fails closed if the
-required exact scaling would approach the declared HiGHS large-value safety regime.
+`InverseMrioMechanismProblem` remains a transition-role-agnostic monetary MRIO API.
+It accepts `(A0,x0,f0)`, an independent coefficient-change box `L<=Delta A<=U`,
+arbitrary linear output targets `C delta_x = d`, optional accompaniment indices, and
+optional caller-owned linear output-change guards `g_L <= G delta_x <= g_U`. The API
+assigns no environmental or scenario meaning to `C` or `G`.
 
-`numerical_matrix_diagnostics` reports the number of matrix entries at or below the
-old `1e-9` default and the explicit `1e-12` backend floor, the smallest stored input
-coefficient, and the number/magnitude of exact row scalings. These are numerical
-diagnostics, not an empirical coefficient-support rule. The public constructor also
-checks the complete lower corner `A0 + L >= 0` row by row.
+The exact economic identities remain
 
-For a pure-final-use solve, `u=0`, `L<=0<=U`, and `x1>=0` imply
-`L x1 <= 0 <= U x1`; the large coefficient-capacity row blocks are therefore
-mathematically redundant. The persistent model defers those rows until the first
-solve that permits structural adjustment, then appends them once and reuses the
-resulting HiGHS model/basis for later solves. This changes construction order only,
-not the inverse-accounting problem or its lexicographic objectives.
+```
+(I-A0) delta_x = delta_f + u
+u = Delta A x1
+x1 = x0 + delta_x >= 0
+L x1 <= u <= U x1
+```
+
+and the burden coordinates remain `||delta_f||_1/||f0||_1` and
+`||u||_1/||A0 x0||_1`. The structural-flow image therefore still removes one LP
+variable per coefficient edge while retaining an auditable sparse `Delta A` witness.
+
+The previous whole-row preservation strategy is retired. Multiplying a row by a very
+large factor is algebraically exact but changes the effective original-unit
+acceptance scale when the numerical solver uses absolute feasibility tolerances; in
+production it also produced a matrix dynamic range of roughly 1e22. Instead the API
+solves in dimensionless monetary coordinates. Each output/final-use/structural-flow
+row is scaled by a positive baseline monetary magnitude and target/guard rows are
+scaled to their own baseline activity. The scientific matrices `A0`, `L`, `U`, `C`
+and optional `G` remain stored in their original coordinates.
+
+HiGHS still requires a finite matrix-entry floor. Entries at or below the declared
+`solver_matrix_floor` may therefore be omitted **only after** transformation to the
+dimensionless solver coordinates. This is a numerical approximation rule, not a
+scientific coefficient-support rule and not a claim that every IEEE nonzero is
+meaningful. `numerical_matrix_diagnostics` reports the number and maximum magnitude
+of omitted scaled entries, the retained matrix range/dynamic range, the selected
+cold-start solver, and solve count.
+
+Every backend-optimal result is recomputed against the complete original `A0/L/U/C/G`
+objects. The API returns `numerical_failure`, not `optimal`, whenever scale-aware
+original-coordinate accounting, target, coefficient-capacity, gross-output, or
+output-guard residuals exceed `postcheck_tolerance`. In particular, backend
+sparsification is never accepted solely because HiGHS reports optimality.
+
+The optional `cold_start_solver` is one of `choose`, `simplex`, or `ipm`. `ipm`
+enables crossover for the first cold solve; after a successful first run, continuation
+solves switch to simplex so nearby epsilon-constraint problems can reuse basis
+information. Solver selection is numerical policy only and carries no economic
+interpretation. Production callers should benchmark memory/time before changing their
+default.
+
+For pure-final-use solves, `u=0`, `L<=0<=U`, and `x1>=0` still make the coefficient
+capacity rows redundant, so those rows remain deferred until structural adjustment is
+first permitted. Generic output-guard rows are not deferred because they can restrict
+the output path even when `u=0`.
