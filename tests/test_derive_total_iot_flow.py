@@ -857,3 +857,78 @@ def test_source_ts_bp_controls_reject_flow_specific_identity_drift() -> None:
             rtol=1e-9,
             atol=1e-6,
         )
+
+# STEP2_MONETARY_SCALE_INTEGRATION_TEST_V3
+def test_joint_iot_reconciliation_is_scale_equivariant_on_homogeneous_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Step-2 zero-target identities must remain stable under monetary rescaling."""
+    (
+        _children,
+        child_parent,
+        output_share,
+        Z_dom,
+        Z_imp,
+        Y_dom,
+        Y_imp,
+        refs,
+    ) = _joint_reconciliation_fixture()
+
+    base = MODULE._reconcile_iot_intermediate_transactions(
+        Z_dom,
+        Z_imp,
+        Y_dom,
+        Y_imp,
+        child_parent=child_parent,
+        dom_output_share=output_share,
+        references=refs,
+    )
+
+    factor = 1.0e6
+    monkeypatch.setattr(
+        MODULE,
+        "_GENERATED_IDENTITY_ATOL",
+        MODULE._GENERATED_IDENTITY_ATOL * factor,
+    )
+    scaled_refs: dict[str, SimpleNamespace] = {}
+    for flow, reference in refs.items():
+        scaled_refs[flow] = SimpleNamespace(
+            Z=reference.Z * factor,
+            Y=reference.Y * factor,
+            V=None if reference.V is None else reference.V * factor,
+        )
+    scaled = MODULE._reconcile_iot_intermediate_transactions(
+        Z_dom * factor,
+        Z_imp * factor,
+        Y_dom * factor,
+        Y_imp * factor,
+        child_parent=child_parent,
+        dom_output_share=output_share,
+        references=scaled_refs,
+    )
+
+    for base_frame, scaled_frame in zip(base[:4], scaled[:4], strict=True):
+        pd.testing.assert_frame_equal(
+            scaled_frame / factor,
+            base_frame,
+            check_exact=False,
+            rtol=1e-8,
+            atol=1e-8,
+        )
+    pd.testing.assert_series_equal(
+        scaled[4] / factor,
+        base[4],
+        check_exact=False,
+        check_names=False,
+        rtol=1e-8,
+        atol=1e-8,
+    )
+    assert base[5] is not None and scaled[5] is not None
+    pd.testing.assert_frame_equal(
+        scaled[5] / factor,
+        base[5],
+        check_exact=False,
+        rtol=1e-8,
+        atol=1e-8,
+    )
+    assert {row["status"] for row in scaled[7]} == {"pass"}

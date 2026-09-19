@@ -281,6 +281,7 @@ class KLLinearStats:
 
 
 # SEPARABLE_LINEAR_EQUALITY_RECONCILIATION_V2
+# SEPARABLE_MONETARY_SCALE_EQUIVARIANCE_V3
 def balance_separable_linear_equalities(
     prior: np.ndarray,
     constraint_matrix: object,
@@ -288,6 +289,7 @@ def balance_separable_linear_equalities(
     *,
     signed_quadratic_mask: np.ndarray | None = None,
     signed_quadratic_scale: np.ndarray | None = None,
+    equality_conditioning_scale: np.ndarray | None = None,
     max_iter: int = 50_000,
     rtol: float = 1e-12,
     atol: float = 1e-10,
@@ -299,22 +301,28 @@ def balance_separable_linear_equalities(
 
         x log(x/q) - x + q,
 
-    so a zero KL prior remains a structural zero. Selected signed entries use
+    so a zero KL prior remains a structural zero. Selected signed entries use the
+    monetary-scale-compatible local quadratic form of KL,
 
-        0.5 * ((x-q)/s)^2,
+        (x-q)^2 / (2 s),
 
-    where ``s`` is the declared signed adjustment scale. A zero signed scale fixes
-    that variable exactly at its prior value. This permits intrinsically signed
-    accounts such as inventory/valuables final demand without decomposing them
-    into artificial positive/negative epsilon supports.
+    where ``s`` has the same monetary unit as ``x`` and ``q``. A zero signed scale
+    fixes that variable exactly at its prior value. With ``s=abs(q)`` this is the
+    second-order KL curvature around the signed prior, so the mixed objective is
+    homogeneous of degree one under a change of monetary unit. This permits
+    intrinsically signed accounts such as inventory/valuables final demand without
+    decomposing them into artificial positive/negative epsilon supports.
 
     The dual-family state is closed form:
 
         x_KL = q_KL * exp(-A_KL.T @ lambda)
-        x_S  = q_S - s_S^2 * (A_S.T @ lambda).
+        x_S  = q_S - s_S * (A_S.T @ lambda).
 
-    The solver uses the same target/coefficient row conditioning and
-    feasibility-first KKT acceptance as ``kl_balance_linear_equalities``.
+    ``equality_conditioning_scale`` is an optional non-negative numerical row-scale
+    floor. Dividing an equality and its target by that scale changes only dual
+    coordinates, never ``A @ x = b`` or the primal objective. The solver otherwise
+    uses the same target/coefficient conditioning and feasibility-first KKT
+    acceptance as ``kl_balance_linear_equalities``.
     """
     q = np.asarray(prior, dtype="float64")
     original_shape = q.shape
@@ -374,6 +382,23 @@ def balance_separable_linear_equalities(
         )
     if b.size == 0 or not np.isfinite(b).all() or not np.isfinite(A.data).all():
         raise ValueError("Linear reconciliation constraints and targets must be finite and non-empty.")
+
+    if equality_conditioning_scale is None:
+        conditioning_scale = np.zeros(b.size, dtype="float64")
+    else:
+        conditioning_scale = np.asarray(
+            equality_conditioning_scale, dtype="float64"
+        ).reshape(-1)
+        if conditioning_scale.size != b.size:
+            raise ValueError(
+                "equality_conditioning_scale must match the number of equality rows."
+            )
+        if not np.isfinite(conditioning_scale).all() or bool(
+            (conditioning_scale < 0.0).any()
+        ):
+            raise ValueError(
+                "equality_conditioning_scale must be finite and non-negative."
+            )
 
     # Non-negative KL zero priors are structural zeros. Signed variables with zero
     # declared scale are fixed at their prior value. Remove both from the active
@@ -438,13 +463,20 @@ def balance_separable_linear_equalities(
             )
         return fixed.reshape(original_shape), KLLinearStats(0, max_norm, max_abs)
 
-    # Condition by the authoritative residual equality and coefficients, never by
-    # donor-prior mass. This is algebraically neutral and keeps the dual O(1).
+    # Condition by the authoritative residual equality, coefficients, and any
+    # caller-declared target-system monetary scale; never infer a row scale from
+    # donor-prior mass. This is algebraically neutral and keeps the dual O(1),
+    # including homogeneous Step-2 accounting rows whose literal target is zero.
     abs_A = active_A.copy()
     abs_A.data = np.abs(abs_A.data)
     row_coefficient_scale = np.asarray(abs_A.max(axis=1).toarray()).reshape(-1)
     row_scale = np.maximum.reduce(
-        [np.ones_like(active_target), np.abs(active_target), row_coefficient_scale]
+        [
+            np.ones_like(active_target),
+            np.abs(active_target),
+            row_coefficient_scale,
+            conditioning_scale,
+        ]
     )
     A_scaled = (sparse.diags(1.0 / row_scale) @ active_A).tocsr()
     b_scaled = active_target / row_scale
@@ -463,7 +495,7 @@ def balance_separable_linear_equalities(
             values[active_kl_mask] = q_kl * np.exp(exponent)
         if bool(active_signed_mask.any()):
             signed_load = dual_load[active_signed_mask]
-            values[active_signed_mask] = q_signed - (s_signed**2) * signed_load
+            values[active_signed_mask] = q_signed - s_signed * signed_load
         return values, exponent
 
     def objective(multiplier: np.ndarray) -> float:
@@ -476,7 +508,7 @@ def balance_separable_linear_equalities(
             signed_load = dual_load[active_signed_mask]
             value += float(
                 -q_signed @ signed_load
-                + 0.5 * np.sum((s_signed * signed_load) ** 2)
+                + 0.5 * np.sum(s_signed * signed_load**2)
             )
         return value
 

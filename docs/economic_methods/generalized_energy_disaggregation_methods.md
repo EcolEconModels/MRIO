@@ -503,12 +503,22 @@ parent total is already implied by parent output, intermediate input, and
 `D21X31`.
 
 Non-negative Z, ordinary final-demand atoms, output, D21X31/B1G magnitudes use
-information-projection priors. Legitimately signed inventory/valuables atoms
-(`P5`, `P5M`, `P52`, `P53` when selected by the atomic basis) use a signed
-quadratic deviation around their preliminary child allocation. A zero signed
-prior magnitude is fixed rather than receiving fabricated epsilon sign support.
-The generic numerical owner is
-`ecolecon_mrio.balancing.balance_separable_linear_equalities`.
+information-projection priors. For a legitimately signed inventory/valuables atom
+(`P5`, `P5M`, `P52`, `P53` when selected by the atomic basis), let \(q\) be its
+preliminary child allocation and \(s=|q|\). On nonzero signed support use
+
+\[
+Q(y\mid q,s)=\frac{(y-q)^2}{2s},
+\]
+
+the second-order KL form around the signed prior. Unlike a squared *relative*
+deviation, this penalty has monetary units and scales by the same factor as KL when
+the table's monetary unit changes. A zero signed prior has \(s=0\) and is fixed
+rather than receiving fabricated epsilon sign support. The generic numerical owner
+is `ecolecon_mrio.balancing.balance_separable_linear_equalities`. Homogeneous
+accounting rows and signed-net source rows may receive target-country gross monetary
+row scales for numerical conditioning; these algebraically rescale the equality
+only and do not alter the feasible set, objective, or acceptance tolerance.
 
 Aggregate/display Y controls, derived V rows and M serialization cells are
 recomputed from the primitive solution and are not additional independent

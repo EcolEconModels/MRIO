@@ -368,3 +368,69 @@ def test_separable_linear_reconciliation_keeps_zero_scale_signed_prior_fixed() -
     )
     assert result[1] == pytest.approx(-3.0)
     assert result[0] == pytest.approx(4.0)
+
+# SEPARABLE_MONETARY_UNIT_INVARIANCE_TEST_V3
+def test_separable_linear_reconciliation_is_invariant_to_monetary_unit() -> None:
+    """Mixed KL/signed priors must not change allocation when money units change."""
+    from ecolecon_mrio.balancing import balance_separable_linear_equalities
+
+    prior = np.array([2.0, 1.0], dtype="float64")
+    constraints = np.array([[1.0, 1.0]], dtype="float64")
+    target = np.array([1.0], dtype="float64")
+    signed_mask = np.array([False, True])
+    signed_scale = np.array([0.0, 1.0], dtype="float64")
+
+    base, _ = balance_separable_linear_equalities(
+        prior,
+        constraints,
+        target,
+        signed_quadratic_mask=signed_mask,
+        signed_quadratic_scale=signed_scale,
+        rtol=1e-12,
+        atol=1e-10,
+    )
+    factor = 1.0e6
+    scaled, stats = balance_separable_linear_equalities(
+        prior * factor,
+        constraints,
+        target * factor,
+        signed_quadratic_mask=signed_mask,
+        signed_quadratic_scale=signed_scale * factor,
+        equality_conditioning_scale=np.array([factor], dtype="float64"),
+        rtol=1e-12,
+        atol=1e-10 * factor,
+    )
+
+    np.testing.assert_allclose(scaled / factor, base, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(constraints @ scaled, target * factor, rtol=1e-12, atol=1e-6)
+    assert stats.max_normalized_gap <= 1.0
+
+
+def test_separable_equality_conditioning_scale_is_algebraically_neutral() -> None:
+    """A numerical row-scale floor must not alter the reconciled primal optimum."""
+    from ecolecon_mrio.balancing import balance_separable_linear_equalities
+
+    prior = np.array([4.0, 2.0, 1.0], dtype="float64")
+    constraints = np.array(
+        [[1.0, 1.0, 0.0], [1.0, 0.0, -1.0]], dtype="float64"
+    )
+    targets = np.array([5.0, 0.0], dtype="float64")
+    signed_mask = np.array([False, False, True])
+    signed_scale = np.array([0.0, 0.0, 1.0], dtype="float64")
+
+    base, _ = balance_separable_linear_equalities(
+        prior,
+        constraints,
+        targets,
+        signed_quadratic_mask=signed_mask,
+        signed_quadratic_scale=signed_scale,
+    )
+    conditioned, _ = balance_separable_linear_equalities(
+        prior,
+        constraints,
+        targets,
+        signed_quadratic_mask=signed_mask,
+        signed_quadratic_scale=signed_scale,
+        equality_conditioning_scale=np.array([5.0, 1.0e6], dtype="float64"),
+    )
+    np.testing.assert_allclose(conditioned, base, rtol=1e-9, atol=1e-9)

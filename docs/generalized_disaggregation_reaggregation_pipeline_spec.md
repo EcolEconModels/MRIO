@@ -830,10 +830,15 @@ P1 = TOTAL Z column + D21X31 + B1G
 in the same sparse reconciliation.
 
 EXIO transaction structure and the preliminary child allocations are priors, not
-child monetary observations. Non-negative variables use KL divergence; signed
-inventory/valuables final-demand atoms use a quadratic signed prior with no
-fabricated epsilon support. The numerical owner is
-`balance_separable_linear_equalities`.
+child monetary observations. Non-negative variables use KL divergence. Signed
+inventory/valuables final-demand atoms with nonzero preliminary value \(q\) use
+\(Q(y\mid q,|q|)=(y-q)^2/(2|q|)\), the monetary-scale-compatible local
+quadratic KL form; zero signed support remains fixed and receives no fabricated
+epsilon support. The numerical owner is `balance_separable_linear_equalities`.
+Zero-target accounting identities and signed-net source cells are numerically
+conditioned with gross target-country monetary scale floors only; this is an
+algebraic row rescaling and is not an additional observation, constraint, or
+objective weight.
 
 Aggregate/display Y, derived V, and M serialization cells remain derived rather
 than independent balancing variables. The method records

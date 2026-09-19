@@ -583,10 +583,16 @@ def _append_linear_constraint(
     columns: list[int],
     values: list[float],
     targets: list[float],
+    conditioning_scales: list[float],
     entries: Iterable[tuple[int, float]],
     target: float,
+    *,
+    conditioning_scale: float = 0.0,
 ) -> None:
-    """Append one sparse equality row, omitting explicit zero coefficients."""
+    """Append one sparse equality row and its algebraically neutral scale floor."""
+    scale = float(conditioning_scale)
+    if not np.isfinite(scale) or scale < 0.0:
+        raise ValueError("Equality conditioning scale must be finite and non-negative.")
     row = len(targets)
     for column, value in entries:
         coefficient = float(value)
@@ -596,6 +602,7 @@ def _append_linear_constraint(
         columns.append(int(column))
         values.append(coefficient)
     targets.append(float(target))
+    conditioning_scales.append(scale)
 
 
 def _reconcile_iot_intermediate_transactions(
@@ -836,6 +843,10 @@ def _reconcile_iot_intermediate_transactions(
     matrix_columns: list[int] = []
     matrix_values: list[float] = []
     targets: list[float] = []
+    # STEP2_EQUALITY_CONDITIONING_V3: numerical row scales are derived only from
+    # target-country preliminary monetary objects. They never change an equality,
+    # objective weight, source control, support decision, or acceptance tolerance.
+    conditioning_scales: list[float] = []
 
     def z_index(offset: int, row: int, column: int) -> int:
         return offset + row * n + column
@@ -855,6 +866,7 @@ def _reconcile_iot_intermediate_transactions(
                     matrix_columns,
                     matrix_values,
                     targets,
+                    conditioning_scales,
                     (
                         (z_index(offset, int(row), int(column)), 1.0)
                         for row in supplier_rows
@@ -868,16 +880,26 @@ def _reconcile_iot_intermediate_transactions(
         for parent_position in range(p):
             child_positions = parent_children[parent_position]
             for atom_position in range(k):
+                # A signed parent cell can be a small net of material positive
+                # and negative child allocations. Its gross Austrian preliminary
+                # magnitude is a numerical scale only; the hard target remains net.
+                y_conditioning_scale = float(
+                    np.abs(
+                        y_priors[flow].iloc[child_positions, atom_position]
+                    ).sum()
+                )
                 _append_linear_constraint(
                     matrix_rows,
                     matrix_columns,
                     matrix_values,
                     targets,
+                    conditioning_scales,
                     (
                         (y_index(offset, int(row), atom_position), 1.0)
                         for row in child_positions
                     ),
                     float(y_targets[flow].iloc[parent_position, atom_position]),
+                    conditioning_scale=y_conditioning_scale,
                 )
 
     if production_account_available:
@@ -888,6 +910,7 @@ def _reconcile_iot_intermediate_transactions(
                 matrix_columns,
                 matrix_values,
                 targets,
+                conditioning_scales,
                 (
                     (d21_offset + int(column), 1.0)
                     for column in parent_children[parent_position]
@@ -905,8 +928,23 @@ def _reconcile_iot_intermediate_transactions(
             (y_index(y_dom_offset, row, atom_position), -1.0)
             for atom_position in range(k)
         )
+        # The literal right-hand side is zero, so target-only row scaling loses
+        # the monetary magnitude of this identity. Use the gross preliminary Austrian
+        # row account only as a dual-coordinate scale floor.
+        output_conditioning_scale = float(
+            abs(float(x_prior.iloc[row]))
+            + np.abs(Z_dom.iloc[row, :].to_numpy(dtype="float64")).sum()
+            + np.abs(atomic_dom.iloc[row, :].to_numpy(dtype="float64")).sum()
+        )
         _append_linear_constraint(
-            matrix_rows, matrix_columns, matrix_values, targets, entries, 0.0
+            matrix_rows,
+            matrix_columns,
+            matrix_values,
+            targets,
+            conditioning_scales,
+            entries,
+            0.0,
+            conditioning_scale=output_conditioning_scale,
         )
 
     if production_account_available:
@@ -926,8 +964,24 @@ def _reconcile_iot_intermediate_transactions(
                     (b1g_offset + column, -float(b1g_sign.iloc[column])),
                 ]
             )
+            # As above, use the gross preliminary Austrian producer account to
+            # condition this homogeneous equality without changing its zero target.
+            production_conditioning_scale = float(
+                abs(float(x_prior.iloc[column]))
+                + np.abs(Z_dom.iloc[:, column].to_numpy(dtype="float64")).sum()
+                + np.abs(Z_imp.iloc[:, column].to_numpy(dtype="float64")).sum()
+                + abs(float(d21_prior.iloc[column]))
+                + abs(float(b1g_prior.iloc[column]))
+            )
             _append_linear_constraint(
-                matrix_rows, matrix_columns, matrix_values, targets, entries, 0.0
+                matrix_rows,
+                matrix_columns,
+                matrix_values,
+                targets,
+                conditioning_scales,
+                entries,
+                0.0,
+                conditioning_scale=production_conditioning_scale,
             )
 
     constraint_matrix = sparse.coo_matrix(
@@ -941,6 +995,7 @@ def _reconcile_iot_intermediate_transactions(
         np.asarray(targets, dtype="float64"),
         signed_quadratic_mask=signed_mask,
         signed_quadratic_scale=signed_scale,
+        equality_conditioning_scale=np.asarray(conditioning_scales, dtype="float64"),
         rtol=_GENERATED_IDENTITY_RTOL,
         atol=_GENERATED_IDENTITY_ATOL,
     )
@@ -1733,28 +1788,34 @@ def _retarget_value_per_physical_input(
             "Value-per-physical-input sidecar is missing required columns: "
             f"{sorted(missing)!r}."
         )
-    sectors = frame["disaggregated_sector"].astype(str)
+    # The required-column guard makes each selection a scalar Series; narrow the
+    # pandas-stub union before aligning the final monetary output by child sector.
+    sectors = cast(pd.Series, frame["disaggregated_sector"]).astype(str)
     unknown = sorted(set(sectors) - set(domestic_output.index.astype(str)))
     if unknown:
         raise ValueError(
             "Value-per-physical-input sidecar contains unknown child sectors: "
             f"{unknown!r}."
         )
-    output = domestic_output.copy().astype("float64")
+    output = cast(pd.Series, domestic_output.copy().astype("float64"))
     output.index = output.index.astype(str)
-    monetary = sectors.map(output)
+    monetary = cast(pd.Series, sectors.map(output))
     if monetary.isna().any():
         raise ValueError(
             "Could not align reconciled domestic output to value-per-physical-input rows."
         )
-    quantity = pd.to_numeric(frame["quantity"], errors="coerce").astype("float64")
+    quantity = cast(
+        pd.Series,
+        pd.to_numeric(cast(pd.Series, frame["quantity"]), errors="coerce"),
+    ).astype("float64")
     if not np.isfinite(quantity.to_numpy(dtype="float64")).all():
         raise ValueError("Physical quantity sidecar contains non-finite quantity.")
-    frame["monetary_output"] = monetary.to_numpy(dtype="float64")
+    monetary_values = monetary.to_numpy(dtype="float64")
+    frame["monetary_output"] = monetary_values
     ratio = np.full(len(frame), np.nan, dtype="float64")
     quantity_values = quantity.to_numpy(dtype="float64")
     np.divide(
-        frame["monetary_output"].to_numpy(dtype="float64"),
+        monetary_values,
         quantity_values,
         out=ratio,
         where=quantity_values != 0.0,

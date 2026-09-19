@@ -688,11 +688,21 @@ The generated parent `B1G` total is implied by parent output, intermediate input
 and `D21X31`; the separately published parent `B1G` remains an independently
 rounded source validation control.
 
-Ordinary non-negative final-demand atoms use KL priors. Signed
-inventory/valuables atoms use a signed quadratic child-allocation prior and may
-change sign where the preliminary split has nonzero signed support. Zero signed
-prior magnitude remains fixed; no epsilon support is invented. Aggregate/display
-Y, derived V, and M identities are rebuilt from the primitive solution.
+Ordinary non-negative final-demand atoms use KL priors. For a signed
+inventory/valuables atom with preliminary child value \(q\) and nonzero monetary
+scale \(s=|q|\), the signed child-allocation prior is the local quadratic KL form
+
+\[
+Q(y\mid q,s)=\frac{(y-q)^2}{2s}.
+\]
+
+It has the same monetary dimension and degree-one monetary scaling as KL, so changing
+from euros to thousands or millions cannot change the reconciled allocation. A zero
+signed prior magnitude has \(s=0\) and remains fixed; no epsilon support is invented.
+Aggregate/display Y, derived V, and M identities are rebuilt from the primitive
+solution. Numerical row conditioning may use gross target-country monetary
+magnitudes, including for zero-target accounting identities and signed-net cells,
+but this only rescales an equality and never changes its target or objective weight.
 
 The post-reconciliation environmental contract uses the final monetary
 denominators. DOM production sidecars are retargeted to reconciled \(x\), IMP
