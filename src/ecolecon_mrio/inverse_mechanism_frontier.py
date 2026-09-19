@@ -590,19 +590,48 @@ class InverseMrioMechanismProblem:
         solution=self._solution(message,columns)
         return solution,columns if solution.optimal else None
 
-    def _minimize_with_lexicographic_followups(self,*,primary:Literal["structure","final"],secondary:Literal["structure","final"]|None)->InverseMechanismSolution:
-        primary_slice=self._abs_u if primary=="structure" else self._abs_f; primary_guard=self._row_structure_face if primary=="structure" else self._row_final_face
-        self._set_objective(primary_slice); first,cols=self._solve_stage()
-        if not first.optimal or cols is None: return first
-        primary_value=first.structure_l1 if primary=="structure" else first.final_use_l1; self._set_row_upper(primary_guard,primary_value+self._face_tolerance(primary_value))
+    def _minimize_with_lexicographic_followups(
+        self,
+        *,
+        primary: Literal["structure", "final"],
+        secondary: Literal["structure", "final"] | None,
+    ) -> InverseMechanismSolution:
+        """Solve the declared lexicographic objectives without an empty follow-up run.
+
+        The primary objective is always solved.  When a secondary burden objective is
+        requested, its optimum is found on the primary-optimal face.  A third solve is
+        performed only when the caller explicitly supplied accompaniment indices; in
+        that case the existing accompaniment witness rule is unchanged.  Otherwise the
+        last optimized witness is already the lexicographic solution and is returned
+        directly rather than asking HiGHS to solve the same face with a zero objective.
+        """
+
+        primary_slice = self._abs_u if primary == "structure" else self._abs_f
+        primary_guard = self._row_structure_face if primary == "structure" else self._row_final_face
+        self._set_objective(primary_slice)
+        first, cols = self._solve_stage()
+        if not first.optimal or cols is None:
+            return first
+        last = first
+        primary_value = first.structure_l1 if primary == "structure" else first.final_use_l1
+        self._set_row_upper(primary_guard, primary_value + self._face_tolerance(primary_value))
+
         if secondary is not None:
-            secondary_slice=self._abs_u if secondary=="structure" else self._abs_f; secondary_guard=self._row_structure_face if secondary=="structure" else self._row_final_face
-            self._set_objective(secondary_slice); second,cols2=self._solve_stage()
-            if not second.optimal or cols2 is None: return second
-            secondary_value=second.structure_l1 if secondary=="structure" else second.final_use_l1; self._set_row_upper(secondary_guard,secondary_value+self._face_tolerance(secondary_value))
+            secondary_slice = self._abs_u if secondary == "structure" else self._abs_f
+            secondary_guard = self._row_structure_face if secondary == "structure" else self._row_final_face
+            self._set_objective(secondary_slice)
+            second, cols2 = self._solve_stage()
+            if not second.optimal or cols2 is None:
+                return second
+            last = second
+            secondary_value = second.structure_l1 if secondary == "structure" else second.final_use_l1
+            self._set_row_upper(secondary_guard, secondary_value + self._face_tolerance(secondary_value))
+
         if self.accompaniment_indices.size:
-            self._set_objective(self._acc); final,_=self._solve_stage(); return final
-        self._set_objective(None); final,_=self._solve_stage(); return final
+            self._set_objective(self._acc)
+            final, _ = self._solve_stage()
+            return final
+        return last
 
     def _prepare_solve(self,target_rhs:np.ndarray,guard_lower:np.ndarray|None,guard_upper:np.ndarray|None)->None:
         self._set_target_rhs(target_rhs); self._set_output_guard_bounds(guard_lower,guard_upper); self._reset_guards()

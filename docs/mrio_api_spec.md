@@ -871,8 +871,13 @@ finite-precision baseline source-account residual instead of silently rebalancin
 the source state.
 
 The implementation uses SciPy's bundled incremental HiGHS bindings and streams
-sparse constraint rows into one persistent solver model. This is a resource
-property of the API, not a scientific change. Scenario identities, transition
+sparse constraint rows into one persistent solver model. A lexicographic solve runs
+only the objectives actually requested: when no accompaniment objective is declared,
+the last burden optimum is returned directly rather than performing an additional
+objective-free HiGHS run. Installing the public `highspy` package does not switch
+this backend implicitly; any public-highspy/HiPO backend would require an explicit
+separately tested adapter. This is a resource property of the API, not a scientific
+change. Scenario identities, transition
 roles, environmental extensions, historical precedent, epsilon-grid policy,
 reader-facing witness selection, and plotting remain caller-owned. An EE-MRIO can
 use this API for its monetary MRIO core and evaluate environmental extensions on

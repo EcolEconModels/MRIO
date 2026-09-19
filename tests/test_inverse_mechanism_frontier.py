@@ -222,3 +222,25 @@ def test_inverse_mrio_rejects_negative_lower_coefficient_corner() -> None:
             csr_matrix([[0.1]]),
             csr_matrix([[1.0]]),
         )
+
+def test_inverse_mrio_two_objective_frontier_uses_exactly_two_highs_runs_without_tertiary() -> None:
+    """A Pareto point needs primary+secondary HiGHS runs, not a zero-objective third run."""
+
+    base = _problem()
+    problem = InverseMrioMechanismProblem(
+        base.A0,
+        base.x0,
+        base.f0,
+        base.L,
+        base.U,
+        base.C,
+        accompaniment_indices=np.empty(0, dtype=np.int32),
+        feasibility_tolerance=1.0e-9,
+        objective_relative_tolerance=1.0e-10,
+        objective_absolute_tolerance=1.0e-9,
+    )
+    before = int(problem.numerical_matrix_diagnostics["solver_run_count"])
+    result = problem.solve_epsilon(np.array([1.0]), 0.025)
+    after = int(problem.numerical_matrix_diagnostics["solver_run_count"])
+    assert result.optimal
+    assert after - before == 2
