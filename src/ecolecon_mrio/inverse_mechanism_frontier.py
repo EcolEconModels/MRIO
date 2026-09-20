@@ -29,6 +29,8 @@ InverseSolveStatus = Literal["optimal", "infeasible", "unbounded", "numerical_fa
 HighsBackend = Literal["scipy", "highspy"]
 ColdStartSolver = Literal["choose", "simplex", "ipm", "ipx", "hipo"]
 ColdStartCrossover = Literal["on", "off", "choose"]
+HighsPresolve = Literal["choose", "on", "off"]
+# FIGURE9_HIPO_PRESOLVE_POLICY_V1
 
 _HIGHS_MIN_SMALL_MATRIX_VALUE = 1.0e-12
 _HIGHS_DEFAULT_SMALL_MATRIX_VALUE = 1.0e-9
@@ -100,6 +102,7 @@ class InverseMrioMechanismProblem:
         row_chunk_size: int = 128,
         solver_matrix_floor: float = _HIGHS_MIN_SMALL_MATRIX_VALUE,
         highs_backend: HighsBackend = "scipy",
+        highs_presolve: HighsPresolve = "choose",
         cold_start_solver: ColdStartSolver = "choose",
         cold_start_crossover: ColdStartCrossover = "on",
         verbose: bool = False,
@@ -136,6 +139,7 @@ class InverseMrioMechanismProblem:
         self.row_chunk_size = int(row_chunk_size)
         self.solver_matrix_floor = float(solver_matrix_floor)
         self.highs_backend = cast(HighsBackend, str(highs_backend))
+        self.highs_presolve = cast(HighsPresolve, str(highs_presolve))
         self.cold_start_solver = cast(ColdStartSolver, str(cold_start_solver))
         self.cold_start_crossover = cast(ColdStartCrossover, str(cold_start_crossover))
         self.verbose = bool(verbose)
@@ -151,6 +155,8 @@ class InverseMrioMechanismProblem:
             raise ValueError("solver_matrix_floor must lie in [1e-12, 1e-9]")
         if self.highs_backend not in {"scipy", "highspy"}:
             raise ValueError("highs_backend must be 'scipy' or 'highspy'")
+        if self.highs_presolve not in {"choose", "on", "off"}:
+            raise ValueError("highs_presolve must be 'choose', 'on', or 'off'")
         if self.cold_start_solver not in {"choose", "simplex", "ipm", "ipx", "hipo"}:
             raise ValueError("cold_start_solver must be one of choose/simplex/ipm/ipx/hipo")
         if self.cold_start_crossover not in {"on", "off", "choose"}:
@@ -318,6 +324,7 @@ class InverseMrioMechanismProblem:
         for name, value in (
             ("output_flag", bool(self.verbose)),
             ("log_to_console", bool(self.verbose)),
+            ("presolve", str(self.highs_presolve)),
             ("small_matrix_value", float(self.solver_matrix_floor)),
             ("primal_feasibility_tolerance", float(self.feasibility_tolerance)),
             ("dual_feasibility_tolerance", float(self.feasibility_tolerance)),
@@ -349,6 +356,7 @@ class InverseMrioMechanismProblem:
             "postcheck_tolerance": float(self.postcheck_tolerance),
             "solver_backend": str(self.highs_backend),
             "highs_version": str(self._highs_version),
+            "highs_presolve": str(self.highs_presolve),
             "cold_start_solver": str(self.cold_start_solver),
             "cold_start_crossover": str(self.cold_start_crossover),
             "capacity_rows_materialized": bool(self._capacity_rows_added),

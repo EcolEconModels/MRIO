@@ -264,8 +264,8 @@ def test_inverse_mrio_rejects_public_only_solver_on_scipy_backend() -> None:
         )
 
 
-def test_inverse_mrio_public_highspy_hipo_preserves_audited_solution() -> None:
-    """Public HiPO solves the same tiny economic problem and passes postchecks."""
+def test_inverse_mrio_public_highspy_hipo_presolve_off_matches_stage_f_cold_path() -> None:
+    """Production HiPO cold-path policy passes the unchanged original-coordinate postchecks."""
 
     highspy = pytest.importorskip("highspy")
     pytest.importorskip("highspy_extras")
@@ -284,15 +284,20 @@ def test_inverse_mrio_public_highspy_hipo_preserves_audited_solution() -> None:
         target,
         accompaniment_indices=np.empty(0, dtype=np.int32),
         highs_backend="highspy",
+        highs_presolve="off",
         cold_start_solver="hipo",
-        cold_start_crossover="off",
+        cold_start_crossover="on",
         postcheck_tolerance=1.0e-9,
     )
-    result = problem.solve_pure_final_use(np.array([1.0]))
+    result = problem.solve_min_final_use(np.array([1.0]))
     assert result.optimal
-    assert np.isclose(result.j_structure, 0.0, atol=1.0e-10)
+    assert problem.coefficient_capacity_materialized is True
+    assert result.max_accounting_scaled_residual <= 1.0e-9
+    assert result.max_target_scaled_residual <= 1.0e-9
+    assert result.max_capacity_scaled_violation <= 1.0e-9
     diag = problem.numerical_matrix_diagnostics
     assert diag["solver_backend"] == "highspy"
+    assert diag["highs_presolve"] == "off"
     assert diag["cold_start_solver"] == "hipo"
-    assert diag["cold_start_crossover"] == "off"
+    assert diag["cold_start_crossover"] == "on"
     assert str(diag["highs_version"]) == str(highspy.Highs().version())

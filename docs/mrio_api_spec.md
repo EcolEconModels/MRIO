@@ -930,13 +930,17 @@ sparsification is never accepted solely because HiGHS reports optimality.
 
 `highs_backend` is `scipy` (default) or explicit `highspy`. The compatible
 `cold_start_solver` values are `choose`, `simplex`, and `ipm` on the bundled SciPy
-backend, plus explicit `ipx` and `hipo` on public highspy. `cold_start_crossover` is
-`on`, `off`, or `choose` for an interior-point cold start. The established SciPy-IPM
-path keeps crossover `on`; public highspy exposes the policy for production-size
-benchmarking. After the first run, continuation solves still switch to simplex so an
-available basis can be reused. Solver/backend selection is numerical policy only and
-carries no economic interpretation. Production callers must benchmark memory/time and
-retain the original-coordinate postchecks before changing a production default.
+backend, plus explicit `ipx` and `hipo` on public highspy. `highs_presolve` is
+`choose` (default), `on`, or `off` and is passed directly to the same HiGHS model;
+it changes only numerical preprocessing, never the scientific constraints or the
+mandatory original-coordinate acceptance checks. `cold_start_crossover` is `on`,
+`off`, or `choose` for an interior-point cold start. The established SciPy-IPM path
+keeps crossover `on`; public highspy exposes these numerical policies for
+production-size benchmarking. After the first run, continuation solves still switch
+to simplex so an available basis can be reused. Solver/backend/presolve selection is
+numerical policy only and carries no economic interpretation. Production callers must
+benchmark memory/time and retain the original-coordinate postchecks before changing a
+production default.
 
 For pure-final-use solves, `u=0`, `L<=0<=U`, and `x1>=0` still make the coefficient
 capacity rows redundant, so those rows remain deferred until structural adjustment is
