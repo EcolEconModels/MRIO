@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import io
 import json
 import numpy as np
@@ -30,6 +31,8 @@ from ecolecon_mrio.mrio_sda import UnitMetadata
 # intentionally unchanged in this patch; the DOI controls only source
 # discovery/download and provenance metadata.
 DEFAULT_EXIOBASE3_DOI = "10.5281/zenodo.20051562"
+EXIOBASE_LOCAL_SOURCE_MANIFEST = "source_override.json"
+EXIOBASE_LOCAL_SOURCE_SCHEMA_VERSION = "exiobase_local_source_v1"
 
 
 def default_data_root() -> Path:
@@ -72,6 +75,131 @@ def resolve_exiobase_cache_paths(
         "data_dir": data_dir,
         "zip": data_dir / f"IOT_{int(year)}_{system}.zip",
     }
+
+
+def _sha256_source_file(path: str | Path) -> str:
+    """Return the SHA-256 digest of exact local EXIOBASE source bytes."""
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _exiobase_local_source_manifest_path(data_dir: str | Path) -> Path:
+    return Path(data_dir) / EXIOBASE_LOCAL_SOURCE_MANIFEST
+
+
+def _read_exiobase_local_source_manifest(
+    *,
+    data_dir: str | Path,
+    zip_path: str | Path,
+    year: int,
+    system: str,
+    verify_hash: bool = True,
+) -> dict[str, Any] | None:
+    """Read and validate an explicit non-DOI EXIOBASE source override.
+
+    Absence means the normal DOI cache contract applies. Presence is fail-closed:
+    malformed identity, wrong year/system/filename, or changed source bytes never
+    fall back silently to the DOI interpretation.
+    """
+
+    manifest_path = _exiobase_local_source_manifest_path(data_dir)
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unreadable EXIOBASE local-source manifest: {manifest_path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"EXIOBASE local-source manifest must be a JSON object: {manifest_path}")
+    expected = {
+        "schema_version": EXIOBASE_LOCAL_SOURCE_SCHEMA_VERSION,
+        "year": int(year),
+        "system": str(system).strip().lower(),
+        "source_zip": Path(zip_path).name,
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise ValueError(
+                f"EXIOBASE local-source manifest {manifest_path} has {key}={payload.get(key)!r}; "
+                f"expected {value!r}."
+            )
+    release_label = str(payload.get("release_label", "")).strip()
+    source_url = str(payload.get("source_url", "")).strip()
+    expected_sha = str(payload.get("source_zip_sha256", "")).strip().lower()
+    if not release_label or not source_url or not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+        raise ValueError(
+            f"EXIOBASE local-source manifest {manifest_path} lacks release_label, source_url, "
+            "or a valid source_zip_sha256."
+        )
+    source = Path(zip_path)
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"EXIOBASE local-source manifest exists but its source ZIP is missing: {source}"
+        )
+    if verify_hash:
+        actual_sha = _sha256_source_file(source)
+        if actual_sha != expected_sha:
+            raise ValueError(
+                "EXIOBASE local-source byte hash mismatch. "
+                f"Zip: {source}. Manifest: {manifest_path}. "
+                f"Expected SHA-256: {expected_sha}. Actual SHA-256: {actual_sha}."
+            )
+    return dict(payload)
+
+
+def write_exiobase_local_source_manifest(
+    *,
+    data_dir: str | Path,
+    zip_path: str | Path,
+    year: int,
+    system: str,
+    release_label: str,
+    source_url: str,
+    source_item_id: str | None = None,
+    locator_doi: str | None = None,
+) -> Path:
+    """Write exact provenance for an explicitly supplied EXIOBASE source ZIP.
+
+    This does not alter the ordinary DOI downloader. The manifest is an opt-in
+    declaration that the canonical yearly ZIP contains locally supplied bytes
+    (for example an upstream beta) rather than bytes from the configured DOI.
+    """
+
+    source = Path(zip_path)
+    if not source.is_file() or not zip_contains_member(source, "file_parameters.json"):
+        raise ValueError(f"Local EXIOBASE source is not a valid source ZIP: {source}")
+    system_clean = str(system).strip().lower()
+    if system_clean not in {"pxp", "ixi"}:
+        raise ValueError(f"Unsupported exiobase system {system!r}. Use 'pxp' or 'ixi'.")
+    release_clean = str(release_label).strip()
+    url_clean = str(source_url).strip()
+    if not release_clean or not url_clean:
+        raise ValueError("release_label and source_url must be non-empty")
+    payload: dict[str, Any] = {
+        "schema_version": EXIOBASE_LOCAL_SOURCE_SCHEMA_VERSION,
+        "source_kind": "local_override",
+        "release_label": release_clean,
+        "source_url": url_clean,
+        "source_item_id": None if source_item_id is None else str(source_item_id),
+        "locator_doi": (
+            None if locator_doi is None or not str(locator_doi).strip()
+            else _normalize_exiobase_doi(str(locator_doi))
+        ),
+        "year": int(year),
+        "system": system_clean,
+        "source_zip": source.name,
+        "source_zip_sha256": _sha256_source_file(source),
+    }
+    manifest_path = _exiobase_local_source_manifest_path(data_dir)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(manifest_path)
+    return manifest_path
 
 
 
@@ -540,15 +668,46 @@ def ensure_exiobase_year_zip(
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     zip_path = data_dir / f"IOT_{int(year)}_{system}.zip"
+    local_manifest = _exiobase_local_source_manifest_path(data_dir)
 
-    if force_download and zip_path.exists():
-        zip_path.unlink()
+    if force_download:
+        # Explicit force-download means return this year to the requested DOI source.
+        # Removing the sidecar is therefore part of the destructive opt-in.
+        local_manifest.unlink(missing_ok=True)
+        if zip_path.exists():
+            zip_path.unlink()
+
+    if local_manifest.exists() and not zip_path.exists():
+        raise FileNotFoundError(
+            "EXIOBASE local-source manifest exists but the canonical source ZIP is missing: "
+            f"{zip_path}. Remove the stale manifest or use force_download=True to return to DOI data."
+        )
 
     if zip_path.exists() and not zip_contains_member(zip_path, "file_parameters.json"):
         ts = int(time.time())
         zip_path.rename(data_dir / f"IOT_{int(year)}_{system}.zip.corrupt.{ts}")
+        if local_manifest.exists():
+            raise ValueError(
+                "Explicit local EXIOBASE source ZIP is corrupt; refusing to fall back silently to DOI data. "
+                f"Manifest retained at {local_manifest}."
+            )
 
     if zip_path.exists():
+        local_source = _read_exiobase_local_source_manifest(
+            data_dir=data_dir,
+            zip_path=zip_path,
+            year=int(year),
+            system=str(system),
+            verify_hash=True,
+        )
+        if local_source is not None:
+            if verbose:
+                print(
+                    f"Using explicit local EXIOBASE source {local_source['release_label']} "
+                    f"for {int(year)} {system}: {zip_path}",
+                    flush=True,
+                )
+            return zip_path
         _validate_existing_exiobase_zip_doi(
             zip_path=zip_path,
             data_dir=data_dir,
@@ -988,6 +1147,13 @@ def load_mrio_iot_matrices(
             download_chunk_mb=download_chunk_mb, download_timeout_seconds=download_timeout_seconds,
             download_retries=download_retries, doi=str(doi), verbose=verbose,
         )
+        local_source = _read_exiobase_local_source_manifest(
+            data_dir=data_dir,
+            zip_path=zip_path,
+            year=int(year),
+            system=system,
+            verify_hash=False,
+        )
         for name in requested:
             if name == "Z":
                 Z, candidate = _read_exio_Z_sparse_from_zip(zip_path)
@@ -1008,6 +1174,17 @@ def load_mrio_iot_matrices(
             "system": system,
             "source_zip": str(zip_path),
             "exio_doi": _normalize_exiobase_doi(doi),
+            "exio_source_kind": "local_override" if local_source is not None else "doi",
+            "exio_source_release": (
+                str(local_source["release_label"])
+                if local_source is not None
+                else _normalize_exiobase_doi(doi)
+            ),
+            "source_zip_sha256": (
+                str(local_source["source_zip_sha256"])
+                if local_source is not None
+                else None
+            ),
             "requested_matrices": list(requested),
             "cache_kind": "exiobase_zip_stream_iot",
             "zip_only_cache": True,
@@ -1116,7 +1293,11 @@ def mrio_source_input_paths_for_year(
         system=str(exio_system),
         data_root=get_mrio_data_root(data_root),
     )
-    return [Path(paths["zip"])]
+    out = [Path(paths["zip"])]
+    local_manifest = _exiobase_local_source_manifest_path(paths["data_dir"])
+    if local_manifest.is_file():
+        out.append(local_manifest)
+    return out
 
 
 def ensure_exiobase_source_zip(

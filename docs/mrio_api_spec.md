@@ -828,8 +828,9 @@ The public helpers are:
 - `is_exiobase_dataset(dataset)` for the exact `exiobase` / `exiobase3` alias rule;
 - `get_mrio_data_root(data_root=None)` for the canonical configured data root;
 - `mrio_source_input_paths_for_year(...)` for resumability/provenance source inputs;
-- `ensure_exiobase_source_zip(...)` for DOI-audited source-ZIP availability and an
-  explicit opt-in mismatch refresh;
+- `ensure_exiobase_source_zip(...)` for source-ZIP availability: DOI-audited by default,
+  or an exact-hash-validated explicit local override when `source_override.json` is present,
+  with explicit force-download returning that year to the requested DOI source;
 - `load_mrio_output_vector(...)` for the x-only low-memory boundary; and
 - `load_mrio_index(...)` for the canonical two-level region-sector basis.
 

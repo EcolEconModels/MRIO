@@ -4,7 +4,7 @@ This is the MRIO-side contract for reusable EXIOBASE source loading under data-h
 
 ## Durable cache policy
 
-The DOI-checked raw source zip is the only default durable EXIOBASE data cache:
+The raw source zip is the only default durable EXIOBASE data cache. Ordinary sources are DOI-checked; an explicit local-source manifest may instead identify exact upstream beta bytes:
 
 ```text
 data/exiobase3_YYYY/IOT_YYYY_pxp.zip
@@ -12,6 +12,12 @@ data/exiobase3_YYYY/IOT_YYYY_ixi.zip
 ```
 
 Default loaders must not create full `pymrio` pickle caches, extracted text directories, generated `A.txt`, derived matrix caches, or hidden alternative authoritative sources.
+
+### Explicit local/beta source override
+
+A pre-release source with no DOI may be installed at the same canonical yearly ZIP path only when that year directory also contains `source_override.json`. The sidecar is part of the scientific source identity: it records a release label, upstream URL/item identity, year/system, canonical ZIP filename and SHA-256 of the exact installed bytes. Presence is fail-closed: a missing ZIP, malformed sidecar or hash mismatch must not fall back silently to the configured DOI. `mrio_source_input_paths_for_year(...)` includes the sidecar so downstream manifests invalidate when source identity changes.
+
+`scripts/install_exiobase_box_beta.py` is the maintained acquisition path for the public XIO Box beta currently used in development. It downloads only explicitly requested years, validates each EXIO source archive, writes exact local-source provenance and atomically replaces that year's canonical ZIP. Years without a valid sidecar retain the unchanged DOI download/validation path. Explicit `force_download=True` removes the local override for that year and returns it to the requested DOI source.
 
 ## Complete-IOT primitive loading
 

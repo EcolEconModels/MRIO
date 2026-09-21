@@ -931,15 +931,15 @@ Minimum tests for the generalized pipeline:
 
 ### Local EXIOBASE beta provenance caveat (2026-08-19)
 
-A development checkout may temporarily replace the DOI-downloaded yearly ZIP with a
-Box-distributed EXIOBASE beta before that beta has an official DOI. The Austria 2021
-beta archive used during this extension audit has SHA-256
-`ef1a379366a230b85883428e36322fb1a1d99ea45c8e3672077bad9414e1e2eb`. In that
-manual-substitution state, the existing `download_log.json`/`exio_doi` value still
-describes the configured download locator and **must not be cited as byte-level
-provenance for the beta archive**. Do not invent a beta DOI. Until an official release
-identifier is available, record the local archive hash in analysis provenance and do
-not use EXIO force-download when the intention is to retain the manually supplied beta.
+A development checkout may temporarily use a Box-distributed EXIOBASE beta before
+that beta has an official DOI. Such bytes must be installed through the explicit
+`source_override.json` contract (the maintained public-Box acquisition helper is
+`scripts/install_exiobase_box_beta.py`), not by leaving an unrecorded manual copy over
+a DOI cache. The sidecar records the beta release label, upstream URL/item identity and
+exact archive SHA-256; the configured `exio_doi` remains only the ordinary release
+locator and **must not be cited as byte-level provenance for beta bytes**. Do not invent
+a beta DOI. `force_download=True` is an explicit request to remove the local override
+and return that year to the configured DOI source.
 
 <!-- wp4-region-pipeline -->
 ### Region-aware fuels/fuels-more production path
