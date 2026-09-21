@@ -21,7 +21,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Any, Iterator, Mapping
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import requests
 
@@ -172,8 +172,52 @@ def box_direct_download_url(folder_url: str, file_id: str) -> str:
     )
 
 
+def box_folder_page_url(folder_url: str, page_number: int) -> str:
+    """Return the public shared-folder URL for one validated one-based page."""
+
+    page = int(page_number)
+    if page < 1:
+        raise ValueError(f"Box page number must be positive, got {page_number!r}")
+    parsed = urlsplit(str(folder_url))
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"invalid Box shared-folder URL: {folder_url}")
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["page"] = str(page)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+def _shared_folder_page(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return Box's declared shared-folder pagination object or fail closed."""
+
+    value = payload.get("/app-api/enduserapp/shared-folder")
+    if not isinstance(value, Mapping):
+        raise RuntimeError("public Box bootstrap has no shared-folder pagination object")
+    return value
+
+
+def _positive_page_field(page: Mapping[str, Any], field: str) -> int:
+    """Validate one positive integer field from Box's public folder bootstrap."""
+
+    raw = page.get(field)
+    if isinstance(raw, bool):
+        raise RuntimeError(f"public Box folder field {field} is not a positive integer: {raw!r}")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"public Box folder field {field} is not a positive integer: {raw!r}") from exc
+    if value < 1:
+        raise RuntimeError(f"public Box folder field {field} is not a positive integer: {raw!r}")
+    return value
+
+
 def fetch_public_box_index(folder_url: str, *, timeout_seconds: float = 60.0) -> tuple[dict[str, str], dict[str, str]]:
-    """Fetch one open Box folder page and return file IDs plus anonymous cookies."""
+    """Fetch every declared open Box folder page and return exact file IDs/cookies.
+
+    Box lists a public shared folder in finite HTML-bootstrap pages.  The first page
+    is not evidence that absent requested years do not exist, so each declared page
+    is fetched and checked before filename-to-ID resolution.  No file bytes are
+    requested here.
+    """
 
     response = requests.get(
         str(folder_url),
@@ -181,10 +225,39 @@ def fetch_public_box_index(folder_url: str, *, timeout_seconds: float = 60.0) ->
         timeout=float(timeout_seconds),
     )
     response.raise_for_status()
-    files = box_file_index(parse_box_post_stream_data(response.text))
+    first_payload = parse_box_post_stream_data(response.text)
+    first_page = _shared_folder_page(first_payload)
+    page_count = _positive_page_field(first_page, "pageCount")
+    if _positive_page_field(first_page, "pageNumber") != 1:
+        raise RuntimeError("public Box initial folder response did not identify itself as page 1")
+    files = box_file_index(first_payload)
     if not files:
         raise RuntimeError("public Box page exposed no file metadata in Box.postStreamData")
-    return files, response.cookies.get_dict()
+    cookies = response.cookies.get_dict()
+    for page_number in range(2, page_count + 1):
+        page_response = requests.get(
+            box_folder_page_url(folder_url, page_number),
+            headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
+            cookies=cookies,
+            timeout=float(timeout_seconds),
+        )
+        page_response.raise_for_status()
+        page_payload = parse_box_post_stream_data(page_response.text)
+        page = _shared_folder_page(page_payload)
+        if _positive_page_field(page, "pageCount") != page_count:
+            raise RuntimeError("public Box folder page count changed during metadata enumeration")
+        if _positive_page_field(page, "pageNumber") != page_number:
+            raise RuntimeError(
+                f"public Box requested page {page_number} but bootstrap reported "
+                f"page {_positive_page_field(page, 'pageNumber')}"
+            )
+        for name, file_id in box_file_index(page_payload).items():
+            prior = files.get(name)
+            if prior is not None and prior != file_id:
+                raise RuntimeError(f"public Box pages disagree on file ID for {name}: {prior} vs {file_id}")
+            files[name] = file_id
+        cookies.update(page_response.cookies.get_dict())
+    return files, cookies
 
 
 def install(args: argparse.Namespace) -> None:

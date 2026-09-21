@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 import zipfile
 
 import pytest
@@ -39,6 +40,58 @@ def test_public_box_bootstrap_parser_and_direct_url() -> None:
         "https://xio.app.box.com/index.php?rm=box_download_shared_file"
         "&shared_name=sharedtoken&file_id=f_123"
     )
+
+
+def test_public_box_index_enumerates_every_declared_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    def page_html(page_number: int, items: list[dict[str, object]]) -> str:
+        return (
+            "<script>Box.postStreamData = "
+            + json.dumps(
+                {
+                    "/app-api/enduserapp/shared-folder": {
+                        "pageCount": 2,
+                        "pageNumber": page_number,
+                        "items": items,
+                    }
+                }
+            )
+            + ";</script>"
+        )
+
+    class Response:
+        def __init__(self, text: str, cookie: str) -> None:
+            self.text = text
+            self.cookies = type("Cookies", (), {"get_dict": lambda _self: {cookie: "1"}})()
+
+        def raise_for_status(self) -> None:
+            return None
+
+    calls: list[str] = []
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        calls.append(url)
+        page = int(parse_qs(urlparse(url).query).get("page", ["1"])[0])
+        if page == 1:
+            return Response(
+                page_html(1, [{"type": "file", "id": 2022, "name": "IOT_2022_pxp.zip"}]),
+                "first",
+            )
+        if page == 2:
+            return Response(
+                page_html(2, [{"type": "file", "id": 2012, "name": "IOT_2012_pxp.zip"}]),
+                "second",
+            )
+        raise AssertionError(f"unexpected page request: {url}")
+
+    monkeypatch.setattr(installer.requests, "get", fake_get)
+    files, cookies = installer.fetch_public_box_index("https://xio.app.box.com/s/sharedtoken")
+
+    assert files == {"IOT_2022_pxp.zip": "2022", "IOT_2012_pxp.zip": "2012"}
+    assert cookies == {"first": "1", "second": "1"}
+    assert calls == [
+        "https://xio.app.box.com/s/sharedtoken",
+        "https://xio.app.box.com/s/sharedtoken?page=2",
+    ]
 
 
 def test_local_override_is_accepted_without_doi_download_log(tmp_path: Path) -> None:
