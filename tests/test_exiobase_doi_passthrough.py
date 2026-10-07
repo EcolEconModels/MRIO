@@ -10,7 +10,7 @@ from ecolecon_mrio import data
 from ecolecon_mrio.data import DEFAULT_EXIOBASE3_DOI
 
 
-EXPECTED_DOI = "10.5281/zenodo.20051562"
+EXPECTED_DOI = "10.5281/zenodo.23039074"
 
 
 def test_default_exiobase_doi_is_new_zenodo_record() -> None:
@@ -33,9 +33,9 @@ def test_exiobase_doi_url_normalizes_to_zenodo_record_fallback(monkeypatch) -> N
     url = data._resolve_exiobase3_url(
         2020,
         system="pxp",
-        doi="https://doi.org/10.5281/zenodo.20051562",
+        doi="https://doi.org/10.5281/zenodo.23039074",
     )
-    assert url == "https://zenodo.org/records/20051562/files/IOT_2020_pxp.zip"
+    assert url == "https://zenodo.org/records/23039074/files/IOT_2020_pxp.zip"
 
 
 def test_split_script_forwards_exio_doi_to_all_region_slice_calls() -> None:
@@ -65,7 +65,7 @@ def test_existing_exiobase_zip_requires_matching_download_log_doi(tmp_path: Path
     zip_path = data_dir / "IOT_2020_pxp.zip"
     _write_minimal_exio_zip(zip_path)
     (data_dir / "download_log.json").write_text(
-        '{"version": "https://doi.org/10.5281/zenodo.20051562"}\n',
+        '{"version": "https://doi.org/10.5281/zenodo.23039074"}\n',
         encoding="utf-8",
     )
 
@@ -74,7 +74,7 @@ def test_existing_exiobase_zip_requires_matching_download_log_doi(tmp_path: Path
         data_dir=data_dir,
         system="pxp",
         allow_download_missing=False,
-        doi="10.5281/zenodo.20051562",
+        doi="10.5281/zenodo.23039074",
     )
 
     assert out == zip_path
@@ -95,7 +95,7 @@ def test_existing_exiobase_zip_rejects_mismatched_download_log_doi(tmp_path: Pat
             data_dir=data_dir,
             system="pxp",
             allow_download_missing=False,
-            doi="10.5281/zenodo.20051562",
+            doi="10.5281/zenodo.23039074",
         )
 
 
@@ -110,7 +110,7 @@ def test_existing_exiobase_zip_rejects_missing_download_log_doi(tmp_path: Path) 
             data_dir=data_dir,
             system="pxp",
             allow_download_missing=False,
-            doi="10.5281/zenodo.20051562",
+            doi="10.5281/zenodo.23039074",
         )
 
 

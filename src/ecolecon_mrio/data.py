@@ -30,7 +30,7 @@ from ecolecon_mrio.mrio_sda import UnitMetadata
 # Default EXIOBASE source DOI used for new downloads. Cache paths are
 # intentionally unchanged in this patch; the DOI controls only source
 # discovery/download and provenance metadata.
-DEFAULT_EXIOBASE3_DOI = "10.5281/zenodo.20051562"
+DEFAULT_EXIOBASE3_DOI = "10.5281/zenodo.23039074"
 EXIOBASE_LOCAL_SOURCE_MANIFEST = "source_override.json"
 EXIOBASE_LOCAL_SOURCE_SCHEMA_VERSION = "exiobase_local_source_v1"
 

@@ -803,7 +803,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--year", type=int, default=2021)
     parser.add_argument("--source-zip", default=None)
     parser.add_argument("--data-root", default=None)
-    parser.add_argument("--doi", default="10.5281/zenodo.20051562")
+    parser.add_argument("--doi", default="10.5281/zenodo.23039074")
     parser.add_argument("--system", default="pxp")
     parser.add_argument("--scope-code", required=True)
     parser.add_argument("--scope-mapping-csv", default=None)
