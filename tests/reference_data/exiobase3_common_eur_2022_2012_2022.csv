@@ -1,0 +1,540 @@
+year,base_year,exio_region,region_kind,factor_basis,price_adjustment_factor,source_country_count,source_country_iso3,source_provider
+2012,2022,AT,country,country_gdp_deflator_common_eur,1.236413003369783,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,AU,country,country_gdp_deflator_common_eur,1.071698743566213,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,BE,country,country_gdp_deflator_common_eur,1.241667196111679,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,BG,country,country_gdp_deflator_common_eur,1.602717427705902,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,BR,country,country_gdp_deflator_common_eur,0.91789365572082,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,CA,country,country_gdp_deflator_common_eur,1.2071035776310757,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,CH,country,country_gdp_deflator_common_eur,1.2137662842285553,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,CN,country,country_gdp_deflator_common_eur,1.4040729400996494,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,CY,country,country_gdp_deflator_common_eur,1.0826150460364858,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,CZ,country,country_gdp_deflator_common_eur,1.401886216455495,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,DE,country,country_gdp_deflator_common_eur,1.2522883410626828,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,DK,country,country_gdp_deflator_common_eur,1.2321450472809512,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,EE,country,country_gdp_deflator_common_eur,1.5428342659900862,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,ES,country,country_gdp_deflator_common_eur,1.141604566842453,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,FI,country,country_gdp_deflator_common_eur,1.2236453159474623,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,FR,country,country_gdp_deflator_common_eur,1.1385664893564176,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,GB,country,country_gdp_deflator_common_eur,1.1978549750868108,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,GR,country,country_gdp_deflator_common_eur,1.0298060812117205,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,HR,country,country_gdp_deflator_common_eur,1.1788571804829102,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,HU,country,country_gdp_deflator_common_eur,1.2069694422508717,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,ID,country,country_gdp_deflator_common_eur,1.1569928369009939,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,IE,country,country_gdp_deflator_common_eur,1.2421145513578022,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,IN,country,country_gdp_deflator_common_eur,1.2783362275350578,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,IT,country,country_gdp_deflator_common_eur,1.139844570455279,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,JP,country,country_gdp_deflator_common_eur,0.7822286975561539,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,KR,country,country_gdp_deflator_common_eur,1.246374413354375,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,LT,country,country_gdp_deflator_common_eur,1.4192317709123616,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,LU,country,country_gdp_deflator_common_eur,1.30356343729962,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,LV,country,country_gdp_deflator_common_eur,1.3489965650735116,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,MT,country,country_gdp_deflator_common_eur,1.3018355822098355,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,MX,country,country_gdp_deflator_common_eur,1.2649517688571474,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,NL,country,country_gdp_deflator_common_eur,1.2319086811538418,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,NO,country,country_gdp_deflator_common_eur,1.207125147812482,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,PL,country,country_gdp_deflator_common_eur,1.1747387827308202,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,PT,country,country_gdp_deflator_common_eur,1.2361042688650206,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,RO,country,country_gdp_deflator_common_eur,1.4447466913018392,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,RU,country,country_gdp_deflator_common_eur,1.1648686313575494,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,SE,country,country_gdp_deflator_common_eur,1.0408856748229443,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,SI,country,country_gdp_deflator_common_eur,1.2140979568924999,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,SK,country,country_gdp_deflator_common_eur,1.1885924187026848,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,TR,country,country_gdp_deflator_common_eur,0.7530897214816613,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,TW,country,country_gdp_deflator_common_eur,1.3611432969262112,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2012,2022,US,country,country_gdp_deflator_common_eur,1.545272181696098,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2012,2022,WA,row,country_gdp_deflator_common_eur,1.263184312466295,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2012,2022,WE,row,country_gdp_deflator_common_eur,1.4675043454110341,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2012,2022,WF,row,country_gdp_deflator_common_eur,1.110122586069517,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2012,2022,WL,row,country_gdp_deflator_common_eur,1.276585396083092,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2012,2022,WM,row,country_gdp_deflator_common_eur,1.1766809641921692,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2012,2022,ZA,country,country_gdp_deflator_common_eur,1.0441245604940461,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,AT,country,country_gdp_deflator_common_eur,1.2156410663078658,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,AU,country,country_gdp_deflator_common_eur,1.1717175760001606,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,BE,country,country_gdp_deflator_common_eur,1.224373053397295,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,BG,country,country_gdp_deflator_common_eur,1.602841812455758,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,BR,country,country_gdp_deflator_common_eur,0.974360466578783,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,CA,country,country_gdp_deflator_common_eur,1.2642275554666809,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,CH,country,country_gdp_deflator_common_eur,1.2413526596747204,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,CN,country,country_gdp_deflator_common_eur,1.3926183386789839,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,CY,country,country_gdp_deflator_common_eur,1.092871214972879,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,CZ,country,country_gdp_deflator_common_eur,1.4304631072757952,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,DE,country,country_gdp_deflator_common_eur,1.2277934732473497,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,DK,country,country_gdp_deflator_common_eur,1.2245913985671664,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,EE,country,country_gdp_deflator_common_eur,1.4817284672214386,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,ES,country,country_gdp_deflator_common_eur,1.1366241635422076,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,FI,country,country_gdp_deflator_common_eur,1.1930856887965309,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,FR,country,country_gdp_deflator_common_eur,1.1301146354021072,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,GB,country,country_gdp_deflator_common_eur,1.2247694710051749,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,GR,country,country_gdp_deflator_common_eur,1.0503972453164079,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,HR,country,country_gdp_deflator_common_eur,1.1796790816372262,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,HU,country,country_gdp_deflator_common_eur,1.2056849687318791,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,ID,country,country_gdp_deflator_common_eur,1.2698737463039764,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,IE,country,country_gdp_deflator_common_eur,1.2256973950067052,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,IN,country,country_gdp_deflator_common_eur,1.3646410816811305,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,IT,country,country_gdp_deflator_common_eur,1.1271552367365285,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,JP,country,country_gdp_deflator_common_eur,0.9925674757543205,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,KR,country,country_gdp_deflator_common_eur,1.238678969546836,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,LT,country,country_gdp_deflator_common_eur,1.4087717282227514,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,LU,country,country_gdp_deflator_common_eur,1.2745542625144846,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,LV,country,country_gdp_deflator_common_eur,1.324733165934047,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,MT,country,country_gdp_deflator_common_eur,1.273126994148834,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,MX,country,country_gdp_deflator_common_eur,1.246901432557389,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,NL,country,country_gdp_deflator_common_eur,1.217963878485258,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,NO,country,country_gdp_deflator_common_eur,1.2287948211611304,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,PL,country,country_gdp_deflator_common_eur,1.175401440944478,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,PT,country,country_gdp_deflator_common_eur,1.208615672760452,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,RO,country,country_gdp_deflator_common_eur,1.4133515000389993,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,RU,country,country_gdp_deflator_common_eur,1.1803005415961514,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,SE,country,country_gdp_deflator_common_eur,1.0241697941356698,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,SI,country,country_gdp_deflator_common_eur,1.2004987409152288,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,SK,country,country_gdp_deflator_common_eur,1.1822783209894872,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,TR,country,country_gdp_deflator_common_eur,0.7764387833124193,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,TW,country,country_gdp_deflator_common_eur,1.3931769976385564,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2013,2022,US,country,country_gdp_deflator_common_eur,1.570655648880458,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2013,2022,WA,row,country_gdp_deflator_common_eur,1.2770134433329772,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2013,2022,WE,row,country_gdp_deflator_common_eur,1.4226762367985366,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2013,2022,WF,row,country_gdp_deflator_common_eur,1.1135332609295303,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2013,2022,WL,row,country_gdp_deflator_common_eur,1.3110453510778164,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2013,2022,WM,row,country_gdp_deflator_common_eur,1.244595416574009,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2013,2022,ZA,country,country_gdp_deflator_common_eur,1.199233881259215,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,AT,country,country_gdp_deflator_common_eur,1.1917261712948324,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,AU,country,country_gdp_deflator_common_eur,1.2631233668717123,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,BE,country,country_gdp_deflator_common_eur,1.2141692269369526,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,BG,country,country_gdp_deflator_common_eur,1.5827523171900701,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,BR,country,country_gdp_deflator_common_eur,0.9862436973576284,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,CA,country,country_gdp_deflator_common_eur,1.330355543244349,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,CH,country,country_gdp_deflator_common_eur,1.2353745245839267,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,CN,country,country_gdp_deflator_common_eur,1.3663472837590958,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,CY,country,country_gdp_deflator_common_eur,1.107688456300696,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,CZ,country,country_gdp_deflator_common_eur,1.4776590369270057,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,DE,country,country_gdp_deflator_common_eur,1.2048906124150378,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,DK,country,country_gdp_deflator_common_eur,1.211761399691551,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,EE,country,country_gdp_deflator_common_eur,1.4405777433257754,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,ES,country,country_gdp_deflator_common_eur,1.1391380909051458,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,FI,country,country_gdp_deflator_common_eur,1.1737808610513218,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,FR,country,country_gdp_deflator_common_eur,1.1237006079060479,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,GB,country,country_gdp_deflator_common_eur,1.1456808095434756,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,GR,country,country_gdp_deflator_common_eur,1.0709976118955948,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,HR,country,country_gdp_deflator_common_eur,1.1874696581160527,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,HU,country,country_gdp_deflator_common_eur,1.2094227949043885,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,ID,country,country_gdp_deflator_common_eur,1.3663423273122781,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,IE,country,country_gdp_deflator_common_eur,1.222507558634067,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,IN,country,country_gdp_deflator_common_eur,1.3758403178419198,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,IT,country,country_gdp_deflator_common_eur,1.1170730856834943,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,JP,country,country_gdp_deflator_common_eur,1.0599169243863196,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,KR,country,country_gdp_deflator_common_eur,1.1789550762758678,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,LT,country,country_gdp_deflator_common_eur,1.40025919179264,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,LU,country,country_gdp_deflator_common_eur,1.2398785611420247,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,LV,country,country_gdp_deflator_common_eur,1.3024355785745256,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,MT,country,country_gdp_deflator_common_eur,1.2448528576139812,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,MX,country,country_gdp_deflator_common_eur,1.243754818190975,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,NL,country,country_gdp_deflator_common_eur,1.2137875020046258,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,NO,country,country_gdp_deflator_common_eur,1.3150176724428353,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,PL,country,country_gdp_deflator_common_eur,1.1678480972005836,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,PT,country,country_gdp_deflator_common_eur,1.1999227482631225,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,RO,country,country_gdp_deflator_common_eur,1.3988115319874324,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,RU,country,country_gdp_deflator_common_eur,1.315341148274772,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,SE,country,country_gdp_deflator_common_eur,1.059589396328135,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,SI,country,country_gdp_deflator_common_eur,1.1929645559548105,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,SK,country,country_gdp_deflator_common_eur,1.1838481334337045,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,TR,country,country_gdp_deflator_common_eur,0.8314025545297923,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,TW,country,country_gdp_deflator_common_eur,1.3982623536796097,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2014,2022,US,country,country_gdp_deflator_common_eur,1.5442139804702288,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2014,2022,WA,row,country_gdp_deflator_common_eur,1.2762695169462952,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2014,2022,WE,row,country_gdp_deflator_common_eur,1.5577694501270347,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2014,2022,WF,row,country_gdp_deflator_common_eur,1.0831949281454376,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2014,2022,WL,row,country_gdp_deflator_common_eur,1.3410972804920978,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2014,2022,WM,row,country_gdp_deflator_common_eur,1.2998272822356818,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2014,2022,ZA,country,country_gdp_deflator_common_eur,1.279698039971436,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,AT,country,country_gdp_deflator_common_eur,1.1650165965241197,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,AU,country,country_gdp_deflator_common_eur,1.2742060718481663,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,BE,country,country_gdp_deflator_common_eur,1.2006993194717301,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,BG,country,country_gdp_deflator_common_eur,1.5367818507705144,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,BR,country,country_gdp_deflator_common_eur,1.0826954476672406,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,CA,country,country_gdp_deflator_common_eur,1.2973535970334609,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,CH,country,country_gdp_deflator_common_eur,1.0976867027443853,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,CN,country,country_gdp_deflator_common_eur,1.155148101223322,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,CY,country,country_gdp_deflator_common_eur,1.1161035857626034,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,CZ,country,country_gdp_deflator_common_eur,1.4446214693734523,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,DE,country,country_gdp_deflator_common_eur,1.1849199972266038,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,DK,country,country_gdp_deflator_common_eur,1.2082053605593979,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,EE,country,country_gdp_deflator_common_eur,1.4220001773348383,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,ES,country,country_gdp_deflator_common_eur,1.1328795903227553,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,FI,country,country_gdp_deflator_common_eur,1.1549243831695677,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,FR,country,country_gdp_deflator_common_eur,1.111095890682258,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,GB,country,country_gdp_deflator_common_eur,1.0236867874659865,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,GR,country,country_gdp_deflator_common_eur,1.0728724966299474,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,HR,country,country_gdp_deflator_common_eur,1.1817911038272049,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,HU,country,country_gdp_deflator_common_eur,1.1798236098332853,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,ID,country,country_gdp_deflator_common_eur,1.2384124004294519,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,IE,country,country_gdp_deflator_common_eur,1.1225093655642184,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,IN,country,country_gdp_deflator_common_eur,1.1809173639664765,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,IT,country,country_gdp_deflator_common_eur,1.1083968161268254,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,JP,country,country_gdp_deflator_common_eur,0.9904495393898325,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,KR,country,country_gdp_deflator_common_eur,1.0245904918241253,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,LT,country,country_gdp_deflator_common_eur,1.399605884364781,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,LU,country,country_gdp_deflator_common_eur,1.2129607673665599,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,LV,country,country_gdp_deflator_common_eur,1.2974160391622311,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,MT,country,country_gdp_deflator_common_eur,1.194676865495372,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,MX,country,country_gdp_deflator_common_eur,1.1997626891657436,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,NL,country,country_gdp_deflator_common_eur,1.203098776008029,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,NO,country,country_gdp_deflator_common_eur,1.445972035065365,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,PL,country,country_gdp_deflator_common_eur,1.150286820557696,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,PT,country,country_gdp_deflator_common_eur,1.176828124101622,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,RO,country,country_gdp_deflator_common_eur,1.3530551544026233,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,RU,country,country_gdp_deflator_common_eur,1.6263505500625575,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,SE,country,country_gdp_deflator_common_eur,1.0639553960145016,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,SI,country,country_gdp_deflator_common_eur,1.1827081309209395,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,SK,country,country_gdp_deflator_common_eur,1.1860505442270588,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,TR,country,country_gdp_deflator_common_eur,0.8001980879025344,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,TW,country,country_gdp_deflator_common_eur,1.1864387405485597,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2015,2022,US,country,country_gdp_deflator_common_eur,1.2778096563578325,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2015,2022,WA,row,country_gdp_deflator_common_eur,1.1328475509184144,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2015,2022,WE,row,country_gdp_deflator_common_eur,1.6221070118376275,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2015,2022,WF,row,country_gdp_deflator_common_eur,1.061031251426563,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2015,2022,WL,row,country_gdp_deflator_common_eur,1.1535263806300171,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2015,2022,WM,row,country_gdp_deflator_common_eur,1.2667469917108336,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2015,2022,ZA,country,country_gdp_deflator_common_eur,1.1904645554542281,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,AT,country,country_gdp_deflator_common_eur,1.144251286874564,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,AU,country,country_gdp_deflator_common_eur,1.2394189787094967,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,BE,country,country_gdp_deflator_common_eur,1.1783658789885305,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,BG,country,country_gdp_deflator_common_eur,1.486914220401783,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,BR,country,country_gdp_deflator_common_eur,1.0485566808030629,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,CA,country,country_gdp_deflator_common_eur,1.3321459343431117,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,CH,country,country_gdp_deflator_common_eur,1.127870347290002,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,CN,country,country_gdp_deflator_common_eur,1.2116950328171396,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,CY,country,country_gdp_deflator_common_eur,1.122561509433818,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,CZ,country,country_gdp_deflator_common_eur,1.4108780299027488,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,DE,country,country_gdp_deflator_common_eur,1.1702190197277593,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,DK,country,country_gdp_deflator_common_eur,1.2009241932992707,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,EE,country,country_gdp_deflator_common_eur,1.3881497757062984,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,ES,country,country_gdp_deflator_common_eur,1.1286788447343168,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,FI,country,country_gdp_deflator_common_eur,1.154287269719789,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,FR,country,country_gdp_deflator_common_eur,1.1053782307864686,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,GB,country,country_gdp_deflator_common_eur,1.1358902575207683,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,GR,country,country_gdp_deflator_common_eur,1.0781550373893745,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,HR,country,country_gdp_deflator_common_eur,1.1698412945909107,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,HU,country,country_gdp_deflator_common_eur,1.1707957988254472,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,ID,country,country_gdp_deflator_common_eur,1.1987799243715078,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,IE,country,country_gdp_deflator_common_eur,1.121170981135643,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,IN,country,country_gdp_deflator_common_eur,1.1953262473685542,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,IT,country,country_gdp_deflator_common_eur,1.0947326711835133,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,JP,country,country_gdp_deflator_common_eur,0.8843961208332469,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,KR,country,country_gdp_deflator_common_eur,1.0279273852637891,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,LT,country,country_gdp_deflator_common_eur,1.385920303544387,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,LU,country,country_gdp_deflator_common_eur,1.2265461969379445,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,LV,country,country_gdp_deflator_common_eur,1.2895763103762643,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,MT,country,country_gdp_deflator_common_eur,1.169819866680114,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,MX,country,country_gdp_deflator_common_eur,1.328841815756313,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,NL,country,country_gdp_deflator_common_eur,1.1963329894366121,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,NO,country,country_gdp_deflator_common_eur,1.527050658796174,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,PL,country,country_gdp_deflator_common_eur,1.1993414356357597,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,PT,country,country_gdp_deflator_common_eur,1.1554058896810138,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,RO,country,country_gdp_deflator_common_eur,1.3329842379557837,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,RU,country,country_gdp_deflator_common_eur,1.7360523446360812,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,SE,country,country_gdp_deflator_common_eur,1.0598681938035879,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,SI,country,country_gdp_deflator_common_eur,1.1723273778872896,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,SK,country,country_gdp_deflator_common_eur,1.1907051217884412,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,TR,country,country_gdp_deflator_common_eur,0.8197523998164685,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,TW,country,country_gdp_deflator_common_eur,1.1902844909084653,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2016,2022,US,country,country_gdp_deflator_common_eur,1.26280331001259,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2016,2022,WA,row,country_gdp_deflator_common_eur,1.1562426737749065,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2016,2022,WE,row,country_gdp_deflator_common_eur,1.6484540347200813,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2016,2022,WF,row,country_gdp_deflator_common_eur,1.1384396999224151,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2016,2022,WL,row,country_gdp_deflator_common_eur,1.1913645279008842,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2016,2022,WM,row,country_gdp_deflator_common_eur,1.3268919086068185,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2016,2022,ZA,country,country_gdp_deflator_common_eur,1.2802388937453655,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,AT,country,country_gdp_deflator_common_eur,1.133198994165556,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,AU,country,country_gdp_deflator_common_eur,1.204372811464507,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,BE,country,country_gdp_deflator_common_eur,1.155451389510444,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,BG,country,country_gdp_deflator_common_eur,1.4211424860710111,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,BR,country,country_gdp_deflator_common_eur,0.9435616110660517,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,CA,country,country_gdp_deflator_common_eur,1.2978055530342165,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,CH,country,country_gdp_deflator_common_eur,1.1545060671116427,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,CN,country,country_gdp_deflator_common_eur,1.2078215558830345,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,CY,country,country_gdp_deflator_common_eur,1.1112218595806316,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,CZ,country,country_gdp_deflator_common_eur,1.3544451543199618,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,DE,country,country_gdp_deflator_common_eur,1.153288864134932,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,DK,country,country_gdp_deflator_common_eur,1.189094644368697,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,EE,country,country_gdp_deflator_common_eur,1.3380904927198796,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,ES,country,country_gdp_deflator_common_eur,1.114657079338207,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,FI,country,country_gdp_deflator_common_eur,1.1447169105437849,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,FR,country,country_gdp_deflator_common_eur,1.0989347023487794,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,GB,country,country_gdp_deflator_common_eur,1.197674370206742,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,GR,country,country_gdp_deflator_common_eur,1.0759642286248672,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,HR,country,country_gdp_deflator_common_eur,1.147822894710749,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,HU,country,country_gdp_deflator_common_eur,1.1195947701040014,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,ID,country,country_gdp_deflator_common_eur,1.1794828951230467,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,IE,country,country_gdp_deflator_common_eur,1.1046026345145206,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,IN,country,country_gdp_deflator_common_eur,1.1371392648700038,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,IT,country,country_gdp_deflator_common_eur,1.0870167899617915,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,JP,country,country_gdp_deflator_common_eur,0.9312737327420455,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,KR,country,country_gdp_deflator_common_eur,1.0019501347423732,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,LT,country,country_gdp_deflator_common_eur,1.3313893704603312,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,LU,country,country_gdp_deflator_common_eur,1.200813901487204,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,LV,country,country_gdp_deflator_common_eur,1.2555601725591254,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,MT,country,country_gdp_deflator_common_eur,1.145352981088605,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,MX,country,country_gdp_deflator_common_eur,1.290502984411592,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,NL,country,country_gdp_deflator_common_eur,1.1793581681112804,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,NO,country,country_gdp_deflator_common_eur,1.474491325922899,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,PL,country,country_gdp_deflator_common_eur,1.1528711358992443,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,PT,country,country_gdp_deflator_common_eur,1.1379699134655104,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,RO,country,country_gdp_deflator_common_eur,1.2978068579576065,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,RU,country,country_gdp_deflator_common_eur,1.4632867080747562,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,SE,country,country_gdp_deflator_common_eur,1.0565064773142367,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,SI,country,country_gdp_deflator_common_eur,1.1574240270408216,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,SK,country,country_gdp_deflator_common_eur,1.176796882072955,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,TR,country,country_gdp_deflator_common_eur,0.9105820451733619,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,TW,country,country_gdp_deflator_common_eur,1.1559660627742294,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2017,2022,US,country,country_gdp_deflator_common_eur,1.2661158730079032,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2017,2022,WA,row,country_gdp_deflator_common_eur,1.1554654239623925,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2017,2022,WE,row,country_gdp_deflator_common_eur,1.5131208015813984,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2017,2022,WF,row,country_gdp_deflator_common_eur,1.1502288519257842,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2017,2022,WL,row,country_gdp_deflator_common_eur,1.1361091062344053,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2017,2022,WM,row,country_gdp_deflator_common_eur,1.304788650554404,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2017,2022,ZA,country,country_gdp_deflator_common_eur,1.122074370639271,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,AT,country,country_gdp_deflator_common_eur,1.1130474923562927,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,AU,country,country_gdp_deflator_common_eur,1.2482201523998295,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,BE,country,country_gdp_deflator_common_eur,1.1359440231113047,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,BG,country,country_gdp_deflator_common_eur,1.3608791975662748,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,BR,country,country_gdp_deflator_common_eur,1.08075213604876,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,CA,country,country_gdp_deflator_common_eur,1.332492947346749,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,CH,country,country_gdp_deflator_common_eur,1.189480517696191,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,CN,country,country_gdp_deflator_common_eur,1.1945391931006943,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,CY,country,country_gdp_deflator_common_eur,1.0999396344336283,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,CZ,country,country_gdp_deflator_common_eur,1.2801793524373835,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,DE,country,country_gdp_deflator_common_eur,1.132170107559667,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,DK,country,country_gdp_deflator_common_eur,1.1817855914234743,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,EE,country,country_gdp_deflator_common_eur,1.2762062970980372,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,ES,country,country_gdp_deflator_common_eur,1.1015774477124787,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,FI,country,country_gdp_deflator_common_eur,1.1224138843052875,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,FR,country,country_gdp_deflator_common_eur,1.0868210674036571,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,GB,country,country_gdp_deflator_common_eur,1.1845580569214622,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,GR,country,country_gdp_deflator_common_eur,1.0784965433761564,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,HR,country,country_gdp_deflator_common_eur,1.114874537338769,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,HU,country,country_gdp_deflator_common_eur,1.099147708532952,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,ID,country,country_gdp_deflator_common_eur,1.2636545061370057,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,IE,country,country_gdp_deflator_common_eur,1.0944858977466965,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,IN,country,country_gdp_deflator_common_eur,1.2017264794992248,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,IT,country,country_gdp_deflator_common_eur,1.075502657304231,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,JP,country,country_gdp_deflator_common_eur,0.9584161652304442,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,KR,country,country_gdp_deflator_common_eur,1.0131271087531446,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,LT,country,country_gdp_deflator_common_eur,1.2852115687319492,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,LU,country,country_gdp_deflator_common_eur,1.1791228973875314,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,LV,country,country_gdp_deflator_common_eur,1.21029188258661,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,MT,country,country_gdp_deflator_common_eur,1.1251142954698594,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,MX,country,country_gdp_deflator_common_eur,1.3038701429506592,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,NL,country,country_gdp_deflator_common_eur,1.1502184993688127,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,NO,country,country_gdp_deflator_common_eur,1.419748597012929,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,PL,country,country_gdp_deflator_common_eur,1.1377849281967414,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,PT,country,country_gdp_deflator_common_eur,1.1172738407928455,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,RO,country,country_gdp_deflator_common_eur,1.2427087285579328,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,RU,country,country_gdp_deflator_common_eur,1.493749089932494,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,SE,country,country_gdp_deflator_common_eur,1.094405491658632,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,SI,country,country_gdp_deflator_common_eur,1.1327199297868527,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,SK,country,country_gdp_deflator_common_eur,1.1524948187283468,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,TR,country,country_gdp_deflator_common_eur,1.0813209276589466,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,TW,country,country_gdp_deflator_common_eur,1.204661860564904,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2018,2022,US,country,country_gdp_deflator_common_eur,1.293938906939074,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2018,2022,WA,row,country_gdp_deflator_common_eur,1.1872008169776413,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2018,2022,WE,row,country_gdp_deflator_common_eur,1.4482534813547914,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2018,2022,WF,row,country_gdp_deflator_common_eur,1.2066408039587537,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2018,2022,WL,row,country_gdp_deflator_common_eur,1.2169315884425806,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2018,2022,WM,row,country_gdp_deflator_common_eur,1.3197765275971909,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2018,2022,ZA,country,country_gdp_deflator_common_eur,1.1203510972898492,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,AT,country,country_gdp_deflator_common_eur,1.0968828933792818,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,AU,country,country_gdp_deflator_common_eur,1.2481932131171147,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,BE,country,country_gdp_deflator_common_eur,1.115264337127099,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,BG,country,country_gdp_deflator_common_eur,1.291854621022328,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,BR,country,country_gdp_deflator_common_eur,1.0611562088271527,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,CA,country,country_gdp_deflator_common_eur,1.273628370786594,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,CH,country,country_gdp_deflator_common_eur,1.146986666229839,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,CN,country,country_gdp_deflator_common_eur,1.1670497544312401,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,CY,country,country_gdp_deflator_common_eur,1.0852864695522064,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,CZ,country,country_gdp_deflator_common_eur,1.2333043806806379,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,DE,country,country_gdp_deflator_common_eur,1.109796867695746,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,DK,country,country_gdp_deflator_common_eur,1.1720666025655821,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,EE,country,country_gdp_deflator_common_eur,1.2292172564989194,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,ES,country,country_gdp_deflator_common_eur,1.086061203684394,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,FI,country,country_gdp_deflator_common_eur,1.106024165268851,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,FR,country,country_gdp_deflator_common_eur,1.0738222017768189,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,GB,country,country_gdp_deflator_common_eur,1.1455025539966195,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,GR,country,country_gdp_deflator_common_eur,1.075860515327803,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,HR,country,country_gdp_deflator_common_eur,1.0929216692090873,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,HU,country,country_gdp_deflator_common_eur,1.0699218720565675,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,ID,country,country_gdp_deflator_common_eur,1.171630015927217,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,IE,country,country_gdp_deflator_common_eur,1.0585820154415988,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,IN,country,country_gdp_deflator_common_eur,1.1454396625343628,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,IT,country,country_gdp_deflator_common_eur,1.0643587477289416,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,JP,country,country_gdp_deflator_common_eur,0.8912339672010318,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,KR,country,country_gdp_deflator_common_eur,1.0236851295845544,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,LT,country,country_gdp_deflator_common_eur,1.2553853681610696,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,LU,country,country_gdp_deflator_common_eur,1.1684158798638413,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,LV,country,country_gdp_deflator_common_eur,1.1602126729541622,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,MT,country,country_gdp_deflator_common_eur,1.0976080601394733,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,MX,country,country_gdp_deflator_common_eur,1.1860064955782617,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,NL,country,country_gdp_deflator_common_eur,1.1164147588599185,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,NO,country,country_gdp_deflator_common_eur,1.4643317389644572,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,PL,country,country_gdp_deflator_common_eur,1.1128569401206354,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,PT,country,country_gdp_deflator_common_eur,1.0971481085381356,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,RO,country,country_gdp_deflator_common_eur,1.1843023895781626,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,RU,country,country_gdp_deflator_common_eur,1.416522238154182,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,SE,country,country_gdp_deflator_common_eur,1.102095668659017,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,SI,country,country_gdp_deflator_common_eur,1.1068356208275736,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,SK,country,country_gdp_deflator_common_eur,1.1254699461839779,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,TR,country,country_gdp_deflator_common_eur,1.057815259268402,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,TW,country,country_gdp_deflator_common_eur,1.1716769541842416,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2019,2022,US,country,country_gdp_deflator_common_eur,1.206662134104849,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2019,2022,WA,row,country_gdp_deflator_common_eur,1.1294173725691012,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2019,2022,WE,row,country_gdp_deflator_common_eur,1.3163781473174698,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2019,2022,WF,row,country_gdp_deflator_common_eur,1.1356035146929593,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2019,2022,WL,row,country_gdp_deflator_common_eur,1.201685060781263,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2019,2022,WM,row,country_gdp_deflator_common_eur,1.2476285090415054,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2019,2022,ZA,country,country_gdp_deflator_common_eur,1.1083558142152914,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,AT,country,country_gdp_deflator_common_eur,1.0691582041268235,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,AU,country,country_gdp_deflator_common_eur,1.2479963016314501,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,BE,country,country_gdp_deflator_common_eur,1.0977430768209167,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,BG,country,country_gdp_deflator_common_eur,1.2409277773796785,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,BR,country,country_gdp_deflator_common_eur,1.328994826135316,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,CA,country,country_gdp_deflator_common_eur,1.299625361635603,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,CH,country,country_gdp_deflator_common_eur,1.1135818488165858,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,CN,country,country_gdp_deflator_common_eur,1.1831532482283964,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,CY,country,country_gdp_deflator_common_eur,1.0985562999889922,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,CZ,country,country_gdp_deflator_common_eur,1.2185578356623117,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,DE,country,country_gdp_deflator_common_eur,1.090655364363522,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,DK,country,country_gdp_deflator_common_eur,1.1407822807184975,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,EE,country,country_gdp_deflator_common_eur,1.2200263289806237,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,ES,country,country_gdp_deflator_common_eur,1.073884273744022,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,FI,country,country_gdp_deflator_common_eur,1.0881950045448152,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,FR,country,country_gdp_deflator_common_eur,1.0427687701032307,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,GB,country,country_gdp_deflator_common_eur,1.1098687226677042,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,GR,country,country_gdp_deflator_common_eur,1.0797905176882707,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,HR,country,country_gdp_deflator_common_eur,1.1047993309975492,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,HU,country,country_gdp_deflator_common_eur,1.086898617318915,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,ID,country,country_gdp_deflator_common_eur,1.2370948807795357,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,IE,country,country_gdp_deflator_common_eur,1.0793524188903145,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,IN,country,country_gdp_deflator_common_eur,1.17325761830873,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,IT,country,country_gdp_deflator_common_eur,1.047830244243083,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,JP,country,country_gdp_deflator_common_eur,0.8824375149881738,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,KR,country,country_gdp_deflator_common_eur,1.04129690064966,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,LT,country,country_gdp_deflator_common_eur,1.2303026445260534,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,LU,country,country_gdp_deflator_common_eur,1.124893055826505,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,LV,country,country_gdp_deflator_common_eur,1.1330940283294708,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,MT,country,country_gdp_deflator_common_eur,1.0767651126451103,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,MX,country,country_gdp_deflator_common_eur,1.2900577185036204,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,NL,country,country_gdp_deflator_common_eur,1.0907203303878834,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,NO,country,country_gdp_deflator_common_eur,1.6398884546002397,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,PL,country,country_gdp_deflator_common_eur,1.1064010439346077,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,PT,country,country_gdp_deflator_common_eur,1.0745488063189592,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,RO,country,country_gdp_deflator_common_eur,1.162293282125478,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,RU,country,country_gdp_deflator_common_eur,1.595416170432843,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,SE,country,country_gdp_deflator_common_eur,1.07562800576689,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,SI,country,country_gdp_deflator_common_eur,1.0938242187834117,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,SK,country,country_gdp_deflator_common_eur,1.0990082501082774,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,TR,country,country_gdp_deflator_common_eur,1.1614241139955868,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,TW,country,country_gdp_deflator_common_eur,1.120438233264423,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2020,2022,US,country,country_gdp_deflator_common_eur,1.2148155038759343,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2020,2022,WA,row,country_gdp_deflator_common_eur,1.149235081100106,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2020,2022,WE,row,country_gdp_deflator_common_eur,1.3093667932258681,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2020,2022,WF,row,country_gdp_deflator_common_eur,1.1868241486845197,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2020,2022,WL,row,country_gdp_deflator_common_eur,1.2517087353845309,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2020,2022,WM,row,country_gdp_deflator_common_eur,1.3438038015566514,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2020,2022,ZA,country,country_gdp_deflator_common_eur,1.2223235439993434,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,AT,country,country_gdp_deflator_common_eur,1.0502343156333276,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,AU,country,country_gdp_deflator_common_eur,1.1046546739726566,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,BE,country,country_gdp_deflator_common_eur,1.068439758171519,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,BG,country,country_gdp_deflator_common_eur,1.1575078980813105,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,BR,country,country_gdp_deflator_common_eur,1.273829812280201,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,CA,country,country_gdp_deflator_common_eur,1.167305916213747,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,CH,country,country_gdp_deflator_common_eur,1.107625080525176,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,CN,country,country_gdp_deflator_common_eur,1.0959142798417572,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,CY,country,country_gdp_deflator_common_eur,1.0662051832323447,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,CZ,country,country_gdp_deflator_common_eur,1.132819000389808,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,DE,country,country_gdp_deflator_common_eur,1.0609185663198422,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,DK,country,country_gdp_deflator_common_eur,1.1016862151684756,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,EE,country,country_gdp_deflator_common_eur,1.1578241940239902,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,ES,country,country_gdp_deflator_common_eur,1.0471187421007822,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,FI,country,country_gdp_deflator_common_eur,1.0617278075702798,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,FR,country,country_gdp_deflator_common_eur,1.0301818420778104,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,GB,country,country_gdp_deflator_common_eur,1.0636996174152746,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,GR,country,country_gdp_deflator_common_eur,1.064958243102375,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,HR,country,country_gdp_deflator_common_eur,1.0776597686590919,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,HU,country,country_gdp_deflator_common_eur,1.0433904223158637,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,ID,country,country_gdp_deflator_common_eur,1.1857407187595128,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,IE,country,country_gdp_deflator_common_eur,1.0676287575128836,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,IN,country,country_gdp_deflator_common_eur,1.118479766582673,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,IT,country,country_gdp_deflator_common_eur,1.0345535917134776,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,JP,country,country_gdp_deflator_common_eur,0.9411797922013511,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,KR,country,country_gdp_deflator_common_eur,1.0128693630804795,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,LT,country,country_gdp_deflator_common_eur,1.160665428207157,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,LU,country,country_gdp_deflator_common_eur,1.0622005985627279,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,LV,country,country_gdp_deflator_common_eur,1.096924657025935,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,MT,country,country_gdp_deflator_common_eur,1.0508597973788374,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,MX,country,country_gdp_deflator_common_eur,1.206283122034024,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,NL,country,country_gdp_deflator_common_eur,1.0615557496508332,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,NO,country,country_gdp_deflator_common_eur,1.288677597046106,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,PL,country,country_gdp_deflator_common_eur,1.0770455426397842,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,PT,country,country_gdp_deflator_common_eur,1.053275006721121,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,RO,country,country_gdp_deflator_common_eur,1.1171736563046353,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,RU,country,country_gdp_deflator_common_eur,1.427596567805868,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,SE,country,country_gdp_deflator_common_eur,1.0098060621625478,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,SI,country,country_gdp_deflator_common_eur,1.065171497829245,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,SK,country,country_gdp_deflator_common_eur,1.0748889900247152,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,TR,country,country_gdp_deflator_common_eur,1.1775311851152128,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,TW,country,country_gdp_deflator_common_eur,1.0788405715268758,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2021,2022,US,country,country_gdp_deflator_common_eur,1.2030458924006615,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2021,2022,WA,row,country_gdp_deflator_common_eur,1.1303894141327004,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2021,2022,WE,row,country_gdp_deflator_common_eur,1.1765511176539631,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2021,2022,WF,row,country_gdp_deflator_common_eur,1.1834024402313577,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2021,2022,WL,row,country_gdp_deflator_common_eur,1.208510024406063,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2021,2022,WM,row,country_gdp_deflator_common_eur,1.2262407009381784,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2021,2022,ZA,country,country_gdp_deflator_common_eur,1.068041623037157,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,AT,country,country_gdp_deflator_common_eur,1.0,1,AUT,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,AU,country,country_gdp_deflator_common_eur,1.0,1,AUS,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,BE,country,country_gdp_deflator_common_eur,1.0,1,BEL,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,BG,country,country_gdp_deflator_common_eur,1.0,1,BGR,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,BR,country,country_gdp_deflator_common_eur,1.0,1,BRA,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,CA,country,country_gdp_deflator_common_eur,1.0,1,CAN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,CH,country,country_gdp_deflator_common_eur,1.0,1,CHE,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,CN,country,country_gdp_deflator_common_eur,1.0,1,CHN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,CY,country,country_gdp_deflator_common_eur,1.0,1,CYP,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,CZ,country,country_gdp_deflator_common_eur,1.0,1,CZE,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,DE,country,country_gdp_deflator_common_eur,1.0,1,DEU,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,DK,country,country_gdp_deflator_common_eur,1.0,1,DNK,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,EE,country,country_gdp_deflator_common_eur,1.0,1,EST,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,ES,country,country_gdp_deflator_common_eur,1.0,1,ESP,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,FI,country,country_gdp_deflator_common_eur,1.0,1,FIN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,FR,country,country_gdp_deflator_common_eur,1.0,1,FRA,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,GB,country,country_gdp_deflator_common_eur,1.0,1,GBR,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,GR,country,country_gdp_deflator_common_eur,1.0,1,GRC,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,HR,country,country_gdp_deflator_common_eur,1.0,1,HRV,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,HU,country,country_gdp_deflator_common_eur,1.0,1,HUN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,ID,country,country_gdp_deflator_common_eur,1.0,1,IDN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,IE,country,country_gdp_deflator_common_eur,1.0,1,IRL,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,IN,country,country_gdp_deflator_common_eur,1.0,1,IND,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,IT,country,country_gdp_deflator_common_eur,1.0,1,ITA,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,JP,country,country_gdp_deflator_common_eur,1.0,1,JPN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,KR,country,country_gdp_deflator_common_eur,1.0,1,KOR,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,LT,country,country_gdp_deflator_common_eur,1.0,1,LTU,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,LU,country,country_gdp_deflator_common_eur,1.0,1,LUX,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,LV,country,country_gdp_deflator_common_eur,1.0,1,LVA,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,MT,country,country_gdp_deflator_common_eur,1.0,1,MLT,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,MX,country,country_gdp_deflator_common_eur,1.0,1,MEX,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,NL,country,country_gdp_deflator_common_eur,1.0,1,NLD,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,NO,country,country_gdp_deflator_common_eur,1.0,1,NOR,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,PL,country,country_gdp_deflator_common_eur,1.0,1,POL,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,PT,country,country_gdp_deflator_common_eur,1.0,1,PRT,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,RO,country,country_gdp_deflator_common_eur,1.0,1,ROU,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,RU,country,country_gdp_deflator_common_eur,1.0,1,RUS,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,SE,country,country_gdp_deflator_common_eur,1.0,1,SWE,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,SI,country,country_gdp_deflator_common_eur,1.0,1,SVN,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,SK,country,country_gdp_deflator_common_eur,1.0,1,SVK,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,TR,country,country_gdp_deflator_common_eur,1.0,1,TUR,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,TW,country,country_gdp_deflator_common_eur,1.0,1,TWN,DGBAS GDP deflator + CBC NTD/USD + ECB
+2022,2022,US,country,country_gdp_deflator_common_eur,1.0,1,USA,UNSD AMA current/constant USD GDP levels + ECB
+2022,2022,WA,row,country_gdp_deflator_common_eur,1.0,45,AFG;ARM;AZE;BGD;BRN;BTN;COK;FJI;FSM;GEO;HKG;KAZ;KGZ;KHM;KIR;LAO;LKA;MAC;MDV;MHL;MMR;MNG;MYS;NCL;NPL;NRU;NZL;PAK;PHL;PLW;PNG;PRK;PYF;SGP;SLB;THA;TJK;TKM;TLS;TON;TUV;UZB;VNM;VUT;WSM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2022,2022,WE,row,country_gdp_deflator_common_eur,1.0,14,ALB;AND;BIH;BLR;ISL;LIE;MCO;MDA;MKD;MNE;SMR;SRB;UKR;XKX,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2022,2022,WF,row,country_gdp_deflator_common_eur,1.0,53,AGO;BDI;BEN;BFA;BWA;CAF;CIV;CMR;COD;COG;COM;CPV;DJI;DZA;ERI;ETH;GAB;GHA;GIN;GMB;GNB;GNQ;KEN;LBR;LBY;LSO;MAR;MDG;MLI;MOZ;MRT;MUS;MWI;NAM;NER;NGA;RWA;SDN;SEN;SLE;SOM;SSD;STP;SWZ;SYC;TCD;TGO;TUN;TZA;UGA;ZANZIBAR;ZMB;ZWE,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2022,2022,WL,row,country_gdp_deflator_common_eur,1.0,42,ABW;AIA;ARG;ATG;BHS;BLZ;BMU;BOL;BRB;CHL;COL;CRI;CUB;CUW;CYM;DMA;DOM;ECU;GRD;GRL;GTM;GUY;HND;HTI;JAM;KNA;LCA;MSR;NIC;PAN;PER;PRI;PRY;SLV;SUR;SXM;TCA;TTO;URY;VCT;VEN;VGB,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2022,2022,WM,row,country_gdp_deflator_common_eur,1.0,15,ARE;BHR;EGY;IRN;IRQ;ISR;JOR;KWT;LBN;OMN;PSE;QAT;SAU;SYR;YEM,UNSD AMA aggregate current/constant USD GDP levels + ECB
+2022,2022,ZA,country,country_gdp_deflator_common_eur,1.0,1,ZAF,UNSD AMA current/constant USD GDP levels + ECB

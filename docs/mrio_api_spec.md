@@ -972,3 +972,14 @@ Production callers use `build_exiobase3_eur_price_factors`, whose GDP-level
 aggregation enforces the same formula and the required extensive-first RoW rule.
 The obsolete Python constant for Taiwan's admissible years is also removed;
 the verified observation snapshot is the sole authority for its annual domain.
+
+### Monetary-base regression admission
+
+The public factor builder remains the sole GDP/FX calculation owner. Before a
+publication rebase, `scripts/audit_exiobase_price_factor_rebase.py` compares all
+539 previously certified 2012--2022 region-year factors with the retained old
+query vintage and an extended query vintage, using frozen exact numerical evidence
+under `tests/reference_data/`. It also checks the region-wise change-of-base
+identity and all 49 base-year identities, saving source provenance in JSON. Source
+revisions are blocking findings rather than silently accepted fixture updates.
+This audit introduces no new loader API, MRIO matrix cache or source policy.
