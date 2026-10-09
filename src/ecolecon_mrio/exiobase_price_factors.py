@@ -33,7 +33,6 @@ from ecolecon_mrio.price_indices import (
     PriceIndexHTTPError,
     PriceIndexParseError,
     load_unsd_ama_gdp_usd_levels,
-    price_adjustment_factors,
 )
 
 ECB_USD_EUR_SERIES = "EXR.A.USD.EUR.SP00.A"
@@ -54,7 +53,7 @@ EXIOBASE3RX_BRIDGE_LICENSE = "CC BY 4.0"
 EXIOBASE3RX_BRIDGE_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 DGBAS_TABLE_ID = "A018102050"
 DGBAS_METADATA_URL = f"https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/{DGBAS_TABLE_ID}/all"
-DGBAS_SNAPSHOT_RESOURCE = "reference_data/taiwan_dgbas_gdp_deflator_2012_2022.json"
+DGBAS_SNAPSHOT_RESOURCE = "reference_data/taiwan_dgbas_gdp_deflator.json"
 PRICE_FACTOR_SOURCE_POLICY_RESOURCE = "mappings/exiobase_price_factor_source_policy.csv"
 PRICE_FACTOR_SOURCE_IDENTITY_RESOURCE = "mappings/exiobase_price_factor_source_identity.csv"
 EXIOBASE3RX_BRIDGE_RESOURCE = "mappings/exiobase3rx_to_exiobase3_regions.csv"
@@ -74,7 +73,6 @@ PRICE_FACTOR_SOURCE_IDENTITY_COLUMNS = (
 EXIOBASE3RX_BRIDGE_COLUMNS = (
     "source_country", "source_iso3", "target_exio_region", "weight",
 )
-PINNED_TAIWAN_DGBAS_YEARS = tuple(range(2012, 2023))
 CBC_TWD_USD_ANNUAL_URL = "https://www.cbc.gov.tw/en/cp-480-1879-66035-2.html"
 EXPECTED_ROW_REGIONS = frozenset({"WA", "WL", "WE", "WF", "WM"})
 EXPECTED_EXIOBASE3_REGION_COUNT = 49
@@ -208,7 +206,7 @@ def _read_ecb_usd_per_eur(path: Path) -> pd.Series:
         if not re.fullmatch(r"\d{4}", token):
             continue
         year = int(token)
-        value = float(row["OBS_VALUE"])
+        value = float(cast(float | str, row["OBS_VALUE"]))
         if year in values:
             raise PriceIndexParseError(f"ECB annual USD/EUR series duplicates year {year}")
         values[year] = value
@@ -417,9 +415,10 @@ def _load_price_factor_source_identity_mapping() -> pd.DataFrame:
 def _read_taiwan_dgbas_gdp_deflator_snapshot(path: Path) -> tuple[pd.Series, dict[str, Any]]:
     """Read the audited DGBAS annual GDP-deflator snapshot and its source identity.
 
-    The package resource is intentionally bounded to the historical 2012--2022
-    sensitivity domain because DGBAS's live observation transports are currently
-    not reproducibly certificate-verifiable.  Its table, measure, item, frequency,
+    The package resource declares its audited annual observation domain. All
+    observations were checked against one official publication, preserving a
+    coherent source vintage without runtime dependence on the DGBAS transport.
+    Its table, measure, item, frequency,
     and index-base metadata are validated before the values enter the Taiwan EUR
     conversion, so a future source update cannot silently change the statistic.
     """
@@ -459,10 +458,14 @@ def _read_taiwan_dgbas_gdp_deflator_snapshot(path: Path) -> tuple[pd.Series, dic
         if year in values:
             raise PriceIndexParseError(f"Pinned DGBAS Taiwan GDP-deflator snapshot duplicates year {year}")
         values[year] = value
-    if tuple(sorted(values)) != PINNED_TAIWAN_DGBAS_YEARS:
-        raise PriceIndexParseError(
-            "Pinned DGBAS Taiwan GDP-deflator snapshot must cover exactly 2012--2022"
-        )
+    # Source metadata owns the admitted years; extending a verified snapshot
+    # requires no Python year constant. Gaps never become interpolated prices.
+    try:
+        start, end = (int(year) for year in str(payload["snapshot_domain"]).split("--"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PriceIndexParseError("Pinned DGBAS snapshot requires an annual snapshot_domain start--end") from exc
+    if end < start or tuple(sorted(values)) != tuple(range(start, end + 1)):
+        raise PriceIndexParseError("Pinned DGBAS snapshot observations must cover exactly the declared annual domain")
     series = _positive_series(values, name="taiwan_gdp_deflator")
     provenance = {key: value for key, value in payload.items() if key != "observations"}
     provenance["snapshot_resource"] = DGBAS_SNAPSHOT_RESOURCE
@@ -473,15 +476,11 @@ def _load_taiwan_dgbas_gdp_deflator(years: Sequence[int]) -> tuple[pd.Series, di
     """Load the packaged DGBAS snapshot and reject requests outside its audited domain."""
 
     requested = tuple(sorted({int(year) for year in years}))
-    outside = [year for year in requested if year not in PINNED_TAIWAN_DGBAS_YEARS]
-    if outside:
-        raise ValueError(
-            "Pinned DGBAS Taiwan GDP-deflator snapshot covers 2012--2022 only; "
-            f"requested outside years {outside}"
-        )
     resource = resources.files("ecolecon_mrio").joinpath(DGBAS_SNAPSHOT_RESOURCE)
     with resources.as_file(resource) as path:
         series, provenance = _read_taiwan_dgbas_gdp_deflator_snapshot(path)
+    # Reject years without actual observations, including an unavailable base year.
+    # This remains fail-closed as the pinned observation domain is extended.
     return _require_years(series, requested, name="Pinned DGBAS Taiwan GDP deflator"), provenance
 
 
@@ -514,35 +513,6 @@ def _require_years(series: pd.Series, years: Sequence[int], *, name: str) -> pd.
     if missing:
         raise ValueError(f"{name} is missing requested years {missing}")
     return series.reindex(requested).astype(float)
-
-
-def common_eur_price_factors_from_usd(
-    price_indices: pd.DataFrame,
-    usd_per_eur: pd.Series,
-    *,
-    year: int,
-    base_year: int,
-    area_codes: Sequence[int],
-) -> pd.Series:
-    """Convert UNSD USD-basis GDP-deflator factors into base-year EUR factors.
-
-    If ``u_t`` is annual-average USD per EUR, the common-EUR macro factor is
-    ``(P_usd,b/P_usd,t) * (u_t/u_b)``.  This removes the exchange-rate movement
-    embedded in the USD-basis current-price series while retaining the aggregate
-    GDP-deflator approximation.
-    """
-
-    rates = _require_years(usd_per_eur, [year, base_year], name="ECB USD/EUR")
-    factors = price_adjustment_factors(
-        price_indices,
-        year=int(year),
-        base_year=int(base_year),
-        currency_basis="usd",
-        area_codes=area_codes,
-    )
-    result = factors * (float(rates.loc[int(year)]) / float(rates.loc[int(base_year)]))
-    result.name = "price_adjustment_factor"
-    return result
 
 
 def _taiwan_common_eur_factor(
@@ -849,8 +819,8 @@ def _common_eur_factor_from_usd_levels(
         raise ValueError("GDP-level factor requires at least one source statistical unit")
     current = _require_gdp_level_rows(levels, m49_codes=codes, year=int(year))
     base = _require_gdp_level_rows(levels, m49_codes=codes, year=int(base_year))
-    q_t = float(current["current_usd_gdp"].sum()) / float(current["constant_usd_gdp"].sum())
-    q_b = float(base["current_usd_gdp"].sum()) / float(base["constant_usd_gdp"].sum())
+    q_t = float(cast(float, current["current_usd_gdp"].sum())) / float(cast(float, current["constant_usd_gdp"].sum()))
+    q_b = float(cast(float, base["current_usd_gdp"].sum())) / float(cast(float, base["constant_usd_gdp"].sum()))
     rates = _require_years(usd_per_eur, [year, base_year], name="ECB USD/EUR")
     factor = (q_b / q_t) * (float(rates.loc[int(year)]) / float(rates.loc[int(base_year)]))
     if not math.isfinite(factor) or factor <= 0.0:

@@ -416,7 +416,6 @@ from .price_indices import (
 )
 from .exiobase_price_factors import (
     build_exiobase3_eur_price_factors,
-    common_eur_price_factors_from_usd,
     default_exiobase3_price_factor_storage_folder,
 )
 
@@ -425,7 +424,6 @@ __all__.extend([
     "load_unsd_ama_gdp_usd_levels",
     "read_unsd_ama_gdp_usd_levels",
     "build_exiobase3_eur_price_factors",
-    "common_eur_price_factors_from_usd",
     "default_exiobase3_price_factor_storage_folder",
 ])
 # /ecolecon-exiobase-eur-price-factors

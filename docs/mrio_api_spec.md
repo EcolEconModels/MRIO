@@ -673,7 +673,7 @@ derived CSV is redistributed with attribution to Bjelle et al., DOI
 extraction/reformatting change.  The static bridge contains 170 former-RoW source
 identities: `WA=45`, `WL=43`, `WE=14`, `WF=53`, `WM=15`.
 A separate year-bounded identity mapping resolves provider statistical units and
-historical aggregate aliases.  For the audited 2012--2022 sensitivity, Mainland
+historical aggregate aliases.  For the audited 2012--2023 source-policy domain, Mainland
 Tanzania uses UNSD AMA provider code 835, Zanzibar uses 836, and Kosovo's published
 EXIOBASE3rx pseudo-ISO code `XKX` uses UNSD AMA provider code 412 while remaining in
 its published `WE` membership. The UN M49 overview has no ISO-alpha3 `XKX` entry, so
@@ -697,14 +697,14 @@ never averages country factors, drops a missing member, interpolates, or
 renormalizes around missing data.
 
 Taiwan (`TW`) remains an explicit EXIOBASE country and is not substituted by the
-UNSD China observation. For the project's fixed 2012--2022 sensitivity, its
+UNSD China observation. For the admitted Taiwan observation domain, its
 annual aggregate GDP implicit-price deflator is a packaged, audited snapshot of
 the official Taiwan DGBAS Macro Database table `A018102050`, measure `fldid=3`
 (implicit price deflator, 2021=100), item `code1=14` (GDP), annual frequency.
-The snapshot records the official [National Accounts Yearbook Table 16,
-"4-1. Implicit Price Deflators"](https://ws.dgbas.gov.tw/001/Upload/464/relfile/10866/235856/nie.pdf)
+The snapshot records the official [Statistical Abstract of National Income,
+Table 4-1, printed page 12](https://ws.dgbas.gov.tw/001/Upload/464/ebook/ebook_336584/pdf/full.pdf)
 publication and [DGBAS table metadata](https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/A018102050/all).
-It is deliberately bounded to 2012--2022 and fails closed outside that domain.
+Its declared snapshot domain owns the available years; missing requested observations fail closed.
 This replaces live DGBAS XML/data.gov discovery: the available machine transports
 could not be fetched reproducibly with normal certificate/API verification, so
 there is no DGBAS runtime HTTP request or transport fallback. Its
@@ -810,7 +810,7 @@ provider statistical identities and audited historical aliases; the code does no
 contain country-name branches for these choices.
 
 The source-identity mapping resolves Mainland Tanzania to UNSD 835 and Zanzibar to
-836.  It marks `ANT` inactive for the full 2012--2022 sensitivity domain.  That
+836.  It marks `ANT` inactive for the full 2012--2023 sensitivity domain.  That
 choice is not inferred from a generic zero-GDP rule: MATLAB exports of the official
 EXIOBASE3rx files show that in 2009 `ANT` GDP is essentially exactly Curaçao plus
 Sint Maarten, the overlap persists in 2012, `ANT` is zero in 2013/2015, and BES is
@@ -947,3 +947,28 @@ For pure-final-use solves, `u=0`, `L<=0<=U`, and `x1>=0` still make the coeffici
 capacity rows redundant, so those rows remain deferred until structural adjustment is
 first permitted. Generic output-guard rows are not deferred because they can restrict
 the output path even when `u=0`.
+
+### Audited 2023 price-input extension
+
+The method and source-identity policies are admitted through 2023. The existing
+Mainland Tanzania (835), Zanzibar (836), Kosovo (412), and inactive Netherlands
+Antilles treatments preserve the published geography. The 2012--2023 UNSD census
+contains complete paired GDP levels for the 212 active source units; this is a
+coverage check, not a claim that every estimate has identical accuracy.
+
+Taiwan uses `reference_data/taiwan_dgbas_gdp_deflator.json`, verified
+against one DGBAS Statistical Abstract publication (Table 4-1, printed page 12).
+Its source URL and publication SHA-256 accompany the observations.
+Python no longer owns a fixed Taiwan year list; the snapshot declares a contiguous
+annual domain. Adding a later year requires verified source observations and
+applicable method/geography mapping intervals, not changes to the valuation API. The old
+2012--2022 snapshot is retained as provenance. The GDP deflator for 2023 is 104.37
+on the unchanged 2021=100 index reference. This index reference does not select
+the monetary base: callers may still request common 2022 EUR. The coherent Taiwan snapshot also contains the verified 2024 GDP deflator 107.98.
+Requests outside the declared observation domain remain rejected; no interpolation or extrapolation is introduced.
+
+The unused `common_eur_price_factors_from_usd` public API has been removed.
+Production callers use `build_exiobase3_eur_price_factors`, whose GDP-level
+aggregation enforces the same formula and the required extensive-first RoW rule.
+The obsolete Python constant for Taiwan's admissible years is also removed;
+the verified observation snapshot is the sole authority for its annual domain.

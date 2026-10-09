@@ -97,15 +97,15 @@ def test_common_eur_formula_removes_usd_eur_movement() -> None:
 
     table = pd.DataFrame(
         [
-            {"m49": 40, "year": 2020, "currency_basis": "usd", "price_index": 100.0},
-            {"m49": 40, "year": 2022, "currency_basis": "usd", "price_index": 110.0},
+            {"m49": 40, "year": 2020, "current_usd_gdp": 100.0, "constant_usd_gdp": 100.0},
+            {"m49": 40, "year": 2022, "current_usd_gdp": 110.0, "constant_usd_gdp": 100.0},
         ]
     )
     rates = pd.Series({2020: 1.14, 2022: 1.05})
-    result = factors.common_eur_price_factors_from_usd(
-        table, rates, year=2020, base_year=2022, area_codes=[40]
+    result = factors._common_eur_factor_from_usd_levels(
+        table, rates, year=2020, base_year=2022, m49_codes=[40]
     )
-    assert result.loc[40] == pytest.approx(1.10 * 1.14 / 1.05)
+    assert result == pytest.approx(1.10 * 1.14 / 1.05)
 
 def test_row_factor_sums_current_and_constant_levels_before_deflation() -> None:
     """RoW implicit deflation must aggregate extensive GDP levels before forming C/K."""
@@ -169,7 +169,7 @@ def test_published_bridge_and_effective_antilles_identity_are_data_owned() -> No
     assert len(ant) == 1
     assert ant.iloc[0]["resolution_status"] == "inactive"
     assert int(ant.iloc[0]["start_year"]) == 2012
-    assert int(ant.iloc[0]["end_year"]) == 2022
+    assert int(ant.iloc[0]["end_year"]) == 2023
 
 
 def test_pinned_00_class_crosswalk_is_explicit_country_only(tmp_path: Path) -> None:
@@ -188,7 +188,7 @@ def _snapshot_payload() -> dict[str, Any]:
 
     observations = [
         {"year": year, "gdp_deflator": float(year - 1900)}
-        for year in factors.PINNED_TAIWAN_DGBAS_YEARS
+        for year in range(2012, 2025)
     ]
     return {
         "provider": "DGBAS",
@@ -198,6 +198,7 @@ def _snapshot_payload() -> dict[str, Any]:
         "item": "code1=14",
         "frequency": "annual",
         "reference_year": 2021,
+        "snapshot_domain": "2012--2024",
         "observations": observations,
     }
 
@@ -227,7 +228,7 @@ def test_taiwan_pinned_dgbas_snapshot_has_audited_official_annual_series() -> No
     ("mutate", "error"),
     [
         (lambda payload: payload["observations"].append(copy.deepcopy(payload["observations"][0])), "duplicates year"),
-        (lambda payload: payload["observations"].pop(), "cover exactly 2012--2022"),
+        (lambda payload: payload["observations"].pop(), "cover exactly the declared annual domain"),
         (lambda payload: payload["observations"].__setitem__(0, {"year": 2012, "gdp_deflator": float("nan")}), "positive finite"),
         (lambda payload: payload["observations"].__setitem__(0, {"year": 2012, "gdp_deflator": 0.0}), "positive finite"),
     ],
@@ -243,9 +244,11 @@ def test_taiwan_pinned_snapshot_rejects_malformed_observations(
         factors._read_taiwan_dgbas_gdp_deflator_snapshot(_write_snapshot(tmp_path, payload))
 
 
-def test_taiwan_pinned_snapshot_rejects_outside_audited_years() -> None:
-    with pytest.raises(ValueError, match="Pinned DGBAS Taiwan GDP-deflator snapshot covers 2012--2022 only"):
-        factors._load_taiwan_dgbas_gdp_deflator([2011, 2022])
+@pytest.mark.parametrize("year", [2011, 2025])
+def test_taiwan_pinned_snapshot_rejects_outside_audited_years(year: int) -> None:
+    """An admitted 2023 observation never licenses extrapolation into another year."""
+    with pytest.raises(ValueError, match="missing requested years"):
+        factors._load_taiwan_dgbas_gdp_deflator([year, 2022])
 
 
 def test_taiwan_pinned_snapshot_load_never_performs_runtime_http(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -350,12 +353,13 @@ def test_complete_builder_returns_exact_49_region_base_year_identity(monkeypatch
 
 
 
-def test_price_factor_source_policy_exact_rule_overrides_wildcard() -> None:
+@pytest.mark.parametrize("year", [2022, 2023])
+def test_price_factor_source_policy_exact_rule_overrides_wildcard(year: int) -> None:
     """Country-specific source choice is mapping data, with exact rows overriding the default."""
 
     policy = factors._load_price_factor_source_policy()
-    default = factors._resolve_price_factor_source_policy(policy, exio_region="AT", year=2022)
-    taiwan = factors._resolve_price_factor_source_policy(policy, exio_region="TW", year=2022)
+    default = factors._resolve_price_factor_source_policy(policy, exio_region="AT", year=year)
+    taiwan = factors._resolve_price_factor_source_policy(policy, exio_region="TW", year=year)
     assert default["target_code"] == factors.PRICE_FACTOR_METHOD_UNSD
     assert taiwan["target_code"] == factors.PRICE_FACTOR_METHOD_TAIWAN
 
@@ -379,7 +383,8 @@ def test_source_identity_mapping_resolves_tanzania_zanzibar_kosovo_and_inactivat
     assert str(ant["target_code"]) == "WL"
 
 
-def test_effective_row_members_drop_ant_without_dropping_cuw_or_sxm() -> None:
+@pytest.mark.parametrize("year", [2012, 2022, 2023])
+def test_effective_row_members_drop_ant_without_dropping_cuw_or_sxm(year: int) -> None:
     """The 2012-2022 identity normalization removes only the duplicate ANT alias."""
 
     bridge = pd.DataFrame(
@@ -390,19 +395,20 @@ def test_effective_row_members_drop_ant_without_dropping_cuw_or_sxm() -> None:
         ]
     )
     identity = factors._load_price_factor_source_identity_mapping()
-    result = factors._effective_row_members(bridge, identity, {"CUW": 531, "SXM": 534}, year=2012)
+    result = factors._effective_row_members(bridge, identity, {"CUW": 531, "SXM": 534}, year=year)
     assert set(result["source_code"]) == {"CUW", "SXM"}
     assert set(result["m49"]) == {531, 534}
 
 
-def test_effective_row_members_resolve_kosovo_provider_code_without_m49_iso3() -> None:
+@pytest.mark.parametrize("year", [2022, 2023])
+def test_effective_row_members_resolve_kosovo_provider_code_without_m49_iso3(year: int) -> None:
     """XKX stays in published WE while resolving to the official UNSD AMA Kosovo provider code."""
 
     bridge = pd.DataFrame(
         [{"source_code": "XKX", "source_label": "Kosovo", "target_code": "WE"}]
     )
     identity = factors._load_price_factor_source_identity_mapping()
-    result = factors._effective_row_members(bridge, identity, {}, year=2022)
+    result = factors._effective_row_members(bridge, identity, {}, year=year)
     # Pandas runtime supports orient="records"; the installed stub omits this overload.
     assert result[["target_code", "source_code", "m49"]].to_dict(orient="records") == [  # pyright: ignore[reportCallIssue]
         {"target_code": "WE", "source_code": "XKX", "m49": 412}
@@ -521,3 +527,29 @@ def test_price_adjustment_rejects_negative_output_even_when_called_directly() ->
     row_factors = pd.Series([1.1], index=index, name="price_adjustment_factor")
     with pytest.raises(ValueError, match="x must be non-negative"):
         adjust_mrio_iot_prices({"x": x}, basis_index=index, row_factors=row_factors)
+
+
+def test_taiwan_2023_uses_observation_with_2022_monetary_base() -> None:
+    """Extending history preserves the 2022 identity and applies actual 2023 inputs."""
+    series, provenance = factors._load_taiwan_dgbas_gdp_deflator([2022, 2023])
+    assert series.loc[2023] == pytest.approx(104.37)
+    assert len(provenance["official_source_sha256"]) == 64
+    ntd = pd.Series({2022: 29.777, 2023: 31.15})
+    usd = pd.Series({2022: 1.05, 2023: 1.081268627451})
+    result = factors._taiwan_common_eur_factor(series, ntd, usd, year=2023, base_year=2022)
+    assert result == pytest.approx((102.07 / 104.37) * (31.15 * 1.081268627451) / (29.777 * 1.05))
+    assert result != 1.0
+    assert factors._taiwan_common_eur_factor(series, ntd, usd, year=2022, base_year=2022) == 1.0
+
+
+def test_taiwan_snapshot_domain_is_source_owned(tmp_path: Path) -> None:
+    """A verified later observation needs a source-domain update, not a Python-year API."""
+    payload = _snapshot_payload()
+    payload["snapshot_domain"] = "2012--2025"
+    payload["observations"].append({"year": 2025, "gdp_deflator": 111.0})
+    series, _ = factors._read_taiwan_dgbas_gdp_deflator_snapshot(_write_snapshot(tmp_path, payload))
+    assert series.loc[2025] == 111.0
+    # Declaring a year without supplying its observation must still be rejected.
+    payload["observations"].pop()
+    with pytest.raises(factors.PriceIndexParseError, match="declared annual domain"):
+        factors._read_taiwan_dgbas_gdp_deflator_snapshot(_write_snapshot(tmp_path, payload))

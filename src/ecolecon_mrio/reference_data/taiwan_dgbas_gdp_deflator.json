@@ -1,0 +1,72 @@
+{
+  "provider": "DGBAS",
+  "country": "Taiwan",
+  "statistic": "GDP implicit price deflator",
+  "dgbas_table": "A018102050",
+  "measure": "fldid=3",
+  "item": "code1=14",
+  "frequency": "annual",
+  "reference_year": 2021,
+  "source_publication": "Statistical Abstract of National Income, Table 4-1, printed page 12 (PDF page 7)",
+  "official_source_url": "https://ws.dgbas.gov.tw/001/Upload/464/ebook/ebook_336584/pdf/full.pdf",
+  "metadata_url": "https://nstatdb.dgbas.gov.tw/dgbasAll/webMain.aspx?sdmx/A018102050/all",
+  "snapshot_domain": "2012--2024",
+  "snapshot_purpose": "Coherent official annual GDP-deflator observations; the requested analysis and monetary-base years remain caller choices.",
+  "observations": [
+    {
+      "year": 2012,
+      "gdp_deflator": 90.99
+    },
+    {
+      "year": 2013,
+      "gdp_deflator": 92.38
+    },
+    {
+      "year": 2014,
+      "gdp_deflator": 93.92
+    },
+    {
+      "year": 2015,
+      "gdp_deflator": 97.1
+    },
+    {
+      "year": 2016,
+      "gdp_deflator": 97.83
+    },
+    {
+      "year": 2017,
+      "gdp_deflator": 96.83
+    },
+    {
+      "year": 2018,
+      "gdp_deflator": 96.23
+    },
+    {
+      "year": 2019,
+      "gdp_deflator": 96.18
+    },
+    {
+      "year": 2020,
+      "gdp_deflator": 98.15
+    },
+    {
+      "year": 2021,
+      "gdp_deflator": 100.0
+    },
+    {
+      "year": 2022,
+      "gdp_deflator": 102.07
+    },
+    {
+      "year": 2023,
+      "gdp_deflator": 104.37
+    },
+    {
+      "year": 2024,
+      "gdp_deflator": 107.98
+    }
+  ],
+  "official_source_sha256": "f4e18b596d493fdc779c0084402285f22242ee2ba18d0abc496d5f3879d2ac72",
+  "verified_at_utc": "2026-10-09",
+  "verification_note": "Publication retrieved with TLS verification using the server intermediate certificate verified against system trust roots; GDP column checked for every year, not GNI or component deflators."
+}
