@@ -26,6 +26,9 @@ from .data import (
     resolve_exiobase_cache_paths,
 )
 from .data import exiobase3_monetary_unit
+# Reuse the existing streamed source-byte digest for downstream release admission.
+# A matching provider log alone does not certify an archive's contents.
+from .data import _sha256_source_file as source_file_sha256
 from .decomposition import decompose_slack_change
 from .diagnostics import (
     SafeJustResult,

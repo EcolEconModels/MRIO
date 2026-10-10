@@ -31,6 +31,12 @@ work package and must build on extensive physical and monetary accounts.
 
 ## Source selection
 
+`source_file_sha256(path)` returns the exact SHA-256 of a local source file,
+streaming it in bounded-size chunks through the existing source-provenance owner.
+It performs no download, mutation or cache write. Downstream release policies
+compare this digest to a published, pinned checksum; a matching DOI/download log
+alone certifies provenance identity, not unchanged bytes. Missing files raise.
+
 Source selection is expressed directly on the loader call: dataset, year and the
 provider-specific source controls required to locate an authoritative release.
 The public transformation functions do not carry a second `MrioSource` descriptor.

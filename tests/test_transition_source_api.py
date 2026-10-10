@@ -8,6 +8,20 @@ import pytest
 import ecolecon_mrio.data as data
 
 
+def test_public_source_digest_reuses_streamed_byte_owner(tmp_path: Path) -> None:
+    """A release checksum compares bytes, even when file size is unchanged."""
+    from ecolecon_mrio import source_file_sha256
+
+    source = tmp_path / "source.zip"
+    source.write_bytes(b"abc")
+    assert source_file_sha256 is data._sha256_source_file
+    assert source_file_sha256(source) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    source.write_bytes(b"abd")
+    assert source_file_sha256(source) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    with pytest.raises(FileNotFoundError):
+        source_file_sha256(tmp_path / "absent.zip")
+
+
 def _basis() -> pd.MultiIndex:
     return pd.MultiIndex.from_tuples(
         [("AT", "p01"), ("DE", "p02")], names=["region", "sector"]
