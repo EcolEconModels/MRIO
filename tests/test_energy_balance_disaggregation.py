@@ -4,6 +4,14 @@ import pandas as pd
 import pytest
 
 
+def test_waste_codes_retain_their_published_renewability():
+    """Already separated waste fractions must not exchange fossil/biogenic roles."""
+    from ecolecon_mrio.eurostat_energy_balances import PRODUCT_SOURCE_MAPPING
+
+    assert PRODUCT_SOURCE_MAPPING["Non-renewable waste"] == ("W6100_6220",)
+    assert PRODUCT_SOURCE_MAPPING["Renewable waste and mixed waste"] == ("W6210",)
+
+
 def test_compute_mapping_shares_from_outputs_and_disaggregate():
     from ecolecon_mrio.eurostat_energy_balances import (
         PRIMARY_SOURCES,
