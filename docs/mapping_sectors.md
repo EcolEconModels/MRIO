@@ -80,11 +80,11 @@ resolver still partitions the retained multi-target `p24.d` source from the
 flow-specific Eurostat target-side reference, with source weights summing to one.
 The untouched official-direct file remains the provenance baseline.
 
-The green/brown taxonomy remains a separate analytical pipeline using the older
-C20-only concordance. In that taxonomy, p24.g (biogasoline), p24.h (biodiesel),
-and p24.i (other liquid biofuels) map to `ENERGY_GREEN`; other C20 products remain
-`CPA_C20_others`. Its concordance and reaggregation recipe are intentionally
-unchanged.
+The green/brown taxonomy uses its curated concordance with the reviewed
+Chemicals-nec C20/C21 partition, preserving pharmaceutical support. Liquid
+biofuels p24.g, p24.h and p24.i remain statistically in C20 and reaggregate to
+`ENERGY_GREEN`; other C20 products remain `CPA_C20_others`. Thus C19, C20 and D
+are opened. Cross-parent energy aggregates retain all source parents in metadata.
 
 Ambiguous carriers such as nuclear, biomass/waste, electricity network services, and gas distribution should be documented in the reaggregation notes rather than silently mixed into the concordance layer.
 

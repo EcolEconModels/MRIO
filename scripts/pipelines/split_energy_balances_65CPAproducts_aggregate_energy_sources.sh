@@ -32,6 +32,9 @@ SPLIT_ENERGY_GREEN_BROWN="${SPLIT_ENERGY_GREEN_BROWN:-0}"
 cd "$ROOT_DIR"
 
 BUILD_ARGS=()
+if [[ "${EUROSTAT_FORCE_DOWNLOAD:-0}" == "1" ]]; then
+  BUILD_ARGS+=(--force-download)
+fi
 if [[ "$SPLIT_ENERGY_GREEN_BROWN" == "1" ]]; then
   BUILD_ARGS+=(--split-energy-green-brown)
 fi

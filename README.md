@@ -107,20 +107,13 @@ The exact CLI workflow for the current PostGrowth inputs is now wrapped in:
 bash scripts/pipelines/export_postgrowth_inputs.sh
 ```
 
-By default this writes the following files into the sibling repo `../PostGrowth-SFC-Austria/`:
-
-- `Energy_Balances_2021_Eurostat_green_brown.xlsx`
-- `IOT_AT_2020_TOTAL_energy_green_brown.xlsx`
-- `IOT_AT_2021_TOTAL_energy_green_brown.xlsx`
-
-Detailed behavior:
-
-1. Restores nothing and does not touch the legacy manual workbook `Energy_Balances_2021_Eurostat.xlsx`.
-2. Rebuilds the 2021 model-aligned energy-balance workbook from the Eurostat download/cache path using the declared mapping CSVs.
-3. Forces the upstream brown/green split for the energy balance export, so PostGrowth no longer needs to do that split in R.
-4. Rebuilds the 2020 and 2021 `TOTAL` brown/green IO workbooks from the MRIO split-and-aggregate workflow.
-5. Copies the generated `TOTAL` workbooks into the PostGrowth repo under the filenames expected by the model.
-6. Writes `mapped_output_consistency.csv` for any `TOTAL` flow where the EXIO-to-Eurostat output sanity check is evaluated, so the scaled sector-level comparison remains inspectable.
+The script replaces only `Energy_Balances_2021_Eurostat_green_brown.xlsx`
+and `IOT_AT_2021_TOTAL_energy_green_brown.xlsx` in the sibling ETP and PostGrowth
+repositories. It uses the shared validated DOM/IMP production pipeline with
+2021 Eurostat data and the 2021 EXIOBASE 3.11.2 donor. TOTAL is derived as DOM +
+IMP. Required domestic/import accounts are worksheets inside the existing IOT file.
+The final `exio_to_eurostat_cpa_products.csv` is copied beside it; the final
+reaggregation mapping remains in the workbook. No input folders are created. `EUROSTAT_FORCE_DOWNLOAD=1` refreshes the published Eurostat data.
 
 For classification terminology, Eurostat NACE is the activity classification and Eurostat CPA is the product classification by activity. The direct energy-balance export in this repo targets a project-specific 65-product CPA-based IO classification used downstream in PostGrowth. Retained `NACE2` tokens in one shell-script filename and one mapping filename are legacy compatibility names only: NACE enters on the activity-definition side of parts of the concordance logic, while the operative bridge targets are CPA-based product rows plus households.
 
@@ -151,7 +144,7 @@ SFC_OUTNAME=IOT_AT_2021_{variant}_energy_green_brown.xlsx \
 bash scripts/pipelines/at_2021_energy_green_brown.sh
 ```
 
-The `TOTAL` flow run now keeps the EXIO-to-Eurostat mapping sanity check enabled for both 2020 and 2021. The hard failure criterion is total-scale consistency, while `mapped_output_consistency.csv` records the scaled sector-by-sector comparison for inspection.
+The 2021 release validates both source-account conservation and transformation coherence. The hard failure criterion is total-scale consistency, while `mapped_output_consistency.csv` records the scaled sector-by-sector comparison for inspection.
 
 <!-- wp4-region-pipeline -->
 ### Region-aware fuels/fuels-more production path

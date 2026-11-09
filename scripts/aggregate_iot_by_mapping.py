@@ -253,6 +253,20 @@ def _augment_mapping_from_split_child_edges(
         if "to_sector" in out_df.columns:
             out_df["to_sector"] = out_df["to_sector"].astype(str)
 
+    # Persist source-owned lineage for raw children as well as materialized
+    # edges. Cross-parent energy aggregates cannot infer lineage from their name.
+    parent_rows = edge_metadata[["current_child_code", "parent_code"]].drop_duplicates()
+    if parent_rows["current_child_code"].duplicated().any():
+        raise ValueError("An emitted split child has conflicting source parents.")
+    parent_lookup = parent_rows.set_index("current_child_code")["parent_code"]
+    child_parents = out_df["from_sector"].map(parent_lookup)
+    if "source_parent_code" not in out_df:
+        out_df["source_parent_code"] = ""
+    existing = out_df["source_parent_code"].fillna("").astype(str)
+    conflict = child_parents.notna() & existing.ne("") & existing.ne(child_parents)
+    if conflict.any():
+        raise ValueError("Aggregation lineage conflicts with authoritative split-child metadata.")
+    out_df.loc[child_parents.notna(), "source_parent_code"] = child_parents.dropna()
     audit = pd.DataFrame(audit_rows)
     return out_mapping, out_df, audit
 
@@ -1285,12 +1299,17 @@ def _validate_parent_final_demand_reconstruction(
     product_codes = [str(code) for code in product_codes_order]
     base_codes = [str(code) for code in base_product_codes]
     fd_codes = [str(code) for code in fd_codes_order_no_total]
-    children_by_parent: dict[str, list[str]] = {code: [] for code in base_codes}
+    # A cross-parent aggregate destroys the individual parent margins by design.
+    # Validate each connected parent component instead, retaining exact singleton
+    # checks wherever no aggregate crosses a parent boundary.
+    components = [{code} for code in base_codes]
     for output_code in product_codes:
-        parents = parents_by_output.get(output_code, ())
-        if len(parents) != 1 or parents[0] not in children_by_parent:
+        parents = set(parents_by_output.get(output_code, ()))
+        if not parents or not parents.issubset(base_codes):
             raise ValueError(f"Invalid parent lineage for output {output_code!r}: {parents!r}")
-        children_by_parent[parents[0]].append(output_code)
+        linked = [group for group in components if group & parents]
+        merged = set().union(*linked)
+        components = [group for group in components if not group & parents] + [merged]
 
     before_parent_index = [
         source_parent_by_input.get(str(code)) or _base_sector_from_code(str(code), base_codes)
@@ -1308,16 +1327,17 @@ def _validate_parent_final_demand_reconstruction(
             return frame["P3"] + frame["P5"] + frame["P6"]
         return frame["TFU"]
 
-    for parent, children in children_by_parent.items():
+    for parents in components:
+        children = [code for code in product_codes if set(parents_by_output[code]).issubset(parents)]
         for code in fd_codes:
             if code == "TU" or (code != "TFU" and (code not in source or code not in Y_ord)):
                 continue
-            expected = float(tfu(source).loc[parent]) if code == "TFU" else float(source.loc[parent, code])
+            expected = float(tfu(source).loc[list(parents)].sum()) if code == "TFU" else float(source.loc[list(parents), code].sum())
             actual = float(tfu(Y_ord).reindex(children).sum()) if code == "TFU" else float(Y_ord.loc[children, code].sum())
             if not np.isclose(actual, expected, rtol=rtol, atol=atol):
                 raise ValueError(
                     "Parent final-demand reconstruction failed: "
-                    f"parent={parent!r}, column={code!r}, actual={actual}, expected={expected}."
+                    f"parents={sorted(parents)!r}, column={code!r}, actual={actual}, expected={expected}."
                 )
 
 
@@ -1331,7 +1351,7 @@ def _resolve_product_template_alignment(
     mapping_to_col: str = "to_sector",
     verbose: bool,
 ) -> tuple[Path | None, list[str], dict[str, str], dict[str, tuple[str, ...]]]:
-    """Order output products by current Eurostat parent and mapping-row child order."""
+    """Order products by source-parent/mapping order, retaining cross-parent lineage."""
     input_product_order = list(map(str, output_product_codes))
     output_set = set(input_product_order)
     base_codes = [str(code) for code in base_product_codes]
@@ -1366,10 +1386,9 @@ def _resolve_product_template_alignment(
     missing = [code for code in input_product_order if code not in parents_by_output]
     if missing:
         raise ValueError(f"Could not resolve current Eurostat parents for output products: {missing!r}")
-    ambiguous = {code: parents for code, parents in parents_by_output.items() if len(parents) != 1}
-    if ambiguous:
-        raise ValueError(f"Output products span multiple current Eurostat parents: {ambiguous!r}")
-    primary_parent_by_output = {code: parents[0] for code, parents in parents_by_output.items()}
+    # Joined identifiers preserve every source parent in structural sidecars;
+    # the first source parent controls display order only, never allocation.
+    primary_parent_by_output = {code: "|".join(parents) for code, parents in parents_by_output.items()}
 
     # Mapping rows are the authoritative child sequence inside each current Eurostat
     # parent. Unsplit products follow in their original source order.
@@ -1388,7 +1407,7 @@ def _resolve_product_template_alignment(
             if output_code not in product_order:
                 product_order.append(output_code)
         for output_code in input_product_order:
-            if primary_parent_by_output[output_code] == parent and output_code not in product_order:
+            if parents_by_output[output_code][0] == parent and output_code not in product_order:
                 product_order.append(output_code)
     if set(product_order) != output_set or len(product_order) != len(input_product_order):
         raise ValueError("Current-source/mapping product ordering lost or duplicated output products")
@@ -1652,7 +1671,8 @@ def _write_sector_contract(
     """Write the downstream sector-interface contract for one emitted IO system.
 
     The contract carries only structural identifiers: the canonical output
-    position, the emitted sector, and its current published Eurostat parent. Monetary P1
+    position, the emitted sector, and every current Eurostat parent (joined by |).
+    The NACE sections use the same explicit multi-parent convention. Monetary P1
     remains in the exported workbook so a consumer cannot accidentally pair a
     stale value vector with a newer workbook.
     """
@@ -1662,15 +1682,15 @@ def _write_sector_contract(
         if parent_id is None:
             raise ValueError(f"Sector contract is missing a current Eurostat parent for {sector_id!r}.")
         # CPA product codes are structurally aligned to their NACE letter.
-        parts = str(parent_id).split("_", maxsplit=1)
-        if len(parts) != 2 or not parts[1] or not parts[1][0].isalpha():
+        parent_parts = [parent.split("_", maxsplit=1) for parent in str(parent_id).split("|")]
+        if any(len(parts) != 2 or not parts[1] or not parts[1][0].isalpha() for parts in parent_parts):
             raise ValueError(f"Sector contract cannot derive NACE section from {parent_id!r}.")
         rows.append(
             {
                 "position": position,
                 "sector_id": str(sector_id),
                 "parent_sector_id": str(parent_id),
-                "nace_section": parts[1][0],
+                "nace_section": "|".join(dict.fromkeys(parts[1][0] for parts in parent_parts)),
             }
         )
     _write_rows_csv(pd.DataFrame(rows), out_path, verbose=verbose)
@@ -2403,9 +2423,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         mapping_df_for_run = mapping_df.copy()
         edge_mapping_audit = pd.DataFrame()
         edge_metadata_path = z_dir / "split_child_edges.csv"
-        if edge_metadata_path.exists():
-            _vprint(args.verbose, f"Reading: {edge_metadata_path.resolve()}")
-            edge_metadata = pd.read_csv(edge_metadata_path)
+        edge_paths = [edge_metadata_path] if edge_metadata_path.exists() else []
+        # Derived TOTAL shares the emitted child axis of its two source accounts.
+        # Recover that structural lineage without fabricating a single parent.
+        if not edge_paths and z_dir.name == "stk_flow=TOTAL":
+            edge_paths = sorted(z_dir.parent.glob("stk_flow=*/split_child_edges.csv"))
+        if edge_paths:
+            edge_metadata = pd.concat([pd.read_csv(path) for path in edge_paths], ignore_index=True)
+            edge_metadata = edge_metadata.drop_duplicates()
+            _vprint(args.verbose, f"Reading split-child lineage: {edge_paths}")
             mapping_for_run, mapping_df_for_run, edge_mapping_audit = _augment_mapping_from_split_child_edges(
                 mapping=mapping_for_run,
                 mapping_df=mapping_df_for_run,

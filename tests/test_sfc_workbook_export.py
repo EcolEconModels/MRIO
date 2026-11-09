@@ -1094,3 +1094,57 @@ def test_production_based_intensity_preserves_unavailable_emissions() -> None:
     assert float(output.loc["unavailable"]) == 3.0
     assert pd.isna(intensity.loc["unavailable"])
     assert float(intensity.loc["supported"]) == 2.0
+
+
+def test_cross_parent_energy_aggregation_keeps_lineage_and_final_use(tmp_path: Path) -> None:
+    """A green aggregate crosses parent margins but conserves their connected sum."""
+    from scripts.aggregate_iot_by_mapping import (
+        _augment_mapping_from_split_child_edges,
+        _resolve_product_template_alignment,
+        _validate_parent_final_demand_reconstruction,
+        _write_sector_contract,
+    )
+
+    mapping = {"fossil": "BROWN", "bio": "GREEN", "wind": "GREEN"}
+    frame = pd.DataFrame({"from_sector": list(mapping), "to_sector": list(mapping.values())})
+    edges = pd.DataFrame({"current_child_code": ["fossil", "bio", "wind"],
+                          "parent_code": ["CPA_C19", "CPA_C20", "CPA_D"]})
+    _, enriched, _ = _augment_mapping_from_split_child_edges(
+        mapping=mapping, mapping_df=frame, edge_metadata=edges)
+    _, order, joined, parents = _resolve_product_template_alignment(
+        template_xlsx=None, base_product_codes=["CPA_C19", "CPA_C20", "CPA_D"],
+        output_product_codes=["BROWN", "GREEN"], mapping_df=enriched,
+        mapping_from_col="from_sector", mapping_to_col="to_sector", verbose=False)
+    assert order == ["BROWN", "GREEN"]
+    assert parents["GREEN"] == ("CPA_C20", "CPA_D")
+    assert joined["GREEN"] == "CPA_C20|CPA_D"
+    _write_sector_contract(out_path=tmp_path / "sectors.csv", product_order=order,
+                           parent_by_sector=joined, verbose=False)
+    contract = pd.read_csv(tmp_path / "sectors.csv")
+    assert contract.loc[1, "nace_section"] == "C|D"
+    before = pd.DataFrame({"P3": [3.0, 4.0, 7.0], "P5": [1.0, -2.0, 1.0],
+                           "P6": [2.0, 1.0, 3.0]}, index=list(mapping))
+    after = before.groupby(pd.Index(list(mapping.values())), sort=False).sum()
+    kwargs = dict(product_codes_order=order,
+                  base_product_codes=["CPA_C19", "CPA_C20", "CPA_D"],
+                  parents_by_output=parents,
+                  fd_codes_order_no_total=["P3", "P5", "P6", "TFU"],
+                  Y_before=before,
+                  source_parent_by_input=dict(zip(edges.current_child_code, edges.parent_code)))
+    _validate_parent_final_demand_reconstruction(Y_ord=after, **kwargs)
+    after.loc["GREEN", "P5"] += 1
+    with pytest.raises(ValueError, match="Parent final-demand reconstruction failed"):
+        _validate_parent_final_demand_reconstruction(Y_ord=after, **kwargs)
+
+
+def test_split_lineage_cannot_override_conflicting_mapping() -> None:
+    """An explicit source parent disagreement remains a hard scientific error."""
+    from scripts.aggregate_iot_by_mapping import _augment_mapping_from_split_child_edges
+
+    with pytest.raises(ValueError, match="conflicts with authoritative"):
+        _augment_mapping_from_split_child_edges(
+            mapping={"bio": "GREEN"},
+            mapping_df=pd.DataFrame({"from_sector": ["bio"], "to_sector": ["GREEN"],
+                                     "source_parent_code": ["CPA_C19"]}),
+            edge_metadata=pd.DataFrame({"current_child_code": ["bio"],
+                                        "parent_code": ["CPA_C20"]}))

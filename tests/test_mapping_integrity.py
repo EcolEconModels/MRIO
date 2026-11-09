@@ -73,6 +73,22 @@ def test_reviewed_production_p24_topology_and_runtime_mass_partition() -> None:
         assert source not in resolved.get("CPA_C21", {})
 
 
+def test_green_brown_concordance_retains_pharmaceutical_support() -> None:
+    """The green/brown donor map must cover CPA65 without duplicating Chemicals nec."""
+    path = MAPPINGS / "exio_to_eurostat_cpa_products.csv"
+    frame = _active_rows(pd.read_csv(path, dtype=str).fillna(""))
+    targets = _codes(_read_csv("eurostat_cpa65_products_dictionary.csv"))
+    assert set(frame["target_code"]) == targets
+    reference = dict.fromkeys(targets, 1.0)
+    reference.update({"CPA_C20": 3.0, "CPA_C21": 7.0})
+    mapping = read_weighted_mapping(path, target_output_by_code=reference)
+    assert mapping["CPA_C20"]["p24.d"] == pytest.approx(0.3)
+    assert mapping["CPA_C21"]["p24.d"] == pytest.approx(0.7)
+    for biofuel in ("p24.g", "p24.h", "p24.i"):
+        assert mapping["CPA_C20"][biofuel] == pytest.approx(1.0)
+        assert biofuel not in mapping["CPA_C21"]
+
+
 def test_committed_cpa64_and_cpa65_target_dictionaries_have_explicit_real_estate_granularity() -> None:
     cpa64 = _read_csv("eurostat_cpa64_products_dictionary.csv")
     cpa65 = _read_csv("eurostat_cpa65_products_dictionary.csv")
