@@ -12,6 +12,54 @@ def test_waste_codes_retain_their_published_renewability():
     assert PRODUCT_SOURCE_MAPPING["Renewable waste and mixed waste"] == ("W6210",)
 
 
+def test_hydro_mapping_does_not_add_its_pumped_component():
+    """Pumped hydro is already included in RA100 and must not be added again."""
+    from ecolecon_mrio.eurostat_energy_balances import PRODUCT_SOURCE_MAPPING
+
+    assert PRODUCT_SOURCE_MAPPING["Hydro"] == ("RA100",)
+
+
+def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
+    """A user's electricity must not add combustion already counted at generation."""
+    import sys
+    from types import SimpleNamespace
+
+    from scripts import build_energy_balances_65sectors_primary_sources as export
+    from ecolecon_mrio.eurostat_energy_balances import PRIMARY_SOURCES
+
+    mapping = pd.DataFrame([
+        {"Category": label, "TargetSector": label, "TargetCode": code,
+         "TargetSectorRole": role, "IncludeInDirectEnergy": True,
+         "AllocationRule": "fixed-share", "DeclaredShare": 1.0}
+        for label, code, role in [
+            ("Electricity, gas, steam and air conditioning", "CPA_D", "transformation_sector"),
+            ("Households", "Households", "end_use_sector"),
+        ]
+    ])
+    direct = pd.DataFrame([
+        {"Category": label, **dict.fromkeys(PRIMARY_SOURCES, 0.0), "Fossil gas": gas}
+        for label, gas in zip(mapping["Category"], [20.0, 5.0], strict=True)
+    ])
+    attributed = direct.copy()
+    attributed.loc[1, "Fossil gas"] += 10.0
+    monkeypatch.setattr(export, "read_category_mapping_frame", lambda _: mapping)
+    monkeypatch.setattr(export, "build_tabelle1_from_eurostat", lambda **_: SimpleNamespace(
+        tabelle1=direct, unrolled_sources=attributed, diagnostics=pd.DataFrame()))
+    monkeypatch.setattr(export, "validate_energy_balance_closure", lambda *_, **__: None)
+    monkeypatch.setattr(export, "load_eurostat_iot", lambda **_: None)
+    reference = pd.Series({"CPA_D": 100.0})
+    monkeypatch.setattr(export, "build_eurostat_product_use_reference", lambda _: reference)
+    monkeypatch.setattr(export, "build_eurostat_intermediate_use_reference_from_rows", lambda *_, **__: reference)
+    monkeypatch.setattr(export, "load_eurostat_air_emissions_by_nace", lambda **_: SimpleNamespace(
+        emissions_tonnes=pd.Series({"D": 1.0})))
+    path = tmp_path / "energy.xlsx"
+    monkeypatch.setattr(sys, "argv", ["export", "--out", str(path)])
+    export.main()
+    result = pd.read_excel(path, sheet_name="Energy_1.0").set_index("Sector")
+    assert result.loc["Households", "Fossil gas"] == 5.0
+    assert result["Fossil gas"].sum() == 25.0
+
+
 def test_compute_mapping_shares_from_outputs_and_disaggregate():
     from ecolecon_mrio.eurostat_energy_balances import (
         PRIMARY_SOURCES,

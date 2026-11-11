@@ -115,6 +115,11 @@ IMP. Required domestic/import accounts are worksheets inside the existing IOT fi
 The final `exio_to_eurostat_cpa_products.csv` is copied beside it; the final
 reaggregation mapping remains in the workbook. No input folders are created.
 
+The energy workbook uses direct source quantities for the mapped activities,
+including inputs to generation. Electricity and heat attributed to users are not
+added again. Transport is assigned to transport services, so the split between
+production and final use is an approximation.
+
 For classification terminology, Eurostat NACE is the activity classification and Eurostat CPA is the product classification by activity. The direct energy-balance export in this repo targets a project-specific 65-product CPA-based IO classification used downstream in PostGrowth. Retained `NACE2` tokens in one shell-script filename and one mapping filename are legacy compatibility names only: NACE enters on the activity-definition side of parts of the concordance logic, while the operative bridge targets are CPA-based product rows plus households.
 
 Useful overrides:

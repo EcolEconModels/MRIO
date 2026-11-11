@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
+"""Export source quantities for the mapped activities without counting electricity twice.
+
+Generation inputs remain in the energy sectors. Electricity and heat attributed
+to users are retained in Tabelle1 for inspection, but are not added to their fuels.
+"""
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -181,7 +185,10 @@ def main() -> None:
         mapping_df,
         target_output_by_code=energy_use_reference.to_dict(),
     )
-    sector_energy = disaggregate_unrolled_sources(eb.unrolled_sources, mapping_w)
+    # Count fuel at combustion, not again through users' electricity and heat.
+    # The mapped generation rows also retain hydro, wind and other primary inputs.
+    direct_sources = eb.tabelle1.loc[:, ["Category", *PRIMARY_SOURCES]]
+    sector_energy = disaggregate_unrolled_sources(direct_sources, mapping_w)
     # Preserve TargetSector order from the mapping file (and allow extra rows like "Households" at the end).
     sector_energy = sector_energy.reindex(targets).fillna(0.0)
 
