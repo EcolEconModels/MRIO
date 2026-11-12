@@ -22,7 +22,7 @@ def test_hydro_mapping_does_not_add_its_pumped_component():
 
 @pytest.mark.parametrize("net_electricity", [-2.0, 0.0, 2.0])
 def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path, net_electricity):
-    """A user's electricity must not add combustion already counted at generation."""
+    """Keep signed transformation entries in their sectors without adding combustion."""
     import sys
     from types import SimpleNamespace
 
@@ -37,18 +37,30 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path, net_electri
         for label, code, role in [
             ("Electricity, gas, steam and air conditioning", "CPA_D", "transformation_sector"),
             ("Households", "Households", "end_use_sector"),
+            ("Basic metals", "CPA_C24", "end_use_sector"),
         ]
     ])
     direct = pd.DataFrame([
         {"Category": label, **dict.fromkeys(PRIMARY_SOURCES, 0.0), "Fossil gas": gas}
-        for label, gas in zip(mapping["Category"], [20.0, 5.0], strict=True)
+        for label, gas in zip(mapping["Category"], [20.0, 5.0, 10.0], strict=True)
     ])
+    # Gas produced by blast furnaces reduces attributed gross gas in C24,
+    # without reducing gas assigned to unrelated users or actual combustion.
+    output = mapping.iloc[[2]].copy()
+    output["Category"] = "Transformation output - blast furnaces"
+    output["SourceBalanceRole"] = "transformation_output"
+    output["IncludeInDirectEnergy"] = False
+    mapping = pd.concat([mapping, output], ignore_index=True)
+    transformation = direct.iloc[[2]].copy()
+    transformation["Category"] = output["Category"].iloc[0]
+    transformation["Fossil gas"] = 4.0
+    direct = pd.concat([direct, transformation], ignore_index=True)
     attributed = direct.copy()
     attributed.loc[1, "Fossil gas"] += 10.0
     gross = direct.iloc[[0]].copy()
     gross["Category"] = "Gross inland consumption"
-    gross["Fossil gas"] = 25.0
-    gross["Total"] = 25.0 + net_electricity
+    gross["Fossil gas"] = 31.0
+    gross["Total"] = 31.0 + net_electricity
     gross["Electricity:"] = net_electricity
     gross["Heat"] = 0.0
     monkeypatch.setattr(export, "read_category_mapping_frame", lambda _: mapping)
@@ -71,9 +83,11 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path, net_electri
     export.main()
     result = pd.read_excel(path, sheet_name="Energy_1.0").set_index("Sector")
     assert result.loc["Households", "Fossil gas"] == 5.0
-    assert result["Fossil gas"].sum() == 25.0 + net_electricity
+    assert result.loc["Basic metals", "Fossil gas"] == 6.0
+    assert result.loc["Electricity, gas, steam and air conditioning", "Fossil gas"] == 20.0 + net_electricity
+    assert result["Fossil gas"].sum() == 31.0 + net_electricity
     actual = pd.read_excel(path, sheet_name="Mapped_65").set_index("TargetSector")
-    assert actual["Fossil gas"].sum() == 25.0
+    assert actual["Fossil gas"].sum() == 35.0
     assert pd.ExcelFile(path).sheet_names == ["Energy_1.0", "Tabelle1", "Mapped_65"]
     national = pd.read_excel(path, sheet_name="Tabelle1").set_index("Category")
     assert national.at["Gross inland consumption", "Electricity:"] == net_electricity

@@ -118,7 +118,7 @@ reaggregation mapping remains in the workbook. No input folders are created.
 `Energy_1.0` approximates gross inland energy by sector and source, including
 feedstocks, net fuel transformation, distribution losses and international aviation.
 Net electricity uses the domestic generation mix; domestic electricity and heat
-are not added again. Negative source remainders reduce production users proportionally.
+are not added again. Signed category contributions remain in their mapped sectors.
 Unallocated ambient heat and statistical differences are omitted (0.164 TWh in 2021).
 `Mapped_65` retains actual activity inputs for combustion and fuel-price calculations.
 Consumers must keep those inputs distinct from attributed gross energy.

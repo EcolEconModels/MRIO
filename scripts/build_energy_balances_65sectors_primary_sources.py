@@ -255,33 +255,6 @@ def main() -> None:
             or not np.allclose(source_gap, omitted, rtol=0.0, atol=0.02)):
         raise ValueError(f"Source gaps do not match ambient heat and statistical differences: {(source_gap - omitted).to_dict()}")
 
-    # Allocate the signed remainder against completed actual inputs. Positive
-    # remainders follow the relevant activities above. Negative remainders reduce
-    # existing users proportionally; never clip the remainder or create negative use.
-    remainder = expected_sources - omitted - sector_energy.sum()
-    for src in PRIMARY_SOURCES:
-        actual = sector_energy[src]
-        amount = float(remainder[src])
-        if abs(amount) <= 0.02:  # retain source rounding without inventing an activity
-            gross_energy[src] = actual
-        elif amount < 0:
-            # Attribute fuel-conversion differences to production users; retain
-            # the observed household account and its existing emissions scaling.
-            users = actual.index != "Households"
-            desired = float(actual.loc[users].sum() + amount)
-            if desired < 0 or actual.loc[users].sum() <= 0:
-                raise ValueError(f"Cannot allocate {src!r} non-negatively among production users: {desired} {args.energy_unit}.")
-            gross_energy[src] = actual
-            gross_energy.loc[users, src] *= desired / actual.loc[users].sum()
-        else:
-            additions = gross_energy[src] - actual
-            weights = additions.where(additions > 0, 0.0)
-            if weights.sum() <= 0:
-                raise ValueError(f"No supported sector allocation for positive {src!r} remainder.")
-            gross_energy[src] = actual + weights * (amount / weights.sum())
-    if not np.allclose(expected_sources - gross_energy.sum(), omitted, rtol=0.0, atol=0.02):
-        raise ValueError("Source allocation changed more than the agreed omissions and rounding.")
-
     # 4) Air emissions accounts (CO2) and intensities
     co2 = load_eurostat_air_emissions_by_nace(
         geo=args.geo,
