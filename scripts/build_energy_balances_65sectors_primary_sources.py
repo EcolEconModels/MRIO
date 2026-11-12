@@ -137,13 +137,19 @@ def main() -> None:
     eb = build_tabelle1_from_eurostat(
         geo=args.geo,
         time=args.year,
-        categories=categories,
+        categories=categories + ["Gross inland consumption"],
         unit=args.energy_unit,
         storage_folder=args.storage_folder,
         force_download=args.force_download,
         force_reparse=args.force_reparse,
     )
     validate_energy_balance_closure(eb.diagnostics, tol_abs=1e-6)
+
+    # This supply row is a reference, not an additional sector or combustion input.
+    gross = eb.tabelle1.set_index("Category").loc["Gross inland consumption"]
+    if not np.isclose(gross[list(PRIMARY_SOURCES)].sum() + gross["Electricity:"] + gross["Heat"],
+                      gross["Total"], rtol=0.0, atol=1e-2):
+        raise ValueError("Gross inland sources and net electricity/heat do not reproduce TOTAL.")
 
     # 2) Eurostat IOT -> energy-product intermediate use by CPA product code (monetary weights)
     iot_filters: dict[str, Any] = {

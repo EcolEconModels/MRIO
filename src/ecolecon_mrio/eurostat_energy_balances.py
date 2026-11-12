@@ -24,8 +24,10 @@ import pandas as pd
 from ecolecon_mrio.data import default_data_root
 from ecolecon_mrio.eurostat_iot import (
     EurostatParseError,
+    download_eurostat_dataset,
     eurostat_dimensions,
-    load_eurostat_table_2d,
+    parse_eurostat_table_2d,
+    read_eurostat_raw,
 )
 from ecolecon_mrio.mapping_csv import read_category_mapping_frame, read_product_source_mapping, read_source_bucket_mapping
 
@@ -139,6 +141,8 @@ class EnergyBalanceResult:
 
     `tabelle1` layout mirrors the original standalone script:
       Category | Total | 9 direct sources | Electricity: | 9 electricity sources | Heat | 9 heat sources
+    For GIC, unrolled_sources contains only fuel/source groups; the complete
+    national balance is in tabelle1, including signed electricity and heat.
     """
 
     tabelle1: pd.DataFrame
@@ -400,21 +404,28 @@ def load_eurostat_energy_balance_slice(
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Load Eurostat energy balance data as a 2D matrix: nrg_bal x siec.
+
+    Only flag m (data cannot exist) contributes zero; unavailable data stay NaN.
     """
     filters: dict[str, Any] = {"geo": str(geo), "time": str(time), "unit": str(unit), "freq": str(freq)}
     if nrg_bal is not None:
         filters["nrg_bal"] = list(map(str, nrg_bal))
     if siec is not None:
         filters["siec"] = list(map(str, siec))
-    return load_eurostat_table_2d(
-        dataset=dataset,
+    source = download_eurostat_dataset(
+        dataset,
         filters=filters,
-        row_dim="nrg_bal",
-        col_dim="siec",
         storage_folder=_as_path(storage_folder) if storage_folder is not None else None,
         force_download=force_download,
-        force_reparse=force_reparse,
     )
+    # Reuse the cached payload and parser, retaining genuinely missing values.
+    payload = read_eurostat_raw(source.raw_path)
+    values = dict(payload["value"])
+    for key, flag in payload.get("status", {}).items():
+        if flag == "m" and key not in values:
+            values[key] = 0.0  # Not applicable in the balance, not an observed zero.
+    payload = dict(payload, value=values)
+    return parse_eurostat_table_2d(payload, row_dim="nrg_bal", col_dim="siec", fill_missing=False)
 
 
 def load_eurostat_electricity_heat_mix(
@@ -585,6 +596,7 @@ def build_tabelle1_from_eurostat(
     ----------
     categories:
         Output category labels. Each label must exist as an `nrg_bal` label in the Eurostat energy balance dataset.
+        Gross inland consumption retains signed electricity and heat separately.
     """
     # 1) Load an nrg_bal label map (cheap: siec=TOTAL slice) to resolve category labels -> codes.
     df_total, meta_total = load_eurostat_energy_balance_slice(
@@ -628,7 +640,7 @@ def build_tabelle1_from_eurostat(
     df_fc, meta_fc = load_eurostat_energy_balance_slice(
         geo=geo,
         time=time,
-        nrg_bal=sorted(all_component_codes),
+        nrg_bal=None if "GIC" in all_component_codes else sorted(all_component_codes),
         unit=unit,
         freq=freq,
         dataset=energy_dataset,
@@ -636,6 +648,19 @@ def build_tabelle1_from_eurostat(
         force_download=force_download,
         force_reparse=force_reparse,
     )
+    if "GIC" in all_component_codes:
+        # Reconstruct supply per product. Six rounded inputs plus GIC can differ
+        # slightly; 0.01 in the source unit bounds their published rounding.
+        supply_weights = {"PPRD": 1, "RCV_RCY": 1, "IMP": 1, "EXP": -1,
+                          "STK_CHG": 1, "INTMARB": -1}
+        components = df_fc.loc[list(supply_weights)]
+        if not np.isfinite(components.to_numpy()).all() or not np.isfinite(df_fc.loc["GIC"].to_numpy()).all():
+            raise EurostatParseError("Missing observations in gross inland supply or GIC.")
+        supply = components.mul(pd.Series(supply_weights), axis=0).sum(axis=0)
+        if not np.allclose(supply, df_fc.loc["GIC"], rtol=0.0, atol=1e-2):
+            raise EurostatParseError("Supply flows do not reproduce gross inland consumption.")
+        df_fc = df_fc.copy()
+        df_fc.loc["GIC"] = supply
     dim_siec = (meta_fc.get("dimensions", {}) or {}).get("siec", {})
     if not isinstance(dim_siec, dict) or not dim_siec:
         raise EurostatParseError(f"Missing siec dimension metadata in dataset={energy_dataset}.")
@@ -674,28 +699,34 @@ def build_tabelle1_from_eurostat(
     have_ra000 = str(SIEC_RENEWABLES_AND_BIOFUELS_AGG) in set(map(str, siec_labels.keys()))
 
     # 5) Load electricity/heat production shares by source.
-    elec_mix, heat_mix, mix_meta = load_eurostat_electricity_heat_mix(
-        geo=geo,
-        time=time,
-        unit=unit,
-        freq=freq,
-        dataset=mix_dataset,
-        storage_folder=storage_folder,
-        force_download=force_download,
-        force_reparse=force_reparse,
-    )
+    if all_component_codes == {"GIC"}:
+        # A supply-only request does not require generation or its fuel mix.
+        elec_mix = heat_mix = pd.Series(0.0, index=list(PRIMARY_SOURCES))
+        mix_meta = {}
+    else:
+        elec_mix, heat_mix, mix_meta = load_eurostat_electricity_heat_mix(
+            geo=geo,
+            time=time,
+            unit=unit,
+            freq=freq,
+            dataset=mix_dataset,
+            storage_folder=storage_folder,
+            force_download=force_download,
+            force_reparse=force_reparse,
+        )
 
     # 6) Build Tabelle1.
     rows: list[dict[str, Any]] = []
     diag_rows: list[dict[str, Any]] = []
 
     for cat, codes in category_to_codes.items():
-        block = df_fc.loc[codes].sum(axis=0)
+        gross = codes == ["GIC"]
+        block = df_fc.loc[codes].sum(axis=0, min_count=len(codes))
         total = float(pd.to_numeric(block.get(str(total_siec_code), 0.0), errors="coerce") or 0.0)
         elec_total = float(block.get(elec_code, 0.0))
         heat_total = float(block.get(heat_code, 0.0))
         direct_total = float(total - elec_total - heat_total)
-        if not np.isfinite(direct_total) or direct_total < 0:
+        if not gross and (not np.isfinite(direct_total) or direct_total < 0):
             direct_total = 0.0
 
         direct_vals: dict[str, float] = {
@@ -710,7 +741,7 @@ def build_tabelle1_from_eurostat(
             "Renewable waste and mixed waste": _sum_codes(block, c_renew_mixed_waste),
             "Other Renewables": _sum_codes(block, c_other),
         }
-        if direct_vals["Biofuels"] == 0.0 and have_ra000:
+        if not gross and direct_vals["Biofuels"] == 0.0 and have_ra000:
             ra000 = float(pd.to_numeric(block.get(SIEC_RENEWABLES_AND_BIOFUELS_AGG, 0.0), errors="coerce") or 0.0)
             direct_vals["Biofuels"] = max(
                 0.0,
@@ -722,11 +753,17 @@ def build_tabelle1_from_eurostat(
             )
 
         residual = float(direct_total - sum(direct_vals.values()))
-        if residual > 0:
+        if gross and abs(residual) > 1e-2:
+            raise EurostatParseError(f"Unmapped gross inland supply: {residual} {unit}; check the SIEC source mapping.")
+        if not gross and residual > 0:
             direct_vals["Other Renewables"] += residual
 
-        elec_by_src = (elec_mix * elec_total).to_dict()
-        heat_by_src = (heat_mix * heat_total).to_dict()
+        # National net trade has no observed fuel mix. Its signed carriers remain
+        # in Electricity:/Heat, while activity attribution keeps its existing rule.
+        elec_by_src = (elec_mix * (0.0 if gross else elec_total)).to_dict()
+        heat_by_src = (heat_mix * (0.0 if gross else heat_total)).to_dict()
+        elec_accounted = elec_total if gross else float(sum(elec_by_src.values()))
+        heat_accounted = heat_total if gross else float(sum(heat_by_src.values()))
 
         total_direct = float(sum(direct_vals.values()))
 
@@ -745,13 +782,13 @@ def build_tabelle1_from_eurostat(
             {
                 "Category": cat,
                 "Elec_total": elec_total,
-                "Elec_sources_sum": float(sum(elec_by_src.values())),
-                "Elec_residual_total_minus_sources": elec_total - float(sum(elec_by_src.values())),
+                "Elec_sources_sum": elec_accounted,
+                "Elec_residual_total_minus_sources": elec_total - elec_accounted,
                 "Heat_total": heat_total,
-                "Heat_sources_sum": float(sum(heat_by_src.values())),
-                "Heat_residual_total_minus_sources": heat_total - float(sum(heat_by_src.values())),
+                "Heat_sources_sum": heat_accounted,
+                "Heat_residual_total_minus_sources": heat_total - heat_accounted,
                 "Direct_sources_sum": total_direct,
-                "Unrolled_sum": float(sum(direct_vals.values())) + float(sum(elec_by_src.values())) + float(sum(heat_by_src.values())),
+                "Unrolled_sum": total_direct + elec_accounted + heat_accounted,
             }
         )
 

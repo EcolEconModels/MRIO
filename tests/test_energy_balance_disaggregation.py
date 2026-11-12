@@ -10,6 +10,7 @@ def test_waste_codes_retain_their_published_renewability():
 
     assert PRODUCT_SOURCE_MAPPING["Non-renewable waste"] == ("W6100_6220",)
     assert PRODUCT_SOURCE_MAPPING["Renewable waste and mixed waste"] == ("W6210",)
+    assert "R5160" in PRODUCT_SOURCE_MAPPING["Biofuels"]
 
 
 def test_hydro_mapping_does_not_add_its_pumped_component():
@@ -42,9 +43,15 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     ])
     attributed = direct.copy()
     attributed.loc[1, "Fossil gas"] += 10.0
+    gross = direct.iloc[[0]].copy()
+    gross["Category"] = "Gross inland consumption"
+    gross["Total"] = 23.0
+    gross["Electricity:"] = -2.0
+    gross["Heat"] = 5.0
     monkeypatch.setattr(export, "read_category_mapping_frame", lambda _: mapping)
     monkeypatch.setattr(export, "build_tabelle1_from_eurostat", lambda **_: SimpleNamespace(
-        tabelle1=direct, unrolled_sources=attributed, diagnostics=pd.DataFrame()))
+        tabelle1=pd.concat([direct, gross], ignore_index=True),
+        unrolled_sources=attributed, diagnostics=pd.DataFrame()))
     monkeypatch.setattr(export, "validate_energy_balance_closure", lambda *_, **__: None)
     monkeypatch.setattr(export, "load_eurostat_iot", lambda **_: None)
     reference = pd.Series({"CPA_D": 100.0})
@@ -58,6 +65,68 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     result = pd.read_excel(path, sheet_name="Energy_1.0").set_index("Sector")
     assert result.loc["Households", "Fossil gas"] == 5.0
     assert result["Fossil gas"].sum() == 25.0
+    assert pd.ExcelFile(path).sheet_names == ["Energy_1.0", "Tabelle1", "Mapped_65"]
+    national = pd.read_excel(path, sheet_name="Tabelle1").set_index("Category")
+    assert national.at["Gross inland consumption", "Electricity:"] == -2.0
+
+
+@pytest.mark.parametrize("defect", [None, "TOTAL", "G3000", "missing", "unmapped"])
+def test_gic_preserves_carriers_and_rejects_missing_or_unmapped_supply(monkeypatch, defect):
+    """Supply conservation must not depend on a domestic generation mix."""
+    from ecolecon_mrio import eurostat_energy_balances as eb
+
+    flows = pd.DataFrame({
+        "G3000": [20, 0, 40, 5, -1, 0, 54],
+        "R5160": [0, 0, 2, 0, 0, 0, 2],
+        "E7000": [0, 0, 2, 5, 0, 0, -3],
+        "H8000": [0, 0, 2, 0, 0, 0, 2],
+        "P1000": [1, 0, 0, 0, 0, 0, 1] if defect == "unmapped" else [0] * 7,
+    }, index=pd.Index(["PPRD", "RCV_RCY", "IMP", "EXP", "STK_CHG", "INTMARB", "GIC"]))
+    flows["TOTAL"] = flows.sum(axis=1)
+    if defect in ("TOTAL", "G3000"):
+        flows.loc["GIC", defect] += 1.0
+    if defect == "missing":
+        flows.loc["PPRD", "G3000"] = float("nan")
+    meta = {"dimensions": {
+        "nrg_bal": {c: "Gross inland consumption" if c == "GIC" else c for c in flows.index},
+        "siec": {"TOTAL": "Total", "G3000": "Natural gas", "R5160": "Charcoal",
+                 "E7000": "Electricity", "H8000": "Heat", "P1000": "Peat"},
+    }}
+    monkeypatch.setattr(eb, "load_eurostat_energy_balance_slice", lambda **_: (flows.copy(), meta))
+    monkeypatch.setattr(eb, "load_eurostat_electricity_heat_mix", lambda **_: pytest.fail("GIC must not require a generation mix"))
+    if defect:
+        with pytest.raises(eb.EurostatParseError, match="Supply flows|Missing observations|Unmapped gross"):
+            eb.build_tabelle1_from_eurostat(geo="AT", time=2021, categories=["Gross inland consumption"])
+    else:
+        result = eb.build_tabelle1_from_eurostat(geo="AT", time=2021, categories=["Gross inland consumption"])
+        row = result.tabelle1.iloc[0]
+        assert row["Fossil gas"] == 54.0 and row["Biofuels"] == 2.0
+        assert row["Electricity:"] == -3.0 and row["Heat"] == 2.0
+        assert row.filter(regex="^(Electricity|Heat)::").eq(0).all()
+        assert row[list(eb.PRIMARY_SOURCES)].sum() + row["Electricity:"] + row["Heat"] == row["Total"]
+        eb.validate_energy_balance_closure(result.diagnostics)
+
+
+def test_energy_loader_distinguishes_unavailable_data_from_nonapplicability(monkeypatch, tmp_path):
+    """An absent observation may contribute zero only with Eurostat's m flag."""
+    from types import SimpleNamespace
+    from ecolecon_mrio import eurostat_energy_balances as eb
+
+    payload = {
+        "id": ["nrg_bal", "siec"], "size": [2, 3],
+        "dimension": {
+            "nrg_bal": {"category": {"index": {"GIC": 0, "PPRD": 1}}},
+            "siec": {"category": {"index": {"TOTAL": 0, "E7000": 1, "G3000": 2}}},
+        },
+        "value": {"0": 10.0, "1": 2.0, "2": 8.0, "3": 8.0}, "status": {"4": "m"},
+    }
+    monkeypatch.setattr(eb, "download_eurostat_dataset", lambda *_, **__: SimpleNamespace(raw_path=tmp_path / "raw.json"))
+    monkeypatch.setattr(eb, "read_eurostat_raw", lambda _: payload)
+    table, _ = eb.load_eurostat_energy_balance_slice(geo="AT", time=2021)
+    assert table.loc["PPRD", "E7000"] == 0.0
+    assert pd.isna(table.loc["PPRD", "G3000"])
+    legacy, _ = eb.parse_eurostat_table_2d(payload, row_dim="nrg_bal", col_dim="siec")
+    assert legacy.loc["PPRD", "G3000"] == 0.0  # Other callers retain the existing default.
 
 
 def test_compute_mapping_shares_from_outputs_and_disaggregate():
@@ -687,21 +756,22 @@ def test_build_postgrowth_energy_balance_can_split_single_electricity_row():
     assert green["Total_energy_GWh"] == 41.0
 
 
-def test_energy_balance_mapping_covers_cached_nrg_bal_codes():
+def test_energy_balance_mapping_uses_cached_nrg_bal_codes():
     import json
 
     repo_root = Path(__file__).resolve().parents[1]
     mapping_path = repo_root / "scripts" / "mappings" / "energy_balance_to_cpa65_products_mapping.csv"
-    metadata_path = next((repo_root / "data" / "eurostat" / "nrg_bal_c").glob("*/raw.json"), None)
-    if metadata_path is None:
+    metadata_paths = list((repo_root / "data" / "eurostat" / "nrg_bal_c").glob("*/raw.json"))
+    if not metadata_paths:
         pytest.skip("No cached nrg_bal_c source metadata is available in this test environment.")
 
     mapping = pd.read_csv(mapping_path, dtype=str).fillna("")
-    with metadata_path.open("r", encoding="utf-8") as handle:
-        metadata = json.load(handle)
-
-    nrg_bal_dim = metadata["dimension"]["nrg_bal"]["category"]["label"]
-    official_codes = set(map(str, nrg_bal_dim.keys()))
+    official_codes = set()
+    for metadata_path in metadata_paths:
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        official_codes.update(metadata["dimension"]["nrg_bal"]["category"]["label"])
     mapped_codes = set(mapping["source_code"].astype(str).str.strip())
 
-    assert official_codes.issubset(mapped_codes)
+    # A mapping may select activities; national supply flows are not sectors.
+    assert mapped_codes.issubset(official_codes)

@@ -708,11 +708,13 @@ def parse_eurostat_table_2d(
     row_dim: str,
     col_dim: str,
     value_key: str = "value",
+    fill_missing: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Parse a Eurostat SDMX-JSON slice into a 2D DataFrame (row_dim x col_dim).
 
     All remaining dimensions must be fixed singletons (typically enforced by filters).
+    Set fill_missing=False when unavailable observations must remain missing.
     """
     series = sdmx_json_to_series(payload, value_key=value_key)
     dims = list(series.index.names)
@@ -740,7 +742,9 @@ def parse_eurostat_table_2d(
             )
         df = df.droplevel(d)
 
-    df = df.astype("float64").fillna(0.0)
+    df = df.astype("float64")
+    if fill_missing:
+        df = df.fillna(0.0)
     meta = {"dimensions": eurostat_dimensions(payload), "row_dim": row_dim, "col_dim": col_dim}
     return df, meta
 
