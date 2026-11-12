@@ -43,8 +43,18 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     attributed = direct.copy()
     attributed.loc[1, "Fossil gas"] += 10.0
     monkeypatch.setattr(export, "read_category_mapping_frame", lambda _: mapping)
+    # The national gross balance differs from both combustion and attributed use.
+    gross = direct.iloc[[0]].copy()
+    gross["Category"] = "Gross inland consumption"
+    gross["Total"] = 40.0
+    gross["Fossil gas"] = 38.0
+    gross["Electricity:"] = 2.0
+    attributed_gross = gross.copy()
+    attributed_gross["Fossil gas"] = attributed_gross["Total_unrolled"] = 40.0
     monkeypatch.setattr(export, "build_tabelle1_from_eurostat", lambda **_: SimpleNamespace(
-        tabelle1=direct, unrolled_sources=attributed, diagnostics=pd.DataFrame()))
+        tabelle1=pd.concat([direct, gross], ignore_index=True),
+        unrolled_sources=pd.concat([attributed, attributed_gross], ignore_index=True),
+        diagnostics=pd.DataFrame()))
     monkeypatch.setattr(export, "validate_energy_balance_closure", lambda *_, **__: None)
     monkeypatch.setattr(export, "load_eurostat_iot", lambda **_: None)
     reference = pd.Series({"CPA_D": 100.0})
@@ -58,6 +68,42 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     result = pd.read_excel(path, sheet_name="Energy_1.0").set_index("Sector")
     assert result.loc["Households", "Fossil gas"] == 5.0
     assert result["Fossil gas"].sum() == 25.0
+    assert pd.ExcelFile(path).sheet_names == ["Energy_1.0", "Tabelle1", "Mapped_65"]
+    national = pd.read_excel(path, sheet_name="Tabelle1").set_index("Category")
+    assert national.at["Gross inland consumption", "Total"] == 40.0
+    gross["Total"] = 41.0
+    with pytest.raises(ValueError, match="Gross inland source quantities"):
+        export.main()
+
+
+@pytest.mark.parametrize("error_column", [None, "TOTAL", "G3000"])
+def test_gross_inland_comes_from_supply_flows(monkeypatch, error_column):
+    from ecolecon_mrio import eurostat_energy_balances as eb
+
+    flows = pd.DataFrame({
+        "G3000": [20, 0, 40, 5, -1, 0, 54],
+        "E7000": [10, 0, 5, 2, 0, 1, 12],
+        "H8000": [0] * 7,
+    }, index=["PPRD", "RCV_RCY", "IMP", "EXP", "STK_CHG", "INTMARB", "GIC"])
+    flows["TOTAL"] = flows.sum(axis=1)
+    if error_column:
+        flows.loc["GIC", error_column] += 1.0
+    meta = {"dimensions": {
+        "nrg_bal": {c: "Gross inland consumption" if c == "GIC" else c for c in flows.index},
+        "siec": {"TOTAL": "Total", "G3000": "Natural gas", "E7000": "Electricity", "H8000": "Heat"},
+    }}
+    monkeypatch.setattr(eb, "load_eurostat_energy_balance_slice", lambda **_: (flows.copy(), meta))
+    mix = pd.Series(dict.fromkeys(eb.PRIMARY_SOURCES, 0.0))
+    mix["Fossil gas"] = 1.0
+    monkeypatch.setattr(eb, "load_eurostat_electricity_heat_mix", lambda **_: (mix, mix, {}))
+    if error_column:
+        with pytest.raises(eb.EurostatParseError, match="Supply flows"):
+            eb.build_tabelle1_from_eurostat(geo="AT", time=2021, categories=["Gross inland consumption"])
+    else:
+        result = eb.build_tabelle1_from_eurostat(geo="AT", time=2021, categories=["Gross inland consumption"])
+        assert result.tabelle1["Fossil gas"].iloc[0] == 54.0
+        assert result.tabelle1["Electricity:"].iloc[0] == 12.0
+        assert result.unrolled_sources["Total_unrolled"].iloc[0] == 66.0
 
 
 def test_compute_mapping_shares_from_outputs_and_disaggregate():
