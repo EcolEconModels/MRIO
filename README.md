@@ -119,12 +119,6 @@ The energy workbook uses direct source quantities for the mapped activities,
 including inputs to generation. Electricity and heat attributed to users are not
 added again. Transport is assigned to transport services, so the split between
 production and final use is an approximation.
-The gross inland consumption row in `Tabelle1` is reconstructed for each energy
-product: add production, recovered energy, imports and stock withdrawals; subtract
-exports and fuel for international shipping. Check each result against Eurostat.
-The model sums these source quantities for its baseline; the summary must not be
-added to the activity rows. Net electricity/heat imports use the existing mix of
-generation sources, without adding domestic combustion emissions.
 
 For classification terminology, Eurostat NACE is the activity classification and Eurostat CPA is the product classification by activity. The direct energy-balance export in this repo targets a project-specific 65-product CPA-based IO classification used downstream in PostGrowth. Retained `NACE2` tokens in one shell-script filename and one mapping filename are legacy compatibility names only: NACE enters on the activity-definition side of parts of the concordance logic, while the operative bridge targets are CPA-based product rows plus households.
 

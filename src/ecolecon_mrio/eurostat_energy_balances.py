@@ -585,8 +585,6 @@ def build_tabelle1_from_eurostat(
     ----------
     categories:
         Output category labels. Each label must exist as an `nrg_bal` label in the Eurostat energy balance dataset.
-        Gross inland consumption is reconstructed from supply flows and checked
-        against the published balance, separately for each energy product.
     """
     # 1) Load an nrg_bal label map (cheap: siec=TOTAL slice) to resolve category labels -> codes.
     df_total, meta_total = load_eurostat_energy_balance_slice(
@@ -630,7 +628,7 @@ def build_tabelle1_from_eurostat(
     df_fc, meta_fc = load_eurostat_energy_balance_slice(
         geo=geo,
         time=time,
-        nrg_bal=None if "GIC" in all_component_codes else sorted(all_component_codes),
+        nrg_bal=sorted(all_component_codes),
         unit=unit,
         freq=freq,
         dataset=energy_dataset,
@@ -638,18 +636,6 @@ def build_tabelle1_from_eurostat(
         force_download=force_download,
         force_reparse=force_reparse,
     )
-    if "GIC" in all_component_codes:
-        # Gross inland consumption includes stock withdrawals and excludes marine
-        # bunkers. Aviation stays within this boundary. Derive each product first.
-        supply_weights = {"PPRD": 1, "RCV_RCY": 1, "IMP": 1, "EXP": -1,
-                          "STK_CHG": 1, "INTMARB": -1}
-        supply = df_fc.loc[list(supply_weights)].fillna(0.0).mul(
-            pd.Series(supply_weights), axis=0).sum(axis=0)
-        reported = df_fc.loc["GIC"].dropna()
-        if not np.allclose(supply.loc[reported.index], reported, rtol=0.0, atol=1e-2):
-            raise EurostatParseError("Supply flows do not reproduce gross inland consumption.")
-        df_fc = df_fc.copy()
-        df_fc.loc["GIC"] = supply
     dim_siec = (meta_fc.get("dimensions", {}) or {}).get("siec", {})
     if not isinstance(dim_siec, dict) or not dim_siec:
         raise EurostatParseError(f"Missing siec dimension metadata in dataset={energy_dataset}.")
