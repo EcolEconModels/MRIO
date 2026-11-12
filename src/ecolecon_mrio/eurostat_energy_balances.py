@@ -110,7 +110,10 @@ def _match_codes_by_label(
 def _sum_codes(values: pd.Series, codes: Sequence[str]) -> float:
     if not codes:
         return 0.0
-    v = pd.to_numeric(values.reindex(list(codes)), errors="coerce").fillna(0.0)
+    v = values.reindex(list(codes)).astype("float64")
+    # The loader resolves structural zeros; unavailable fuel data are not zero.
+    if not np.isfinite(v.to_numpy()).all():
+        raise EurostatParseError(f"Missing observations among energy products: {list(codes)}")
     return float(v.sum())
 
 
@@ -222,11 +225,11 @@ def compute_mapping_shares_from_outputs(
 
     outputs_by_target = {str(k): float(v) for k, v in (target_output_by_target or {}).items()}
     outputs_by_code = {str(k): float(v) for k, v in (target_output_by_code or {}).items()}
-    share_used: list[float] = []
+    share_used = pd.Series(index=df.index, dtype="float64")
 
     for cat, grp in df.groupby(category_col, sort=False):
         if declared_share_col in grp.columns:
-            declared = pd.to_numeric(grp[declared_share_col], errors="coerce")
+            declared = pd.Series(pd.to_numeric(grp[declared_share_col], errors="coerce"))
             if declared.notna().any():
                 if not declared.notna().all():
                     raise ValueError(
@@ -237,11 +240,11 @@ def compute_mapping_shares_from_outputs(
                     raise ValueError(
                         f"Declared shares for category {cat!r} must sum to 1.0; got {total:.12g}."
                     )
-                share_used.extend(declared.astype("float64").tolist())
+                share_used.loc[grp.index] = declared.astype("float64")
                 continue
 
         if len(grp) == 1:
-            share_used.append(1.0)
+            share_used.loc[grp.index] = 1.0
             continue
 
         if allocation_rule_col not in grp.columns:
@@ -277,9 +280,10 @@ def compute_mapping_shares_from_outputs(
             raise ValueError(
                 f"No positive weighting reference available for category {cat!r} under rule {rule!r}."
             )
-        share_used.extend(shares)
+        # Preserve row identity when categories are interleaved in the CSV.
+        share_used.loc[grp.index] = shares
 
-    df["Share_used"] = np.array(share_used, dtype="float64")
+    df["Share_used"] = share_used
     return df
 
 
@@ -726,8 +730,8 @@ def build_tabelle1_from_eurostat(
         elec_total = float(block.get(elec_code, 0.0))
         heat_total = float(block.get(heat_code, 0.0))
         direct_total = float(total - elec_total - heat_total)
-        if not gross and (not np.isfinite(direct_total) or direct_total < 0):
-            direct_total = 0.0
+        if not np.isfinite([total, elec_total, heat_total]).all():
+            raise EurostatParseError(f"Missing energy totals for category {cat!r}.")
 
         direct_vals: dict[str, float] = {
             "Solid fossil fuels": _sum_codes(block, c_solid),
@@ -753,10 +757,9 @@ def build_tabelle1_from_eurostat(
             )
 
         residual = float(direct_total - sum(direct_vals.values()))
-        if gross and abs(residual) > 1e-2:
-            raise EurostatParseError(f"Unmapped gross inland supply: {residual} {unit}; check the SIEC source mapping.")
-        if not gross and residual > 0:
-            direct_vals["Other Renewables"] += residual
+        if abs(residual) > 1e-2:
+            scope = "gross inland supply" if gross else f"energy in {cat!r}"
+            raise EurostatParseError(f"Unmapped {scope}: {residual} {unit}; check the SIEC source mapping.")
 
         # National net trade has no observed fuel mix. Its signed carriers remain
         # in Electricity:/Heat, while activity attribution keeps its existing rule.
@@ -788,7 +791,7 @@ def build_tabelle1_from_eurostat(
                 "Heat_sources_sum": heat_accounted,
                 "Heat_residual_total_minus_sources": heat_total - heat_accounted,
                 "Direct_sources_sum": total_direct,
-                "Unrolled_sum": total_direct + elec_accounted + heat_accounted,
+                "Unrolled_sum": total_direct + (0.0 if gross else elec_accounted + heat_accounted),
             }
         )
 

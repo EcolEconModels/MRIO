@@ -42,6 +42,7 @@ SOURCE_BALANCE_ROLES: frozenset[str] = frozenset(
         "energy_sector_own_use",
         "transformation_output",
         "non_energy_use",
+        "distribution_loss",
     }
 )
 

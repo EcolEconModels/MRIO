@@ -20,7 +20,8 @@ def test_hydro_mapping_does_not_add_its_pumped_component():
     assert PRODUCT_SOURCE_MAPPING["Hydro"] == ("RA100",)
 
 
-def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("net_electricity", [-2.0, 0.0, 2.0])
+def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path, net_electricity):
     """A user's electricity must not add combustion already counted at generation."""
     import sys
     from types import SimpleNamespace
@@ -31,6 +32,7 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     mapping = pd.DataFrame([
         {"Category": label, "TargetSector": label, "TargetCode": code,
          "TargetSectorRole": role, "IncludeInDirectEnergy": True,
+         "SourceBalanceRole": "final_use",
          "AllocationRule": "fixed-share", "DeclaredShare": 1.0}
         for label, code, role in [
             ("Electricity, gas, steam and air conditioning", "CPA_D", "transformation_sector"),
@@ -45,14 +47,19 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     attributed.loc[1, "Fossil gas"] += 10.0
     gross = direct.iloc[[0]].copy()
     gross["Category"] = "Gross inland consumption"
-    gross["Total"] = 23.0
-    gross["Electricity:"] = -2.0
-    gross["Heat"] = 5.0
+    gross["Fossil gas"] = 25.0
+    gross["Total"] = 25.0 + net_electricity
+    gross["Electricity:"] = net_electricity
+    gross["Heat"] = 0.0
     monkeypatch.setattr(export, "read_category_mapping_frame", lambda _: mapping)
     monkeypatch.setattr(export, "build_tabelle1_from_eurostat", lambda **_: SimpleNamespace(
         tabelle1=pd.concat([direct, gross], ignore_index=True),
         unrolled_sources=attributed, diagnostics=pd.DataFrame()))
     monkeypatch.setattr(export, "validate_energy_balance_closure", lambda *_, **__: None)
+    mix = pd.Series(0.0, index=PRIMARY_SOURCES); mix["Fossil gas"] = 1.0
+    monkeypatch.setattr(export, "load_eurostat_electricity_heat_mix", lambda **_: (mix, mix, {}))
+    balance = pd.DataFrame(0.0, index=pd.Index(["STATDIFF", "FC_OTH_NSP_E", "FC_IND_E"]), columns=pd.Index(["RA600", "G3000"]))
+    monkeypatch.setattr(export, "load_eurostat_energy_balance_slice", lambda **_: (balance, {}))
     monkeypatch.setattr(export, "load_eurostat_iot", lambda **_: None)
     reference = pd.Series({"CPA_D": 100.0})
     monkeypatch.setattr(export, "build_eurostat_product_use_reference", lambda _: reference)
@@ -64,10 +71,12 @@ def test_workbook_counts_generation_fuel_once(monkeypatch, tmp_path):
     export.main()
     result = pd.read_excel(path, sheet_name="Energy_1.0").set_index("Sector")
     assert result.loc["Households", "Fossil gas"] == 5.0
-    assert result["Fossil gas"].sum() == 25.0
+    assert result["Fossil gas"].sum() == 25.0 + net_electricity
+    actual = pd.read_excel(path, sheet_name="Mapped_65").set_index("TargetSector")
+    assert actual["Fossil gas"].sum() == 25.0
     assert pd.ExcelFile(path).sheet_names == ["Energy_1.0", "Tabelle1", "Mapped_65"]
     national = pd.read_excel(path, sheet_name="Tabelle1").set_index("Category")
-    assert national.at["Gross inland consumption", "Electricity:"] == -2.0
+    assert national.at["Gross inland consumption", "Electricity:"] == net_electricity
 
 
 @pytest.mark.parametrize("defect", [None, "TOTAL", "G3000", "missing", "unmapped"])
@@ -164,6 +173,26 @@ def test_compute_mapping_shares_from_outputs_and_disaggregate():
     # All sources identical; check one
     assert abs(out.loc["T1", PRIMARY_SOURCES[0]] - 0.25 * 1.0) < 1e-12
     assert abs(out.loc["T2", PRIMARY_SOURCES[0]] - (0.75 * 1.0 + 1.0 * 2.0)) < 1e-12
+
+
+def test_mapping_shares_follow_interleaved_rows():
+    """CSV row order must not move another category's shares onto a sector."""
+    from ecolecon_mrio.eurostat_energy_balances import compute_mapping_shares_from_outputs
+
+    frame = pd.DataFrame({
+        "Category": ["A", "B", "A"], "TargetSector": ["X", "Y", "Z"],
+        "AllocationRule": ["split-by-energy-product-prd-use"] * 3,
+    }, index=pd.Index([9, 4, 7]))
+    result = compute_mapping_shares_from_outputs(frame, target_output_by_target={"X": 1, "Y": 8, "Z": 3})
+    assert result["Share_used"].tolist() == [0.25, 1.0, 0.75]
+
+
+def test_missing_fuel_cannot_become_a_zero_or_renewable_residual():
+    """Unavailable fuel observations must not alter the physical REN/NREN split."""
+    from ecolecon_mrio.eurostat_energy_balances import _sum_codes, EurostatParseError
+
+    with pytest.raises(EurostatParseError, match="Missing observations"):
+        _sum_codes(pd.Series({"G3000": float("nan")}), ["G3000"])
 
 
 def test_norm_label_allows_hyphen():

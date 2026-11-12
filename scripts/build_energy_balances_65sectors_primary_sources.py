@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Export source quantities for the mapped activities without counting electricity twice.
+"""Export an approximation of gross energy by source, alongside actual activity inputs.
 
-Generation inputs remain in the energy sectors. Electricity and heat attributed
-to users are retained in Tabelle1 for inspection, but are not added to their fuels.
+Energy_1.0 includes feedstocks, net transformation and attributed net electricity.
+Mapped_65 retains actual activity inputs for combustion and fuel-price calculations.
 """
 from __future__ import annotations
 
@@ -17,11 +17,14 @@ from openpyxl import Workbook
 from ecolecon_mrio.eurostat_air_emissions import load_eurostat_air_emissions_by_nace
 from ecolecon_mrio.eurostat_energy_balances import (
     PRIMARY_SOURCES,
+    PRODUCT_SOURCE_MAPPING,
     DEFAULT_PRIMARY_SOURCE_BUCKETS_PATH,
     build_postgrowth_energy_balance,
     build_tabelle1_from_eurostat,
     compute_mapping_shares_from_outputs,
     disaggregate_unrolled_sources,
+    load_eurostat_electricity_heat_mix,
+    load_eurostat_energy_balance_slice,
     validate_energy_balance_closure,
 )
 from ecolecon_mrio.data import default_data_root
@@ -191,12 +194,93 @@ def main() -> None:
         mapping_df,
         target_output_by_code=energy_use_reference.to_dict(),
     )
-    # Count fuel at combustion, not again through users' electricity and heat.
-    # The mapped generation rows also retain hydro, wind and other primary inputs.
+    # Actual inputs exclude feedstocks, losses and transformations between fuels.
+    # Generation fuel remains here; users' electricity/heat is not added again.
     direct_sources = eb.tabelle1.loc[:, ["Category", *PRIMARY_SOURCES]]
-    sector_energy = disaggregate_unrolled_sources(direct_sources, mapping_w)
+    sector_energy = disaggregate_unrolled_sources(
+        direct_sources, mapping_w.loc[mapping_w["IncludeInDirectEnergy"]]
+    )
     # Preserve TargetSector order from the mapping file (and allow extra rows like "Households" at the end).
     sector_energy = sector_energy.reindex(targets).fillna(0.0)
+
+    # Reuse the same allocation, subtracting outputs of fuel transformation once.
+    gross_sources = direct_sources.copy()
+    output_categories = mapping_w.loc[
+        mapping_w["SourceBalanceRole"].eq("transformation_output"), "Category"
+    ]
+    gross_sources.loc[gross_sources["Category"].isin(output_categories), list(PRIMARY_SOURCES)] *= -1
+    gross_energy = disaggregate_unrolled_sources(gross_sources, mapping_w).reindex(targets).fillna(0.0)
+    label_by_code = target_codes.set_index("TargetCode")["TargetSector"].to_dict()
+
+    # Approximate non-energy oil/gas use by chemicals, but coal by basic metals.
+    nonenergy_categories = mapping_w.loc[
+        mapping_w["SourceBalanceRole"].eq("non_energy_use"), "Category"
+    ]
+    coal_nonenergy = float(direct_sources.loc[
+        direct_sources["Category"].isin(nonenergy_categories), "Solid fossil fuels"
+    ].sum())
+    if coal_nonenergy != 0:
+        gross_energy.loc[label_by_code["CPA_C20"], "Solid fossil fuels"] -= coal_nonenergy
+        gross_energy.loc[label_by_code["CPA_C24"], "Solid fossil fuels"] += coal_nonenergy
+
+    # Net imported electricity uses the domestic generation mix as an approximation,
+    # in electricity units, without a fuel-efficiency multiplier or Austrian combustion.
+    if abs(float(gross["Heat"])) > 1e-2:
+        raise ValueError("Nonzero net heat trade requires an explicit source allocation.")
+    elec_mix, _, _ = load_eurostat_electricity_heat_mix(
+        geo=args.geo, time=args.year, unit=args.energy_unit,
+        storage_folder=args.storage_folder, force_download=args.force_download,
+        force_reparse=args.force_reparse,
+    )
+    if not np.isclose(elec_mix.sum(), 1.0, rtol=0.0, atol=1e-10):
+        raise ValueError("Electricity generation shares must sum to one.")
+    gross_energy.loc[label_by_code["CPA_D"], list(PRIMARY_SOURCES)] += elec_mix * float(gross["Electricity:"])
+    expected_sources = gross[list(PRIMARY_SOURCES)] + elec_mix * float(gross["Electricity:"])
+    source_gap = expected_sources - gross_energy.sum()
+    # Independently identify the two agreed omissions by source. A match in the
+    # grand total must not conceal compensating fuel-classification errors.
+    balance, _ = load_eurostat_energy_balance_slice(
+        geo=args.geo, time=args.year, unit=args.energy_unit, storage_folder=args.storage_folder,
+        force_download=args.force_download, force_reparse=args.force_reparse,
+    )
+    if not np.isfinite(balance.loc["STATDIFF"].to_numpy()).all():
+        raise ValueError("Missing observations in statistical differences.")
+    omitted = pd.Series({src: balance.loc["STATDIFF", [c for c in codes if c in balance.columns]].sum()
+                         for src, codes in PRODUCT_SOURCE_MAPPING.items()})
+    industry_children = balance.index.str.startswith("FC_IND_") & (balance.index != "FC_IND_E")
+    omitted["Other Renewables"] += (balance.at["FC_OTH_NSP_E", "RA600"]
+        + balance.at["FC_IND_E", "RA600"] - balance.loc[industry_children, "RA600"].sum())
+    if (not np.isfinite(omitted.to_numpy()).all()
+            or omitted.abs().sum() > abs(float(gross["Total"])) * 0.001
+            or not np.allclose(source_gap, omitted, rtol=0.0, atol=0.02)):
+        raise ValueError(f"Source gaps do not match ambient heat and statistical differences: {(source_gap - omitted).to_dict()}")
+
+    # Allocate the signed remainder against completed actual inputs. Positive
+    # remainders follow the relevant activities above. Negative remainders reduce
+    # existing users proportionally; never clip the remainder or create negative use.
+    remainder = expected_sources - omitted - sector_energy.sum()
+    for src in PRIMARY_SOURCES:
+        actual = sector_energy[src]
+        amount = float(remainder[src])
+        if abs(amount) <= 0.02:  # retain source rounding without inventing an activity
+            gross_energy[src] = actual
+        elif amount < 0:
+            # Attribute fuel-conversion differences to production users; retain
+            # the observed household account and its existing emissions scaling.
+            users = actual.index != "Households"
+            desired = float(actual.loc[users].sum() + amount)
+            if desired < 0 or actual.loc[users].sum() <= 0:
+                raise ValueError(f"Cannot allocate {src!r} non-negatively among production users: {desired} {args.energy_unit}.")
+            gross_energy[src] = actual
+            gross_energy.loc[users, src] *= desired / actual.loc[users].sum()
+        else:
+            additions = gross_energy[src] - actual
+            weights = additions.where(additions > 0, 0.0)
+            if weights.sum() <= 0:
+                raise ValueError(f"No supported sector allocation for positive {src!r} remainder.")
+            gross_energy[src] = actual + weights * (amount / weights.sum())
+    if not np.allclose(expected_sources - gross_energy.sum(), omitted, rtol=0.0, atol=0.02):
+        raise ValueError("Source allocation changed more than the agreed omissions and rounding.")
 
     # 4) Air emissions accounts (CO2) and intensities
     co2 = load_eurostat_air_emissions_by_nace(
@@ -248,10 +332,17 @@ def main() -> None:
 
     source_group_by_source = read_source_bucket_groups(primary_source_buckets_path)
     postgrowth_df = build_postgrowth_energy_balance(
-        mapped_df,
+        gross_energy.rename_axis("TargetSector").reset_index(),
         source_group_by_source=source_group_by_source,
         split_energy_green_brown=args.split_energy_green_brown,
     )
+    if (postgrowth_df[list(PRIMARY_SOURCES)].to_numpy() < -1e-6).any():
+        raise ValueError("The gross-energy allocation has a negative sector/source quantity.")
+    if not np.allclose(postgrowth_df[list(PRIMARY_SOURCES)].sum(), gross_energy.sum(), rtol=0.0, atol=1e-7):
+        raise ValueError("The green/brown allocation did not conserve energy sources.")
+    print(f"Activity inputs: {sector_energy.to_numpy().sum():.3f} {args.energy_unit}; "
+          f"allocated gross energy: {postgrowth_df['Total_energy_GWh'].sum():.3f}; "
+          f"Eurostat GIC: {float(gross['Total']):.3f}.")
 
     # 5) Write single Excel output (atomically), using openpyxl directly for maximum Excel compatibility.
     sheets: list[tuple[str, pd.DataFrame]] = [
